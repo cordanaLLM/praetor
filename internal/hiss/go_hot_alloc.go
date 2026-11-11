@@ -10,6 +10,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -142,6 +143,12 @@ func collectFileHotFunctions(fset *token.FileSet, file *ast.File, rel string, re
 			continue
 		}
 		name, symbol := funcDeclSymbol(fn)
+		if fn.Recv == nil {
+			name = "func:" + name
+		} else {
+			// Methods with the same name on different receiver types remain ambiguous.
+			name = "method:" + name
+		}
 		targets = append(targets, hotPathFunction{
 			file:   rel,
 			symbol: symbol,
@@ -243,39 +250,100 @@ func findZeroAllocTests(fset *token.FileSet, testFiles []string) ([]string, erro
 	return results, nil
 }
 
-// findZeroAllocTestsInFile walks a parsed test file to find zero-allocation assertions.
+// hotTestContext carries import names and the enclosing function's test parameter.
+type hotTestContext struct {
+	imports   map[string]bool
+	testParam string
+}
+
+// hotImportNames collects local import names for distinguishing package functions from methods.
+func hotImportNames(file *ast.File) map[string]bool {
+	names := make(map[string]bool)
+	for i := 0; i < len(file.Imports) && i < maxHotAllocDecls; i++ {
+		spec := file.Imports[i]
+		if spec.Name != nil {
+			names[spec.Name.Name] = true
+			continue
+		}
+		value, err := strconv.Unquote(spec.Path.Value)
+		if err == nil {
+			names[path.Base(value)] = true
+		}
+	}
+	return names
+}
+
+// hotTestingParam finds the first named testing parameter accepted by allocation assertions.
+func hotTestingParam(fn *ast.FuncDecl) string {
+	if fn.Type.Params == nil {
+		return ""
+	}
+	for i := 0; i < len(fn.Type.Params.List) && i < maxHotAllocDecls; i++ {
+		field := fn.Type.Params.List[i]
+		if len(field.Names) > 0 && isHotTestingType(field.Type) {
+			return field.Names[0].Name
+		}
+	}
+	return ""
+}
+
+// isHotTestingType recognizes the supported testing parameter types.
+func isHotTestingType(expr ast.Expr) bool {
+	pointer := false
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+		pointer = true
+	}
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	if !ok || pkg.Name != "testing" {
+		return false
+	}
+	return (pointer && (sel.Sel.Name == "T" || sel.Sel.Name == "B")) || (!pointer && sel.Sel.Name == "TB")
+}
+
+// findZeroAllocTestsInFile walks function bodies with their testing parameter and imports.
 func findZeroAllocTestsInFile(file *ast.File) []string {
 	var tested []string
-	ast.Inspect(file, func(n ast.Node) bool {
-		block, ok := n.(*ast.BlockStmt)
-		if !ok {
-			return true
+	imports := hotImportNames(file)
+	for i := 0; i < len(file.Decls) && i < maxHotAllocDecls; i++ {
+		fn, ok := file.Decls[i].(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
 		}
-		tested = append(tested, inspectBlockForAllocTests(block)...)
-		return true
-	})
+		ctx := hotTestContext{imports: imports, testParam: hotTestingParam(fn)}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if block, ok := n.(*ast.BlockStmt); ok {
+				tested = append(tested, inspectBlockForAllocTests(block, ctx)...)
+			}
+			return true
+		})
+	}
 	return tested
 }
 
 // inspectBlockForAllocTests examines statements for allocation tests and their assertions.
-func inspectBlockForAllocTests(block *ast.BlockStmt) []string {
+func inspectBlockForAllocTests(block *ast.BlockStmt, ctx hotTestContext) []string {
 	var tested []string
 	stmts := block.List
 	for i := 0; i < len(stmts) && i < maxHotAllocStmts; i++ {
 		switch s := stmts[i].(type) {
 		case *ast.AssignStmt:
-			tested = append(tested, checkAssignAllocTest(stmts, i, s)...)
+			tested = append(tested, checkAssignAllocTest(stmts, i, s, ctx)...)
 		case *ast.DeclStmt:
-			tested = append(tested, checkDeclAllocTest(stmts, i, s)...)
+			tested = append(tested, checkDeclAllocTest(stmts, i, s, ctx)...)
 		case *ast.IfStmt:
-			tested = append(tested, checkIfAllocTest(s)...)
+			tested = append(tested, checkIfAllocTest(s, ctx)...)
 		}
 	}
 	return tested
 }
 
 // checkAssignAllocTest recognizes an allocation measurement assigned for a later assertion.
-func checkAssignAllocTest(stmts []ast.Stmt, idx int, assign *ast.AssignStmt) []string {
+func checkAssignAllocTest(stmts []ast.Stmt, idx int, assign *ast.AssignStmt, ctx hotTestContext) []string {
 	if len(assign.Lhs) == 0 || len(assign.Rhs) == 0 {
 		return nil
 	}
@@ -283,7 +351,7 @@ func checkAssignAllocTest(stmts []ast.Stmt, idx int, assign *ast.AssignStmt) []s
 	if !ok {
 		return nil
 	}
-	targets, valid := checkAllocsCall(call)
+	targets, valid := checkAllocsCall(call, ctx)
 	if !valid {
 		return nil
 	}
@@ -291,14 +359,14 @@ func checkAssignAllocTest(stmts []ast.Stmt, idx int, assign *ast.AssignStmt) []s
 	if !ok {
 		return nil
 	}
-	if hasZeroAssertion(stmts[idx+1:], id.Name, nil) {
+	if hasZeroAssertion(stmts[idx+1:], id.Name, nil, ctx.testParam) {
 		return targets
 	}
 	return nil
 }
 
 // checkDeclAllocTest recognizes an allocation measurement declared for a later assertion.
-func checkDeclAllocTest(stmts []ast.Stmt, idx int, declStmt *ast.DeclStmt) []string {
+func checkDeclAllocTest(stmts []ast.Stmt, idx int, declStmt *ast.DeclStmt, ctx hotTestContext) []string {
 	gen, ok := declStmt.Decl.(*ast.GenDecl)
 	if !ok || gen.Tok != token.VAR {
 		return nil
@@ -312,8 +380,8 @@ func checkDeclAllocTest(stmts []ast.Stmt, idx int, declStmt *ast.DeclStmt) []str
 		if !ok {
 			continue
 		}
-		targets, valid := checkAllocsCall(call)
-		if valid && hasZeroAssertion(stmts[idx+1:], spec.Names[0].Name, nil) {
+		targets, valid := checkAllocsCall(call, ctx)
+		if valid && hasZeroAssertion(stmts[idx+1:], spec.Names[0].Name, nil, ctx.testParam) {
 			return targets
 		}
 	}
@@ -321,7 +389,7 @@ func checkDeclAllocTest(stmts []ast.Stmt, idx int, declStmt *ast.DeclStmt) []str
 }
 
 // checkIfInitAllocTest recognizes an allocation measurement in an if initializer.
-func checkIfInitAllocTest(ifStmt *ast.IfStmt) []string {
+func checkIfInitAllocTest(ifStmt *ast.IfStmt, ctx hotTestContext) []string {
 	assign, ok := ifStmt.Init.(*ast.AssignStmt)
 	if !ok || len(assign.Lhs) == 0 || len(assign.Rhs) == 0 {
 		return nil
@@ -334,7 +402,7 @@ func checkIfInitAllocTest(ifStmt *ast.IfStmt) []string {
 	if !ok {
 		return nil
 	}
-	targets, valid := checkAllocsCall(call)
+	targets, valid := checkAllocsCall(call, ctx)
 	if valid && isZeroCondition(ifStmt.Cond, id.Name, nil) {
 		return targets
 	}
@@ -342,7 +410,7 @@ func checkIfInitAllocTest(ifStmt *ast.IfStmt) []string {
 }
 
 // checkIfCondAllocTest recognizes an allocation measurement used directly in an if condition.
-func checkIfCondAllocTest(ifStmt *ast.IfStmt) []string {
+func checkIfCondAllocTest(ifStmt *ast.IfStmt, ctx hotTestContext) []string {
 	bin, ok := unwrapCond(ifStmt.Cond).(*ast.BinaryExpr)
 	if !ok {
 		return nil
@@ -351,7 +419,7 @@ func checkIfCondAllocTest(ifStmt *ast.IfStmt) []string {
 	if !ok {
 		return nil
 	}
-	targets, valid := checkAllocsCall(call)
+	targets, valid := checkAllocsCall(call, ctx)
 	if valid && isZeroCondition(bin, "", call) {
 		return targets
 	}
@@ -359,18 +427,18 @@ func checkIfCondAllocTest(ifStmt *ast.IfStmt) []string {
 }
 
 // checkIfAllocTest checks whether an if statement establishes a zero-allocation assertion.
-func checkIfAllocTest(ifStmt *ast.IfStmt) []string {
-	if !bodyFailsTest(ifStmt.Body) {
+func checkIfAllocTest(ifStmt *ast.IfStmt, ctx hotTestContext) []string {
+	if !bodyFailsTest(ifStmt.Body, ctx.testParam) {
 		return nil
 	}
-	if targets := checkIfInitAllocTest(ifStmt); len(targets) > 0 {
+	if targets := checkIfInitAllocTest(ifStmt, ctx); len(targets) > 0 {
 		return targets
 	}
-	return checkIfCondAllocTest(ifStmt)
+	return checkIfCondAllocTest(ifStmt, ctx)
 }
 
 // hasZeroAssertion looks for a failure assertion when a measured allocation count is nonzero.
-func hasZeroAssertion(stmts []ast.Stmt, varName string, call *ast.CallExpr) bool {
+func hasZeroAssertion(stmts []ast.Stmt, varName string, call *ast.CallExpr, testParam string) bool {
 	found := false
 	for i := 0; i < len(stmts) && i < maxHotAllocStmts && !found; i++ {
 		ast.Inspect(stmts[i], func(n ast.Node) bool {
@@ -378,7 +446,7 @@ func hasZeroAssertion(stmts []ast.Stmt, varName string, call *ast.CallExpr) bool
 				return false
 			}
 			if ifStmt, ok := n.(*ast.IfStmt); ok {
-				if isZeroCondition(ifStmt.Cond, varName, call) && bodyFailsTest(ifStmt.Body) {
+				if isZeroCondition(ifStmt.Cond, varName, call) && bodyFailsTest(ifStmt.Body, testParam) {
 					found = true
 					return false
 				}
@@ -452,7 +520,7 @@ func isMatchingAllocs(expr ast.Expr, varName string, call *ast.CallExpr) bool {
 }
 
 // bodyFailsTest checks whether a branch contains a test failure call.
-func bodyFailsTest(body *ast.BlockStmt) bool {
+func bodyFailsTest(body *ast.BlockStmt, testParam string) bool {
 	if body == nil {
 		return false
 	}
@@ -461,7 +529,7 @@ func bodyFailsTest(body *ast.BlockStmt) bool {
 		if found || n == nil {
 			return false
 		}
-		if call, ok := n.(*ast.CallExpr); ok && callFailsTest(call) {
+		if call, ok := n.(*ast.CallExpr); ok && callFailsTest(call, testParam) {
 			found = true
 			return false
 		}
@@ -471,9 +539,13 @@ func bodyFailsTest(body *ast.BlockStmt) bool {
 }
 
 // callFailsTest recognizes calls that fail the current test.
-func callFailsTest(c *ast.CallExpr) bool {
+func callFailsTest(c *ast.CallExpr, testParam string) bool {
 	sel, ok := c.Fun.(*ast.SelectorExpr)
-	if !ok {
+	if !ok || testParam == "" {
+		return false
+	}
+	receiver, ok := sel.X.(*ast.Ident)
+	if !ok || receiver.Name != testParam {
 		return false
 	}
 	switch sel.Sel.Name {
@@ -485,7 +557,7 @@ func callFailsTest(c *ast.CallExpr) bool {
 }
 
 // checkAllocsCall extracts target calls from a valid testing.AllocsPerRun measurement.
-func checkAllocsCall(call *ast.CallExpr) ([]string, bool) {
+func checkAllocsCall(call *ast.CallExpr, ctx hotTestContext) ([]string, bool) {
 	if call == nil || len(call.Args) < 2 {
 		return nil, false
 	}
@@ -495,7 +567,7 @@ func checkAllocsCall(call *ast.CallExpr) ([]string, bool) {
 	if !isValidRunsArg(call.Args[0]) {
 		return nil, false
 	}
-	targets := extractCallees(call.Args[1])
+	targets := extractCallees(call.Args[1], ctx.imports)
 	if len(targets) == 0 {
 		return nil, false
 	}
@@ -527,15 +599,15 @@ func isValidRunsArg(arg ast.Expr) bool {
 }
 
 // extractCallees identifies the function or calls passed to an allocation measurement.
-func extractCallees(arg ast.Expr) []string {
+func extractCallees(arg ast.Expr, imports map[string]bool) []string {
 	var callees []string
-	if id, ok := unwrapCallee(arg); ok {
+	if id, ok := unwrapCallee(arg, imports); ok {
 		callees = append(callees, id)
 		return callees
 	}
 	ast.Inspect(arg, func(n ast.Node) bool {
 		if call, ok := n.(*ast.CallExpr); ok {
-			if name, ok := unwrapCallee(call.Fun); ok {
+			if name, ok := unwrapCallee(call.Fun, imports); ok {
 				callees = append(callees, name)
 			}
 		}
@@ -545,7 +617,7 @@ func extractCallees(arg ast.Expr) []string {
 }
 
 // unwrapCallee removes wrappers from a callee expression before identifying its target.
-func unwrapCallee(fun ast.Expr) (string, bool) {
+func unwrapCallee(fun ast.Expr, imports map[string]bool) (string, bool) {
 	fun = unwrapCond(fun)
 	if idx, ok := fun.(*ast.IndexExpr); ok {
 		fun = idx.X
@@ -555,10 +627,13 @@ func unwrapCallee(fun ast.Expr) (string, bool) {
 	}
 	fun = unwrapCond(fun)
 	if id, ok := fun.(*ast.Ident); ok {
-		return id.Name, true
+		return "func:" + id.Name, true
 	}
 	if sel, ok := fun.(*ast.SelectorExpr); ok {
-		return sel.Sel.Name, true
+		if id, ok := sel.X.(*ast.Ident); ok && imports[id.Name] {
+			return "func:" + sel.Sel.Name, true
+		}
+		return "method:" + sel.Sel.Name, true
 	}
 	return "", false
 }

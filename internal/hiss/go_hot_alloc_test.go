@@ -74,6 +74,24 @@ func hotAllocPositiveCases() []hotAllocTestCase {
 			wantSub:   "has no testing.AllocsPerRun test asserting zero allocations",
 		},
 		{
+			name: "positive: method test does not cover same-name function",
+			sources: map[string]string{
+				"hot.go":      "package p\n\ntype Engine struct{}\n\n//hiss:hot engine step\nfunc (e *Engine) Step() {}\n\n//hiss:hot plain step\nfunc Step() {}\n",
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\te := &Engine{}\n\tif allocs := testing.AllocsPerRun(100, func() { e.Step() }); allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n}\n",
+			},
+			wantCount: 1,
+			wantSub:   "function Step has no testing.AllocsPerRun",
+		},
+		{
+			name: "positive: error logging does not fail test",
+			sources: map[string]string{
+				"hot.go":      "package p\n\n//hiss:hot rendering frame\nfunc Frame() {}\n",
+				"hot_test.go": "package p\n\nimport (\n\t\"testing\"\n\t\"log\"\n)\n\nfunc TestFrame(t *testing.T) {\n\tvar err error\n\tif allocs := testing.AllocsPerRun(100, func() { Frame() }); allocs != 0 { log.Print(err.Error()) }\n}\n",
+			},
+			wantCount: 1,
+			wantSub:   "has no testing.AllocsPerRun test asserting zero allocations",
+		},
+		{
 			name: "positive: marker without reason",
 			sources: map[string]string{
 				"hot.go": "package p\n\n//hiss:hot\nfunc Step() {}\n",
