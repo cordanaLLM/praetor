@@ -440,6 +440,271 @@ func CounterNeqStepTwo() {
 		line: 5,
 		fn:   "CounterNeqStepTwo",
 	},
+	{
+		name: "multi_name_spec_array",
+		rel:  "multi_name_array.go",
+		src: `package p
+func work(string) {}
+func MultiNameArray(extra []string) {
+	var fixed, items = [4]string{}, extra
+	_ = fixed
+	for _, item := range items {
+		go work(item)
+	}
+}
+`,
+		line: 7,
+		fn:   "MultiNameArray",
+	},
+	{
+		name: "multi_name_spec_semaphore",
+		rel:  "multi_name_sem.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+type fakeGate struct{}
+func (fakeGate) Acquire(context.Context, int64) error { return nil }
+func (fakeGate) Release(int64) {}
+func nonLimiter() fakeGate { return fakeGate{} }
+func work(string) {}
+func MultiNameSem(ctx context.Context, items []string) error {
+	var realSem, sem = semaphore.NewWeighted(4), nonLimiter()
+	_ = realSem
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+`,
+		line: 16,
+		fn:   "MultiNameSem",
+	},
+	{
+		name: "acquire_released_before_launch",
+		rel:  "acquire_released.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func work(string) {}
+func ReleasedBeforeLaunch(ctx context.Context, items []string) error {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		sem.Release(1)
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+`,
+		line: 12,
+		fn:   "ReleasedBeforeLaunch",
+	},
+	{
+		name: "acquire_without_goroutine_release",
+		rel:  "acquire_no_release.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func work(string) {}
+func MissingGoroutineRelease(ctx context.Context, items []string) error {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		go work(item)
+	}
+	return nil
+}
+`,
+		line: 10,
+		fn:   "MissingGoroutineRelease",
+	},
+	{
+		name: "nonconst_weight_tryacquire",
+		rel:  "nonconst_weight.go",
+		src: `package p
+import "golang.org/x/sync/semaphore"
+func work(string) {}
+func NonConstWeight(items []string, n int64) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if !sem.TryAcquire(n) {
+			continue
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+}
+`,
+		line: 11,
+		fn:   "NonConstWeight",
+	},
+	{
+		name: "nonconst_weight_zero_array_len",
+		rel:  "zero_array_weight.go",
+		src: `package p
+import "golang.org/x/sync/semaphore"
+func work(string) {}
+func ZeroArrayWeight(items []string) {
+	var empty [0]int
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if !sem.TryAcquire(len(empty)) {
+			continue
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+}
+`,
+		line: 12,
+		fn:   "ZeroArrayWeight",
+	},
+	{
+		name: "fatal_non_testing_receiver",
+		rel:  "fatal_non_testing.go",
+		src: `package p
+import "golang.org/x/sync/semaphore"
+type recorder struct{}
+func (recorder) Fatal(string) {}
+func work(string) {}
+func FatalNonTesting(items []string, rec recorder) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if !sem.TryAcquire(1) {
+			rec.Fatal("saturated")
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+}
+`,
+		line: 13,
+		fn:   "FatalNonTesting",
+	},
+	{
+		name: "failnow_non_testing_receiver",
+		rel:  "failnow_non_testing.go",
+		src: `package p
+import "golang.org/x/sync/semaphore"
+type recorder struct{}
+func (recorder) FailNow() {}
+func work(string) {}
+func FailNowNonTesting(items []string, rec recorder) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if !sem.TryAcquire(1) {
+			rec.FailNow()
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+}
+`,
+		line: 13,
+		fn:   "FailNowNonTesting",
+	},
+	{
+		name: "conditional_token_send",
+		rel:  "conditional_token_send.go",
+		src: `package p
+func work(string) {}
+func ConditionalTokenSend(items []string, cond bool) {
+	tokens := make(chan struct{}, 4)
+	for _, item := range items {
+		if cond {
+			tokens <- struct{}{}
+		}
+		v := item
+		go func() {
+			defer func() { <-tokens }()
+			work(v)
+		}()
+	}
+}
+`,
+		line: 10,
+		fn:   "ConditionalTokenSend",
+	},
+	{
+		name: "select_token_send_not_enclosing_launch",
+		rel:  "select_token_send.go",
+		src: `package p
+func work(string) {}
+func SelectTokenSend(items []string) {
+	tokens := make(chan struct{}, 4)
+	for _, item := range items {
+		select {
+		case tokens <- struct{}{}:
+		default:
+		}
+		v := item
+		go func() {
+			defer func() { <-tokens }()
+			work(v)
+		}()
+	}
+}
+`,
+		line: 11,
+		fn:   "SelectTokenSend",
+	},
+	{
+		name: "counter_written_in_body",
+		rel:  "counter_written.go",
+		src: `package p
+func work(int) {}
+func CounterWrittenInBody(retry bool) {
+	for i := 0; i < 8; i++ {
+		if retry {
+			i--
+		}
+		go work(i)
+	}
+}
+`,
+		line: 8,
+		fn:   "CounterWrittenInBody",
+	},
+	{
+		name: "counter_address_taken_in_body",
+		rel:  "counter_addr.go",
+		src: `package p
+func touch(*int) {}
+func work(int) {}
+func CounterAddressTaken() {
+	for i := 0; i < 8; i++ {
+		touch(&i)
+		go work(i)
+	}
+}
+`,
+		line: 7,
+		fn:   "CounterAddressTaken",
+	},
 }
 
 // TestGoFanout_Positive_UnboundedShapesReported checks that unbounded worker shapes produce findings.
@@ -700,6 +965,95 @@ for worker := 0; worker < concurrency; worker++ {
 `,
 	},
 	{
+		name: "testing_param_and_log_fatal_guards",
+		src: `package p
+import (
+"context"
+stdlog "log"
+tst "testing"
+"golang.org/x/sync/semaphore"
+)
+const permitWeight = 2
+func work(string) {}
+func RunTestingTBGuard(tb tst.TB, items []string) {
+	var slots [4]int
+	sem := semaphore.NewWeighted(8)
+	for _, item := range items {
+		if !sem.TryAcquire(len(slots)) {
+			tb.Fatalf("saturated: %s", item)
+		}
+		v := item
+		go func() {
+			defer sem.Release(len(slots))
+			work(v)
+		}()
+	}
+}
+func RunBenchFailNowGuard(b *tst.B, items []string) {
+	sem := semaphore.NewWeighted(8)
+	for _, item := range items {
+		if !sem.TryAcquire(permitWeight) {
+			b.FailNow()
+		}
+		v := item
+		go func() {
+			work(v)
+			sem.Release(permitWeight)
+		}()
+	}
+}
+func RunLogFatalGuard(ctx context.Context, items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			stdlog.Fatal(err)
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+}
+`,
+	},
+	{
+		name: "multi_name_spec_valid_and_dominating_token_branch",
+		src: `package p
+func usePtr(*int) {}
+func work(string) {}
+func RunMultiNameValid(extra []string) {
+	var fixed, unused = [4]string{"a", "b", "c", "d"}, extra
+	_ = unused
+	for _, v := range fixed {
+		go work(v)
+	}
+}
+func RunDominatingTokenBranch(items []string, cond bool) {
+	tokens := make(chan struct{}, 4)
+	for _, item := range items {
+		if cond {
+			tokens <- struct{}{}
+			v := item
+			go func() {
+				defer func() { <-tokens }()
+				work(v)
+			}()
+		}
+	}
+}
+func RunCounterElementAddr(arr [8]int) {
+	for i := 0; i < 8; i++ {
+		usePtr(&arr[i])
+		go func(i int) {
+			i++
+			_ = i
+		}(i)
+	}
+}
+`,
+	},
+	{
 		name: "gap_caller_variable_bound_and_numcpu_pool",
 		src: `package p
 import (
@@ -832,5 +1186,27 @@ func Run(items []int) {
 	rep := scanGoSnippet(src, "fanout.go")
 	if rep.Breakdown["HISS-06"] == 0 {
 		t.Fatal("SetLimit must not exempt raw go statements")
+	}
+}
+
+// TestGoFanout_Boundary_FactWalkTruncatedReportsAndMarksTruncated verifies that when a function's
+// AST walk exceeds maxNodeStack, the launch receives no exemption and ScanReport.Truncated is set.
+func TestGoFanout_Boundary_FactWalkTruncatedReportsAndMarksTruncated(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("package p\nimport (\"context\"; \"golang.org/x/sync/semaphore\")\nfunc work(string) {}\n")
+	b.WriteString("func OversizedBody(ctx context.Context, items []string) error {\n")
+	b.WriteString("\tsem := semaphore.NewWeighted(4)\n\tn := 0\n")
+	for i := 0; i < maxNodeStack; i++ {
+		b.WriteString("\tn++\n")
+	}
+	b.WriteString("\t_ = n\n\tfor _, item := range items {\n")
+	b.WriteString("\t\tif err := sem.Acquire(ctx, 1); err != nil { return err }\n")
+	b.WriteString("\t\tv := item\n\t\tgo func() { defer sem.Release(1); work(v) }()\n\t}\n\treturn nil\n}\n")
+	rep := scanGoSnippet(b.String(), "oversized.go")
+	if !rep.Truncated || !rep.Incomplete() {
+		t.Fatalf("Truncated=%v Incomplete=%v, want both true", rep.Truncated, rep.Incomplete())
+	}
+	if got := rep.Breakdown["HISS-06"]; got != 1 {
+		t.Fatalf("Breakdown[HISS-06] = %d, want 1 when fact walk hits maxNodeStack", got)
 	}
 }

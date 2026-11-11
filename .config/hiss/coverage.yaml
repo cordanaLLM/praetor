@@ -442,26 +442,39 @@ rules:
           *ast.GoStmt in production, generated and _test.go files
         rationale: >-
           A go statement inside a for or range body (directly, or inside a function literal
-          invoked inside that loop) is reported unless the enclosing function bounds it by one
-          of four shapes: a dominating semaphore.Weighted Acquire or checked TryAcquire on a
-          limiter declared once outside the loop (negative/semaphore-acquire.go,
-          negative/tryacquire-checked.go; positive/tryacquire-ignored.go,
-          positive/conditional-acquire.go, positive/shadowed-semaphore.go), a send on a
+          invoked inside that loop) is reported unless every bounded AST walk completes within
+          maxNodeStack (an incomplete walk marks ScanReport.Truncated and grants no exemption)
+          and the enclosing function bounds the launch by one of four shapes: a dominating
+          semaphore.Weighted Acquire or checked TryAcquire with a proven positive weight
+          (positive integer literal, declared positive literal constant, or len of a nonzero
+          fixed array) on a limiter declared once outside the loop, with no Release on that
+          semaphore before the go statement and a deferred or final-statement Release inside the
+          goroutine, and with failure-branch Fatal/Fatalf/Fatalln/FailNow accepted only on the
+          enclosing function's testing parameter or imported log.Fatal*
+          (negative/semaphore-acquire.go, negative/tryacquire-checked.go;
+          positive/tryacquire-ignored.go, positive/conditional-acquire.go,
+          positive/shadowed-semaphore.go, positive/acquire-released-before-launch.go,
+          positive/nonconst-weight.go, positive/fatal-non-testing.go); a dominating send on a
           buffered token channel declared once outside the loop before the go statement with a
           matching receive deferred or at the end of the goroutine body
-          (negative/token-channel.go; positive/limiter-per-iteration.go), a range over a fixed
-          array declared once outside the loop or a constant-bounded counter loop whose nonzero
-          constant step moves toward the bound (negative/constant-loop.go;
-          positive/unbounded-range-fanout.go, positive/fanout-in-func-literal.go,
-          positive/counter-zero-step.go, positive/counter-wrong-direction.go), or a worker pool
-          loop over a constant or an explicit int variable named with a bound value and reason
-          in a //hiss:bound comment on the loop (negative/hiss-bound-comment.go). Names
-          redeclared in the same function carry no limiter or array fact so shadowing fails
-          closed. gap/ records what the per-function syntax check does not prove: a token
-          channel sized by runtime.NumCPU() without a //hiss:bound comment
-          (gap/numcpu-pool.go). SetLimit does not bound raw go statements
-          (positive/errgroup-setlimit.go; positive/caller-variable-bound.go); calls to g.Go are
-          outside this raw-go check (negative/errgroup-setlimit.go).
+          (negative/token-channel.go; positive/limiter-per-iteration.go,
+          positive/conditional-token-send.go); a range over a fixed array declared once outside
+          the loop or a constant-bounded counter loop whose nonzero constant step moves toward
+          the bound and whose body neither writes to the counter nor takes its address
+          (negative/constant-loop.go; positive/unbounded-range-fanout.go,
+          positive/fanout-in-func-literal.go, positive/counter-zero-step.go,
+          positive/counter-wrong-direction.go, positive/counter-written-in-body.go,
+          positive/multi-name-spec.go); or a worker pool loop over a constant or an explicit int
+          variable named with a bound value and reason in a //hiss:bound comment on the loop
+          (negative/hiss-bound-comment.go). Multi-name var specs pair each declared identifier
+          with its own initializer (or the shared type when Values is empty) rather than
+          applying an aggregate classification across all names, and names redeclared in the
+          same function carry no limiter or array fact so shadowing fails closed. gap/ records
+          what the per-function syntax check does not prove: a token channel sized by
+          runtime.NumCPU() without a //hiss:bound comment (gap/numcpu-pool.go). SetLimit does
+          not bound raw go statements (positive/errgroup-setlimit.go;
+          positive/caller-variable-bound.go); calls to g.Go are outside this raw-go check
+          (negative/errgroup-setlimit.go).
   - id: HISS-08
     coverage:
       - language: c
