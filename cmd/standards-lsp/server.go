@@ -181,7 +181,13 @@ func (s *Server) HandleMessage(ctx context.Context, raw []byte) (*JSONRPCRespons
 		}, nil, nil
 	}
 
-	return s.dispatchRequest(ctx, req)
+	resp, notifs, err := s.dispatchRequest(ctx, req)
+	if err == nil && resp == nil && req.ID != nil {
+		// JSON-RPC 2.0 exempts only notifications, which carry no id, from a reply: a request that
+		// carries one for a method the server handles as a notification still gets a null result.
+		resp = &JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: nil}
+	}
+	return resp, notifs, err
 }
 
 func (s *Server) dispatchRequest(ctx context.Context, req JSONRPCRequest) (*JSONRPCResponse, []JSONRPCNotification, error) {

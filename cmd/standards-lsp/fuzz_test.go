@@ -11,9 +11,8 @@ import (
 
 // FuzzLSPHandleMessage feeds arbitrary bytes (capped at 64 KiB) to a fresh server per input and
 // requires HandleMessage to return a JSON-RPC parse error for invalid JSON, never an error of its
-// own, and for valid JSON a well-formed frame whenever it answers: a request with an id gets a
-// response unless it names a method the server handles as a notification, and a notification
-// gets none required.
+// own, and for valid JSON a well-formed frame whenever it answers: every request with an id gets a
+// response, and a notification gets none required.
 func FuzzLSPHandleMessage(f *testing.F) {
 	f.Add([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`))
 	f.Add([]byte(`{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"position":{"line":0,"character":0}}}`))
@@ -84,23 +83,12 @@ func assertResponseFrame(t *testing.T, resp *JSONRPCResponse) {
 	}
 }
 
-// notificationMethods are the methods the server handles as notifications: it sends no
-// response for them, even when a client attaches an id.
-var notificationMethods = map[string]bool{
-	"initialized":            true,
-	"exit":                   true,
-	"textDocument/didOpen":   true,
-	"textDocument/didChange": true,
-	"textDocument/didSave":   true,
-	"textDocument/didClose":  true,
-}
-
-// assertRequestAnswered requires a response for a request that carries a non-null id and names a
-// method outside notificationMethods.
+// assertRequestAnswered requires a response for every request that carries a non-null id, whatever
+// its method: JSON-RPC 2.0 exempts only notifications, which carry none.
 func assertRequestAnswered(t *testing.T, data []byte, resp *JSONRPCResponse) {
 	t.Helper()
 	var req JSONRPCRequest
-	if json.Unmarshal(data, &req) != nil || req.ID == nil || notificationMethods[req.Method] {
+	if json.Unmarshal(data, &req) != nil || req.ID == nil {
 		return
 	}
 	if resp == nil {
