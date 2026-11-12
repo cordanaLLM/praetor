@@ -130,21 +130,6 @@ linters:
           - forbidigo
       # praetor:generated-exceptions begin (praetorctl linters exceptions; never edit by hand)
       # baseline #1030
-      - path: ^cmd/standards-lsp/server_test\.go$
-        linters:
-          - gocognit
-        text: func `TestLSP_Negative_MalformedAndUnknownMethods`
-      # baseline #1030
-      - path: ^cmd/standards-lsp/server_test\.go$
-        linters:
-          - gocyclo
-        text: func `TestLSP_Negative_MalformedAndUnknownMethods`
-      # baseline #1030
-      - path: ^cmd/standards-lsp/server_test\.go$
-        linters:
-          - gocyclo
-        text: func `testLSPSaveCloseAndShutdown`
-      # baseline #1030
       - path: ^cmd/standards-mcp/audit_branch_ruleset_test\.go$
         linters:
           - funlen
