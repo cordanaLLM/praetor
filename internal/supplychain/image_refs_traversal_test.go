@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 type fakeDirEntry struct {
@@ -483,4 +485,117 @@ func TestReadScanDirectory_Confinement_3D(t *testing.T) {
 	t.Run("symlink escaping root is refused", func(t *testing.T) {
 		testSymlinkEscapeRefused(t, rootDir, outsideDir)
 	})
+}
+
+func setMaxScopeBytesForTest(t *testing.T, limit int) {
+	t.Helper()
+	orig := maxScopeBytes
+	maxScopeBytes = limit
+	t.Cleanup(func() { maxScopeBytes = orig })
+}
+
+func setMaxScopeListingEntriesForTest(t *testing.T, limit int) {
+	t.Helper()
+	orig := maxScopeListingEntries
+	maxScopeListingEntries = limit
+	t.Cleanup(func() { maxScopeListingEntries = orig })
+}
+
+// TestRepositoryFiles_LargeListingPassesCandidateCap proves a tracked git listing larger than
+// maxScopeBytes passes when few candidates match, while candidates past maxScannedFiles fail
+// with the cap error (HISS-15).
+func TestRepositoryFiles_LargeListingPassesCandidateCap(t *testing.T) {
+	setMaxScopeBytesForTest(t, 256)
+	setMaxScannedFilesForTest(t, 3)
+	root := createLargeListingPinFixture(t)
+
+	got, err := RepositoryFiles(t.Context(), root, ScannedFile)
+	if err != nil || !slices.Equal(got, []string{"Dockerfile", "deploy.yaml"}) {
+		t.Fatalf("RepositoryFiles = %v, err=%v; want [Dockerfile deploy.yaml]", got, err)
+	}
+	if pins, pinErr := ScanRepositoryPins(t.Context(), root); pinErr != nil || len(pins) != 2 {
+		t.Fatalf("ScanRepositoryPins = %v, err=%v; want 2 pins", pins, pinErr)
+	}
+	if findings, imgErr := ScanImageRefs(t.Context(), root); imgErr != nil || len(findings) != 0 {
+		t.Fatalf("ScanImageRefs = %v, err=%v; want 0 findings", findings, imgErr)
+	}
+	assertLargeListingCandidateOverflow(t, root)
+}
+
+func createLargeListingPinFixture(t *testing.T) string {
+	t.Helper()
+	pinned := "golang:1.27-alpine@sha256:" + testPinnedDigest
+	files := map[string]string{
+		"Dockerfile":  "FROM " + pinned + "\n",
+		"deploy.yaml": "image: " + pinned + "\n",
+	}
+	for i := 0; i < 30; i++ {
+		files[fmt.Sprintf("docs/guide_section_%02d.txt", i)] = "non-candidate doc\n"
+	}
+	root := fixtureRepo(t, files)
+	testsupport.RunFixtureGit(t, root, []string{"add", "."})
+	return root
+}
+
+func assertLargeListingCandidateOverflow(t *testing.T, root string) {
+	t.Helper()
+	for _, extra := range []string{"a.yaml", "b.yaml"} {
+		if err := os.WriteFile(filepath.Join(root, extra), []byte("k: v\n"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", extra, err)
+		}
+	}
+	testsupport.RunFixtureGit(t, root, []string{"add", "."})
+	_, capErr := ScanImageRefs(t.Context(), root)
+	if capErr == nil || !strings.Contains(capErr.Error(), "3") || !strings.Contains(capErr.Error(), "scanned candidate") {
+		t.Fatalf("expected candidate cap error naming 3, got %v", capErr)
+	}
+}
+
+// TestRepositoryFiles_StreamListingBound_3D verifies that a git listing just under
+// maxScopeListingEntries passes while reaching maxScopeListingEntries fails naming the bound (HISS-15).
+func TestRepositoryFiles_StreamListingBound_3D(t *testing.T) {
+	setMaxScopeListingEntriesForTest(t, 4)
+	root := fixtureRepo(t, map[string]string{
+		"Dockerfile": "FROM golang:1.27-alpine@sha256:" + testPinnedDigest + "\n",
+		"docs/a.txt": "a\n",
+		"docs/b.txt": "b\n",
+	})
+	testsupport.RunFixtureGit(t, root, []string{"add", "."})
+
+	// 3 tracked entries (< 4) passes.
+	if got, err := RepositoryFiles(t.Context(), root, ScannedFile); err != nil || !slices.Equal(got, []string{"Dockerfile"}) {
+		t.Fatalf("expected 3 entries (< 4) to pass, got %v err=%v", got, err)
+	}
+
+	// Adding 4th entry reaches maxScopeListingEntries (4) -> fails naming bound.
+	if err := os.WriteFile(filepath.Join(root, "docs", "c.txt"), []byte("c\n"), 0o600); err != nil {
+		t.Fatalf("write c.txt: %v", err)
+	}
+	testsupport.RunFixtureGit(t, root, []string{"add", "."})
+	_, boundErr := RepositoryFiles(t.Context(), root, ScannedFile)
+	if boundErr == nil || !strings.Contains(boundErr.Error(), "maxScopeListingEntries") || !strings.Contains(boundErr.Error(), "4") {
+		t.Fatalf("expected stream bound error naming maxScopeListingEntries and 4, got %v", boundErr)
+	}
+}
+
+// TestRepositoryFiles_CancelledContextStopsStream verifies that a cancelled context stops
+// RepositoryFiles mid-stream before offering remaining entries to keep (HISS-15).
+func TestRepositoryFiles_CancelledContextStopsStream(t *testing.T) {
+	root := fixtureRepo(t, map[string]string{
+		"a.yaml": "k: 1\n",
+		"b.yaml": "k: 2\n",
+		"c.yaml": "k: 3\n",
+	})
+	testsupport.RunFixtureGit(t, root, []string{"add", "."})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	seen := 0
+	_, err := RepositoryFiles(ctx, root, func(string) bool {
+		seen++
+		cancel()
+		return true
+	})
+	if !errors.Is(err, context.Canceled) || seen != 1 {
+		t.Fatalf("RepositoryFiles err=%v seen=%d; want context.Canceled after 1 entry", err, seen)
+	}
 }

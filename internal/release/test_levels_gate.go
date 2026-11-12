@@ -5,6 +5,8 @@
 package release
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -49,10 +51,19 @@ const (
 	maxRepoWalkEntries      = 1 << 20
 	maxWorkflowJobs         = 64
 	maxReleaseWorkflowFiles = ghworkflow.MaxFiles
+
+	defaultMaxRepoScanFiles = 10000
+	repoListingEntryFactor  = 64
 )
 
 // maxRepoScanFiles bounds how many candidate files matching test-level paths one scan reads (HISS-02).
-var maxRepoScanFiles = 10000
+var maxRepoScanFiles = defaultMaxRepoScanFiles
+
+// maxRepoListingEntries bounds streamed git ls-files entries per scan (defaultMaxRepoScanFiles * repoListingEntryFactor; HISS-02).
+var maxRepoListingEntries = defaultMaxRepoScanFiles * repoListingEntryFactor
+
+// maxRepoListingBufferBytes bounds retained path and stderr bytes while streaming git ls-files (HISS-02).
+var maxRepoListingBufferBytes = maxGitLogBytes
 
 // TestLevelsOptions configures AuditTestLevels (#1733).
 type TestLevelsOptions struct {
@@ -451,7 +462,7 @@ func checkSingleLevel(
 	if live.Refusal != "" {
 		return live.Refusal, nil
 	}
-	matchedFiles, err := matchFilesForLevel(repoPath, files, b.Spec)
+	matchedFiles, err := matchFilesForLevel(ctx, repoPath, files, b.Spec)
 	if err != nil {
 		return "", err
 	}
@@ -459,7 +470,13 @@ func checkSingleLevel(
 		return fmt.Sprintf("no tracked file matches paths %v", b.Spec.Paths), nil
 	}
 	if b.Spec.Pattern != "" && !anyFileMatchesPattern(ctx, repoPath, matchedFiles, b.Spec.Pattern) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("no matched file satisfies pattern %q", b.Spec.Pattern), nil
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	wfName, _, ok := findRunnableWorkflowForLevel(b, workflows, auxScripts)
 	if !ok {
@@ -481,52 +498,78 @@ func (live levelLiveHealth) levelRefusal(level, workflow string) string {
 
 // listLevelCandidateFiles returns existing regular repository files matching at least one binding.
 func listLevelCandidateFiles(ctx context.Context, repoPath string, bindings []resolvedLevelBinding) ([]string, error) {
-	return listRepositoryFiles(ctx, repoPath, func(rel string) bool {
-		return fileMatchesAnyBinding(repoPath, rel, bindings)
+	return listRepositoryFiles(ctx, repoPath, func(rel string) (bool, error) {
+		return fileMatchesAnyBinding(ctx, repoPath, rel, bindings)
 	})
 }
 
 // fileMatchesAnyBinding reports whether rel matches the path rules of any resolved level binding.
-func fileMatchesAnyBinding(root, rel string, bindings []resolvedLevelBinding) bool {
+func fileMatchesAnyBinding(ctx context.Context, root, rel string, bindings []resolvedLevelBinding) (bool, error) {
+	if len(bindings) > config.MaxReleaseTestLevels {
+		return false, fmt.Errorf("test level bindings passed %d levels", config.MaxReleaseTestLevels)
+	}
 	for i := 0; i < len(bindings) && i < config.MaxReleaseTestLevels; i++ {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		hasPattern := strings.TrimSpace(bindings[i].Spec.Pattern) != ""
-		if fileMatchesLevelPaths(root, rel, bindings[i].Spec.Paths, hasPattern) {
-			return true
+		matched, err := fileMatchesLevelPaths(ctx, root, rel, bindings[i].Spec.Paths, hasPattern)
+		if err != nil || matched {
+			return matched, err
 		}
 	}
-	return false
+	return false, nil
 }
 
 // matchFilesForLevel returns repository files matching the level's path globs, requiring
 // a recognizable test file for directory globs when pattern is unset.
-func matchFilesForLevel(root string, files []string, spec config.ReleaseTestLevelSpec) ([]string, error) {
+func matchFilesForLevel(ctx context.Context, root string, files []string, spec config.ReleaseTestLevelSpec) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(files) > maxRepoScanFiles {
 		return nil, fmt.Errorf("test level scan passed %d scanned candidate files; narrow test_levels paths", maxRepoScanFiles)
 	}
 	hasPattern := strings.TrimSpace(spec.Pattern) != ""
 	var matched []string
 	for i := 0; i < len(files) && i < maxRepoScanFiles; i++ {
-		f := files[i]
-		if fileMatchesLevelPaths(root, f, spec.Paths, hasPattern) {
-			matched = append(matched, f)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		ok, err := fileMatchesLevelPaths(ctx, root, files[i], spec.Paths, hasPattern)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			matched = append(matched, files[i])
 		}
 	}
 	return matched, nil
 }
 
 // fileMatchesLevelPaths reports whether rel matches any glob in paths; a directory glob without a
-// pattern accepts only a test file by its language convention (forge.IsTestFile).
-func fileMatchesLevelPaths(root, rel string, paths []string, hasPattern bool) bool {
-	for i := 0; i < len(paths) && i < config.MaxReleaseTestLevels; i++ {
+// pattern accepts only a test file by its language convention (forge.IsTestFileContext).
+func fileMatchesLevelPaths(ctx context.Context, root, rel string, paths []string, hasPattern bool) (bool, error) {
+	if len(paths) > config.MaxReleaseE2EPaths {
+		return false, fmt.Errorf("test level path globs passed %d entries", config.MaxReleaseE2EPaths)
+	}
+	for i := 0; i < len(paths) && i < config.MaxReleaseE2EPaths; i++ {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		g := paths[i]
 		if !matchesAnyGlob(rel, []string{g}) {
 			continue
 		}
-		if !isDirectoryGlob(g) || hasPattern || forge.IsTestFile(root, rel) {
-			return true
+		if !isDirectoryGlob(g) || hasPattern {
+			return true, nil
+		}
+		isTest, err := forge.IsTestFileContext(ctx, root, rel)
+		if err != nil || isTest {
+			return isTest, err
 		}
 	}
-	return false
+	return false, nil
 }
 
 // isDirectoryGlob reports whether glob matches a directory tree rather than a specific file pattern.
@@ -804,40 +847,181 @@ func loadAuxBuildScripts(ctx context.Context, repoPath string) string {
 
 // listRepositoryFiles returns tracked git files matching keep in repoPath, or falls back to a
 // bounded filesystem directory walk when no git repository is present.
-func listRepositoryFiles(ctx context.Context, repoPath string, keep func(string) bool) ([]string, error) {
-	if !util.PathExists(filepath.Join(repoPath, ".git")) {
-		return walkRepositoryFilesBounded(repoPath, keep)
+func listRepositoryFiles(ctx context.Context, repoPath string, keep func(string) (bool, error)) ([]string, error) {
+	if ctx == nil {
+		return nil, errors.New("list repository files requires a context")
 	}
-	res, err := util.RunGitProbe(ctx, repoPath, maxGitLogBytes, "ls-files", "--cached")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !util.PathExists(filepath.Join(repoPath, ".git")) {
+		return walkRepositoryFilesBounded(ctx, repoPath, keep)
+	}
+	return streamGitTrackedFiles(ctx, repoPath, keep)
+}
+
+func streamGitTrackedFiles(ctx context.Context, repoPath string, keep func(string) (bool, error)) ([]string, error) {
+	envCtx, err := util.WithGitProbeEnvironment(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list tracked files: %w", err)
 	}
-	return filterExistingGitFiles(repoPath, string(res.Stdout), keep)
+	probeCtx, cancelProbe := context.WithTimeout(envCtx, contextopt.MaxDuration)
+	defer cancelProbe()
+	streamCtx, stopStream := context.WithCancel(probeCtx)
+	defer stopStream()
+
+	stream := &gitTrackedCandidateStream{
+		repoPath:  repoPath,
+		callerCtx: ctx,
+		probeCtx:  probeCtx,
+		stop:      stopStream,
+		keep:      keep,
+	}
+	stderrCap := min(max(maxRepoListingBufferBytes, 1), util.MaxCommandOutputBytes)
+	stderr, runErr := util.RunCommandStream(
+		streamCtx, repoPath, "git", nil, stream, stderrCap,
+		util.GitProbeArgs("ls-files", "--cached", "-z")...,
+	)
+	if stream.err != nil {
+		return nil, stream.err
+	}
+	if runErr != nil {
+		return nil, formatReleaseGitListError(ctx, probeCtx, runErr, stderr)
+	}
+	if err := stream.finish(); err != nil {
+		return nil, err
+	}
+	return stream.candidates, nil
 }
 
-// filterExistingGitFiles parses raw git ls-files output and returns regular files matching
-// keep that exist on the local filesystem, bounded by maxRepoScanFiles.
-func filterExistingGitFiles(repoPath, gitOut string, keep func(string) bool) ([]string, error) {
-	trimmed := strings.TrimSpace(gitOut)
-	if trimmed == "" {
-		return nil, nil
+func formatReleaseGitListError(callerCtx, probeCtx context.Context, runErr error, stderr []byte) error {
+	if ctxErr := cmp.Or(callerCtx.Err(), probeCtx.Err()); ctxErr != nil {
+		return fmt.Errorf("list tracked files: %w", ctxErr)
 	}
-	lines := strings.Split(trimmed, "\n")
-	var files []string
-	for i := 0; i < len(lines) && i <= maxGitLogBytes; i++ {
-		rel := filepath.ToSlash(strings.TrimSpace(lines[i]))
-		if rel == "" || (keep != nil && !keep(rel)) {
-			continue
-		}
-		if !isExistingRegularFile(repoPath, rel) {
-			continue
-		}
-		if len(files) >= maxRepoScanFiles {
-			return nil, fmt.Errorf("test level scan passed %d scanned candidate files; narrow test_levels paths", maxRepoScanFiles)
-		}
-		files = append(files, rel)
+	if preview := util.BodyPreview(stderr); preview != "" {
+		return fmt.Errorf("list tracked files: %w: %s", runErr, preview)
 	}
-	return files, nil
+	return fmt.Errorf("list tracked files: %w", runErr)
+}
+
+type gitTrackedCandidateStream struct {
+	repoPath        string
+	callerCtx       context.Context
+	probeCtx        context.Context
+	stop            context.CancelFunc
+	keep            func(string) (bool, error)
+	partial         bytes.Buffer
+	candidates      []string
+	streamedEntries int
+	retainedBytes   int
+	err             error
+}
+
+func (g *gitTrackedCandidateStream) Write(chunk []byte) (int, error) {
+	if g.err != nil {
+		return 0, g.err
+	}
+	if ctxErr := cmp.Or(g.callerCtx.Err(), g.probeCtx.Err()); ctxErr != nil {
+		return 0, g.fail(fmt.Errorf("list tracked files: %w", ctxErr))
+	}
+	written := len(chunk)
+	maxSteps := len(chunk) + 1
+	for step := 0; len(chunk) > 0 && step < maxSteps; step++ {
+		nul := bytes.IndexByte(chunk, 0)
+		if nul < 0 {
+			if err := g.bufferPartial(chunk); err != nil {
+				return 0, err
+			}
+			return written, nil
+		}
+		if err := g.consumeEntry(chunk[:nul]); err != nil {
+			return 0, err
+		}
+		chunk = chunk[nul+1:]
+	}
+	if len(chunk) > 0 {
+		return 0, g.fail(fmt.Errorf("test level git listing chunk passed %d parse steps", maxSteps))
+	}
+	return written, nil
+}
+
+func (g *gitTrackedCandidateStream) fail(cause error) error {
+	if g.err == nil {
+		g.err = cause
+		g.stop()
+	}
+	return g.err
+}
+
+func (g *gitTrackedCandidateStream) bufferPartial(part []byte) error {
+	if g.retainedBytes+g.partial.Len()+len(part) > maxRepoListingBufferBytes {
+		return g.fail(fmt.Errorf("test level git listing passed maxRepoListingBufferBytes (%d bytes)", maxRepoListingBufferBytes))
+	}
+	if _, err := g.partial.Write(part); err != nil {
+		return g.fail(err)
+	}
+	return nil
+}
+
+func (g *gitTrackedCandidateStream) consumeEntry(part []byte) error {
+	if ctxErr := cmp.Or(g.callerCtx.Err(), g.probeCtx.Err()); ctxErr != nil {
+		return g.fail(fmt.Errorf("list tracked files: %w", ctxErr))
+	}
+	if g.retainedBytes+g.partial.Len()+len(part) > maxRepoListingBufferBytes {
+		return g.fail(fmt.Errorf("test level git listing passed maxRepoListingBufferBytes (%d bytes)", maxRepoListingBufferBytes))
+	}
+	raw := string(part)
+	if g.partial.Len() > 0 {
+		if _, err := g.partial.Write(part); err != nil {
+			return g.fail(err)
+		}
+		raw = g.partial.String()
+		g.partial.Reset()
+	}
+	if raw == "" {
+		return nil
+	}
+	return g.acceptTrackedPath(filepath.ToSlash(raw))
+}
+
+func (g *gitTrackedCandidateStream) acceptTrackedPath(rel string) error {
+	g.streamedEntries++
+	if g.streamedEntries >= maxRepoListingEntries {
+		return g.fail(fmt.Errorf("test level git listing reached maxRepoListingEntries bound (%d entries)", maxRepoListingEntries))
+	}
+	if g.keep != nil {
+		matched, keepErr := g.keep(rel)
+		if keepErr != nil {
+			return g.fail(keepErr)
+		}
+		if ctxErr := cmp.Or(g.callerCtx.Err(), g.probeCtx.Err()); ctxErr != nil {
+			return g.fail(fmt.Errorf("list tracked files: %w", ctxErr))
+		}
+		if !matched {
+			return nil
+		}
+	}
+	if !isExistingRegularFile(g.repoPath, rel) {
+		return nil
+	}
+	if len(g.candidates) >= maxRepoScanFiles {
+		return g.fail(fmt.Errorf("test level scan passed %d scanned candidate files; narrow test_levels paths", maxRepoScanFiles))
+	}
+	g.candidates = append(g.candidates, rel)
+	g.retainedBytes += len(rel)
+	return nil
+}
+
+func (g *gitTrackedCandidateStream) finish() error {
+	if ctxErr := cmp.Or(g.callerCtx.Err(), g.probeCtx.Err()); ctxErr != nil {
+		return g.fail(fmt.Errorf("list tracked files: %w", ctxErr))
+	}
+	if g.partial.Len() == 0 {
+		return nil
+	}
+	raw := g.partial.String()
+	g.partial.Reset()
+	return g.acceptTrackedPath(filepath.ToSlash(raw))
 }
 
 // isExistingRegularFile reports whether rel under repoPath exists as a regular file.
@@ -848,10 +1032,19 @@ func isExistingRegularFile(repoPath, rel string) bool {
 
 // walkRepositoryFilesBounded performs a bounded filesystem walk of repoPath, skipping ignored
 // directories and returning relative paths to regular files matching keep.
-func walkRepositoryFilesBounded(repoPath string, keep func(string) bool) ([]string, error) {
+func walkRepositoryFilesBounded(ctx context.Context, repoPath string, keep func(string) (bool, error)) ([]string, error) {
+	if ctx == nil {
+		return nil, errors.New("walk repository files requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var files []string
 	visited := 0
 	err := filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -862,7 +1055,10 @@ func walkRepositoryFilesBounded(repoPath string, keep func(string) bool) ([]stri
 		if d.IsDir() {
 			return skipIgnoredRepoDir(d.Name())
 		}
-		return collectWalkedRepoFile(repoPath, path, d, keep, &files)
+		if err := collectWalkedRepoFile(repoPath, path, d, keep, &files); err != nil {
+			return err
+		}
+		return ctx.Err()
 	})
 	return files, err
 }
@@ -876,7 +1072,7 @@ func skipIgnoredRepoDir(name string) error {
 }
 
 // collectWalkedRepoFile appends a walked regular candidate file to files within maxRepoScanFiles.
-func collectWalkedRepoFile(repoPath, path string, d fs.DirEntry, keep func(string) bool, files *[]string) error {
+func collectWalkedRepoFile(repoPath, path string, d fs.DirEntry, keep func(string) (bool, error), files *[]string) error {
 	if !d.Type().IsRegular() {
 		return nil
 	}
@@ -885,8 +1081,14 @@ func collectWalkedRepoFile(repoPath, path string, d fs.DirEntry, keep func(strin
 		return fmt.Errorf("relativize walked path %s: %w", path, err)
 	}
 	slashed := filepath.ToSlash(rel)
-	if keep != nil && !keep(slashed) {
-		return nil
+	if keep != nil {
+		ok, keepErr := keep(slashed)
+		if keepErr != nil {
+			return keepErr
+		}
+		if !ok {
+			return nil
+		}
 	}
 	if len(*files) >= maxRepoScanFiles {
 		return fmt.Errorf("test level scan passed %d scanned candidate files; narrow test_levels paths", maxRepoScanFiles)

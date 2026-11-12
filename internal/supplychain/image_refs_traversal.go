@@ -5,6 +5,7 @@
 package supplychain
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -13,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -38,26 +38,177 @@ const maxScanDirs = 8192
 const maxScanDirEntries = 8192
 
 // RepositoryFiles asks git which paths belong to root (tracked files plus untracked files
-// git is not ignoring) and returns those matching keep, bounded by maxScannedFiles.
+// git is not ignoring) and streams NUL-delimited entries through keep, bounded by
+// maxScannedFiles candidates, maxScopeListingEntries streamed entries, and maxScopeBytes retained bytes.
 func RepositoryFiles(ctx context.Context, root string, keep func(string) bool) ([]string, error) {
-	out, err := util.RunGitProbe(ctx, root, maxScopeBytes,
-		"ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z", "--", ".")
+	if ctx == nil {
+		return nil, errors.New("enumerate image pin scope requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("enumerate image pin scope in %s: %w", root, err)
+	}
+	probeCtx, err := util.WithGitProbeEnvironment(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("enumerate image pin scope in %s: %w", root, err)
 	}
-	parts := strings.Split(string(out.Stdout), "\x00")
-	var files []string
-	for i := 0; i < len(parts) && i <= maxScopeBytes; i++ {
-		rel := parts[i]
-		if rel == "" || (keep != nil && !keep(rel)) {
-			continue
-		}
-		if len(files) >= maxScannedFiles {
-			return nil, fmt.Errorf("image pin scope passed %d scanned candidate files; narrow the listing", maxScannedFiles)
-		}
-		files = append(files, rel)
+	scanCtx, cancelScan := context.WithTimeout(probeCtx, imageRefScanTimeout)
+	defer cancelScan()
+	streamCtx, abortStream := context.WithCancel(scanCtx)
+	defer abortStream()
+
+	writer := &scopeListingStream{
+		callerCtx: ctx,
+		scanCtx:   scanCtx,
+		abort:     abortStream,
+		keep:      keep,
 	}
-	return files, nil
+	stderrCap := min(max(maxScopeBytes, 1), util.MaxCommandOutputBytes)
+	stderr, runErr := util.RunCommandStream(
+		streamCtx, root, "git", nil, writer, stderrCap,
+		util.GitProbeArgs("ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z", "--", ".")...,
+	)
+	if writer.streamErr != nil {
+		return nil, writer.streamErr
+	}
+	if runErr != nil {
+		return nil, formatScopeStreamError(root, ctx, scanCtx, runErr, stderr)
+	}
+	if err := writer.finish(); err != nil {
+		return nil, err
+	}
+	return writer.files, nil
+}
+
+func formatScopeStreamError(root string, callerCtx, scanCtx context.Context, runErr error, stderr []byte) error {
+	if ctxErr := cmp.Or(callerCtx.Err(), scanCtx.Err()); ctxErr != nil {
+		return fmt.Errorf("enumerate image pin scope in %s: %w", root, ctxErr)
+	}
+	if preview := util.BodyPreview(stderr); preview != "" {
+		return fmt.Errorf("enumerate image pin scope in %s: %w: %s", root, runErr, preview)
+	}
+	return fmt.Errorf("enumerate image pin scope in %s: %w", root, runErr)
+}
+
+type scopeListingStream struct {
+	callerCtx   context.Context
+	scanCtx     context.Context
+	abort       context.CancelFunc
+	keep        func(string) bool
+	tail        bytes.Buffer
+	files       []string
+	seenEntries int
+	keptBytes   int
+	streamErr   error
+}
+
+func (s *scopeListingStream) Write(p []byte) (int, error) {
+	if s.streamErr != nil {
+		return 0, s.streamErr
+	}
+	if err := s.activeContextErr(); err != nil {
+		return 0, s.abortWith(fmt.Errorf("enumerate image pin scope: %w", err))
+	}
+	total := len(p)
+	maxSteps := len(p) + 1
+	for steps := 0; len(p) > 0 && steps < maxSteps; steps++ {
+		idx := bytes.IndexByte(p, 0)
+		if idx < 0 {
+			if err := s.appendTail(p); err != nil {
+				return 0, err
+			}
+			return total, nil
+		}
+		if err := s.handleSegment(p[:idx]); err != nil {
+			return 0, err
+		}
+		p = p[idx+1:]
+	}
+	if len(p) > 0 {
+		return 0, s.abortWith(fmt.Errorf("image pin scope chunk passed %d parse steps", maxSteps))
+	}
+	return total, nil
+}
+
+func (s *scopeListingStream) activeContextErr() error {
+	return cmp.Or(s.callerCtx.Err(), s.scanCtx.Err())
+}
+
+func (s *scopeListingStream) abortWith(err error) error {
+	if s.streamErr == nil {
+		s.streamErr = err
+		s.abort()
+	}
+	return s.streamErr
+}
+
+func (s *scopeListingStream) appendTail(rem []byte) error {
+	if s.keptBytes+s.tail.Len()+len(rem) > maxScopeBytes {
+		return s.abortWith(fmt.Errorf("image pin scope passed maxScopeBytes (%d bytes)", maxScopeBytes))
+	}
+	_, err := s.tail.Write(rem)
+	if err != nil {
+		return s.abortWith(err)
+	}
+	return nil
+}
+
+func (s *scopeListingStream) handleSegment(seg []byte) error {
+	if err := s.activeContextErr(); err != nil {
+		return s.abortWith(fmt.Errorf("enumerate image pin scope: %w", err))
+	}
+	if s.keptBytes+s.tail.Len()+len(seg) > maxScopeBytes {
+		return s.abortWith(fmt.Errorf("image pin scope passed maxScopeBytes (%d bytes)", maxScopeBytes))
+	}
+	rel := string(seg)
+	if s.tail.Len() > 0 {
+		if _, err := s.tail.Write(seg); err != nil {
+			return s.abortWith(err)
+		}
+		rel = s.tail.String()
+		s.tail.Reset()
+	}
+	if rel == "" {
+		return nil
+	}
+	return s.recordPath(rel)
+}
+
+func (s *scopeListingStream) recordPath(rel string) error {
+	s.seenEntries++
+	if s.seenEntries >= maxScopeListingEntries {
+		return s.abortWith(fmt.Errorf("image pin scope reached maxScopeListingEntries bound (%d entries)", maxScopeListingEntries))
+	}
+	if s.keep != nil && !s.keep(rel) {
+		return s.checkPostKeepContext()
+	}
+	if err := s.checkPostKeepContext(); err != nil {
+		return err
+	}
+	if len(s.files) >= maxScannedFiles {
+		return s.abortWith(fmt.Errorf("image pin scope passed %d scanned candidate files; narrow the listing", maxScannedFiles))
+	}
+	s.files = append(s.files, rel)
+	s.keptBytes += len(rel)
+	return nil
+}
+
+func (s *scopeListingStream) checkPostKeepContext() error {
+	if err := s.activeContextErr(); err != nil {
+		return s.abortWith(fmt.Errorf("enumerate image pin scope: %w", err))
+	}
+	return nil
+}
+
+func (s *scopeListingStream) finish() error {
+	if err := s.activeContextErr(); err != nil {
+		return s.abortWith(fmt.Errorf("enumerate image pin scope: %w", err))
+	}
+	if s.tail.Len() == 0 {
+		return nil
+	}
+	trailing := s.tail.String()
+	s.tail.Reset()
+	return s.recordPath(trailing)
 }
 
 // imageRefCandidateFiles lists candidate files matching keep under root via git when root is a

@@ -55,14 +55,28 @@ func RunGitProbeWithin(ctx context.Context, dir string, maxBytes int, timeout ti
 	if timeout <= 0 {
 		return CommandBytes{}, fmt.Errorf("git probe bound must be positive, got %v", timeout)
 	}
-	probeCtx, err := WithCommandEnvironment(ctx, []string{
-		"PATH=" + os.Getenv("PATH"), "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull,
-		"GIT_ATTR_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1",
-	})
+	probeCtx, err := WithGitProbeEnvironment(ctx)
 	if err != nil {
 		return CommandBytes{}, err
 	}
 	return runGitInspection(probeCtx, dir, maxBytes, timeout, args...)
+}
+
+// WithGitProbeEnvironment returns ctx carrying the command environment every read-only git
+// inspection runs under: no system or global configuration, no attribute file, no prompt, no
+// optional locks, no replace objects and no lazy fetch. A streaming inspection that cannot use
+// RunGitProbe's collected output takes the same environment from here.
+func WithGitProbeEnvironment(ctx context.Context) (context.Context, error) {
+	return WithCommandEnvironment(ctx, []string{
+		"PATH=" + os.Getenv("PATH"), "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull,
+		"GIT_ATTR_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1",
+	})
+}
+
+// GitProbeArgs prefixes a git inspection's arguments with the command-line overrides that
+// switch off the filesystem monitor and hooks; the command line outranks every configuration file.
+func GitProbeArgs(args ...string) []string {
+	return append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)
 }
 
 // runGitInspection is the part of RunGitProbeWithin that does not choose which configuration
@@ -72,8 +86,7 @@ func RunGitProbeWithin(ctx context.Context, dir string, maxBytes int, timeout ti
 func runGitInspection(ctx context.Context, dir string, maxBytes int, timeout time.Duration, args ...string) (CommandBytes, error) {
 	inspectCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	argv := append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)
-	return RunGitBytes(inspectCtx, dir, maxBytes, argv...)
+	return RunGitBytes(inspectCtx, dir, maxBytes, GitProbeArgs(args...)...)
 }
 
 // RunGitProbeStatus runs RunGitProbe and accepts both of git's answering statuses: 0 for a

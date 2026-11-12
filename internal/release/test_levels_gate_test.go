@@ -860,3 +860,170 @@ func TestAuditTestLevels_Negative_ActionsReaderErrorNamesReason(t *testing.T) {
 		t.Fatalf("expected formatted line %q to contain error %q", line, queryErr.Error())
 	}
 }
+
+func setMaxRepoListingBufferBytesForTest(t *testing.T, limit int) {
+	t.Helper()
+	orig := maxRepoListingBufferBytes
+	maxRepoListingBufferBytes = limit
+	t.Cleanup(func() { maxRepoListingBufferBytes = orig })
+}
+
+func setMaxRepoListingEntriesForTest(t *testing.T, limit int) {
+	t.Helper()
+	orig := maxRepoListingEntries
+	maxRepoListingEntries = limit
+	t.Cleanup(func() { maxRepoListingEntries = orig })
+}
+
+func writeNonCandidateTrackedDocs(t *testing.T, repo string, count int) {
+	t.Helper()
+	for i := 0; i < count && i < 256; i++ {
+		rel := fmt.Sprintf("docs/guide_section_%02d.txt", i)
+		writeTestRepoFile(t, repo, rel, "non-candidate documentation\n")
+	}
+}
+
+// TestAuditTestLevels_LargeListingPassesCandidateCap proves a tracked listing larger than the
+// in-memory listing buffer bound still passes when few candidates match, while candidates past
+// maxRepoScanFiles fail with the cap error (HISS-15).
+func TestAuditTestLevels_LargeListingPassesCandidateCap(t *testing.T) {
+	setMaxRepoListingBufferBytesForTest(t, 256)
+	setMaxRepoScanFilesForTest(t, 3)
+	repo := setupGoLibraryTempRepo(t)
+	writeNonCandidateTrackedDocs(t, repo, 30)
+	writeTestRepoFile(t, repo, "z_integration_test.go", "package lib\n")
+	commitAllTestRepoFiles(t, repo)
+
+	_, bindings, err := resolveLevelBindings(t.Context(), repo, nil)
+	if err != nil {
+		t.Fatalf("resolveLevelBindings: %v", err)
+	}
+	want := []string{"pkg/client_test.go", "z_integration_test.go"}
+	if got, listErr := listLevelCandidateFiles(t.Context(), repo, bindings); listErr != nil || !slices.Equal(got, want) {
+		t.Fatalf("listLevelCandidateFiles = %v, err=%v; want %v", got, listErr, want)
+	}
+	if rep, auditErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions()); auditErr != nil || rep.Status != TestLevelStatusPass {
+		t.Fatalf("AuditTestLevels = %+v, err=%v; want PASS", rep, auditErr)
+	}
+
+	writeTestRepoFile(t, repo, "pkg/extra_test.go", "package lib\n")
+	writeTestRepoFile(t, repo, "pkg/fourth_test.go", "package lib\n")
+	runGitCmd(t, repo, "add", ".")
+	runGitCmd(t, repo, "commit", "-q", "-m", "chore: exceed candidate cap")
+	if _, capErr := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: false}); capErr == nil ||
+		!strings.Contains(capErr.Error(), "3") || !strings.Contains(capErr.Error(), "scanned candidate") {
+		t.Fatalf("expected candidate cap error naming 3, got %v", capErr)
+	}
+}
+
+// TestAuditTestLevels_StreamListingBound_3D verifies that a listing just under maxRepoListingEntries
+// passes while reaching maxRepoListingEntries fails naming the bound (HISS-15).
+func TestAuditTestLevels_StreamListingBound_3D(t *testing.T) {
+	setMaxRepoListingEntriesForTest(t, 7)
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "z_integration_test.go", "package lib\n")
+	commitAllTestRepoFiles(t, repo)
+
+	// setupGoLibraryTempRepo writes 5 files + z_integration_test.go = 6 tracked entries (just under 7).
+	if rep, err := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions()); err != nil || rep.Status != TestLevelStatusPass {
+		t.Fatalf("expected 6 tracked entries (< 7) to pass, got rep=%+v err=%v", rep, err)
+	}
+
+	// Adding 1 file reaches 7 tracked entries -> fails naming maxRepoListingEntries and 7.
+	writeTestRepoFile(t, repo, "docs/seventh.txt", "seven\n")
+	runGitCmd(t, repo, "add", ".")
+	runGitCmd(t, repo, "commit", "-q", "-m", "chore: reach stream bound")
+	_, boundErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
+	if boundErr == nil || !strings.Contains(boundErr.Error(), "maxRepoListingEntries") || !strings.Contains(boundErr.Error(), "7") {
+		t.Fatalf("expected stream bound error naming maxRepoListingEntries and 7, got %v", boundErr)
+	}
+}
+
+// TestAuditTestLevels_QuotedAndSpacePrefixedTestFiles proves git ls-files -z preserves non-ASCII
+// names git would quote and leading-space paths without trimming (HISS-15).
+func TestAuditTestLevels_QuotedAndSpacePrefixedTestFiles(t *testing.T) {
+	repo := setupGoLibraryTempRepo(t)
+	if err := os.Remove(filepath.Join(repo, "pkg", "client_test.go")); err != nil {
+		t.Fatalf("remove default unit test: %v", err)
+	}
+	writeTestRepoFile(t, repo, "测试_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestUnicode(t *testing.T) {}\n")
+	writeTestRepoFile(t, repo, " leading_integration_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestLeadingSpace(t *testing.T) {}\n")
+	commitAllTestRepoFiles(t, repo)
+
+	_, bindings, err := resolveLevelBindings(t.Context(), repo, nil)
+	if err != nil {
+		t.Fatalf("resolveLevelBindings: %v", err)
+	}
+	want := []string{" leading_integration_test.go", "测试_test.go"}
+	got, listErr := listLevelCandidateFiles(t.Context(), repo, bindings)
+	if listErr != nil || !slices.Equal(got, want) {
+		t.Fatalf("listLevelCandidateFiles = %q, err=%v; want %q", got, listErr, want)
+	}
+	if rep, auditErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions()); auditErr != nil || rep.Status != TestLevelStatusPass {
+		t.Fatalf("expected quoted and space-prefixed test files to satisfy levels, got rep=%+v err=%v", rep, auditErr)
+	}
+}
+
+// TestAuditTestLevels_CancelledContextStopsWalkStreamAndRustCheck verifies that cancelling ctx
+// stops the filesystem walk, the git stream, and directory-glob Rust checks with context.Canceled
+// before reading further files (HISS-15).
+func TestAuditTestLevels_CancelledContextStopsWalkStreamAndRustCheck(t *testing.T) {
+	t.Run("stops non-git candidate walk before reading further", func(t *testing.T) {
+		assertReleaseWalkStopsOnCancel(t)
+	})
+	t.Run("stops git listing stream before reading further", func(t *testing.T) {
+		assertReleaseStreamStopsOnCancel(t)
+	})
+	t.Run("stops directory-glob Rust check with context error", func(t *testing.T) {
+		assertReleaseRustCheckStopsOnCancel(t)
+	})
+}
+
+func assertReleaseWalkStopsOnCancel(t *testing.T) {
+	t.Helper()
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "pkg/a_test.go", "package lib\n")
+	writeTestRepoFile(t, repo, "pkg/b_test.go", "package lib\n")
+	ctx, cancel := context.WithCancel(t.Context())
+	seen := 0
+	_, err := listRepositoryFiles(ctx, repo, func(string) (bool, error) {
+		seen++
+		cancel()
+		return true, nil
+	})
+	if !errors.Is(err, context.Canceled) || seen != 1 {
+		t.Fatalf("walk err=%v seen=%d; want context.Canceled after 1 file", err, seen)
+	}
+}
+
+func assertReleaseStreamStopsOnCancel(t *testing.T) {
+	t.Helper()
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "pkg/a_test.go", "package lib\n")
+	writeTestRepoFile(t, repo, "pkg/b_test.go", "package lib\n")
+	commitAllTestRepoFiles(t, repo)
+	ctx, cancel := context.WithCancel(t.Context())
+	seen := 0
+	_, err := listRepositoryFiles(ctx, repo, func(string) (bool, error) {
+		seen++
+		cancel()
+		return true, nil
+	})
+	if !errors.Is(err, context.Canceled) || seen != 1 {
+		t.Fatalf("stream err=%v seen=%d; want context.Canceled after 1 file", err, seen)
+	}
+}
+
+func assertReleaseRustCheckStopsOnCancel(t *testing.T) {
+	t.Helper()
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "pkg/integration/a.rs", "#[cfg(test)]\nmod tests {}\n")
+	writeTestRepoFile(t, repo, "pkg/integration/b.rs", "#[cfg(test)]\nmod tests {}\n")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	spec := config.ReleaseTestLevelSpec{Paths: []string{"**/integration/**"}}
+	matched, err := matchFilesForLevel(ctx, repo, []string{"pkg/integration/a.rs", "pkg/integration/b.rs"}, spec)
+	if !errors.Is(err, context.Canceled) || len(matched) != 0 {
+		t.Fatalf("expected context.Canceled and 0 matched files from Rust check, got matched=%v err=%v", matched, err)
+	}
+}
