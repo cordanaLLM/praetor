@@ -341,19 +341,38 @@ func recordSpecArrayFact(name string, pos token.Pos, typ, val ast.Expr, facts *f
 
 // recordSpecLimiterFact records errgroup, semaphore or buffered token-channel facts for one spec binding.
 func (g *goScanner) recordSpecLimiterFact(name string, pos token.Pos, typ, val ast.Expr, facts *fanoutFacts) bool {
+	declLine := g.line(pos)
 	switch {
 	case g.isErrgroupType(typ) || g.isErrgroupValue(val):
 		recordBoundPos(facts.errgroups, name, pos, facts)
 		return true
-	case (val == nil && g.isSemaphoreType(typ)) || g.isSemaphoreValue(val, g.line(pos), facts):
+	case g.isBoundSemaphoreSpec(typ, val, declLine, facts) || g.isSemaphoreValue(val, declLine, facts):
 		recordBoundPos(facts.semaphores, name, pos, facts)
 		return true
-	case g.isBufferedChanMake(val, g.line(pos), facts):
+	case g.isBufferedChanMake(val, declLine, facts):
 		recordBoundPos(facts.tokenChans, name, pos, facts)
 		return true
 	default:
 		return false
 	}
+}
+
+// isBoundSemaphoreSpec reports whether a typed semaphore spec without a NewWeighted constructor
+// carries a //hiss:bound directive on declLine.
+func (g *goScanner) isBoundSemaphoreSpec(typ, val ast.Expr, declLine int, facts *fanoutFacts) bool {
+	if !g.isSemaphoreType(typ) || g.isNewWeightedCall(val) {
+		return false
+	}
+	return facts != nil && facts.hissBounds[declLine] != ""
+}
+
+// isNewWeightedCall reports whether expr invokes semaphore.NewWeighted.
+func (g *goScanner) isNewWeightedCall(expr ast.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	call, ok := ast.Unparen(expr).(*ast.CallExpr)
+	return ok && g.matchesPkgSelector(call.Fun, "golang.org/x/sync/semaphore", "semaphore", "NewWeighted")
 }
 
 // isSpecIntBinding reports whether a spec binding has an integer type or integer literal initializer.
@@ -1077,11 +1096,11 @@ func goroutineBodyCleanup(goStmt *ast.GoStmt, match func(ast.Node) bool) bool {
 	return match(lit.Body.List[len(lit.Body.List)-1])
 }
 
-// isConditionalOrAsyncNode reports whether n introduces conditional, looping or asynchronous flow
-// that prevents treating an enclosed cleanup as unconditional.
+// isConditionalOrAsyncNode reports whether n introduces conditional, looping, deferred or
+// asynchronous flow that prevents treating an enclosed call or assertion as unconditional.
 func isConditionalOrAsyncNode(n ast.Node) bool {
 	switch n.(type) {
-	case *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt, *ast.GoStmt:
+	case *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt, *ast.GoStmt, *ast.DeferStmt:
 		return true
 	default:
 		return false
@@ -1517,12 +1536,12 @@ func (g *goScanner) nodeReceivesFromChan(root ast.Node, ch string) bool {
 	return found && complete
 }
 
-// isLoopBounded checks bounds (d) array range / constant counter loop and (e) //hiss:bound
-// worker pool loop on one enclosing loop.
+// isLoopBounded checks bounds (d) array or constant-integer range / constant counter loop and
+// (e) //hiss:bound worker pool loop on one enclosing loop.
 func (g *goScanner) isLoopBounded(loop ast.Stmt, facts *fanoutFacts) bool {
 	switch l := loop.(type) {
 	case *ast.RangeStmt:
-		if isArrayRangeExpr(l.X, facts) {
+		if isArrayRangeExpr(l.X, facts) || g.isConstBoundExpr(l.X, facts) {
 			return true
 		}
 	case *ast.ForStmt:

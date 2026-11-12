@@ -344,8 +344,14 @@ rules:
         mechanism: internal/hiss go_hot_alloc.go checkHotAllocations
         rationale: >-
           Go only: functions and methods whose doc comment carries a line //hiss:hot <reason>
-          must have a testing.AllocsPerRun test asserting zero allocations. Unmarked code
-          is unchecked; Rust and C are not checked.
+          must have a reachable testing.AllocsPerRun test asserting zero allocations where every
+          frame between the test entry and helper call (plainHelperCalls), between the measurement
+          statement and the zero check (hasZeroAssertion), and between the zero-check body and the
+          failure call (bodyFailsTest) is unconditional, with no if, switch, select, for/range,
+          go, defer or uninvoked function literal in between
+          (positive/conditional-zero-assertion.txtar, positive/switch-case-fatal.txtar;
+          negative/internal-test.txtar, negative/external-test.txtar). Unmarked code is unchecked;
+          Rust and C are not checked.
   - id: HISS-04
     coverage:
       - language: go
@@ -450,8 +456,12 @@ rules:
           dominating semaphore.Weighted Acquire or checked TryAcquire with a proven positive
           weight (positive integer literal, declared positive literal constant, or len of a
           nonzero fixed array) on a limiter declared once outside the loop whose capacity is
-          proven by isConstBoundExpr or documented by a //hiss:bound comment on the declaring
-          line (positive/len-sized-semaphore.go), with Acquire accepted only when its error is
+          proven via semaphore.NewWeighted with isConstBoundExpr or documented by a //hiss:bound
+          comment on the declaring line, with typed semaphore bindings lacking a NewWeighted
+          constructor (such as parameters, zero var declarations, or typed struct-field reads)
+          accepted only when their declaring line carries //hiss:bound
+          (positive/len-sized-semaphore.go, positive/param-semaphore-unbounded.go;
+          negative/param-semaphore-hiss-bound.go), with Acquire accepted only when its error is
           checked by an enclosing if-initializer/condition guard or immediately followed in the
           same block by a terminating if err != nil guard on that assigned error name
           (negative/semaphore-acquire.go, negative/acquire-split-guarded.go,
@@ -470,26 +480,26 @@ rules:
           (negative/token-channel.go; positive/len-sized-chan-limiter.go,
           positive/token-received-before-launch.go, positive/limiter-per-iteration.go,
           positive/conditional-token-send.go); a range over a fixed array declared once outside
-          the loop or a constant-bounded counter loop whose nonzero constant step moves toward
-          the bound (with != requiring integer-literal start and bound endpoints and a unit step)
-          and whose body neither writes to the counter nor takes its address
-          (negative/constant-loop.go; positive/unbounded-range-fanout.go,
-          positive/fanout-in-func-literal.go, positive/counter-zero-step.go,
-          positive/counter-wrong-direction.go, positive/counter-written-in-body.go,
-          positive/multi-name-spec.go); or a worker pool loop over a constant or an explicit int
-          variable named with a bound value and reason in a //hiss:bound comment on the loop
-          (negative/hiss-bound-comment.go). Multi-name var specs pair each declared identifier
-          with its own initializer (or the shared type when Values is empty) rather than
-          applying an aggregate classification across all names, and names redeclared in the
-          same function carry no limiter or array fact so shadowing fails closed. gap/ records
-          what the per-function *ast.GoStmt syntax check does not decide: a *semaphore.Weighted
-          parameter whose capacity is chosen by a caller, a helper function called in a loop
-          that launches its goroutine in its own body, != counter loops with non-literal
-          constant endpoints (reported unless rewritten with <, <=, > or >=), and
-          errgroup.Group.Go pools without a proven constant SetLimit (gap/numcpu-pool.go).
-          SetLimit does not bound raw go statements (positive/errgroup-setlimit.go;
-          positive/caller-variable-bound.go); calls to g.Go are outside this raw-go check
-          (negative/errgroup-setlimit.go).
+          the loop, a range over a constant integer expression proven by isConstBoundExpr
+          (negative/range-int-literal.go, negative/range-int-const.go), or a constant-bounded
+          counter loop whose nonzero constant step moves toward the bound (with != requiring
+          integer-literal start and bound endpoints and a unit step) and whose body neither
+          writes to the counter nor takes its address (negative/constant-loop.go;
+          positive/unbounded-range-fanout.go, positive/fanout-in-func-literal.go,
+          positive/counter-zero-step.go, positive/counter-wrong-direction.go,
+          positive/counter-written-in-body.go, positive/multi-name-spec.go); or a worker pool
+          loop over a constant or an explicit int variable named with a bound value and reason in
+          a //hiss:bound comment on the loop (negative/hiss-bound-comment.go). Multi-name var
+          specs pair each declared identifier with its own initializer (or the shared type when
+          Values is empty) rather than applying an aggregate classification across all names, and
+          names redeclared in the same function carry no limiter or array fact so shadowing fails
+          closed. gap/ records what the per-function *ast.GoStmt syntax check does not decide: a
+          helper function called in a loop that launches its goroutine in its own body, != counter
+          loops with non-literal constant endpoints (reported unless rewritten with <, <=, > or
+          >=), and errgroup.Group.Go pools without a proven constant SetLimit
+          (gap/numcpu-pool.go). SetLimit does not bound raw go statements
+          (positive/errgroup-setlimit.go; positive/caller-variable-bound.go); calls to g.Go are
+          outside this raw-go check (negative/errgroup-setlimit.go).
   - id: HISS-08
     coverage:
       - language: c

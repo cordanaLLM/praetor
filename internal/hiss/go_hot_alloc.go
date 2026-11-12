@@ -314,21 +314,9 @@ func funcDeclSymbol(fn *ast.FuncDecl) (string, string) {
 
 // findZeroAllocTests collects functions covered by zero-allocation assertions in reachable test functions.
 func findZeroAllocTests(ctx context.Context, fset *token.FileSet, scope hotDirScope, testFiles []string) ([]string, error) {
-	if len(testFiles) > maxHotAllocFiles {
-		scope.rep.Truncated = true
-	}
-	byPkg := make(map[string][]*ast.File)
-	var pkgs []string
-	for i := 0; i < len(testFiles) && i < maxHotAllocFiles; i++ {
-		file, _, err := parseHotFile(ctx, fset, scope.root, testFiles[i])
-		if err != nil {
-			return nil, fmt.Errorf("parse test %s: %w", testFiles[i], err)
-		}
-		pkg := file.Name.Name
-		if _, seen := byPkg[pkg]; !seen {
-			pkgs = append(pkgs, pkg)
-		}
-		byPkg[pkg] = append(byPkg[pkg], file)
+	byPkg, pkgs, err := parseHotTestPackages(ctx, fset, scope, testFiles)
+	if err != nil {
+		return nil, err
 	}
 	prodImport, err := externalProdImport(ctx, scope, pkgs)
 	if err != nil {
@@ -346,6 +334,27 @@ func findZeroAllocTests(ctx context.Context, fset *token.FileSet, scope hotDirSc
 		results = append(results, findZeroAllocTestsInPackage(byPkg[pkgs[i]], pkgImport, scope.rep)...)
 	}
 	return results, nil
+}
+
+// parseHotTestPackages parses testFiles up to maxHotAllocFiles and groups their ASTs by package name.
+func parseHotTestPackages(ctx context.Context, fset *token.FileSet, scope hotDirScope, testFiles []string) (map[string][]*ast.File, []string, error) {
+	if len(testFiles) > maxHotAllocFiles {
+		scope.rep.Truncated = true
+	}
+	byPkg := make(map[string][]*ast.File)
+	var pkgs []string
+	for i := 0; i < len(testFiles) && i < maxHotAllocFiles; i++ {
+		file, _, err := parseHotFile(ctx, fset, scope.root, testFiles[i])
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse test %s: %w", testFiles[i], err)
+		}
+		pkg := file.Name.Name
+		if _, seen := byPkg[pkg]; !seen {
+			pkgs = append(pkgs, pkg)
+		}
+		byPkg[pkg] = append(byPkg[pkg], file)
+	}
+	return byPkg, pkgs, nil
 }
 
 // isExternalTestPkg reports whether pkg is an external _test package for one of prodPkgs.
@@ -675,15 +684,14 @@ func enqueueHotHelpers(callees []string, byName map[string][]int, visited []bool
 	return queue
 }
 
-// plainHelperCalls returns unshadowed plain-name callees reached from fn outside uncalled literals.
+// plainHelperCalls returns unshadowed plain-name callees unconditionally reached from fn.
 func plainHelperCalls(fn *ast.FuncDecl, invoked map[*ast.FuncLit][]string) []string {
 	var scope goScope
 	var callees []string
 	seen := make(map[string]bool)
 	scope.inspect(fn, func(n ast.Node) bool {
-		if lit, ok := n.(*ast.FuncLit); ok {
-			_, ok = invoked[lit]
-			return ok
+		if !shouldDescendHelperNode(n, invoked) {
+			return false
 		}
 		call, ok := n.(*ast.CallExpr)
 		if !ok || len(callees) >= maxHotAllocDecls {
@@ -699,10 +707,23 @@ func plainHelperCalls(fn *ast.FuncDecl, invoked map[*ast.FuncLit][]string) []str
 	return callees
 }
 
+// shouldDescendHelperNode reports whether plainHelperCalls may traverse into n unconditionally.
+func shouldDescendHelperNode(n ast.Node, invoked map[*ast.FuncLit][]string) bool {
+	if isConditionalOrAsyncNode(n) {
+		return false
+	}
+	if lit, ok := n.(*ast.FuncLit); ok {
+		_, ok = invoked[lit]
+		return ok
+	}
+	return true
+}
+
 type litParamStack struct {
 	invoked    map[*ast.FuncLit][]string
 	stack      []ast.Node
 	paramStack [][]string
+	condDepth  int
 }
 
 // newLitParamStack initializes a stack tracking active testing parameters across invoked literals.
@@ -723,6 +744,11 @@ func (s *litParamStack) full() bool {
 	return len(s.stack) >= maxNodeStack
 }
 
+// unconditional reports whether no conditional, looping or asynchronous frame encloses the current node.
+func (s *litParamStack) unconditional() bool {
+	return s.condDepth == 0
+}
+
 // push enters node n, refusing uncalled function literals so their bodies are skipped.
 func (s *litParamStack) push(n ast.Node) bool {
 	if lit, ok := n.(*ast.FuncLit); ok {
@@ -731,6 +757,9 @@ func (s *litParamStack) push(n ast.Node) bool {
 			return false
 		}
 		s.paramStack = append(s.paramStack, params)
+	}
+	if isConditionalOrAsyncNode(n) {
+		s.condDepth++
 	}
 	s.stack = append(s.stack, n)
 	return true
@@ -742,8 +771,12 @@ func (s *litParamStack) pop() {
 	if last < 0 {
 		return
 	}
-	if _, isLit := s.stack[last].(*ast.FuncLit); isLit {
+	top := s.stack[last]
+	if _, isLit := top.(*ast.FuncLit); isLit {
 		s.paramStack = s.paramStack[:len(s.paramStack)-1]
+	}
+	if isConditionalOrAsyncNode(top) {
+		s.condDepth--
 	}
 	s.stack = s.stack[:last]
 }
@@ -771,13 +804,17 @@ func collectInvokedFuncLits(body *ast.BlockStmt, imports GoImports, rootParams [
 	return invoked
 }
 
-// visit records invoked function literals in pre-order and skips uncalled literal bodies.
+// visit records invoked function literals in pre-order and skips async, deferred or uncalled literal bodies.
 func (c *invokedLitCollector) visit(n ast.Node) bool {
 	if n == nil {
 		c.frames.pop()
 		return true
 	}
 	if c.frames.full() {
+		return false
+	}
+	switch n.(type) {
+	case *ast.GoStmt, *ast.DeferStmt:
 		return false
 	}
 	if call, ok := n.(*ast.CallExpr); ok {
@@ -1002,7 +1039,7 @@ type zeroAssertionWalk struct {
 	stopped bool
 }
 
-// hasZeroAssertion looks for a failure assertion while the measured allocation binding still holds.
+// hasZeroAssertion looks for an unconditional failure assertion while the measured allocation binding still holds.
 func hasZeroAssertion(stmts []ast.Stmt, varName string, call *ast.CallExpr, ctx hotTestContext) bool {
 	if varName == "_" {
 		return false
@@ -1041,14 +1078,14 @@ func (w *zeroAssertionWalk) visit(n ast.Node) bool {
 	return w.frames.push(n)
 }
 
-// visitIf checks one if statement for a rebinding initializer or a zero-allocation failure branch.
+// visitIf checks one if statement for a rebinding initializer or an unconditional zero-allocation failure branch.
 func (w *zeroAssertionWalk) visitIf(ifStmt *ast.IfStmt) bool {
 	if rebindsHotVar(ifStmt.Init, w.varName) {
 		w.stopped = true
 		return false
 	}
 	curCtx := w.ctx.withParams(w.frames.params())
-	if isZeroCondition(ifStmt.Cond, w.varName, w.call) && bodyFailsTest(ifStmt.Body, curCtx) {
+	if w.frames.unconditional() && isZeroCondition(ifStmt.Cond, w.varName, w.call) && bodyFailsTest(ifStmt.Body, curCtx) {
 		w.found = true
 		return false
 	}
@@ -1223,7 +1260,7 @@ func isMatchingAllocs(expr ast.Expr, varName string, call *ast.CallExpr) bool {
 	return false
 }
 
-// bodyFailsTest checks whether a branch contains a test failure call outside uncalled literals.
+// bodyFailsTest checks whether a branch unconditionally invokes a test failure call outside uncalled literals.
 func bodyFailsTest(body *ast.BlockStmt, ctx hotTestContext) bool {
 	if body == nil {
 		return false
@@ -1238,7 +1275,7 @@ func bodyFailsTest(body *ast.BlockStmt, ctx hotTestContext) bool {
 		if found || frames.full() {
 			return false
 		}
-		if call, ok := n.(*ast.CallExpr); ok && callFailsTest(call, frames.params()) {
+		if call, ok := n.(*ast.CallExpr); ok && frames.unconditional() && callFailsTest(call, frames.params()) {
 			found = true
 			return false
 		}

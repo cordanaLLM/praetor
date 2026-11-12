@@ -1,0 +1,25 @@
+A hot function whose zero-allocation failure call is reachable only under a switch case.
+
+-- frame.go --
+package positive
+
+//hiss:hot rendering frame loop
+func Frame() {}
+
+-- frame_test.go --
+package positive
+
+import "testing"
+
+func TestFrame(t *testing.T) {
+	mode := 0
+	allocs := testing.AllocsPerRun(100, func() {
+		Frame()
+	})
+	if allocs != 0 {
+		switch mode {
+		case 1:
+			t.Fatal(allocs)
+		}
+	}
+}

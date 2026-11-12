@@ -912,6 +912,92 @@ func CounterNeqCallStart(slots [4]int) {
 		line: 5,
 		fn:   "CounterNeqCallStart",
 	},
+	{
+		name: "param_semaphore_without_hiss_bound",
+		rel:  "param_sem_unbounded.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func work(string) {}
+func ParamSemUnbounded(ctx context.Context, sem *semaphore.Weighted, items []string) error {
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+`,
+		line: 10,
+		fn:   "ParamSemUnbounded",
+	},
+	{
+		name: "zero_var_semaphore_without_hiss_bound",
+		rel:  "zero_var_sem_unbounded.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func work(string) {}
+func ZeroVarSemUnbounded(ctx context.Context, items []string) error {
+	var sem *semaphore.Weighted
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+`,
+		line: 11,
+		fn:   "ZeroVarSemUnbounded",
+	},
+	{
+		name: "struct_field_semaphore_without_hiss_bound",
+		rel:  "field_sem_unbounded.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+type holder struct { sem *semaphore.Weighted }
+func work(string) {}
+func FieldSemUnbounded(ctx context.Context, h holder, items []string) error {
+	var sem *semaphore.Weighted = h.sem
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+`,
+		line: 12,
+		fn:   "FieldSemUnbounded",
+	},
+	{
+		name: "range_variable_int_without_hiss_bound",
+		rel:  "range_var_int.go",
+		src: `package p
+func work(int) {}
+func RangeVarInt(n int) {
+	for i := range n {
+		go work(i)
+	}
+}
+`,
+		line: 5,
+		fn:   "RangeVarInt",
+	},
 }
 
 // TestGoFanout_Positive_UnboundedShapesReported checks that unbounded worker shapes produce findings.
@@ -1346,6 +1432,80 @@ return g.Wait()
 }
 `,
 	},
+	{
+		name: "param_and_typed_var_semaphore_with_hiss_bound",
+		src: `package p
+import (
+"context"
+"golang.org/x/sync/semaphore"
+)
+type holder struct { sem *semaphore.Weighted }
+func work(string) {}
+func RunBoundParamSem(
+	ctx context.Context,
+	sem *semaphore.Weighted, //hiss:bound sem<=8 caller constructs bounded pool semaphore
+	items []string,
+) error {
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+func RunBoundZeroVarSem(ctx context.Context, items []string) error {
+	var sem *semaphore.Weighted //hiss:bound sem<=8 wired by caller harness before dispatch
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+func RunBoundFieldSem(ctx context.Context, h holder, items []string) error {
+	var sem *semaphore.Weighted = h.sem //hiss:bound sem<=8 holder initializes bounded weight
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+`,
+	},
+	{
+		name: "range_int_literal_and_const",
+		src: `package p
+const workerPoolSize = 8
+func work(int) {}
+func RunRangeIntConstAndLit() {
+	for i := range 8 {
+		go work(i)
+	}
+	for range 4 {
+		go work(0)
+	}
+	for i := range workerPoolSize {
+		go work(i)
+	}
+}
+`,
+	},
 }
 
 // TestGoFanout_Negative_AcceptedBoundsPass checks that recognized worker bounds do not produce findings.
@@ -1382,7 +1542,12 @@ func TestGoFanout_Boundary_EmptyAndParseErrorFiles(t *testing.T) {
 
 // TestGoFanout_Boundary_OwnComplexityWithinHISS04 checks that the fanout implementation stays within the complexity limits it enforces.
 func TestGoFanout_Boundary_OwnComplexityWithinHISS04(t *testing.T) {
-	path := filepath.Join("go_fanout.go")
+	assertFileComplexityWithinHISS04(t, filepath.Join("go_fanout.go"))
+}
+
+// assertFileComplexityWithinHISS04 verifies every measured function in path stays within HISS-04 caps.
+func assertFileComplexityWithinHISS04(t *testing.T, path string) {
+	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

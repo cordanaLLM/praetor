@@ -919,3 +919,137 @@ func TestGoHotAlloc_QualifiedCalleeResolution(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
 	}
 }
+
+// hotAllocConditionalAssertionCases builds cases where the zero-allocation assertion sits under a
+// conditional, looping or async frame between the measurement and the check.
+func hotAllocConditionalAssertionCases(hotSrc string) []hotAllocTestCase {
+	return []hotAllocTestCase{
+		{
+			name: "zero check inside if branch not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tverbose := false\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif verbose {\n\t\tif allocs != 0 { t.Fatal(allocs) }\n\t}\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "zero check inside switch case not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tmode := 0\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tswitch mode {\n\tcase 1:\n\t\tif allocs != 0 { t.Fatal(allocs) }\n\t}\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "zero check inside for loop not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tn := 0\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tfor i := 0; i < n; i++ {\n\t\tif allocs != 0 { t.Fatal(allocs) }\n\t}\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "zero check inside go or defer literal not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tgo func() {\n\t\tif allocs != 0 { t.Fatal(allocs) }\n\t}()\n\tdefer func() {\n\t\tif allocs != 0 { t.Fatal(allocs) }\n\t}()\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "conditional rebinding before top-level zero check not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tverbose := true\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif verbose { allocs = 0 }\n\tif allocs != 0 { t.Fatal(allocs) }\n}\n",
+			},
+			wantCount: 1,
+		},
+	}
+}
+
+// hotAllocConditionalFatalCases builds cases where the failure call inside a zero-check body sits
+// under a conditional, looping or async frame.
+func hotAllocConditionalFatalCases(hotSrc string) []hotAllocTestCase {
+	return []hotAllocTestCase{
+		{
+			name: "t.Fatal reachable only under switch case not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tmode := 0\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif allocs != 0 {\n\t\tswitch mode {\n\t\tcase 1:\n\t\t\tt.Fatal(allocs)\n\t\t}\n\t}\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "t.Fatal reachable only under nested if not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tstrict := false\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif allocs != 0 {\n\t\tif strict { t.Fatal(allocs) }\n\t}\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "t.Fatal inside select or defer not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tch := make(chan struct{})\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif allocs != 0 {\n\t\tselect {\n\t\tcase <-ch:\n\t\t\tt.Fatal(allocs)\n\t\tdefault:\n\t\t}\n\t\tdefer t.Fatal(allocs)\n\t}\n}\n",
+			},
+			wantCount: 1,
+		},
+	}
+}
+
+// hotAllocConditionalHelperAndControlCases builds conditional helper-call positive cases and
+// unconditional controls.
+func hotAllocConditionalHelperAndControlCases(hotSrc string) []hotAllocTestCase {
+	const helperDecl = "func checkStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(100, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n"
+	return []hotAllocTestCase{
+		{
+			name: "helper call inside if branch not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\n" + helperDecl + "func TestStep(t *testing.T) {\n\tverbose := false\n\tif verbose { checkStep(t) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "helper call inside switch for go or defer not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\n" + helperDecl + "func TestStep(t *testing.T) {\n\tmode, n := 0, 0\n\tswitch mode { case 1: checkStep(t) }\n\tfor i := 0; i < n; i++ { checkStep(t) }\n\tgo checkStep(t)\n\tdefer checkStep(t)\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "control non-rebinding if before top-level zero check credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tverbose := false\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif verbose { t.Log(allocs) }\n\tif allocs != 0 { t.Fatal(allocs) }\n}\n",
+			},
+			wantCount: 0,
+		},
+		{
+			name: "control unconditional helper call inside t.Run credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\n" + helperDecl + "func TestStep(t *testing.T) {\n\tt.Run(\"sub\", func(t *testing.T) { checkStep(t) })\n}\n",
+			},
+			wantCount: 0,
+		},
+	}
+}
+
+// TestGoHotAlloc_ConditionalAndAsyncFrames verifies zero assertions, failure calls and helper calls
+// earn credit only when every frame between the measurement or entry and the call is unconditional.
+func TestGoHotAlloc_ConditionalAndAsyncFrames(t *testing.T) {
+	const hotSrc = "package p\n\n//hiss:hot step\nfunc Step() {}\n"
+	cases := append(hotAllocConditionalAssertionCases(hotSrc), hotAllocConditionalFatalCases(hotSrc)...)
+	cases = append(cases, hotAllocConditionalHelperAndControlCases(hotSrc)...)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
+	}
+}
+
+// TestGoHotAlloc_Boundary_OwnComplexityWithinHISS04 checks that go_hot_alloc.go stays within HISS-04 caps.
+func TestGoHotAlloc_Boundary_OwnComplexityWithinHISS04(t *testing.T) {
+	assertFileComplexityWithinHISS04(t, filepath.Join("go_hot_alloc.go"))
+}

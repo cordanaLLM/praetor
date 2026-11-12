@@ -1,0 +1,24 @@
+A hot function whose zero-allocation check sits inside a conditional if branch after measurement.
+
+-- frame.go --
+package positive
+
+//hiss:hot rendering frame loop
+func Frame() {}
+
+-- frame_test.go --
+package positive
+
+import "testing"
+
+func TestFrame(t *testing.T) {
+	verbose := false
+	allocs := testing.AllocsPerRun(100, func() {
+		Frame()
+	})
+	if verbose {
+		if allocs != 0 {
+			t.Fatal(allocs)
+		}
+	}
+}
