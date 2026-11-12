@@ -6,37 +6,97 @@ package forge
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+const maxRustTestReadBytes = 64 * 1024
+
+// IsTestFileContext reports whether rel, a path below root, is a test file by its language's own
+// naming convention while honoring ctx on any Rust source read. A Rust source the snapshot reader
+// refuses returns (false, error wrapping ErrRustSourceRefused); a context error returns unchanged.
+func IsTestFileContext(ctx context.Context, root, rel string) (bool, error) {
+	if ctx == nil {
+		return false, errors.New("test file check requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return classifyTestFile(root, rel, func(r, slash string) (bool, error) {
+		return isRustTestContext(ctx, r, slash)
+	})
+}
 
 // IsTestFile reports whether rel, a path below root, is a test file by its language's own
 // naming convention: Go and Python, JavaScript and TypeScript markers, Rust test folders or a
 // #[cfg(test)] module, C, C++, Java, Kotlin, Swift and C#, Ruby, shell, Dart, PHP and Lua. It
 // is the one definition the pinned-fixture audit and the release test levels gate share.
 func IsTestFile(root, rel string) bool {
+	ok, err := classifyTestFile(root, rel, isRustTest)
+	return err == nil && ok
+}
+
+// classifyTestFile applies the test-file conventions to rel, calling rustCheck only for a Rust source outside a tests directory.
+func classifyTestFile(root, rel string, rustCheck func(string, string) (bool, error)) (bool, error) {
 	slash := path.Clean(filepath.ToSlash(rel))
 	base := strings.ToLower(path.Base(slash))
 	if strings.HasSuffix(base, ".rs") {
-		return strings.HasSuffix(base, "_test.rs") || isRustTest(root, slash)
+		if strings.HasSuffix(base, "_test.rs") || isRustTestDir(slash) {
+			return true, nil
+		}
+		return rustCheck(root, slash)
 	}
-	return isGoOrPythonTest(base) || isJSTSTest(base) || isCompiledTest(base) || isScriptTest(base)
+	return isGoOrPythonTest(base) || isJSTSTest(base) || isCompiledTest(base) || isScriptTest(base), nil
 }
 
-// isRustTest reports whether a Rust source file at rel in root resides in a test directory
-// or contains a #[cfg(test)] module annotation.
-func isRustTest(root, rel string) bool {
-	if strings.HasPrefix(rel, "tests/") || strings.Contains(rel, "/tests/") {
-		return true
+// isRustTestDir reports whether a slash path sits in a top-level or nested tests directory.
+func isRustTestDir(slash string) bool {
+	return strings.HasPrefix(slash, "tests/") || strings.Contains(slash, "/tests/")
+}
+
+// ErrRustSourceRefused marks a Rust source the confined snapshot reader refuses to read: a symlink
+// leaf, a file that is not valid UTF-8 text, or one over the read bound. IsTestFileContext wraps it
+// with the path and the reader's reason, so a caller can tell a refused file from a failed audit.
+var ErrRustSourceRefused = errors.New("rust source refused by the snapshot reader")
+
+// contextReadError returns a context cancellation or deadline unchanged, wraps any other read
+// error with the file it came from under ErrRustSourceRefused, and returns the live context's
+// error when the read itself succeeded.
+func contextReadError(ctx context.Context, slash string, err error) error {
+	if err == nil {
+		return ctx.Err()
 	}
-	data, err := util.ReadFileLimited(filepath.Join(root, rel), 64*1024)
-	if err != nil {
-		return false
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
-	return bytes.Contains(data, []byte("#[cfg(test)]"))
+	return fmt.Errorf("read rust source %s: %w: %w", slash, ErrRustSourceRefused, err)
+}
+
+// isRustTestContext checks whether a Rust source file below root contains a #[cfg(test)] module
+// using the repository's confined context-bounded snapshot reader. A source the reader refuses
+// returns (false, error wrapping ErrRustSourceRefused); a context error returns unchanged.
+func isRustTestContext(ctx context.Context, root, slash string) (bool, error) {
+	if !filepath.IsLocal(filepath.FromSlash(slash)) {
+		return false, nil
+	}
+	data, exists, readErr := contextopt.ObserveSnapshotIn(ctx, root, filepath.FromSlash(slash))
+	if err := contextReadError(ctx, slash, readErr); err != nil {
+		return false, err
+	}
+	return exists && bytes.Contains(data, []byte("#[cfg(test)]")), nil
+}
+
+// isRustTest reports whether a Rust source file at slash in root contains a #[cfg(test)] module.
+func isRustTest(root, slash string) (bool, error) {
+	data, readErr := util.ReadConfinedLimited(root, filepath.FromSlash(slash), maxRustTestReadBytes)
+	return readErr == nil && bytes.Contains(data, []byte("#[cfg(test)]")), nil
 }
 
 // isGoOrPythonTest checks Go and Python test file conventions.

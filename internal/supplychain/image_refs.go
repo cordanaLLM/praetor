@@ -17,8 +17,16 @@ import (
 // ImageRefRuleID is the HISS rule identifier for unpinned container image references.
 const ImageRefRuleID = "HISS-11"
 
-// maxScannedFiles bounds how many repository paths one scan reads (HISS-02).
-const maxScannedFiles = 8192
+const (
+	defaultMaxScannedFiles  = 8192
+	scopeListingEntryFactor = 64
+)
+
+// maxScannedFiles bounds how many candidate files one scan reads (HISS-02).
+var maxScannedFiles = defaultMaxScannedFiles
+
+// maxScopeListingEntries bounds streamed git listing entries per scan (defaultMaxScannedFiles * scopeListingEntryFactor; HISS-02).
+var maxScopeListingEntries = defaultMaxScannedFiles * scopeListingEntryFactor
 
 // maxImageRefFileBytes bounds one scanned file (HISS-02): a larger tracked file is refused by
 // util.ReadConfinedLimited and fails the scan with its name, never read in full or skipped.
@@ -30,8 +38,8 @@ const maxFileLines = 16384
 // maxLineLiterals bounds how many string literals one source line scan processes (HISS-02).
 const maxLineLiterals = 64
 
-// maxScopeBytes bounds the NUL-separated listing git returns (HISS-02).
-const maxScopeBytes = 8 << 20
+// maxScopeBytes bounds retained path and stderr bytes while streaming git listing output (HISS-02).
+var maxScopeBytes = 8 << 20
 
 var (
 	// taggedDigest matches "<repository>:<tag>@sha256:<64 hex>", the tag-plus-digest form
@@ -131,7 +139,7 @@ func ScannedFile(rel string) bool {
 func ScanRepositoryPins(ctx context.Context, root string) ([]ImagePin, error) {
 	ctx, cancel := context.WithTimeout(ctx, imageRefScanTimeout)
 	defer cancel()
-	files, err := RepositoryFiles(ctx, root)
+	files, err := RepositoryFiles(ctx, root, ScannedFile)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +175,7 @@ func ScannedImageRefFile(rel string) bool {
 func ScanImageRefs(ctx context.Context, root string) ([]ImageRefFinding, error) {
 	ctx, cancel := context.WithTimeout(ctx, imageRefScanTimeout)
 	defer cancel()
-	files, err := imageRefCandidateFiles(ctx, root)
+	files, err := imageRefCandidateFiles(ctx, root, ScannedImageRefFile)
 	if err != nil {
 		return nil, err
 	}
