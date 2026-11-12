@@ -259,6 +259,7 @@ func validateExceptionTarget(repoPath string, entry config.Exception) error {
 	return nil
 }
 
+// scanGoFile counts scanned functions and collects clone and sprawl candidates.
 func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, hashMap map[string][]FileLocation, locMap map[string]int, engineMode bool, adopterStarts *[]adopterGitStart, report *DedupeReport) error {
 	content, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
@@ -285,10 +286,13 @@ func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, 
 
 	for _, decl := range node.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil || len(fn.Body.List) < minCloneStatements {
+		if !ok || fn.Body == nil {
 			continue
 		}
 		report.TotalFuncsScanned++
+		if len(fn.Body.List) < minCloneStatements {
+			continue
+		}
 
 		hashKey, lines, err := cloneKey(fset, fn, imports)
 		if err != nil {

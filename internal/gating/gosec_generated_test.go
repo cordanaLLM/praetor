@@ -2,7 +2,6 @@ package gating
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,17 +16,18 @@ func TestGeneratedGosecFindingExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg, _ := newTestConfig(t, dir, false)
+	called := false
 	cfg.run = func(_ context.Context, dir, _ string, args ...string) (string, error) {
-		data, err := os.ReadFile(filepath.Join(dir, "generated.go"))
-		if err != nil {
-			return "", err
+		called = true
+		if strings.Contains(strings.Join(args, " "), "-exclude-generated") {
+			t.Error("generated header must not exclude a file")
 		}
-		if strings.Contains(string(data), "crypto/md5") && !strings.Contains(strings.Join(args, " "), "-exclude-generated") {
-			return "generated finding", errors.New("finding")
-		}
-		return "", nil
+		return `{"Issues":[{"rule_id":"G401","file":"generated.go","line":"3","details":"weak hash"}]}`, nil
 	}
-	if _, err := runGosecScan(context.Background(), cfg, dir, ".gosec.json", []string{"."}); err != nil {
-		t.Fatalf("generated finding should be excluded: %v", err)
+	if _, err := runGosecScan(context.Background(), cfg, dir, ".gosec.json", []string{"."}); err == nil {
+		t.Fatal("unverified generated header must not hide a finding")
+	}
+	if !called {
+		t.Fatal("scanner was not invoked")
 	}
 }

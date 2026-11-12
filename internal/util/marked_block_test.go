@@ -306,3 +306,21 @@ func TestCheckLineBudget_Boundary(t *testing.T) {
 		t.Fatalf("expected nil error at exact budget, got %v", err)
 	}
 }
+
+// TestMarkdownFenceRequiresFullClosingRun checks short and interleaved closers.
+func TestMarkdownFenceRequiresFullClosingRun(t *testing.T) {
+	var f MarkdownFence
+	f.Inside("````go")
+	f.Inside("```")
+	if !f.Open() {
+		t.Fatal("short closer closed fence")
+	}
+	f.Inside("```` ````")
+	if !f.Open() {
+		t.Fatal("interleaved closer closed fence")
+	}
+	f.Inside("````")
+	if f.Open() {
+		t.Fatal("valid closer left fence open")
+	}
+}
