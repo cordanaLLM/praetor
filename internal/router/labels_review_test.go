@@ -2,6 +2,7 @@ package router
 
 import "testing"
 
+// TestIsReviewTask checks the declared review labels and that other labels are not review tasks.
 func TestIsReviewTask(t *testing.T) {
 	for _, tc := range []struct {
 		label string

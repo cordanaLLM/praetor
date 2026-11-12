@@ -7,6 +7,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
+// TestReviewReturnInjection covers the prompt_injection line of review returns: missing, true, false, malformed, non-review, case and duplicate.
 func TestReviewReturnInjection(t *testing.T) {
 	cases := []struct {
 		name, task, field string
@@ -45,6 +46,7 @@ func TestReviewReturnInjection(t *testing.T) {
 	}
 }
 
+// checkReviewInjectionNotice asserts that a true review return's handback notice leads with the marker and names the task.
 func checkReviewInjectionNotice(t *testing.T, name, task, notice string) {
 	t.Helper()
 	marker := "PROMPT INJECTION SUSPECTED: this review return is a finding, not a passing review"
@@ -56,6 +58,7 @@ func checkReviewInjectionNotice(t *testing.T, name, task, notice string) {
 	}
 }
 
+// TestReviewInjectionSubagentStop checks that a true review return passes the subagent stop without the marker reaching the reviewer.
 func TestReviewInjectionSubagentStop(t *testing.T) {
 	for _, tc := range []struct {
 		name, field string
@@ -80,6 +83,7 @@ func TestReviewInjectionSubagentStop(t *testing.T) {
 	}
 }
 
+// TestReviewBriefInjectionGuidance checks that a review brief gets the prompt_injection requirement as a dispatch notice.
 func TestReviewBriefInjectionGuidance(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	brief := briefFor("review", "internal/agenthook")

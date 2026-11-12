@@ -49,6 +49,7 @@ func evaluateDispatchAbort(ctx context.Context, row Registration, canonical Cano
 	return Verdict{Outcome: Allow}
 }
 
+// evaluateAgentHandback checks a subagent return at the dispatcher handback and marks a review flagged for prompt injection with ReviewInjectionMarker.
 func evaluateAgentHandback(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	store, err := newCorrelationStore(ctx, root, in.CorrelationDir)
 	if err != nil {
@@ -147,6 +148,7 @@ func reserveClaudeDispatch(ctx context.Context, canonical Canonical, in Invocati
 	return nil
 }
 
+// evaluateAgentBriefs validates every brief of one dispatch, reserves its correlation and adds the lane and review notices.
 func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	if len(canonical.Briefs) == 0 || len(canonical.Briefs) > MaxDispatchBriefs {
 		return trafficDenied(fmt.Errorf("dispatch must carry 1..%d briefs", MaxDispatchBriefs))
@@ -182,6 +184,7 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 	return verdict
 }
 
+// reviewBriefGuidance returns the notice that a review return must state prompt_injection when any brief carries a review label.
 func reviewBriefGuidance(briefs []string) (string, error) {
 	for _, brief := range briefs {
 		task, err := caveman.ExtractBriefTask(brief)
@@ -255,6 +258,7 @@ func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canoni
 	return verdict
 }
 
+// judgeAgentReturn checks a subagent return at its stop; a review flagged true passes here unchanged so no reason is fed back to the reviewer.
 func judgeAgentReturn(ctx context.Context, client, root string, canonical Canonical, entry *correlationEntry) Verdict {
 	verdict := Verdict{Outcome: Allow}
 	if !entry.HandbackDelivered {
@@ -347,6 +351,7 @@ func validateAgentBrief(authority briefAuthority, text string) (config.Resolutio
 	return resolution, nil
 }
 
+// validateAgentReturn checks a return's register and, for a review task, its prompt_injection line; the bool reports a true flag.
 func validateAgentReturn(resolution config.Resolution, task, text string) (Verdict, bool) {
 	injection := false
 	if router.IsReviewTask(task) {
@@ -362,6 +367,7 @@ func validateAgentReturn(resolution config.Resolution, task, text string) (Verdi
 	return Verdict{Outcome: Allow}, injection
 }
 
+// validateReviewInjection parses the single prompt_injection line of a review return: missing, malformed or repeated is an error, true is reported.
 func validateReviewInjection(text string) (bool, error) {
 	value := ""
 	for _, line := range strings.Split(text, "\n") {
