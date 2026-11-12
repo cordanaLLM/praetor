@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+type: added
+title: Review returns declare suspected prompt injection so flagged reviews cannot pass silently.

@@ -535,6 +535,12 @@ fails closed:
   agent` as a skip (`unownedAgent`, `internal/agenthook/agent_traffic.go`).
 - A correlation store failure at `SubagentStop` is a skip that names the fault
   (`subagent return not judged: …`). The pre-launch gate still fails closed on the same fault.
+- Correlated returns for `code_review`, `review`, and `single_file_audits` require exactly one
+  `prompt_injection: true` or `prompt_injection: false` line (key case insensitive, value exact).
+  Missing, malformed, or duplicate fields are denied; `true` is denied with the named finding
+  `prompt injection suspected`, and `false` leaves other validation unchanged. Dispatch guidance
+  names the required field. This independent defence takes its idea from [Fairies](https://code.ffmpeg.org/michaelni/Fairies),
+  without incorporating its code or text. Uncorrelated or unsupported return paths retain the skips below.
 - Review and audit return claims are resolved against the repository root and the subagent
   transcript (`internal/agenthook/return_claims.go`). For subagents dispatched with a review
   or audit routing label, `SubagentStop` extracts cited paths, line numbers and ranges

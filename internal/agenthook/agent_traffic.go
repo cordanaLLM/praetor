@@ -61,7 +61,7 @@ func evaluateAgentHandback(ctx context.Context, row Registration, canonical Cano
 	if entry.HandbackDelivered {
 		return trafficDenied(errors.New("subagent handback already delivered"))
 	}
-	verdict := validateAgentReturn(entry.Resolution, canonical.Return)
+	verdict := validateAgentReturn(entry.Resolution, entry.Task, canonical.Return)
 	if verdict.Outcome != Allow {
 		return verdict
 	}
@@ -165,10 +165,28 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 		return trafficDenied(err)
 	}
 	verdict.Notice = appendLaneNotice(verdict.Notice, offload.Notice)
+	guidance, err := reviewBriefGuidance(canonical.Briefs)
+	if err != nil {
+		return trafficDenied(err)
+	}
+	verdict.Notice = appendLaneNotice(verdict.Notice, guidance)
 	if err := authority.reserveDispatch(ctx, row.Client, canonical, in, root, resolution, prompt, &verdict); err != nil {
 		return trafficDenied(err)
 	}
 	return verdict
+}
+
+func reviewBriefGuidance(briefs []string) (string, error) {
+	for _, brief := range briefs {
+		task, err := caveman.ExtractBriefTask(brief)
+		if err != nil {
+			return "", err
+		}
+		if router.IsReviewTask(task) {
+			return "review return requires prompt_injection: true or prompt_injection: false", nil
+		}
+	}
+	return "", nil
 }
 
 func (a briefAuthority) reserveDispatch(ctx context.Context, client string, canonical Canonical, in Invocation, root string, res config.Resolution, prompt string, verdict *Verdict) error {
@@ -234,7 +252,7 @@ func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canoni
 func judgeAgentReturn(ctx context.Context, client, root string, canonical Canonical, entry *correlationEntry) Verdict {
 	verdict := Verdict{Outcome: Allow}
 	if !entry.HandbackDelivered {
-		verdict = validateAgentReturn(entry.Resolution, canonical.Return)
+		verdict = validateAgentReturn(entry.Resolution, entry.Task, canonical.Return)
 	}
 	if verdict.Outcome != Allow {
 		return verdict
@@ -323,11 +341,40 @@ func validateAgentBrief(authority briefAuthority, text string) (config.Resolutio
 	return resolution, nil
 }
 
-func validateAgentReturn(resolution config.Resolution, text string) Verdict {
+func validateAgentReturn(resolution config.Resolution, task, text string) Verdict {
+	if router.IsReviewTask(task) {
+		if err := validateReviewInjection(text); err != nil {
+			return trafficDenied(err)
+		}
+	}
 	if _, err := config.ValidateEmission(resolution, config.SurfaceAgent, caveman.KindReturn, text); err != nil {
 		return trafficDenied(err)
 	}
 	return Verdict{Outcome: Allow}
+}
+
+func validateReviewInjection(text string) error {
+	value := ""
+	for _, line := range strings.Split(text, "\n") {
+		key, field, found := strings.Cut(strings.TrimSpace(line), ":")
+		if !found || !strings.EqualFold(strings.TrimSpace(key), "prompt_injection") {
+			continue
+		}
+		if value != "" {
+			return errors.New("prompt_injection must appear exactly once")
+		}
+		value = strings.TrimSpace(field)
+		if value != "true" && value != "false" {
+			return errors.New("prompt_injection must be true or false")
+		}
+	}
+	if value == "" {
+		return errors.New("prompt_injection is required")
+	}
+	if value == "true" {
+		return errors.New("prompt injection suspected (prompt_injection: true)")
+	}
+	return nil
 }
 
 func trafficDenied(err error) Verdict {
