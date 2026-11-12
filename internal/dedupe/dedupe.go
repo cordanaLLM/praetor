@@ -56,6 +56,8 @@ type DuplicateGroup struct {
 
 // SprawlItem highlights ad-hoc utility implementations that should use centralized utils.
 type SprawlItem struct {
+	funcLine    int
+	pos         token.Pos
 	File        string `json:"file"`
 	Line        int    `json:"line"`
 	Pattern     string `json:"pattern"`
@@ -72,8 +74,11 @@ type DedupeReport struct {
 	SprawlItems           []SprawlItem     `json:"sprawl_items"`
 	StaleExceptions       []string         `json:"stale_exceptions,omitempty"`
 	NotCheckedExceptions  []string         `json:"not_checked_exceptions,omitempty"`
-	CleanlinessScore      float64          `json:"cleanliness_score"`
-	Passed                bool             `json:"passed"`
+	// FindingFunctions is the score's numerator: the distinct scanned functions that take part
+	// in a duplicate or sprawl finding (#241 asks for the raw counts beside the ratio).
+	FindingFunctions int     `json:"finding_functions"`
+	CleanlinessScore float64 `json:"cleanliness_score"`
+	Passed           bool    `json:"passed"`
 	// Applicable reports whether there was anything to scan. This detector reads Go sources
 	// only, so a repository with none is not clean -- it is unexamined, and the difference
 	// matters to every caller that reads the score.
@@ -259,6 +264,7 @@ func validateExceptionTarget(repoPath string, entry config.Exception) error {
 	return nil
 }
 
+// scanGoFile counts scanned functions and collects clone and sprawl candidates.
 func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, hashMap map[string][]FileLocation, locMap map[string]int, engineMode bool, adopterStarts *[]adopterGitStart, report *DedupeReport) error {
 	content, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
@@ -275,20 +281,21 @@ func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, 
 	}
 	report.TotalFilesScanned++
 
-	if engineMode {
-		checkUtilitySprawl(fset, node, relPath, report)
-	} else {
-		collectAdopterGitStarts(fset, node, relPath, adopterStarts)
+	if err := collectSprawlForFile(fset, node, relPath, engineMode, adopterStarts, report); err != nil {
+		return err
 	}
 
 	imports := fileImports(node)
 
 	for _, decl := range node.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil || len(fn.Body.List) < minCloneStatements {
+		if !ok || fn.Body == nil {
 			continue
 		}
 		report.TotalFuncsScanned++
+		if len(fn.Body.List) < minCloneStatements {
+			continue
+		}
 
 		hashKey, lines, err := cloneKey(fset, fn, imports)
 		if err != nil {
@@ -508,6 +515,42 @@ func checkUtilitySprawl(fset *token.FileSet, node *ast.File, relPath string, rep
 	})
 }
 
+// collectSprawlForFile collects the findings applicable to the repository mode.
+func collectSprawlForFile(fset *token.FileSet, node *ast.File, relPath string, engineMode bool, starts *[]adopterGitStart, report *DedupeReport) error {
+	if !engineMode {
+		collectAdopterGitStarts(fset, node, relPath, starts)
+		return nil
+	}
+	if len(node.Decls) > maxDeclsPerFile {
+		return fmt.Errorf("too many declarations in %s", relPath)
+	}
+	first := len(report.SprawlItems)
+	checkUtilitySprawl(fset, node, relPath, report)
+	items := report.SprawlItems[first:]
+	if len(items) > maxScoreFindings {
+		return fmt.Errorf("too many declarations or sprawl findings in %s", relPath)
+	}
+	assignSprawlFunctions(fset, node, relPath, items)
+	return nil
+}
+
+// assignSprawlFunctions maps findings in this file to their enclosing function declaration.
+func assignSprawlFunctions(fset *token.FileSet, node *ast.File, relPath string, items []SprawlItem) {
+	for i := 0; i < len(node.Decls) && i < maxDeclsPerFile; i++ {
+		fn, ok := node.Decls[i].(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		start := fset.Position(fn.Pos())
+		for j := 0; j < len(items) && j < maxScoreFindings; j++ {
+			item := &items[j]
+			if item.File == relPath && item.pos >= fn.Pos() && item.pos < fn.End() {
+				item.funcLine = start.Line
+			}
+		}
+	}
+}
+
 // managedAsset reports whether relPath is an asset of a managed asset family
 // (internal/managedasset): a file adoption writes into another repository, which has no
 // internal/util, so the audited helpers cannot be called from it. The Go API compatibility
@@ -595,6 +638,7 @@ func checkAdHocGit(call *ast.CallExpr, relPath string, line int, report *DedupeR
 	report.SprawlItems = append(report.SprawlItems, SprawlItem{
 		File:        relPath,
 		Line:        line,
+		pos:         call.Pos(),
 		Pattern:     form.pattern,
 		Replacement: gitSprawlReplacement,
 	})
@@ -646,6 +690,7 @@ func collectAdopterGitStarts(fset *token.FileSet, node *ast.File, relPath string
 	}
 }
 
+// collectDeclGitStarts records git calls and their enclosing function, if any.
 func collectDeclGitStarts(fset *token.FileSet, decl ast.Decl, relPath string, starts *[]adopterGitStart) {
 	switch d := decl.(type) {
 	case *ast.FuncDecl:
@@ -659,8 +704,7 @@ func collectDeclGitStarts(fset *token.FileSet, decl ast.Decl, relPath string, st
 		name := filepath.Base(relPath)
 		ast.Inspect(d, func(n ast.Node) bool {
 			if call, ok := n.(*ast.CallExpr); ok {
-				pos := fset.Position(call.Pos())
-				recordCallGitStart(fset, call, relPath, name, pos.Line, starts)
+				recordCallGitStart(fset, call, relPath, name, 0, starts)
 			}
 			return true
 		})
@@ -766,6 +810,7 @@ func reportAdopterSprawl(starts []adopterGitStart, helper adopterGitFunction, re
 		report.SprawlItems = append(report.SprawlItems, SprawlItem{
 			File:        s.file,
 			Line:        s.line,
+			funcLine:    s.funcLine,
 			Pattern:     s.pattern,
 			Replacement: replacement,
 		})
@@ -902,6 +947,40 @@ func judgeLocation(loc *FileLocation, mainRoot, hash string, exceptions []config
 	return live
 }
 
+// maxScoreFindings bounds the finding records inspected when scoring.
+const maxScoreFindings = 1000000
+
+// countFindingFunctions counts each file and declaration line once across all findings.
+func countFindingFunctions(report *DedupeReport) int {
+	type key struct {
+		file string
+		line int
+	}
+	seen := make(map[key]struct{})
+	if len(report.Duplicates) > maxScoreFindings || len(report.SprawlItems) > maxScoreFindings {
+		return report.TotalFuncsScanned
+	}
+	for i := 0; i < len(report.Duplicates) && i < maxScoreFindings; i++ {
+		locations := report.Duplicates[i].Locations
+		if len(locations) > maxScoreFindings {
+			return report.TotalFuncsScanned
+		}
+		for j := 0; j < len(locations) && j < maxScoreFindings; j++ {
+			loc := locations[j]
+			seen[key{loc.Path, loc.Line}] = struct{}{}
+		}
+	}
+	for i := 0; i < len(report.SprawlItems) && i < maxScoreFindings; i++ {
+		item := report.SprawlItems[i]
+		if item.funcLine > 0 {
+			seen[key{item.File, item.funcLine}] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
+// calculateScore deducts 100 times the number of participating functions divided by scanned functions;
+// the denominator is at least one and the score is bounded to 0..100.
 func calculateScore(report *DedupeReport) {
 	// A score over an empty set is not a result. This detector reads Go sources only, so on a
 	// TypeScript, Rust or Python repository it scanned nothing -- and reporting 100% and
@@ -917,7 +996,8 @@ func calculateScore(report *DedupeReport) {
 		report.Passed = false
 		return
 	}
-	deduction := float64(len(report.Duplicates)*15 + len(report.SprawlItems)*5)
+	report.FindingFunctions = countFindingFunctions(report)
+	deduction := 100 * float64(report.FindingFunctions) / float64(max(1, report.TotalFuncsScanned))
 	score := 100.0 - deduction
 	if score < 0.0 {
 		score = 0.0

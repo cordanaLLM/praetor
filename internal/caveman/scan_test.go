@@ -11,7 +11,7 @@ import (
 // the delimiter with whitespace ("```` `") does close it - the case the scanner's own
 // former copy read as content, leaving every later line classified as code.
 func TestScanDrivesTheSharedFenceTracker(t *testing.T) {
-	lines, s := scan("````md\n```\n## Quoted\n```` `\n## Live")
+	lines, s := scan("````md\n```\n## Quoted\n````\n## Live")
 	if s.fence.Open() {
 		t.Fatalf("the fence was left open: %q", s.fence.Marker())
 	}
@@ -26,6 +26,16 @@ func TestScanDrivesTheSharedFenceTracker(t *testing.T) {
 	}
 	if lines[0].lang != "md" || lines[3].lang != "md" {
 		t.Fatalf("the info string was lost: %q, %q", lines[0].lang, lines[3].lang)
+	}
+}
+
+// TestScanFenceCloserTakesNoTrailingText pins the CommonMark 0.31.2 closing-fence rule the
+// shared tracker follows (section 4.5): a run of the opener's character may be followed only by
+// spaces or tabs, so a run with text after it is content and the fence stays open.
+func TestScanFenceCloserTakesNoTrailingText(t *testing.T) {
+	_, s := scan("````md\n## Quoted\n```` `\n## Still code")
+	if !s.fence.Open() {
+		t.Fatal("a closing run followed by text closed the fence")
 	}
 }
 

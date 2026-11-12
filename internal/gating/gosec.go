@@ -237,10 +237,16 @@ func scanDiscoveredModules(ctx context.Context, repoDir string, files []string, 
 	return allFindings, true, nil
 }
 
+// scanModuleGosec scans a module for baseline findings.
 func scanModuleGosec(ctx context.Context, repoDir, modDir, confPath string) ([]baseline.Infraction, error) {
+	return scanModuleGosecWithRunner(ctx, repoDir, modDir, confPath, util.RunCommand)
+}
+
+// scanModuleGosecWithRunner executes the baseline scan with the supplied command runner.
+func scanModuleGosecWithRunner(ctx context.Context, repoDir, modDir, confPath string, runner commandRunner) ([]baseline.Infraction, error) {
 	scanCtx, cancel := context.WithTimeout(ctx, gosecScanTimeout)
 	defer cancel()
-	run := retryGoCacheMiss(util.RunCommand, os.Stderr)
+	run := retryGoCacheMiss(runner, os.Stderr)
 	listing, err := run(scanCtx, modDir, "go", "list", "-f", "{{.Dir}}", "./...")
 	if err != nil {
 		return nil, fmt.Errorf("list Go packages in %s: %w", modDir, err)
@@ -256,10 +262,15 @@ func scanModuleGosec(ctx context.Context, repoDir, modDir, confPath string) ([]b
 	if err != nil {
 		confRel = confPath
 	}
-	args := append([]string{"-fmt=json", "-conf", confRel}, packages...)
-	out, err := util.RunCommand(scanCtx, modDir, "gosec", args...)
+	args := append(gosecBaseArgs(confRel), packages...)
+	out, err := runner(scanCtx, modDir, "gosec", args...)
 	if err != nil && len(out) == 0 {
 		return nil, fmt.Errorf("run gosec in %s: %w", modDir, err)
 	}
 	return parseGosecOutput(repoDir, modDir, out)
+}
+
+// gosecBaseArgs supplies the same scanner configuration for both scan paths.
+func gosecBaseArgs(conf string) []string {
+	return []string{"-fmt=json", "-conf", conf}
 }

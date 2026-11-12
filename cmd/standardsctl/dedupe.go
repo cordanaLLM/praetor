@@ -146,7 +146,8 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 		fmt.Printf("  Generated Skipped: %d\n", report.SkippedGeneratedFiles)
 	}
 	fmt.Printf("  Functions Scanned: %d\n", report.TotalFuncsScanned)
-	fmt.Printf("  Cleanliness Score: %.1f%%\n", report.CleanlinessScore)
+	fmt.Printf("  Cleanliness Score: %.1f%% (%d of %d scanned functions in findings)\n",
+		report.CleanlinessScore, report.FindingFunctions, report.TotalFuncsScanned)
 	if report.Partial {
 		// A verdict over the Go files of a polyglot repository used to read as a clean bill
 		// for all of it (#161); the verdict now says what it covers.

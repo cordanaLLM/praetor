@@ -57,12 +57,7 @@ func (f *MarkdownFence) Marker() string { return f.marker }
 // or a fence delimiter. Callers pass an already whitespace-trimmed line, exactly once per
 // line, in document order, and skip every line for which it returns true.
 //
-// A line closes the fence when it opens with the delimiter run that opened it and carries
-// nothing further but that same delimiter character, spaces and tabs. That admits one line
-// CommonMark does not, the interleaved close "``` ```", and it is deliberate: the ledger
-// parsers were merged onto the tolerant rule the OPEN.md and BUGS.md scanners already used,
-// so that a hand-edited ledger keeps closing its fences exactly as it did before. The rule
-// is pinned by TestMarkdownFenceBoundaryRunsAndUnterminatedFences.
+// A closing delimiter has at least the opening run length and no trailing info string.
 //
 // A line opens a fence when it starts with three or more backticks or tildes. CommonMark
 // forbids a backtick inside the info string of a backtick fence, so "```make``` passes"
@@ -70,7 +65,7 @@ func (f *MarkdownFence) Marker() string { return f.marker }
 // backticks. Pinned by TestMarkdownFenceBacktickInfoStringIsAnInlineSpan.
 func (f *MarkdownFence) Inside(trimmed string) bool {
 	if f.marker != "" {
-		if strings.HasPrefix(trimmed, f.marker) && strings.Trim(trimmed, f.marker[:1]+" \t") == "" {
+		if strings.HasPrefix(trimmed, f.marker) && strings.TrimSpace(strings.TrimLeft(trimmed, f.marker[:1])) == "" {
 			f.marker = ""
 		}
 		return true

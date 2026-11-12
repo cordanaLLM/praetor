@@ -119,8 +119,9 @@ func assertExceptionFindingCounts(t *testing.T, report *dedupe.DedupeReport, tc 
 	if len(report.Duplicates) != wantNative || len(report.ForeignDuplicates) != wantForeign {
 		t.Errorf("unexcused native/foreign = %d/%d, want %d/%d", len(report.Duplicates), len(report.ForeignDuplicates), wantNative, wantForeign)
 	}
-	if report.CleanlinessScore != float64(100-15*wantNative) {
-		t.Errorf("score = %v, want %d", report.CleanlinessScore, 100-15*wantNative)
+	wantScore := 100 - 100*float64(wantNative*2)/float64(max(1, report.TotalFuncsScanned))
+	if report.CleanlinessScore != wantScore {
+		t.Errorf("score = %v, want %v", report.CleanlinessScore, wantScore)
 	}
 }
 

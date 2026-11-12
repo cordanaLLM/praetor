@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 var (
@@ -24,8 +25,11 @@ var (
 	typeDeclRegex = regexp.MustCompile(`(?m)^\s*(type\s+[A-Z][a-zA-Z0-9_]*\s+(?:struct|interface|func|[a-zA-Z0-9_]+))`)
 )
 
-// truncationNotice closes a sheet cut to its token budget, so a reader knows content is
-// missing. Its words count against the budget like any other.
+// maxBudgetLines and maxQuoteDepth bound fence and quotation inspection.
+const maxBudgetLines = 65536
+const maxQuoteDepth = 64
+
+// truncationNotice closes a sheet cut to its token budget.
 const truncationNotice = "*(Truncated to token budget)*"
 
 // quotedProvenance heads the harvested part of every sheet. The package's documentation is
@@ -86,7 +90,8 @@ var minTokenBudget = int(math.Ceil(float64(len(strings.Fields(truncationNotice))
 // fitTokenBudget returns rawMD cut to budget tokens and the token estimate of the result.
 //
 // A sheet within budget is returned whole. Otherwise whole lines are kept while they fit,
-// the first line that does not is cut at a word boundary, and truncationNotice is appended.
+// the first line that does not is dropped, and truncationNotice is appended.
+// If the cut falls inside a fenced block, the entire block is omitted.
 // Cutting by line rather than joining every word keeps each kept line's markdown, so a
 // quoted line stays quoted. The notice's words are reserved before any content is kept, so
 // the estimate of the result, which is what the doc reports, never exceeds the budget.
@@ -100,22 +105,63 @@ func fitTokenBudget(rawMD string, budget int) (string, int) {
 	}
 	allowance := int(float64(budget)/caveman.TokensPerWord) - len(strings.Fields(truncationNotice))
 	lines := strings.Split(rawMD, "\n")
+	if len(lines) > maxBudgetLines {
+		return truncationNotice + "\n", caveman.EstimateTokens(truncationNotice)
+	}
 	kept := make([]string, 0, len(lines))
-	for i := 0; i < len(lines) && allowance > 0; i++ {
+	for i := 0; i < len(lines) && i < maxBudgetLines && allowance > 0; i++ {
 		words := strings.Fields(lines[i])
 		if len(words) > allowance {
-			kept = append(kept, strings.Join(words[:allowance], " "))
 			break
 		}
 		kept = append(kept, lines[i])
 		allowance -= len(words)
 	}
-	body := strings.TrimRight(strings.Join(kept, "\n"), "\n")
+	body := strings.TrimRight(strings.Join(trimUnclosedFence(kept), "\n"), "\n")
 	truncated := truncationNotice + "\n"
 	if body != "" {
 		truncated = body + "\n\n" + truncated
 	}
 	return truncated, caveman.EstimateTokens(truncated)
+}
+
+// trimUnclosedFence removes the last block if the retained lines end inside it.
+func trimUnclosedFence(lines []string) []string {
+	if len(lines) > maxBudgetLines {
+		return nil
+	}
+	var fence util.MarkdownFence
+	start, depth := 0, 0
+	for i := 0; i < len(lines) && i < maxBudgetLines; i++ {
+		line, quoteDepth, ok := stripQuotePrefixes(lines[i])
+		if !ok {
+			return nil
+		}
+		if fence.Open() && quoteDepth < depth {
+			fence = util.MarkdownFence{}
+		}
+		wasOpen := fence.Open()
+		fence.Inside(line)
+		if !wasOpen && fence.Open() {
+			start, depth = i, quoteDepth
+		}
+	}
+	if fence.Open() {
+		return lines[:start]
+	}
+	return lines
+}
+
+// stripQuotePrefixes reveals nested quoted fence delimiters within a bounded depth.
+func stripQuotePrefixes(line string) (string, int, bool) {
+	line = strings.TrimSpace(line)
+	for i := 0; i < maxQuoteDepth; i++ {
+		if !strings.HasPrefix(line, ">") {
+			return line, i, true
+		}
+		line = strings.TrimSpace(line[1:])
+	}
+	return line, maxQuoteDepth, !strings.HasPrefix(line, ">")
 }
 
 func stripBoilerplate(text string) string {

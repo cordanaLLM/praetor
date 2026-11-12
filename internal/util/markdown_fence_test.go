@@ -45,29 +45,10 @@ func TestMarkdownFenceNegativeIgnoresNonFenceLines(t *testing.T) {
 }
 
 func TestMarkdownFenceBoundaryRunsAndUnterminatedFences(t *testing.T) {
-	// A shorter run never closes a longer one. Callers hand the tracker an already
-	// trimmed line, so the only whitespace a closing delimiter can still carry is
-	// interior whitespace: "```` `" is the line that separates the tolerant close the
-	// ledger parsers use from the stricter one, and deleting " \t" from the cutset in
-	// Inside has to fail here.
-	live, unterminated := scanFence("````md\n```\nstill fenced\n```` `\nafter")
-	if unterminated {
-		t.Fatal("an interleaved closing delimiter did not close the fence")
-	}
-	if len(live) != 1 || live[0] != "after" {
-		t.Fatalf("nested run handling is wrong: %q", live)
-	}
-
-	// The same tolerance on a bare run, on a tab rather than a space, and on tildes.
-	for _, document := range []string{
-		"```\n- [ ] example\n``` ```\nafter",
-		"```\n- [ ] example\n```\t```\nafter",
-		"~~~\n- [ ] example\n~~~ ~~~\nafter",
-	} {
-		live, unterminated := scanFence(document)
-		if unterminated || len(live) != 1 || live[0] != "after" {
-			t.Fatalf("%q did not close its fence: %q, open=%v", document, live, unterminated)
-		}
+	// Short and interleaved runs remain content until a full closing delimiter.
+	live, unterminated := scanFence("````md\n```\nstill fenced\n```` `\n````\nafter")
+	if unterminated || len(live) != 1 || live[0] != "after" {
+		t.Fatalf("nested run handling is wrong: %q open=%v", live, unterminated)
 	}
 
 	// A delimiter run followed by anything else is content, not a close: the fence
@@ -110,9 +91,8 @@ func TestMarkdownFenceMarkerReportsTheOpenDelimiter(t *testing.T) {
 	}
 }
 
-// TestFindMarkedBlockTolerantCloseInsideTheCompiledContext carries the tolerant close
-// through markerLines, the AGENTS.md compile-context path. A marker quoted inside the
-// fence stays quoted, and the real marker after the interleaved close is the one found.
+// TestFindMarkedBlockTolerantCloseInsideTheCompiledContext checks that an interleaved
+// delimiter remains inside the fence until a valid close.
 func TestFindMarkedBlockTolerantCloseInsideTheCompiledContext(t *testing.T) {
 	document := strings.Join([]string{
 		"# Canonical",
@@ -120,12 +100,13 @@ func TestFindMarkedBlockTolerantCloseInsideTheCompiledContext(t *testing.T) {
 		"<!-- praetor:start -->",
 		"quoted example",
 		"``` `",
+		"```",
 		"<!-- praetor:start -->",
 		"body",
 		"<!-- praetor:end -->",
 	}, "\n")
 	first, last, err := util.FindMarkedBlock(document, "<!-- praetor:start -->", "<!-- praetor:end -->")
-	if err != nil || first != 5 || last != 7 {
+	if err != nil || first != 6 || last != 8 {
 		t.Fatalf("marked block after an interleaved close: %d..%d, %v", first, last, err)
 	}
 }
