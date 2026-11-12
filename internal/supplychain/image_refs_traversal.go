@@ -79,6 +79,7 @@ func RepositoryFiles(ctx context.Context, root string, keep func(string) bool) (
 	return writer.files, nil
 }
 
+// formatScopeStreamError names why the image pin scope listing failed: a context error first, else git's stderr preview, else the run error.
 func formatScopeStreamError(root string, callerCtx, scanCtx context.Context, runErr error, stderr []byte) error {
 	if ctxErr := cmp.Or(callerCtx.Err(), scanCtx.Err()); ctxErr != nil {
 		return fmt.Errorf("enumerate image pin scope in %s: %w", root, ctxErr)
@@ -101,6 +102,7 @@ type scopeListingStream struct {
 	streamErr   error
 }
 
+// Write splits a chunk of the NUL-delimited scope listing into paths and handles each complete one.
 func (s *scopeListingStream) Write(p []byte) (int, error) {
 	if s.streamErr != nil {
 		return 0, s.streamErr
@@ -129,10 +131,12 @@ func (s *scopeListingStream) Write(p []byte) (int, error) {
 	return total, nil
 }
 
+// activeContextErr returns the caller's or the scan's context error, if either is set.
 func (s *scopeListingStream) activeContextErr() error {
 	return cmp.Or(s.callerCtx.Err(), s.scanCtx.Err())
 }
 
+// abortWith records the first stream error and stops the git process.
 func (s *scopeListingStream) abortWith(err error) error {
 	if s.streamErr == nil {
 		s.streamErr = err
@@ -141,6 +145,7 @@ func (s *scopeListingStream) abortWith(err error) error {
 	return s.streamErr
 }
 
+// appendTail keeps an incomplete trailing path for the next chunk, within maxScopeBytes.
 func (s *scopeListingStream) appendTail(rem []byte) error {
 	if s.keptBytes+s.tail.Len()+len(rem) > maxScopeBytes {
 		return s.abortWith(fmt.Errorf("image pin scope passed maxScopeBytes (%d bytes)", maxScopeBytes))
@@ -152,6 +157,7 @@ func (s *scopeListingStream) appendTail(rem []byte) error {
 	return nil
 }
 
+// handleSegment checks the context and records one complete path from the listing.
 func (s *scopeListingStream) handleSegment(seg []byte) error {
 	if err := s.activeContextErr(); err != nil {
 		return s.abortWith(fmt.Errorf("enumerate image pin scope: %w", err))
@@ -173,6 +179,7 @@ func (s *scopeListingStream) handleSegment(seg []byte) error {
 	return s.recordPath(rel)
 }
 
+// recordPath counts one entry against maxScopeListingEntries and keeps it when keep accepts it, up to maxScannedFiles.
 func (s *scopeListingStream) recordPath(rel string) error {
 	s.seenEntries++
 	if s.seenEntries >= maxScopeListingEntries {
@@ -192,6 +199,7 @@ func (s *scopeListingStream) recordPath(rel string) error {
 	return nil
 }
 
+// checkPostKeepContext stops the stream when the context ended while keep ran.
 func (s *scopeListingStream) checkPostKeepContext() error {
 	if err := s.activeContextErr(); err != nil {
 		return s.abortWith(fmt.Errorf("enumerate image pin scope: %w", err))
@@ -199,6 +207,7 @@ func (s *scopeListingStream) checkPostKeepContext() error {
 	return nil
 }
 
+// finish checks the context and handles a final path git did not terminate with NUL.
 func (s *scopeListingStream) finish() error {
 	if err := s.activeContextErr(); err != nil {
 		return s.abortWith(fmt.Errorf("enumerate image pin scope: %w", err))

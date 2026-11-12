@@ -487,6 +487,7 @@ func TestReadScanDirectory_Confinement_3D(t *testing.T) {
 	})
 }
 
+// setMaxScopeBytesForTest lowers the scope byte bound for one test and restores it afterwards.
 func setMaxScopeBytesForTest(t *testing.T, limit int) {
 	t.Helper()
 	orig := maxScopeBytes
@@ -494,6 +495,7 @@ func setMaxScopeBytesForTest(t *testing.T, limit int) {
 	t.Cleanup(func() { maxScopeBytes = orig })
 }
 
+// setMaxScopeListingEntriesForTest lowers the scope listing entry bound for one test and restores it afterwards.
 func setMaxScopeListingEntriesForTest(t *testing.T, limit int) {
 	t.Helper()
 	orig := maxScopeListingEntries
@@ -522,6 +524,7 @@ func TestRepositoryFiles_LargeListingPassesCandidateCap(t *testing.T) {
 	assertLargeListingCandidateOverflow(t, root)
 }
 
+// createLargeListingPinFixture builds a repository with one pinned image reference among many files no scan reads.
 func createLargeListingPinFixture(t *testing.T) string {
 	t.Helper()
 	pinned := "golang:1.27-alpine@sha256:" + testPinnedDigest
@@ -537,6 +540,7 @@ func createLargeListingPinFixture(t *testing.T) string {
 	return root
 }
 
+// assertLargeListingCandidateOverflow checks that candidates past the scan cap still fail with the cap error.
 func assertLargeListingCandidateOverflow(t *testing.T, root string) {
 	t.Helper()
 	for _, extra := range []string{"a.yaml", "b.yaml"} {

@@ -12,6 +12,7 @@ import (
 	"testing"
 )
 
+// writeForgeTestFile writes one fixture file under root, creating its directories.
 func writeForgeTestFile(t *testing.T, root, rel, content string) {
 	t.Helper()
 	full := filepath.Join(root, filepath.FromSlash(rel))
@@ -42,6 +43,7 @@ func TestIsTestFileContext_RustAndConventions_3D(t *testing.T) {
 	})
 }
 
+// assertPositiveTestFileConventions checks that Go, Rust and spec test files are recognised under a live context.
 func assertPositiveTestFileConventions(t *testing.T, root string) {
 	t.Helper()
 	for _, rel := range []string{"pkg/a_test.go", "tests/integration.rs", "src/unit_test.rs", "src/inline.rs", "app.spec.ts"} {
@@ -52,6 +54,7 @@ func assertPositiveTestFileConventions(t *testing.T, root string) {
 	}
 }
 
+// assertBoundaryNonTestFiles checks that a plain Rust source, a missing file and a README are not test files.
 func assertBoundaryNonTestFiles(t *testing.T, root string) {
 	t.Helper()
 	for _, rel := range []string{"src/plain.rs", "src/missing.rs", "README.md"} {
@@ -62,6 +65,7 @@ func assertBoundaryNonTestFiles(t *testing.T, root string) {
 	}
 }
 
+// assertNegativeContextTestFileChecks checks that a nil or cancelled context stops the Rust check with an error.
 func assertNegativeContextTestFileChecks(t *testing.T, root string) {
 	t.Helper()
 	if ok, err := IsTestFileContext(nil, root, "src/inline.rs"); err == nil || ok { //nolint:staticcheck // deliberate nil context negative test

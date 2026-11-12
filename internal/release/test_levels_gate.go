@@ -860,6 +860,7 @@ func listRepositoryFiles(ctx context.Context, repoPath string, keep func(string)
 	return streamGitTrackedFiles(ctx, repoPath, keep)
 }
 
+// streamGitTrackedFiles streams NUL-delimited git ls-files output under the probe environment and keeps the paths keep accepts, bounded by the candidate cap and the listing entry bound.
 func streamGitTrackedFiles(ctx context.Context, repoPath string, keep func(string) (bool, error)) ([]string, error) {
 	envCtx, err := util.WithGitProbeEnvironment(ctx)
 	if err != nil {
@@ -894,6 +895,7 @@ func streamGitTrackedFiles(ctx context.Context, repoPath string, keep func(strin
 	return stream.candidates, nil
 }
 
+// formatReleaseGitListError names why the tracked-file listing failed: a context error first, else git's stderr preview, else the run error.
 func formatReleaseGitListError(callerCtx, probeCtx context.Context, runErr error, stderr []byte) error {
 	if ctxErr := cmp.Or(callerCtx.Err(), probeCtx.Err()); ctxErr != nil {
 		return fmt.Errorf("list tracked files: %w", ctxErr)
@@ -917,6 +919,7 @@ type gitTrackedCandidateStream struct {
 	err             error
 }
 
+// Write splits a chunk of the NUL-delimited listing into paths and applies keep to each complete one.
 func (g *gitTrackedCandidateStream) Write(chunk []byte) (int, error) {
 	if g.err != nil {
 		return 0, g.err
@@ -945,6 +948,7 @@ func (g *gitTrackedCandidateStream) Write(chunk []byte) (int, error) {
 	return written, nil
 }
 
+// fail records the first stream error and stops the git process.
 func (g *gitTrackedCandidateStream) fail(cause error) error {
 	if g.err == nil {
 		g.err = cause
@@ -953,6 +957,7 @@ func (g *gitTrackedCandidateStream) fail(cause error) error {
 	return g.err
 }
 
+// bufferPartial keeps an incomplete trailing path for the next chunk, within maxRepoListingBufferBytes.
 func (g *gitTrackedCandidateStream) bufferPartial(part []byte) error {
 	if g.retainedBytes+g.partial.Len()+len(part) > maxRepoListingBufferBytes {
 		return g.fail(fmt.Errorf("test level git listing passed maxRepoListingBufferBytes (%d bytes)", maxRepoListingBufferBytes))
@@ -963,6 +968,7 @@ func (g *gitTrackedCandidateStream) bufferPartial(part []byte) error {
 	return nil
 }
 
+// consumeEntry checks the context and hands one complete NUL-delimited path to acceptTrackedPath.
 func (g *gitTrackedCandidateStream) consumeEntry(part []byte) error {
 	if ctxErr := cmp.Or(g.callerCtx.Err(), g.probeCtx.Err()); ctxErr != nil {
 		return g.fail(fmt.Errorf("list tracked files: %w", ctxErr))
@@ -984,6 +990,7 @@ func (g *gitTrackedCandidateStream) consumeEntry(part []byte) error {
 	return g.acceptTrackedPath(filepath.ToSlash(raw))
 }
 
+// acceptTrackedPath counts one streamed entry against maxRepoListingEntries and keeps it when keep accepts an existing regular file.
 func (g *gitTrackedCandidateStream) acceptTrackedPath(rel string) error {
 	g.streamedEntries++
 	if g.streamedEntries >= maxRepoListingEntries {
@@ -1012,6 +1019,7 @@ func (g *gitTrackedCandidateStream) acceptTrackedPath(rel string) error {
 	return nil
 }
 
+// finish checks the context and handles a final path git did not terminate with NUL.
 func (g *gitTrackedCandidateStream) finish() error {
 	if ctxErr := cmp.Or(g.callerCtx.Err(), g.probeCtx.Err()); ctxErr != nil {
 		return g.fail(fmt.Errorf("list tracked files: %w", ctxErr))

@@ -861,6 +861,7 @@ func TestAuditTestLevels_Negative_ActionsReaderErrorNamesReason(t *testing.T) {
 	}
 }
 
+// setMaxRepoListingBufferBytesForTest lowers the listing buffer bound for one test and restores it afterwards.
 func setMaxRepoListingBufferBytesForTest(t *testing.T, limit int) {
 	t.Helper()
 	orig := maxRepoListingBufferBytes
@@ -868,6 +869,7 @@ func setMaxRepoListingBufferBytesForTest(t *testing.T, limit int) {
 	t.Cleanup(func() { maxRepoListingBufferBytes = orig })
 }
 
+// setMaxRepoListingEntriesForTest lowers the listing entry bound for one test and restores it afterwards.
 func setMaxRepoListingEntriesForTest(t *testing.T, limit int) {
 	t.Helper()
 	orig := maxRepoListingEntries
@@ -875,6 +877,7 @@ func setMaxRepoListingEntriesForTest(t *testing.T, limit int) {
 	t.Cleanup(func() { maxRepoListingEntries = orig })
 }
 
+// writeNonCandidateTrackedDocs tracks count documentation files no test level matches, to grow the listing without candidates.
 func writeNonCandidateTrackedDocs(t *testing.T, repo string, count int) {
 	t.Helper()
 	for i := 0; i < count && i < 256; i++ {
@@ -979,6 +982,7 @@ func TestAuditTestLevels_CancelledContextStopsWalkStreamAndRustCheck(t *testing.
 	})
 }
 
+// assertReleaseWalkStopsOnCancel checks that the non-git candidate walk stops with the context error.
 func assertReleaseWalkStopsOnCancel(t *testing.T) {
 	t.Helper()
 	repo := setupGoLibraryTempRepo(t)
@@ -996,6 +1000,7 @@ func assertReleaseWalkStopsOnCancel(t *testing.T) {
 	}
 }
 
+// assertReleaseStreamStopsOnCancel checks that the git listing stream stops before reading further paths once the context is cancelled.
 func assertReleaseStreamStopsOnCancel(t *testing.T) {
 	t.Helper()
 	repo := setupGoLibraryTempRepo(t)
@@ -1014,6 +1019,7 @@ func assertReleaseStreamStopsOnCancel(t *testing.T) {
 	}
 }
 
+// assertReleaseRustCheckStopsOnCancel checks that the Rust test-file check honours a cancelled context.
 func assertReleaseRustCheckStopsOnCancel(t *testing.T) {
 	t.Helper()
 	repo := setupGoLibraryTempRepo(t)

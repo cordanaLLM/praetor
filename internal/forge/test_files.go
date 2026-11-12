@@ -41,6 +41,7 @@ func IsTestFile(root, rel string) bool {
 	return err == nil && ok
 }
 
+// classifyTestFile applies the test-file conventions to rel, calling rustCheck only for a Rust source outside a tests directory.
 func classifyTestFile(root, rel string, rustCheck func(string, string) (bool, error)) (bool, error) {
 	slash := path.Clean(filepath.ToSlash(rel))
 	base := strings.ToLower(path.Base(slash))
@@ -53,10 +54,12 @@ func classifyTestFile(root, rel string, rustCheck func(string, string) (bool, er
 	return isGoOrPythonTest(base) || isJSTSTest(base) || isCompiledTest(base) || isScriptTest(base), nil
 }
 
+// isRustTestDir reports whether a slash path sits in a top-level or nested tests directory.
 func isRustTestDir(slash string) bool {
 	return strings.HasPrefix(slash, "tests/") || strings.Contains(slash, "/tests/")
 }
 
+// contextReadError returns a context cancellation or deadline unchanged and wraps any other read error with the file it came from.
 func contextReadError(ctx context.Context, err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
