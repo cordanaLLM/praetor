@@ -4,7 +4,6 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -144,33 +143,37 @@ func removeSessionDir(dir string) (resultErr error) {
 }
 
 const sessionAttempts = 16
-const sessionInputLimit = 1 << 20
 
 // runSession launches a session with bounded retries so start-tick collisions cannot reuse an identity.
 func runSession(ctx context.Context, inv Invocation, sh string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	input, err := sessionInput(stdin)
-	if err != nil {
-		return err
-	}
-	return retrySession(ctx, func() (bool, error) { return runSessionAttempt(ctx, inv, sh, command, input(), stdout, stderr) }, admission.SleepContext)
+	return retrySession(ctx, func() (bool, error) { return runSessionAttempt(ctx, inv, sh, command, stdin, stdout, stderr) }, admission.SleepContext)
 }
 
-// sessionInput preserves file descriptors and makes bounded non-file input replayable across retries.
-func sessionInput(stdin io.Reader) (func() io.Reader, error) {
-	if stdin == nil {
-		return func() io.Reader { return nil }, nil
+type sessionGatedReader struct {
+	ctx     context.Context
+	release <-chan struct{}
+	input   io.Reader
+}
+
+// Read waits for the successful attempt's release before consuming streaming input.
+func (r *sessionGatedReader) Read(p []byte) (int, error) {
+	select {
+	case <-r.ctx.Done():
+		return 0, r.ctx.Err()
+	case <-r.release:
+		return r.input.Read(p)
 	}
-	if _, ok := stdin.(*os.File); ok {
-		return func() io.Reader { return stdin }, nil
+}
+
+// sessionInput gates non-file input while leaving file descriptors unchanged.
+func sessionInput(ctx context.Context, input io.Reader, release <-chan struct{}) io.Reader {
+	if input == nil {
+		return nil
 	}
-	data, err := io.ReadAll(io.LimitReader(stdin, sessionInputLimit+1))
-	if err != nil {
-		return nil, fmt.Errorf("read session input: %w", err)
+	if _, ok := input.(*os.File); ok {
+		return input
 	}
-	if len(data) > sessionInputLimit {
-		return nil, errors.New("session input exceeds limit")
-	}
-	return func() io.Reader { return bytes.NewReader(data) }, nil
+	return &sessionGatedReader{ctx: ctx, release: release, input: input}
 }
 
 // retrySession retries collisions up to sixteen attempts with jitter and stops on cancellation or other errors.
@@ -214,7 +217,8 @@ func runSessionAttempt(ctx context.Context, inv Invocation, sh string, command [
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	started := time.Now()
-	done := startSessionChild(childCtx, wrapped, stdin, stdout, stderr)
+	released := make(chan struct{})
+	done := startSessionChild(childCtx, wrapped, sessionInput(childCtx, stdin, released), stdout, stderr)
 	handshake, stop := context.WithDeadline(childCtx, started.Add(sessionHandshakeTimeout))
 	defer stop()
 	tick, collision, err := sessionHandshake(handshake, files, container, done, cancel)
@@ -227,7 +231,7 @@ func runSessionAttempt(ctx context.Context, inv Invocation, sh string, command [
 		_, err := updateSessionRegistry(cleanup, files.registry, tick, os.Getpid(), true)
 		resultErr = errors.Join(resultErr, err)
 	}()
-	return false, releaseSessionChild(files.block, done, cancel)
+	return false, releaseSessionChild(files.block, done, cancel, released)
 }
 
 // startSessionChild launches the wrapped sandbox and reports its exit through a buffered channel.
@@ -256,12 +260,13 @@ func sessionHandshake(ctx context.Context, files *sessionFiles, container bool, 
 }
 
 // releaseSessionChild releases the blocked sandbox and collects its exit status.
-func releaseSessionChild(block *os.File, done chan error, cancel context.CancelFunc) error {
+func releaseSessionChild(block *os.File, done chan error, cancel context.CancelFunc, released chan struct{}) error {
 	if _, err := block.Write([]byte{1}); err != nil {
 		cancel()
 		childErr := <-done
 		return errors.Join(fmt.Errorf("release session sandbox: %w", err), childErr)
 	}
+	close(released)
 	return <-done
 }
 

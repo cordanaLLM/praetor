@@ -245,7 +245,6 @@ func TestSessionRetryReplaysInput(t *testing.T) {
 	script := fmt.Sprintf(`#!/bin/sh
 umask 077
 if [ ! -f %q ]; then
-  cat >/dev/null
   : > %q
   tick=$(awk '{print $22}' /proc/$$/stat)
   printf '{"%%s":{"owner":%%s,"owner_start_tick":%%s,"released":false}}' "$tick" "$$" "$tick" > %q
@@ -267,11 +266,8 @@ cat
 	}
 }
 
-// TestSessionInputBoundsAndFiles verifies the input limit and preserves file descriptors.
-func TestSessionInputBoundsAndFiles(t *testing.T) {
-	if _, err := sessionInput(strings.NewReader(strings.Repeat("x", sessionInputLimit+1))); err == nil || !strings.Contains(err.Error(), "session input exceeds limit") {
-		t.Fatalf("oversized input: %v", err)
-	}
+// TestSessionInputFiles preserves file descriptors.
+func TestSessionInputFiles(t *testing.T) {
 	file, err := os.CreateTemp(t.TempDir(), "input")
 	if err != nil {
 		t.Fatal(err)
@@ -281,9 +277,8 @@ func TestSessionInputBoundsAndFiles(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	input, err := sessionInput(file)
-	if err != nil || input() != file || input() != file {
-		t.Fatalf("file input was replaced: %v", err)
+	if sessionInput(t.Context(), file, make(chan struct{})) != file {
+		t.Fatal("file input was replaced")
 	}
 }
 
@@ -300,7 +295,7 @@ func TestSessionReleaseError(t *testing.T) {
 	done := make(chan error, 1)
 	done <- childErr
 	cancelled := false
-	err = releaseSessionChild(file, done, func() { cancelled = true })
+	err = releaseSessionChild(file, done, func() { cancelled = true }, make(chan struct{}))
 	if !cancelled || !errors.Is(err, childErr) || !strings.Contains(err.Error(), "release session sandbox") {
 		t.Fatalf("cancelled=%v error=%v", cancelled, err)
 	}
@@ -490,5 +485,132 @@ func TestSessionLiveOwnerRetained(t *testing.T) {
 	ok, err := reserveSessionTick(t.Context(), path, 42, owner)
 	if err != nil || ok {
 		t.Fatalf("live owner not retained: %v %v", ok, err)
+	}
+}
+
+// TestSessionRegistryWriteLimit preserves the previous registry when the encoded limit is exceeded.
+func TestSessionRegistryWriteLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry")
+	entry := sessionReservation{Owner: 1}
+	prefix := `{"":` + `{"owner":1,"owner_start_tick":0,"released":false}}`
+	key := strings.Repeat("1", 65536-len(prefix))
+	exact := map[string]sessionReservation{key: entry}
+	if err := writeSessionRegistry(path, exact); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSessionRegistry(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSessionRegistry(path, map[string]sessionReservation{key + "1": entry}); err == nil {
+		t.Fatal("oversized registry accepted")
+	}
+	got, err := readSessionRegistry(path)
+	if err != nil || len(got) != 1 || got[key] != entry {
+		t.Fatalf("previous registry lost: %v", err)
+	}
+}
+
+// TestSessionStreamingInput starts the child before supplying input and keeps the pipe open until then.
+func TestSessionStreamingInput(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	fake := filepath.Join(dir, "sandbox")
+	script := fmt.Sprintf(`#!/bin/sh
+: > %q
+printf '{"child-pid":%%s}\n' "$$" >&3
+dd bs=1 count=1 <&4 >/dev/null 2>/dev/null || exit 1
+cat
+`, filepath.Join(dir, "started"))
+	// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fake sandbox requires owner execution
+	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { closeSessionTestPipe(t, reader, writer) })
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	var out strings.Builder
+	go func() {
+		done <- runSession(ctx, Invocation{Path: fake, Args: []string{"--", "/test"}}, "/bin/sh", []string{"/test"}, reader, &out, io.Discard)
+	}()
+	for i := 0; i < 50; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "started")); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "started")); err != nil {
+		cancel()
+		if err := reader.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := <-done; err == nil {
+			t.Error("expected cancellation")
+		}
+		t.Fatal("child did not start before input")
+	}
+	if _, err := writer.Write([]byte("stream")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil || out.String() != "stream" {
+		t.Fatalf("output=%q error=%v", out.String(), err)
+	}
+}
+
+// TestSessionRegistryWriteDeadline preserves the old registry after a stalled replacement expires.
+func TestSessionRegistryWriteDeadline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry")
+	old := map[string]sessionReservation{"1": {Owner: 1}}
+	if err := writeSessionRegistry(path, old); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	entered, unblock, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- writeSessionRegistryWithContext(ctx, path, map[string]sessionReservation{"2": {Owner: 2}}, func() { close(entered); <-unblock })
+	}()
+	<-entered
+	cancel()
+	close(unblock)
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("write error: %v", err)
+	}
+	got, err := readSessionRegistry(path)
+	if err != nil || len(got) != 1 || got["1"] != old["1"] {
+		t.Fatalf("previous registry lost: %v %v", got, err)
+	}
+}
+
+// closeSessionTestPipe closes both ends of the streaming fixture.
+func closeSessionTestPipe(t *testing.T, reader *io.PipeReader, writer *io.PipeWriter) {
+	t.Helper()
+	if err := reader.Close(); err != nil {
+		t.Error(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Error(err)
+	}
+}
+
+// TestSessionInputWaitsForRelease checks that a cancelled attempt never consumes its input.
+func TestSessionInputWaitsForRelease(t *testing.T) {
+	input := strings.NewReader("data")
+	ctx, cancel := context.WithCancel(t.Context())
+	release := make(chan struct{})
+	gated := sessionInput(ctx, input, release)
+	done := make(chan error, 1)
+	go func() { _, err := gated.Read(make([]byte, 4)); done <- err }()
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) || input.Len() != 4 {
+		t.Fatalf("cancelled read: %v, remaining %d", err, input.Len())
+	}
+	close(release)
+	buf := make([]byte, 4)
+	if n, err := sessionInput(t.Context(), input, release).Read(buf); err != nil || n != 4 || string(buf) != "data" {
+		t.Fatalf("released read: %d %q %v", n, buf, err)
 	}
 }

@@ -18,6 +18,7 @@ import (
 )
 
 const (
+	sessionRegistryLimit     = 65536
 	sessionHandshakeTimeout  = 5 * time.Second
 	sessionLockTimeout       = 5 * time.Second
 	sessionMaxReservationAge = uint64((sessionHandshakeTimeout + sessionLockTimeout) / (10 * time.Millisecond))
@@ -60,6 +61,13 @@ func updateSessionRegistry(ctx context.Context, path string, tick uint64, owner 
 
 // updateSessionRegistryWithClock serializes registry updates and holds released ticks to prevent identity reuse during the retention window.
 func updateSessionRegistryWithClock(ctx context.Context, path string, tick uint64, owner int, remove bool, clock func() (uint64, error)) (ok bool, resultErr error) {
+	return sessionRead(ctx, func() (bool, error) {
+		return updateSessionRegistryLocked(ctx, path, tick, owner, remove, clock)
+	})
+}
+
+// updateSessionRegistryLocked owns the lock until all registry operations finish.
+func updateSessionRegistryLocked(ctx context.Context, path string, tick uint64, owner int, remove bool, clock func() (uint64, error)) (ok bool, resultErr error) {
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
 		return false, err
@@ -83,7 +91,7 @@ func updateSessionRegistryWithClock(ctx context.Context, path string, tick uint6
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	if err = writeSessionRegistry(path, entries); err != nil {
+	if err = writeSessionRegistryWithContext(ctx, path, entries, func() {}); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -146,7 +154,7 @@ func mutateSessionRegistry(entries map[string]sessionReservation, tick uint64, o
 // readSessionRegistry loads a size-limited registry and rejects malformed entries so reservations are not silently lost.
 func readSessionRegistry(path string) (map[string]sessionReservation, error) {
 	entries := map[string]sessionReservation{}
-	data, err := util.ReadFileLimited(path, 65536)
+	data, err := util.ReadFileLimited(path, sessionRegistryLimit)
 	if errors.Is(err, os.ErrNotExist) {
 		return entries, nil
 	}
@@ -237,9 +245,17 @@ func staleSessionOwner(entry sessionReservation) (bool, error) {
 
 // writeSessionRegistry replaces the registry through a temporary file so readers do not observe a partial update.
 func writeSessionRegistry(path string, entries map[string]sessionReservation) (resultErr error) {
+	return writeSessionRegistryWithContext(context.Background(), path, entries, func() {})
+}
+
+// writeSessionRegistryWithContext checks cancellation under the registry lock before replacing the file.
+func writeSessionRegistryWithContext(ctx context.Context, path string, entries map[string]sessionReservation, beforeReplace func()) (resultErr error) {
 	data, err := json.Marshal(entries)
 	if err != nil {
 		return err
+	}
+	if len(data) > sessionRegistryLimit {
+		return errors.New("session registry exceeds limit")
 	}
 	temp, err := os.CreateTemp(filepath.Dir(path), ".session-registry-")
 	if err != nil {
@@ -253,6 +269,10 @@ func writeSessionRegistry(path string, entries map[string]sessionReservation) (r
 	_, writeErr := temp.Write(data)
 	closeErr := temp.Close()
 	if err = errors.Join(writeErr, closeErr); err != nil {
+		return err
+	}
+	beforeReplace()
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return os.Rename(temp.Name(), path)
