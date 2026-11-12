@@ -48,6 +48,8 @@ func auditPinned(t *testing.T, root string, entries ...config.Exception) (string
 	})
 }
 
+// TestAuditPinnedFixturesEOL_EmptyHashIsNotPinned: a test naming the sha256 of zero bytes pins no
+// fixture, since every checkout writes an empty file the same way; the audit passes.
 func TestAuditPinnedFixturesEOL_EmptyHashIsNotPinned(t *testing.T) {
 	root := initPinnedRepo(t, map[string]string{
 		"empty.txt":    "",
@@ -59,6 +61,8 @@ func TestAuditPinnedFixturesEOL_EmptyHashIsNotPinned(t *testing.T) {
 	}
 }
 
+// TestAuditPinnedFixturesEOL_EmptyNamedPathIsNotPinned: a test naming the path of an empty fixture
+// pins nothing line endings could change; the audit passes without an eol rule.
 func TestAuditPinnedFixturesEOL_EmptyNamedPathIsNotPinned(t *testing.T) {
 	root := initPinnedRepo(t, map[string]string{
 		"testdata/empty.txt": "",
@@ -70,6 +74,8 @@ func TestAuditPinnedFixturesEOL_EmptyNamedPathIsNotPinned(t *testing.T) {
 	}
 }
 
+// TestAuditPinnedFixturesEOL_NonEmptyHashRemainsPinned: one byte or more stays pinned by its sha256;
+// without an eol rule the audit names the fixture and the test (boundary at one byte).
 func TestAuditPinnedFixturesEOL_NonEmptyHashRemainsPinned(t *testing.T) {
 	for _, content := range []string{"x", "non-empty fixture\n"} {
 		t.Run(fmt.Sprintf("bytes_%d", len(content)), func(t *testing.T) {
