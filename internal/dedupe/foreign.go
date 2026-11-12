@@ -199,6 +199,7 @@ func executeJscpd(ctx context.Context, dir, bin string, files []string) (reportD
 	}()
 
 	outDir := filepath.Join(tmpDir, "out")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- the jscpd output directory holds the report file, so it needs the owner execute bit; 0o700 is least privilege
 	if err := os.MkdirAll(outDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create jscpd output dir: %w", err)
 	}
@@ -456,6 +457,7 @@ func mergeFileSpans(spans []rawFileSpan, partners map[spanRangeKey]struct{}) []r
 	return merged
 }
 
+// buildDuplicateGroup records each merged copy's span and the longest span's LOC.
 func buildDuplicateGroup(dups []rawJscpdDuplicate, roots []rootMapping, isCrossRoot bool) DuplicateGroup {
 	spansByFile, partners := collectSpansAndPartners(dups, roots, isCrossRoot)
 
@@ -470,9 +472,10 @@ func buildDuplicateGroup(dups []rawJscpdDuplicate, roots []rootMapping, isCrossR
 				maxLOC = spanLen
 			}
 			locations = append(locations, FileLocation{
-				Root: span.root,
-				Path: span.path,
-				Line: span.start,
+				Root:    span.root,
+				Path:    span.path,
+				Line:    span.start,
+				EndLine: span.end,
 			})
 		}
 	}
@@ -510,6 +513,8 @@ func determineLanguage(format string, locations []FileLocation) string {
 	return format
 }
 
+// computeDuplicateHash hashes language and Root:Path:Line only; EndLine is excluded
+// to preserve existing group hashes.
 func computeDuplicateHash(language string, locations []FileLocation) string {
 	h := sha256.New()
 	if _, err := h.Write([]byte(language + "\n")); err != nil {
@@ -524,6 +529,7 @@ func computeDuplicateHash(language string, locations []FileLocation) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// resolveFileLocation maps a scanner span to its root-relative path without reading source.
 func resolveFileLocation(file rawJscpdFile, roots []rootMapping, isCrossRoot bool) FileLocation {
 	absPath := filepath.Clean(file.Name)
 	for i := 0; i < len(roots) && i < 1000; i++ {
@@ -537,16 +543,18 @@ func resolveFileLocation(file rawJscpdFile, roots []rootMapping, isCrossRoot boo
 					rootName = r.raw
 				}
 				return FileLocation{
-					Path: path,
-					Line: file.Start,
-					Root: rootName,
+					Path:    path,
+					Line:    file.Start,
+					EndLine: file.End, // Zero if omitted; this resolver has no pair length.
+					Root:    rootName,
 				}
 			}
 		}
 	}
 	return FileLocation{
-		Path: filepath.ToSlash(file.Name),
-		Line: file.Start,
+		Path:    filepath.ToSlash(file.Name),
+		Line:    file.Start,
+		EndLine: file.End, // Zero if omitted; this resolver has no pair length.
 	}
 }
 
