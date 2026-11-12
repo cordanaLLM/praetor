@@ -46,7 +46,7 @@ func TestCalculateScore_Positive_ScannedCleanRepositoryStillPasses(t *testing.T)
 // TestCalculateScore_Negative_SingleSprawlItemFails is the regression: five points per
 // sprawl item against an 80 threshold let four ad-hoc utility call sites score 80 and pass.
 func TestCalculateScore_Negative_SingleSprawlItemFails(t *testing.T) {
-	report := &DedupeReport{TotalFilesScanned: 4, TotalFuncsScanned: 100, SprawlItems: []SprawlItem{{File: "a.go", Line: 3}}}
+	report := &DedupeReport{TotalFilesScanned: 4, TotalFuncsScanned: 100, SprawlItems: []SprawlItem{{File: "a.go", Line: 3, funcLine: 1}}}
 	calculateScore(report)
 	if report.CleanlinessScore != 99 {
 		t.Errorf("one sprawl item per 100 functions deducts 1, got %.1f", report.CleanlinessScore)
@@ -59,7 +59,7 @@ func TestCalculateScore_Negative_SingleSprawlItemFails(t *testing.T) {
 // TestCalculateScore_Boundary_FourSprawlItemsLandOnTheThreshold keeps four findings failing
 // while their score reflects the size of the scan.
 func TestCalculateScore_Boundary_FourSprawlItemsLandOnTheThreshold(t *testing.T) {
-	report := &DedupeReport{TotalFilesScanned: 9, TotalFuncsScanned: 100, SprawlItems: make([]SprawlItem, 4)}
+	report := &DedupeReport{TotalFilesScanned: 9, TotalFuncsScanned: 100, SprawlItems: []SprawlItem{{File: "a.go", funcLine: 1}, {File: "a.go", funcLine: 2}, {File: "a.go", funcLine: 3}, {File: "a.go", funcLine: 4}}}
 	calculateScore(report)
 	if report.CleanlinessScore != 96 {
 		t.Errorf("four sprawl items per 100 functions deduct 4, got %.1f", report.CleanlinessScore)
@@ -75,7 +75,7 @@ func TestCalculateScore_Boundary_DuplicatesStillDeduct(t *testing.T) {
 	report := &DedupeReport{
 		TotalFilesScanned: 3,
 		TotalFuncsScanned: 100,
-		Duplicates:        []DuplicateGroup{{Hash: "a", LOC: 20}, {Hash: "b", LOC: 30}},
+		Duplicates:        []DuplicateGroup{{Hash: "a", LOC: 20, Locations: []FileLocation{{Path: "a.go", Line: 1}}}, {Hash: "b", LOC: 30, Locations: []FileLocation{{Path: "b.go", Line: 1}}}},
 	}
 	calculateScore(report)
 	if !report.Applicable {

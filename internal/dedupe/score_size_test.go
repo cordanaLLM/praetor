@@ -4,8 +4,8 @@ import "testing"
 
 // TestScoreScalesWithRepositorySize compares the same finding in different scan sizes.
 func TestScoreScalesWithRepositorySize(t *testing.T) {
-	small := &DedupeReport{TotalFilesScanned: 1, TotalFuncsScanned: 10, Duplicates: make([]DuplicateGroup, 1)}
-	large := &DedupeReport{TotalFilesScanned: 1, TotalFuncsScanned: 100, Duplicates: make([]DuplicateGroup, 1)}
+	small := &DedupeReport{TotalFilesScanned: 1, TotalFuncsScanned: 10, Duplicates: []DuplicateGroup{{Locations: []FileLocation{{Path: "a.go", Line: 1}}}}}
+	large := &DedupeReport{TotalFilesScanned: 1, TotalFuncsScanned: 100, Duplicates: []DuplicateGroup{{Locations: []FileLocation{{Path: "a.go", Line: 1}}}}}
 	calculateScore(small)
 	calculateScore(large)
 	if large.CleanlinessScore <= small.CleanlinessScore {

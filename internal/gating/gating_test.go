@@ -543,7 +543,7 @@ func TestRunSecurityStage_3D(t *testing.T) {
 		t.Fatalf("expected package listing, govulncheck and gosec to run, recorded %+v", *recorded)
 	}
 	gosecArgs := strings.Join((*recorded)[2].args, " ")
-	if (*recorded)[2].name != "gosec" || gosecArgs != "-fmt=json -exclude-generated -conf "+GosecConfigFile+" ." {
+	if (*recorded)[2].name != "gosec" || gosecArgs != "-fmt=json -conf "+GosecConfigFile+" ." {
 		t.Errorf("unexpected gosec invocation: %s %s", (*recorded)[2].name, gosecArgs)
 	}
 	if strings.Contains(gosecArgs, "-exclude=") {

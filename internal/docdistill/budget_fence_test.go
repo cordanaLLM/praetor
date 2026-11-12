@@ -64,16 +64,16 @@ func TestBudgetWholeLinesAndQuotedFence(t *testing.T) {
 
 // TestBudgetFenceInspectionLimitDropsExcerpt checks both inspection limits.
 func TestBudgetFenceInspectionLimitDropsExcerpt(t *testing.T) {
-	lines := make([]string, maxBudgetLines+1)
+	lines := make([]string, 65537)
 	lines[0] = "keep"
 	if got := trimUnclosedFence(lines); len(got) != 0 {
 		t.Fatal("over-limit excerpt retained")
 	}
-	got, _ := fitTokenBudget(strings.Repeat("word\n", maxBudgetLines+1), 10)
+	got, _ := fitTokenBudget(strings.Repeat("word\n", 65537), 10)
 	if got != truncationNotice+"\n" {
 		t.Fatalf("over-limit budget excerpt: %q", got)
 	}
-	if got := trimUnclosedFence([]string{strings.Repeat(">", maxQuoteDepth+1) + "```"}); len(got) != 0 {
+	if got := trimUnclosedFence([]string{strings.Repeat(">", 65) + "```"}); len(got) != 0 {
 		t.Fatal("over-depth quote retained")
 	}
 }

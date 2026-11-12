@@ -2,8 +2,12 @@ package gating
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -30,4 +34,70 @@ func TestGeneratedGosecFindingExcluded(t *testing.T) {
 	if !called {
 		t.Fatal("scanner was not invoked")
 	}
+}
+
+// TestGosecScanPathsShareArguments compares the stage and baseline scanner calls.
+func TestGosecScanPathsShareArguments(t *testing.T) {
+	dir := t.TempDir()
+	cfg, _ := newTestConfig(t, dir, false)
+	var stageArgs, baselineArgs []string
+	cfg.run = func(_ context.Context, _, _ string, args ...string) (string, error) {
+		stageArgs = append([]string(nil), args...)
+		return `{"Issues":[]}`, nil
+	}
+	if _, err := runGosecScan(context.Background(), cfg, dir, ".gosec.json", []string{"."}); err != nil {
+		t.Fatal(err)
+	}
+	runner := func(_ context.Context, _, name string, args ...string) (string, error) {
+		if name == "go" {
+			return dir + "\n", nil
+		}
+		if name != "gosec" {
+			t.Fatalf("unexpected command %s", name)
+		}
+		baselineArgs = append([]string(nil), args...)
+		return `{"Issues":[]}`, nil
+	}
+	if _, err := scanModuleGosecWithRunner(context.Background(), dir, dir, filepath.Join(dir, ".gosec.json"), runner); err != nil {
+		t.Fatal(err)
+	}
+	if len(stageArgs) == 0 || !slices.Equal(stageArgs, baselineArgs) || slices.Contains(stageArgs, "-exclude-generated") {
+		t.Fatalf("stage=%v baseline=%v", stageArgs, baselineArgs)
+	}
+}
+
+// TestGosecScanPathsReuseArgumentBuilder prevents scanner configuration from drifting.
+func TestGosecScanPathsReuseArgumentBuilder(t *testing.T) {
+	for _, item := range []struct{ file, function string }{{"pipeline.go", "runGosecScan"}, {"gosec.go", "scanModuleGosecWithRunner"}} {
+		tree, err := parser.ParseFile(token.NewFileSet(), item.file, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !callsGosecBaseArgs(tree, item.function) {
+			t.Errorf("%s must call gosecBaseArgs", item.function)
+		}
+	}
+}
+
+// callsGosecBaseArgs checks the named scanner function for the shared argument builder.
+func callsGosecBaseArgs(tree *ast.File, name string) bool {
+	found := false
+	for i := 0; i < len(tree.Decls) && i < 4096; i++ {
+		fn, ok := tree.Decls[i].(*ast.FuncDecl)
+		if !ok || fn.Name.Name != name {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			ident, ok := call.Fun.(*ast.Ident)
+			if ok && ident.Name == "gosecBaseArgs" {
+				found = true
+			}
+			return true
+		})
+	}
+	return found
 }

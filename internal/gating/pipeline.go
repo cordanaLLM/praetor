@@ -676,7 +676,7 @@ func resolveModulePackages(ctx context.Context, cfg *stageConfig, moduleDir stri
 
 // runGosecScan runs the configured scanner on reviewable source files.
 func runGosecScan(ctx context.Context, cfg *stageConfig, moduleDir, conf string, packages []string) (string, error) {
-	args := append([]string{"-fmt=json", "-conf", conf}, packages...)
+	args := append(gosecBaseArgs(conf), packages...)
 	out, err := cfg.run(ctx, moduleDir, "gosec", args...)
 	if err == nil && len(strings.TrimSpace(out)) == 0 {
 		return "", nil
