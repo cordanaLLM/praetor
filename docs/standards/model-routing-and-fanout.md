@@ -633,3 +633,13 @@ pricing synchronization in this path, and the catalog it merges into is the rout
 itself (`.config/models/routing.yaml`, the `--config` default), not a separate catalog file.
 Future work must connect execution and real observation sources explicitly before
 claiming live fanout or evidence-driven escalation.
+
+## Merging reviews
+
+`praetorctl models merge-check --draft review-a.json --draft review-b.json --final merged.json --json` checks a merge without dispatching reviewers. It exits 0 for a valid merge, 1 for contract violations and 2 for usage or input errors. JSON output is an array of problems with `id` and `rule`.
+
+Each draft is an object with `model`, `kind` (`code` or `design`) and `findings`. Each finding has `id`, `claim`, `pointer` (path:line) and `evidence`. Drafts are ungraded: unknown fields, including `verdict` and `classification`, are refused.
+
+The final object has `combiner`, `verdict`, `kept`, `added` and `dropped`. Verdict is one of `approve`, `request_changes`, or `comment`. Kept entries carry the finding fields and `sources`, an array of the raising model names. Dropped entries carry `id`, the draft's `claim`, `reason` and `pointer`. Each draft finding ID must occur exactly once in kept or dropped; a kept entry names every model that raised that ID and no other model. IDs cannot repeat within a draft. Dropped entries need a claim, reason and pointer; the claim must match every draft bearing that ID exactly. Kept and dropped IDs must be raised in drafts. Added findings use the finding shape and have an `added:` ID prefix, marking them as the combiner's; their IDs must be unique and cannot also be draft IDs. At most 64 drafts and 256 findings per draft or final list are accepted.
+
+The idea comes from [Fairies by Michael Niedermayer](https://code.ffmpeg.org/michaelni/Fairies) (GPL-2.0, commit `c4ed93c30469`); no code or text was taken.
