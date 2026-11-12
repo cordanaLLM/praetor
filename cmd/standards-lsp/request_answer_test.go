@@ -20,7 +20,7 @@ func TestLSP_Negative_IDBearingNotificationMethodsAnswered(t *testing.T) {
 	srv := NewServer(strings.NewReader(""), &bytes.Buffer{}, "test")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	doc := `{"textDocument":{"uri":"file:///answered.go"}}`
+	const doc = `{"textDocument":{"uri":"file:///answered.go"}}`
 	for _, step := range []struct {
 		id, method, params string
 		wantID             any
