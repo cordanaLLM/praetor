@@ -1,0 +1,2 @@
+type: fixed
+title: Each foreign clone location in the dedupe report carries its own end line, so consumers judge a copy over its real span; group hashes are unchanged.
