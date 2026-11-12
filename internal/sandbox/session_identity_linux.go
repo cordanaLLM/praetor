@@ -20,8 +20,9 @@ import (
 const sessionTickHold uint64 = 600
 
 type sessionReservation struct {
-	Owner    int  `json:"owner"`
-	Released bool `json:"released"`
+	Owner          int    `json:"owner"`
+	OwnerStartTick uint64 `json:"owner_start_tick"`
+	Released       bool   `json:"released"`
 }
 
 // Session reservations coordinate sandboxes of one user, not a rootful engine shared by users.
@@ -57,20 +58,34 @@ func updateSessionRegistryWithClock(ctx context.Context, path string, tick uint6
 	if err = pruneSessionRegistry(entries, now); err != nil {
 		return false, err
 	}
+	ok, err = mutateSessionRegistry(entries, tick, owner, remove)
+	if err != nil || !ok {
+		return ok, err
+	}
+	if err = writeSessionRegistry(path, entries); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// mutateSessionRegistry applies a release or creates a reservation with the owner's process identity.
+func mutateSessionRegistry(entries map[string]sessionReservation, tick uint64, owner int, remove bool) (bool, error) {
 	key := strconv.FormatUint(tick, 10)
 	if remove {
 		if entry, found := entries[key]; found && entry.Owner == owner {
 			entry.Released = true
 			entries[key] = entry
 		}
-	} else if _, found := entries[key]; found {
+		return true, nil
+	}
+	if _, found := entries[key]; found {
 		return false, nil
-	} else {
-		entries[key] = sessionReservation{Owner: owner}
 	}
-	if err = writeSessionRegistry(path, entries); err != nil {
-		return false, err
+	start, err := procStartTick("/proc", owner)
+	if err != nil {
+		return false, fmt.Errorf("session owner identity: %w", err)
 	}
+	entries[key] = sessionReservation{Owner: owner, OwnerStartTick: start}
 	return true, nil
 }
 
@@ -85,8 +100,9 @@ func readSessionRegistry(path string) (map[string]sessionReservation, error) {
 		return nil, fmt.Errorf("read session registry: %w", err)
 	}
 	var raw map[string]struct {
-		Owner    *int  `json:"owner"`
-		Released *bool `json:"released"`
+		Owner          *int   `json:"owner"`
+		OwnerStartTick uint64 `json:"owner_start_tick"`
+		Released       *bool  `json:"released"`
 	}
 	if err = json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("invalid session registry: %w", err)
@@ -98,7 +114,7 @@ func readSessionRegistry(path string) (map[string]sessionReservation, error) {
 		if value.Owner == nil || value.Released == nil {
 			return nil, fmt.Errorf("invalid session registry entry %q", key)
 		}
-		entries[key] = sessionReservation{Owner: *value.Owner, Released: *value.Released}
+		entries[key] = sessionReservation{Owner: *value.Owner, OwnerStartTick: value.OwnerStartTick, Released: *value.Released}
 	}
 	return entries, nil
 }
@@ -142,14 +158,27 @@ func pruneSessionRegistry(entries map[string]sessionReservation, now uint64) err
 			delete(entries, key)
 			continue
 		}
-		_, err = os.Stat(filepath.Join("/proc", strconv.Itoa(entry.Owner)))
-		if errors.Is(err, os.ErrNotExist) {
+		stale, err := staleSessionOwner(entry)
+		if err != nil {
+			return err
+		}
+		if stale {
 			delete(entries, key)
-		} else if err != nil {
-			return fmt.Errorf("session owner: %w", err)
 		}
 	}
 	return nil
+}
+
+// staleSessionOwner checks whether the recorded owner has exited or its PID was reused.
+func staleSessionOwner(entry sessionReservation) (bool, error) {
+	start, err := procStartTick("/proc", entry.Owner)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("session owner: %w", err)
+	}
+	return entry.OwnerStartTick != 0 && start != entry.OwnerStartTick, nil
 }
 
 // writeSessionRegistry replaces the registry through a temporary file so readers do not observe a partial update.

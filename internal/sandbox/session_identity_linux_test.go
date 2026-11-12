@@ -6,6 +6,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strconv"
@@ -133,6 +134,7 @@ func checkSessionInvocation(t *testing.T, container bool) {
 			t.Errorf("missing %q in %q", v, got.Args)
 		}
 	}
+	checkSessionDescriptors(t, got.Args)
 	if slices.Contains(got.Args, "--pid") != container {
 		t.Errorf("pid mode: %q", got.Args)
 	}
@@ -142,6 +144,17 @@ func checkSessionInvocation(t *testing.T, container bool) {
 	}
 	if !slices.Contains(got.Args, script) {
 		t.Errorf("missing opener: %q", got.Args)
+	}
+}
+
+// checkSessionDescriptors verifies the values associated with the FIFO flags.
+func checkSessionDescriptors(t *testing.T, args []string) {
+	t.Helper()
+	for flag, value := range map[string]string{"--info-fd": "3", "--block-fd": "4"} {
+		index := slices.Index(args, flag)
+		if index < 0 || index+1 >= len(args) || args[index+1] != value {
+			t.Errorf("%s must be paired with %s: %q", flag, value, args)
+		}
 	}
 }
 
@@ -230,16 +243,16 @@ func TestSessionReleasedTickHeld(t *testing.T) {
 	if _, err = update(os.Getpid(), true); err != nil {
 		t.Fatal(err)
 	}
-	ok, err = update(os.Getpid()+1, false)
+	ok, err = update(os.Getpid(), false)
 	checkSessionReservation(t, ok, err, false)
 	now += 600
-	ok, err = update(os.Getpid()+1, false)
+	ok, err = update(os.Getpid(), false)
 	checkSessionReservation(t, ok, err, false)
 	now++
-	ok, err = update(os.Getpid()+1, false)
+	ok, err = update(os.Getpid(), false)
 	checkSessionReservation(t, ok, err, true)
 	entries, err := readSessionRegistry(path)
-	if err != nil || entries["42"].Owner != os.Getpid()+1 || entries["42"].Released {
+	if err != nil || entries["42"].Owner != os.Getpid() || entries["42"].Released {
 		t.Fatalf("replacement: %v %v", entries, err)
 	}
 }
@@ -270,5 +283,62 @@ func TestSessionRetryBeyondFourCollisions(t *testing.T) {
 	err = retrySession(t.Context(), func() (bool, error) { count++; return true, nil }, waiter)
 	if err == nil || !strings.Contains(err.Error(), "collision") || !strings.Contains(err.Error(), "16 attempts") || count != 16 || waits != 15 {
 		t.Fatalf("attempts=%d waits=%d error=%v", count, waits, err)
+	}
+}
+
+// TestSessionReusedOwnerPruned rejects an old reservation whose live PID has a different start tick.
+func TestSessionReusedOwnerPruned(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry")
+	owner := os.Getpid()
+	start, err := procStartTick("/proc", owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := fmt.Sprintf(`{"42":{"owner":%d,"owner_start_tick":%d,"released":false}}`, owner, start+1)
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := reserveSessionTick(t.Context(), path, 42, owner)
+	if err != nil || !ok {
+		t.Fatalf("reused owner was retained: %v %v", ok, err)
+	}
+}
+
+// TestSessionPrivateTempDirectory rejects a pre-planted link in the temporary root.
+func TestSessionPrivateTempDirectory(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("TMPDIR", root)
+	private := filepath.Join(root, fmt.Sprintf("praetor-testexec-%d", os.Getuid()))
+	if err := os.Symlink(t.TempDir(), private); err != nil {
+		t.Fatal(err)
+	}
+	files, err := newSessionFiles()
+	if err == nil {
+		if closeErr := files.close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+		t.Fatal("pre-planted private directory symlink accepted")
+	}
+	if !strings.Contains(err.Error(), "private session directory") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestSessionLiveOwnerRetained preserves an old reservation when its owner identity still matches.
+func TestSessionLiveOwnerRetained(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry")
+	owner := os.Getpid()
+	start, err := procStartTick("/proc", owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := fmt.Sprintf(`{"42":{"owner":%d,"owner_start_tick":%d,"released":false}}`, owner, start)
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := reserveSessionTick(t.Context(), path, 42, owner)
+	if err != nil || ok {
+		t.Fatalf("live owner not retained: %v %v", ok, err)
 	}
 }
