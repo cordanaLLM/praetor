@@ -4,6 +4,8 @@
 package hiss
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -45,5 +47,29 @@ func TestMaskDataHeredocsUnreadable(t *testing.T) {
 	input := "cat <<'EOF'\nx\nEOF"
 	if got, ok := MaskDataHeredocs(input, 2); ok || got != input {
 		t.Fatalf("line bound: got %q, %v", got, ok)
+	}
+}
+
+// TestMaskDataHeredocFixtures replays the shared masking decisions.
+func TestMaskDataHeredocFixtures(t *testing.T) {
+	data, err := os.ReadFile("testdata/heredoc_mask_cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name, Input string
+		Masked      bool
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			got, _ := MaskDataHeredocs(tc.Input, 100)
+			masked := !strings.Contains(got, "sudo id")
+			if masked != tc.Masked {
+				t.Errorf("masked=%v want=%v", masked, tc.Masked)
+			}
+		})
 	}
 }

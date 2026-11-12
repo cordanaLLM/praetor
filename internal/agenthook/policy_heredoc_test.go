@@ -3,7 +3,11 @@
 
 package agenthook
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
 
 // TestPolicyHeredoc distinguishes data bodies from commands and expansions.
 func TestPolicyHeredoc(t *testing.T) {
@@ -26,6 +30,33 @@ func TestPolicyHeredoc(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := p.Command(tc.command); got.Outcome != tc.want {
 				t.Fatalf("got %v; want %v", got.Outcome, tc.want)
+			}
+		})
+	}
+}
+
+// TestPolicyHeredocFixtures checks the privilege verdict on the shared fixtures.
+func TestPolicyHeredocFixtures(t *testing.T) {
+	data, err := os.ReadFile("../hiss/testdata/heredoc_mask_cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name, Input string
+		Masked      bool
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	p := policy(t)
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			want := Deny
+			if tc.Masked {
+				want = Allow
+			}
+			if got := p.textVerdict(tc.Input); got.Outcome != want {
+				t.Errorf("got %v want %v", got.Outcome, want)
 			}
 		})
 	}

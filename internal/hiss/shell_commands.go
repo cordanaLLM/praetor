@@ -80,12 +80,19 @@ type shellCmd struct {
 // pattern list at the end of a line is not lost. Inside a [[ ... ]] test nothing is an
 // operator: the regular expression of `[[ $f =~ \.(sh|bash)$ ]]` pipes nothing anywhere.
 func splitShellCommands(text string) []shellCmd {
+	cmds, _ := splitShellCommandsBounded(text)
+	return cmds
+}
+
+// splitShellCommandsBounded reports whether every byte was tokenized.
+func splitShellCommandsBounded(text string) ([]shellCmd, bool) {
 	t := shellTokenizer{text: text, start: -1}
-	for i := 0; i < len(text) && len(t.cmds) < maxShellCommands; {
+	i := 0
+	for i < len(text) && len(t.cmds) < maxShellCommands {
 		i = t.step(i)
 	}
 	t.cur.addWord(text, t.start, len(text))
-	return append(t.cmds, t.cur)
+	return append(t.cmds, t.cur), i == len(text)
 }
 
 // shellTokenizer carries splitShellCommands' state through one logical line.

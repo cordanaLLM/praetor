@@ -4,7 +4,10 @@
 
 package hiss
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // ShellCode returns the code of each physical line of script as the shell scanner reads it
 // (shell_lex.go): quoted text, comments and parameter expansions blanked, and a line of a
@@ -35,24 +38,59 @@ func MaskDataHeredocs(script string, maxLines int) (string, bool) {
 	if len(lines) > maxLines || strings.Contains(script, "\r") {
 		return script, false
 	}
+	if !heredocInputSafe(lines) {
+		return script, false
+	}
+	if !maskHeredocLines(lines) {
+		return script, false
+	}
+	return strings.Join(lines, "\n"), true
+}
+
+// maskHeredocLines classifies headers and processes each body with bounded lexer state.
+func maskHeredocLines(lines []string) bool {
 	var l, expansion shellLexer
 	for i, line := range lines {
 		if len(l.bodies) > 0 {
 			var ok bool
 			lines[i], ok = maskHeredocBody(line, &l, &expansion)
 			if !ok {
-				return script, false
+				return false
 			}
 			continue
 		}
 		if !maskHeredocHeader(line, &l) {
-			return script, false
+			return false
 		}
 	}
-	if l.misread || expansion.misread || len(expansion.stack) > 0 || len(l.stack) > 0 {
-		return script, false
+	return !l.misread && !expansion.misread && len(expansion.stack) == 0 && len(l.stack) == 0
+}
+
+// heredocShadow catches definitions conservatively, including ambiguous data and comments.
+var heredocShadow = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])(?:alias|function)(?:[^A-Za-z0-9_]|$)|[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)`)
+
+// heredocFD catches descriptor openings and output to inherited descriptors.
+var heredocFD = regexp.MustCompile(`(?:^|[^0-9])[0-9]+[ \t]*[<>]|\{[^}]+\}[ \t]*[<>]|>[ \t]*&`)
+
+// heredocInputSafe refuses whole-input ambiguity before any body is masked.
+func heredocInputSafe(lines []string) bool {
+	var l shellLexer
+	for _, line := range lines {
+		if heredocShadow.MatchString(line) || heredocFD.MatchString(line) || strings.Contains(line, "/dev/fd/") || strings.Contains(line, "/proc/self/fd/") {
+			return false
+		}
+		code, body := l.line(line)
+		if !body {
+			// Quoted or expanded command words can disguise definitions or descriptors.
+			if strings.Contains(line, `\`) || strings.ContainsAny(code, "\"'$") {
+				return false
+			}
+			if _, ok := splitShellCommandsBounded(code); !ok {
+				return false
+			}
+		}
 	}
-	return strings.Join(lines, "\n"), true
+	return !l.misread
 }
 
 // maskHeredocHeader classifies bodies opened by one unambiguous command line.
@@ -82,13 +120,22 @@ func maskHeredocBody(line string, l, expansion *shellLexer) (string, bool) {
 	if end == h.delimiter {
 		return line, len(expansion.stack) == 0
 	}
+	if !h.quoted && strings.Contains(line, "${") {
+		// Bash 5.3 substitutions may span lines; leave the entire script unmasked.
+		return line, false
+	}
 	if !h.data {
 		return line, true
 	}
 	if h.quoted {
 		return "", true
 	}
-	return heredocExpansions(line, expansion), true
+	kept := heredocExpansions(line, expansion)
+	if len(expansion.stack) > 0 {
+		// A substitution crossing a line is left wholly visible to both guards.
+		return line, false
+	}
+	return kept, true
 }
 
 // dataHeredocCommand accepts only an unambiguous cat or tee invocation without a pipe.
@@ -132,7 +179,15 @@ func dataHeredocWords(words []string) bool {
 			i++
 		}
 	}
-	return i < len(words) && (words[i] == "cat" || words[i] == "tee")
+	if i >= len(words) {
+		return false
+	}
+	name := strings.SplitN(words[i], "<<", 2)[0]
+	switch name {
+	case "cat", "tee", "/bin/cat", "/usr/bin/cat", "/bin/tee", "/usr/bin/tee":
+		return true
+	}
+	return false
 }
 
 // heredocExpansions retains command substitutions in an expanding data body.

@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import contextlib
+import io
 
 MAX_INPUT_BYTES = 1 << 20
 MAX_REASON_BYTES = 4096
@@ -134,13 +136,168 @@ def search(pattern, text):
     return False
 
 
+# These conservative recognizers refuse ambiguous shell syntax rather than hiding it.
+HEREDOC_SHADOW = re.compile(r"(?:^|[^A-Za-z0-9_])(?:alias|function)(?:[^A-Za-z0-9_]|$)|[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)")
+HEREDOC_FD = re.compile(r"(?:^|[^0-9])[0-9]+[ \t]*[<>]|\{[^}]+\}[ \t]*[<>]|>[ \t]*&|/dev/fd/|/proc/self/fd/")
+HEREDOC_OP = re.compile(r"<<(-?)[ \t]*(?:'([^'\"$`\\\n]+)'|\"([^'\"$`\\\n]+)\"|([A-Za-z_0-9.-]+))")
+HEREDOC_COMMAND = re.compile(r"^(?:(?:env|command|exec|[A-Za-z_][A-Za-z_0-9]*=[A-Za-z_0-9]*)[ \t]+)*(?:cat|tee|/bin/cat|/usr/bin/cat|/bin/tee|/usr/bin/tee)(?:[ \t]|$)")
+
+
+def data_heredoc_header(line):
+    """Find a simple data header, or refuse syntax this recognizer cannot prove safe."""
+    if any(c in line for c in "|`$()\\#") or line.count(";") + line.count("&") >= 1024:
+        return None
+    matches = list(HEREDOC_OP.finditer(line))
+    if not matches or line.count("<<") != len(matches):
+        return None
+    clean = HEREDOC_OP.sub(" ", line)
+    if not re.fullmatch(r"[A-Za-z_0-9 /.;=&>+:-]*", clean):
+        return None
+    parts = re.split(r";|&", HEREDOC_OP.sub(" << ", line))
+    for part in parts:
+        if "<<" in part:
+            part = part.replace("<<", " ").strip()
+            if not HEREDOC_COMMAND.match(part):
+                return None
+    return [(m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), bool(m.group(2) or m.group(3))) for m in matches]
+
+
+def heredoc_backtick_end(line, start):
+    """Find a simple complete backquoted substitution."""
+    end = line.find("`", start + 1)
+    if end < 0 or any(char in line[start + 1:end] for char in "'\"#$\\"):
+        return -1
+    return end + 1
+
+
+def heredoc_substitution_end(line, start):
+    """Find a complete simple or nested substitution, refusing ambiguous shell syntax."""
+    if line[start] == "`":
+        return heredoc_backtick_end(line, start)
+    frames = [[1, ""]]
+    index = start + 2
+    while index < len(line):
+        depth, quote = frames[-1]
+        char = line[index]
+        if char == "\\" or (quote != "'" and line.startswith("${", index)):
+            return -1
+        if quote != "'" and char == "`":
+            index = heredoc_backtick_end(line, index)
+            if index < 0:
+                return -1
+            continue
+        if quote != "'" and line.startswith("$(", index):
+            if len(frames) >= 32:
+                return -1
+            frames.append([1, ""])
+            index += 2
+            continue
+        if quote:
+            if char == quote:
+                frames[-1][1] = ""
+        elif char in "'\"":
+            frames[-1][1] = char
+        elif char == "#":
+            return -1
+        elif char == "(":
+            frames[-1][0] = depth + 1
+        elif char == ")":
+            frames[-1][0] = depth - 1
+            if depth == 1:
+                frames.pop()
+                if not frames:
+                    return index + 1
+        index += 1
+    return -1
+
+
+def heredoc_substitutions(line):
+    """Keep complete command substitutions; return None on ambiguous input."""
+    spans = []
+    index = 0
+    while index < len(line):
+        if line[index] == "\\":
+            index += 2
+            continue
+        if line.startswith("$(", index) or line[index] == "`":
+            end = heredoc_substitution_end(line, index)
+            if end < 0:
+                return None
+            spans.append(line[index:end])
+            index = end
+        else:
+            index += 1
+    return "".join(spans)
+
+
+def mask_data_heredocs(command):
+    """Mask only recognized data bodies; all uncertain input stays visible."""
+    if "\r" in command or HEREDOC_SHADOW.search(command) or HEREDOC_FD.search(command):
+        return command
+    lines = command.split("\n")
+    out = list(lines)
+    pending = []
+    for index, line in enumerate(lines):
+        if pending:
+            delimiter, tabs, quoted, data = pending[0]
+            if (line.lstrip("\t") if tabs else line) == delimiter:
+                pending.pop(0)
+            elif data and quoted:
+                out[index] = ""
+            elif data:
+                if line.endswith("\\"):
+                    return command
+                if "${" in line:
+                    return command
+                expansions = heredoc_substitutions(line)
+                if expansions is None:
+                    return command
+                out[index] = expansions
+            continue
+        if sum(line.count(mark) for mark in ";&|()") >= 1024:
+            return command
+        if "<<" not in line:
+            if any(mark in line for mark in ("\"", "'", "\\", "$", "`")):
+                return command
+            continue
+        headers = list(HEREDOC_OP.finditer(line))
+        if line.count("<<") != len(headers):
+            return command
+        safe = data_heredoc_header(line)
+        pending = [(m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), bool(m.group(2) or m.group(3)), safe is not None) for m in headers]
+    return "\n".join(out)
+
+
+def heredoc_selftest():
+    """Replay the shared fixture without invoking host admission or external commands."""
+    path = Path(__file__).resolve().parents[3] / "internal/hiss/testdata/heredoc_mask_cases.json"
+    cases = json.loads(path.read_text(encoding="utf-8"))
+    failed = False
+    global check_admission
+    original_admission = check_admission
+    check_admission = lambda _command: True
+    for case in cases:
+        masked = mask_data_heredocs(case["input"])
+        actual = "sudo id" not in masked
+        with contextlib.redirect_stderr(io.StringIO()):
+            denied = not audit_command(case["input"])
+        if actual != case["masked"] or denied == case["masked"]:
+            print(f"FAIL {case['name']}: masked={actual} denied={denied}", file=sys.stderr)
+            failed = True
+    check_admission = original_admission
+    if not failed:
+        print(f"heredoc fixtures: {len(cases)} passed")
+    return not failed
+
+
 def audit_command(command_str: str) -> bool:
     command_str = join_line_continuations(command_str)
     if not scannable(command_str):
         return False
-    judged = without_read_only_words(command_str)
+    masked = mask_data_heredocs(command_str).replace("${|", "$( ").replace("${", "$(")
+    judged = without_read_only_words(masked)
     for pattern in BLOCKED_PATTERNS:
-        text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else command_str
+        text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else masked
         if search(pattern, text):
             reason = (
                 f"[BLOCKED BY HISS] verification evasion prohibited; commits, pushes and tool "
@@ -338,6 +495,8 @@ def read_json_command(stream) -> str:
 
 
 def main():
+    if sys.argv[1:] == ["selftest"]:
+        sys.exit(0 if heredoc_selftest() else 1)
     if not audit_environment():
         sys.exit(1)
 

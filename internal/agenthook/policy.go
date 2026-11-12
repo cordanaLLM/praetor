@@ -453,7 +453,9 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 	return verdict
 }
 
-// textVerdict applies built-in rules to masked data and operator rules to the original text.
+// textVerdict ignores proven plain-data bodies of unshadowed cat/tee for built-ins
+// when descriptors and complete command scanning are safe. Executable bodies and
+// substitutions remain checked; operator rules inspect the original text.
 func (p *Policy) textVerdict(command string) Verdict {
 	masked := command
 	if data, ok := hiss.MaskDataHeredocs(command, admissionMaxLines); ok {
@@ -461,6 +463,9 @@ func (p *Policy) textVerdict(command string) Verdict {
 	}
 	command = joinLineContinuations(command)
 	masked = joinLineContinuations(masked)
+	// Bash 5.3 alternate command substitutions also introduce a command position.
+	masked = strings.ReplaceAll(masked, "${|", "$( ")
+	masked = strings.ReplaceAll(masked, "${", "$(")
 	judged := withoutReadOnlyWords(command)
 	maskedJudged := withoutReadOnlyWords(masked)
 	for _, rule := range p.rules {
