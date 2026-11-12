@@ -12,6 +12,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
+// ReviewInjectionMarker identifies a review finding that must not count as a pass.
+const ReviewInjectionMarker = "PROMPT INJECTION SUSPECTED: this review return is a finding, not a passing review"
+
 func evaluateAgentTraffic(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	switch row.Event {
 	case EventPreDispatch:
@@ -61,13 +64,16 @@ func evaluateAgentHandback(ctx context.Context, row Registration, canonical Cano
 	if entry.HandbackDelivered {
 		return trafficDenied(errors.New("subagent handback already delivered"))
 	}
-	verdict := validateAgentReturn(entry.Resolution, entry.Task, canonical.Return)
+	verdict, injection := validateAgentReturn(entry.Resolution, entry.Task, canonical.Return)
 	if verdict.Outcome != Allow {
 		return verdict
 	}
 	if err := store.markHandbackValidated(ctx, row.Client, canonical.ConversationID, canonical.AgentID,
 		canonical.ToolUseID, canonical.Return); err != nil {
 		return trafficDenied(err)
+	}
+	if injection {
+		verdict.Notice = ReviewInjectionMarker + "; task: " + entry.Task
 	}
 	return verdict
 }
@@ -252,7 +258,7 @@ func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canoni
 func judgeAgentReturn(ctx context.Context, client, root string, canonical Canonical, entry *correlationEntry) Verdict {
 	verdict := Verdict{Outcome: Allow}
 	if !entry.HandbackDelivered {
-		verdict = validateAgentReturn(entry.Resolution, entry.Task, canonical.Return)
+		verdict, _ = validateAgentReturn(entry.Resolution, entry.Task, canonical.Return)
 	}
 	if verdict.Outcome != Allow {
 		return verdict
@@ -341,19 +347,22 @@ func validateAgentBrief(authority briefAuthority, text string) (config.Resolutio
 	return resolution, nil
 }
 
-func validateAgentReturn(resolution config.Resolution, task, text string) Verdict {
+func validateAgentReturn(resolution config.Resolution, task, text string) (Verdict, bool) {
+	injection := false
 	if router.IsReviewTask(task) {
-		if err := validateReviewInjection(text); err != nil {
-			return trafficDenied(err)
+		var err error
+		injection, err = validateReviewInjection(text)
+		if err != nil {
+			return trafficDenied(err), false
 		}
 	}
 	if _, err := config.ValidateEmission(resolution, config.SurfaceAgent, caveman.KindReturn, text); err != nil {
-		return trafficDenied(err)
+		return trafficDenied(err), false
 	}
-	return Verdict{Outcome: Allow}
+	return Verdict{Outcome: Allow}, injection
 }
 
-func validateReviewInjection(text string) error {
+func validateReviewInjection(text string) (bool, error) {
 	value := ""
 	for _, line := range strings.Split(text, "\n") {
 		key, field, found := strings.Cut(strings.TrimSpace(line), ":")
@@ -361,20 +370,17 @@ func validateReviewInjection(text string) error {
 			continue
 		}
 		if value != "" {
-			return errors.New("prompt_injection must appear exactly once")
+			return false, errors.New("prompt_injection must appear exactly once")
 		}
 		value = strings.TrimSpace(field)
 		if value != "true" && value != "false" {
-			return errors.New("prompt_injection must be true or false")
+			return false, errors.New("prompt_injection must be true or false")
 		}
 	}
 	if value == "" {
-		return errors.New("prompt_injection is required")
+		return false, errors.New("prompt_injection is required")
 	}
-	if value == "true" {
-		return errors.New("prompt injection suspected (prompt_injection: true)")
-	}
-	return nil
+	return value == "true", nil
 }
 
 func trafficDenied(err error) Verdict {

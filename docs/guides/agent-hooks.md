@@ -537,8 +537,10 @@ fails closed:
   (`subagent return not judged: …`). The pre-launch gate still fails closed on the same fault.
 - Correlated returns for `code_review`, `review`, and `single_file_audits` require exactly one
   `prompt_injection: true` or `prompt_injection: false` line (key case insensitive, value exact).
-  Missing, malformed, or duplicate fields are denied; `true` is denied with the named finding
-  `prompt injection suspected`, and `false` leaves other validation unchanged. Dispatch guidance
+  Missing, malformed, or duplicate fields are denied at `SubagentStop`; `true` passes unchanged
+  without feeding a reason to the subagent and is delivered at dispatcher handback with the notice
+  `PROMPT INJECTION SUSPECTED: this review return is a finding, not a passing review` and the task
+  label. `false` leaves other validation unchanged. Dispatch guidance
   names the required field. This independent defence takes its idea from [Fairies](https://code.ffmpeg.org/michaelni/Fairies),
   without incorporating its code or text. Uncorrelated or unsupported return paths retain the skips below.
 - Review and audit return claims are resolved against the repository root and the subagent

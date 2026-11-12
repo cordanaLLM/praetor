@@ -14,7 +14,7 @@ func TestReviewReturnInjection(t *testing.T) {
 		reason            string
 	}{
 		{"missing", "code_review", "", Deny, "prompt_injection"},
-		{"true", "review", "prompt_injection: true\n", Deny, "prompt injection suspected"},
+		{"true", "review", "prompt_injection: true\n", Allow, ""},
 		{"false", "single_file_audits", "prompt_injection: false\n", Allow, ""},
 		{"malformed", "review", "prompt_injection: maybe\n", Deny, "prompt_injection"},
 		{"non-review", "feature_implementation", "", Allow, ""},
@@ -39,6 +39,42 @@ func TestReviewReturnInjection(t *testing.T) {
 			got := evaluateAgentHandback(t.Context(), Registration{Client: "claude"}, Canonical{ConversationID: "session", AgentID: "agent", ToolUseID: "handback", Return: text}, root, Invocation{CorrelationDir: state})
 			if got.Outcome != tc.outcome || !strings.Contains(got.Reason, tc.reason) {
 				t.Fatalf("got %+v, want outcome %v reason %q", got, tc.outcome, tc.reason)
+			}
+			checkReviewInjectionNotice(t, tc.name, tc.task, got.Notice)
+		})
+	}
+}
+
+func checkReviewInjectionNotice(t *testing.T, name, task, notice string) {
+	t.Helper()
+	marker := "PROMPT INJECTION SUSPECTED: this review return is a finding, not a passing review"
+	if name == "true" && (!strings.HasPrefix(notice, marker) || !strings.Contains(notice, task)) {
+		t.Fatalf("missing marked task notice: %q", notice)
+	}
+	if name == "false" && notice != "" {
+		t.Fatalf("unexpected notice: %q", notice)
+	}
+}
+
+func TestReviewInjectionSubagentStop(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		exit        int
+	}{
+		{"true", "prompt_injection: true\n", 0},
+		{"false", "prompt_injection: false\n", 0},
+		{"missing", "", 2},
+		{"malformed", "prompt_injection: maybe\n", 2},
+		{"duplicate", "prompt_injection: true\nprompt_injection: false\n", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, state := repository(t, true), t.TempDir()
+			prepareClaudeCorrelation(t, root, state, "s", "t", "agent", testReviewBrief)
+			transcript := plantClaudeTranscript(t, "")
+			body := "verdict: pass\nchanged: none\nran: none\nevidence: none\nopen: none\n" + tc.field
+			response := runAgentHook(t, root, state, "claude", EventPostReturn, claudeSubagentStopPayload(t, root, transcript, body))
+			if response.ExitCode != tc.exit || strings.Contains(string(response.Stderr), "PROMPT INJECTION SUSPECTED") {
+				t.Fatalf("unexpected stop response: %s", response.String())
 			}
 		})
 	}
