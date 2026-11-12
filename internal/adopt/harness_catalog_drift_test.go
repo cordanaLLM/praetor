@@ -11,7 +11,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
-// TestHarnessCatalogDrift checks exact catalog membership, duplicates, and order independence.
+// TestHarnessCatalogDrift checks exact membership, duplicates, and order independence
+// in the generated catalog table, before repository-owned rows are merged.
 func TestHarnessCatalogDrift(t *testing.T) {
 	harness := renderTruthHarness(t, "", "fixture", truthPlan)
 	rows, err := hisscatalog.InvariantTableRows(harness)
@@ -57,7 +58,10 @@ func TestHarnessCatalogDrift(t *testing.T) {
 // missing and invented IDs for actual against canonical.
 func assertCatalogIDs(t *testing.T, canonical, actual, wantMissing, wantInvented []string) {
 	t.Helper()
-	missing, invented := hisscatalog.CompareIDs(canonical, actual)
+	missing, invented, err := hisscatalog.CompareIDs(canonical, actual)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !slices.Equal(missing, wantMissing) || !slices.Equal(invented, wantInvented) {
 		t.Fatalf("missing %v, invented %v; want missing %v, invented %v", missing, invented, wantMissing, wantInvented)
 	}
