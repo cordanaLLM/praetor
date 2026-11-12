@@ -57,6 +57,7 @@ type DuplicateGroup struct {
 // SprawlItem highlights ad-hoc utility implementations that should use centralized utils.
 type SprawlItem struct {
 	funcLine    int
+	pos         token.Pos
 	File        string `json:"file"`
 	Line        int    `json:"line"`
 	Pattern     string `json:"pattern"`
@@ -537,10 +538,10 @@ func assignSprawlFunctions(fset *token.FileSet, node *ast.File, relPath string, 
 		if !ok || fn.Body == nil {
 			continue
 		}
-		start, end := fset.Position(fn.Pos()), fset.Position(fn.End())
+		start := fset.Position(fn.Pos())
 		for j := 0; j < len(items) && j < maxScoreFindings; j++ {
 			item := &items[j]
-			if item.File == relPath && item.Line >= start.Line && item.Line <= end.Line {
+			if item.File == relPath && item.pos >= fn.Pos() && item.pos < fn.End() {
 				item.funcLine = start.Line
 			}
 		}
@@ -634,6 +635,7 @@ func checkAdHocGit(call *ast.CallExpr, relPath string, line int, report *DedupeR
 	report.SprawlItems = append(report.SprawlItems, SprawlItem{
 		File:        relPath,
 		Line:        line,
+		pos:         call.Pos(),
 		Pattern:     form.pattern,
 		Replacement: gitSprawlReplacement,
 	})

@@ -131,16 +131,19 @@ func trimUnclosedFence(lines []string) []string {
 		return nil
 	}
 	var fence util.MarkdownFence
-	start := 0
+	start, depth := 0, 0
 	for i := 0; i < len(lines) && i < maxBudgetLines; i++ {
-		line, ok := stripQuotePrefixes(lines[i])
+		line, quoteDepth, ok := stripQuotePrefixes(lines[i])
 		if !ok {
 			return nil
+		}
+		if fence.Open() && quoteDepth < depth {
+			fence = util.MarkdownFence{}
 		}
 		wasOpen := fence.Open()
 		fence.Inside(line)
 		if !wasOpen && fence.Open() {
-			start = i
+			start, depth = i, quoteDepth
 		}
 	}
 	if fence.Open() {
@@ -150,15 +153,15 @@ func trimUnclosedFence(lines []string) []string {
 }
 
 // stripQuotePrefixes reveals nested quoted fence delimiters within a bounded depth.
-func stripQuotePrefixes(line string) (string, bool) {
+func stripQuotePrefixes(line string) (string, int, bool) {
 	line = strings.TrimSpace(line)
 	for i := 0; i < maxQuoteDepth; i++ {
 		if !strings.HasPrefix(line, ">") {
-			return line, true
+			return line, i, true
 		}
 		line = strings.TrimSpace(line[1:])
 	}
-	return line, !strings.HasPrefix(line, ">")
+	return line, maxQuoteDepth, !strings.HasPrefix(line, ">")
 }
 
 func stripBoilerplate(text string) string {

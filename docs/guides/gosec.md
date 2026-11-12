@@ -3,7 +3,7 @@
 The Security stage rejects gosec findings unless an existing baseline or a live, per-file
 exception covers them. Resolve each finding by fixing the code, adding a justified
 `#nosec Gxxx -- reason` comment at its line, or declaring a dated exception in `.standards.yaml`.
-The scanner configuration stays `.gosec.json`; exceptions do not change its enabled rules. The security stage scans generated and handwritten files alike; a generated-code header alone never excludes a finding. A generated-file finding requires a declared, reviewed exception for its file and rule, with a reason and expiry. See [runGosecScan](../../internal/gating/pipeline.go), [scanModuleGosec](../../internal/gating/gosec.go), [exception filtering](../../internal/gating/gosec_exceptions.go), and [the regression test](../../internal/gating/gosec_generated_test.go).
+The scanner configuration stays `.gosec.json`; exceptions do not change its enabled rules. The security stage scans generated and handwritten files alike; a generated-code header alone never excludes a finding. A generated-file finding requires a declared, reviewed exception for its file and rule, with a reason and expiry. See [runGosecScan](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/pipeline.go), [scanModuleGosec](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/gosec.go), [exception filtering](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/gosec_exceptions.go), and [the regression test](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/gosec_generated_test.go).
 
 ## Record an existing baseline
 

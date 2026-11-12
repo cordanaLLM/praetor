@@ -57,8 +57,8 @@ func TestBudgetWholeLinesAndQuotedFence(t *testing.T) {
 		t.Fatalf("partial line: %q", got)
 	}
 	got = strings.Join(trimUnclosedFence([]string{"keep", "> > ````go", "> body", "> ```"}), "\n")
-	if got != "keep" {
-		t.Fatalf("quoted open fence retained: %q", got)
+	if got != "keep\n> > ````go\n> body" {
+		t.Fatalf("quoted fence container handling: %q", got)
 	}
 }
 
@@ -75,5 +75,14 @@ func TestBudgetFenceInspectionLimitDropsExcerpt(t *testing.T) {
 	}
 	if got := trimUnclosedFence([]string{strings.Repeat(">", 65) + "```"}); len(got) != 0 {
 		t.Fatal("over-depth quote retained")
+	}
+}
+
+// TestCompressQuotedFenceContainerEnd keeps the API after a quoted fence ends with its container.
+func TestCompressQuotedFenceContainerEnd(t *testing.T) {
+	raw := "``` warning about package usage\nfunc Exported() error\nWarning: " + strings.Repeat("word ", 500) + "\n"
+	doc := CompressDocumentation(PackageRef{Name: "sample", Kind: KindGoModule}, raw, DistillOptions{MaxTokensPerPackage: 80})
+	if !strings.Contains(doc.RawMarkdown, "warning about package usage") || !strings.Contains(doc.RawMarkdown, "func Exported() error") || !strings.Contains(doc.RawMarkdown, truncationNotice) {
+		t.Fatalf("summary or API lost: %s", doc.RawMarkdown)
 	}
 }

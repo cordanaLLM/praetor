@@ -10,6 +10,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // TestGeneratedGosecFindingExcluded plants a generated source finding at the scanner boundary.
@@ -69,7 +72,11 @@ func TestGosecScanPathsShareArguments(t *testing.T) {
 // TestGosecScanPathsReuseArgumentBuilder prevents scanner configuration from drifting.
 func TestGosecScanPathsReuseArgumentBuilder(t *testing.T) {
 	for _, item := range []struct{ file, function string }{{"pipeline.go", "runGosecScan"}, {"gosec.go", "scanModuleGosecWithRunner"}} {
-		tree, err := parser.ParseFile(token.NewFileSet(), item.file, nil, 0)
+		data, err := util.ReadFileLimited(item.file, hiss.MaxScanFileSize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tree, err := parser.ParseFile(token.NewFileSet(), item.file, data, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

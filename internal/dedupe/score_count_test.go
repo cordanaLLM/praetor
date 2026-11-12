@@ -54,3 +54,20 @@ func TestScoreSprawlRejectsExcessDeclarations(t *testing.T) {
 		t.Fatal("excess declarations accepted")
 	}
 }
+
+// TestScoreSprawlSharedDeclarationLine attributes calls by their source position.
+func TestScoreSprawlSharedDeclarationLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.go")
+	source := "package sample\nimport \"os/exec\"\nfunc first() {\nexec.Command(\"git\") }; func second() { exec.Command(\"git\") }\n"
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	report := &DedupeReport{}
+	var starts []adopterGitStart
+	if err := scanGoFile(context.Background(), token.NewFileSet(), path, "sample.go", map[string][]FileLocation{}, map[string]int{}, true, &starts, report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.SprawlItems) != 2 || report.SprawlItems[0].funcLine != 3 || report.SprawlItems[1].funcLine != 4 {
+		t.Fatalf("sprawl attribution: %+v", report.SprawlItems)
+	}
+}

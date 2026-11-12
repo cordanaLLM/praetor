@@ -906,7 +906,7 @@ cancelled or expired caller context is never retried, and a second failure or an
 fails the stage
 ([`internal/gating/prefetch.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/prefetch.go)).
 Security runs symbol-level `govulncheck` against the repository-root OpenVEX document and `gosec`
-over every file, generated code included (a finding takes a declared exception; see
+over the non-test Go package files in each tracked module, generated code included (a finding takes a declared exception; see
 [gosec](gosec.md)), and the race stage runs `go test -race ./...` in an isolated worktree for each module. Each
 module's compiled test binaries run through `go test -exec '<current CLI> go test-exec'`
 on local Linux gates. The wrapper reuses `internal/sandbox`'s `NetworkNone` bubblewrap
