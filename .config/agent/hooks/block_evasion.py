@@ -93,49 +93,6 @@ def join_line_continuations(command_str: str) -> str:
     return re.sub(r"\\\r?\n", " ", command_str)
 
 
-# Every match of the privilege rule contains one of these literal program names.
-# BuiltinRule.RequiredAny supplies the same prefilter to Go and the emitted interceptor.
-RULE_PREFILTERS = {BLOCKED_PATTERNS[-1]: ("sudo", "doas", "pkexec", "run0", "su")}
-
-
-# The git rule with an option run (the short skip flag rule) is searched once per run (#1283).
-# re retries a rule at every git it finds, and a git inside an option token (-git, --x=git,
-# -C dir/git) starts at a boundary of the run an earlier git already walked: each retry walked
-# the rest of that run again, quadratic in the line. A start at a walked boundary reaches the
-# same end, and only a run's end can be followed by the rest of the rule (every option starts
-# with a blank and a dash), so skipping it keeps re.search's answer. The adopter interceptor
-# carries this code byte for byte (TestEmittedInterceptorSearchesLikeTheEngineGuard).
-GIT_OPTION_RUN_HEAD = r"\bgit("
-GIT_OPTION_RUN_JOIN = r")*\s+("
-
-
-def search(pattern, text):
-    """re.search(pattern, text) is not None, with the git option-run rule in linear time."""
-    literals = RULE_PREFILTERS.get(pattern, ())
-    if literals and not any(literal in text for literal in literals):
-        return False
-    head, join, tail = pattern.partition(GIT_OPTION_RUN_JOIN)
-    if not join or not head.startswith(GIT_OPTION_RUN_HEAD):
-        return re.search(pattern, text) is not None
-    first = len(GIT_OPTION_RUN_HEAD)
-    option = re.compile(head[first:])
-    rest = re.compile(r"\s+(" + tail)
-    walked = set()
-    for found in re.finditer(r"\bgit", text):
-        position = found.end()
-        if position in walked:
-            continue
-        while position not in walked:
-            walked.add(position)
-            step = option.match(text, position)
-            if step is None or step.end() == position:
-                break
-            position = step.end()
-        if rest.match(text, position):
-            return True
-    return False
-
-
 # These conservative recognizers refuse ambiguous shell syntax rather than hiding it.
 HEREDOC_SHADOW = re.compile(r"(?:^|[^A-Za-z0-9_])(?:alias|function)(?:[^A-Za-z0-9_]|$)|[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)")
 HEREDOC_FD = re.compile(r"(?:^|[^0-9])[0-9]+[ \t]*[<>]|\{[^}]+\}[ \t]*[<>]|>[ \t]*&|/dev/fd/|/proc/self/fd/")
@@ -213,6 +170,49 @@ def heredoc_selftest():
     if not failed:
         print(f"heredoc fixtures: {len(cases)} passed")
     return not failed
+
+
+# Every match of the privilege rule contains one of these literal program names.
+# BuiltinRule.RequiredAny supplies the same prefilter to Go and the emitted interceptor.
+RULE_PREFILTERS = {BLOCKED_PATTERNS[-1]: ("sudo", "doas", "pkexec", "run0", "su")}
+
+
+# The git rule with an option run (the short skip flag rule) is searched once per run (#1283).
+# re retries a rule at every git it finds, and a git inside an option token (-git, --x=git,
+# -C dir/git) starts at a boundary of the run an earlier git already walked: each retry walked
+# the rest of that run again, quadratic in the line. A start at a walked boundary reaches the
+# same end, and only a run's end can be followed by the rest of the rule (every option starts
+# with a blank and a dash), so skipping it keeps re.search's answer. The adopter interceptor
+# carries this code byte for byte (TestEmittedInterceptorSearchesLikeTheEngineGuard).
+GIT_OPTION_RUN_HEAD = r"\bgit("
+GIT_OPTION_RUN_JOIN = r")*\s+("
+
+
+def search(pattern, text):
+    """re.search(pattern, text) is not None, with the git option-run rule in linear time."""
+    literals = RULE_PREFILTERS.get(pattern, ())
+    if literals and not any(literal in text for literal in literals):
+        return False
+    head, join, tail = pattern.partition(GIT_OPTION_RUN_JOIN)
+    if not join or not head.startswith(GIT_OPTION_RUN_HEAD):
+        return re.search(pattern, text) is not None
+    first = len(GIT_OPTION_RUN_HEAD)
+    option = re.compile(head[first:])
+    rest = re.compile(r"\s+(" + tail)
+    walked = set()
+    for found in re.finditer(r"\bgit", text):
+        position = found.end()
+        if position in walked:
+            continue
+        while position not in walked:
+            walked.add(position)
+            step = option.match(text, position)
+            if step is None or step.end() == position:
+                break
+            position = step.end()
+        if rest.match(text, position):
+            return True
+    return False
 
 
 def audit_command(command_str: str) -> bool:
