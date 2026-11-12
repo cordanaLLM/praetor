@@ -41,6 +41,7 @@ func writeTestLines(t *testing.T, root, rel string, count int, header string) {
 	}
 }
 
+// TestReturnClaims_Refused_MissingPath refuses a return that cites a file which does not exist.
 func TestReturnClaims_Refused_MissingPath(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	prepareClaudeCorrelation(t, root, state, "s", "t", "agent", testReviewBrief)
@@ -53,6 +54,7 @@ func TestReturnClaims_Refused_MissingPath(t *testing.T) {
 	}
 }
 
+// TestReturnClaims_Refused_LinePastEndOfFile refuses a return citing a line one past the file's last line.
 func TestReturnClaims_Refused_LinePastEndOfFile(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
@@ -67,6 +69,7 @@ func TestReturnClaims_Refused_LinePastEndOfFile(t *testing.T) {
 	}
 }
 
+// TestReturnClaims_Refused_ClaimedRunNoBashCall refuses a claimed command run that no Bash tool call made.
 func TestReturnClaims_Refused_ClaimedRunNoBashCall(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
@@ -82,6 +85,7 @@ func TestReturnClaims_Refused_ClaimedRunNoBashCall(t *testing.T) {
 	}
 }
 
+// TestReturnClaims_Accepted_ExistingPathAndLastValidLine accepts an existing path cited at its last valid line with a matching run.
 func TestReturnClaims_Accepted_ExistingPathAndLastValidLine(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
@@ -96,6 +100,7 @@ func TestReturnClaims_Accepted_ExistingPathAndLastValidLine(t *testing.T) {
 	}
 }
 
+// TestReturnClaims_Accepted_HonestReturnBuildCouldNotRun accepts a return that states honestly that the build could not run.
 func TestReturnClaims_Accepted_HonestReturnBuildCouldNotRun(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
@@ -143,6 +148,7 @@ func TestReturnClaims_Unmeasured_CodexReturnWithClaimedRun(t *testing.T) {
 	}
 }
 
+// TestReturnClaims_SyntheticSurveyAllShapes runs every claim shape of a synthetic survey return through the check.
 func TestReturnClaims_SyntheticSurveyAllShapes(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	writeTestLines(t, root, ".standards.yaml", 410, "version: 1")
@@ -210,6 +216,7 @@ func TestReturnClaims_CancellableCitationRead(t *testing.T) {
 	}
 }
 
+// TestReturnClaims_Refused_SymlinkEscapingRoot refuses a cited path that resolves through a symlink outside the repository.
 func TestReturnClaims_Refused_SymlinkEscapingRoot(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
@@ -259,6 +266,7 @@ func TestReturnClaims_Skip_EndedContext(t *testing.T) {
 	}
 }
 
+// TestReturnClaims_Accepted_BashCommandPastIndex1023 finds a claimed run in a Bash call past the transcript's first 1023 entries.
 func TestReturnClaims_Accepted_BashCommandPastIndex1023(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
@@ -277,6 +285,7 @@ func TestReturnClaims_Accepted_BashCommandPastIndex1023(t *testing.T) {
 	}
 }
 
+// TestReturnClaims_Refused_EchoArgumentNotExecutedCommand refuses a claimed run that only appears as an echo argument.
 func TestReturnClaims_Refused_EchoArgumentNotExecutedCommand(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
