@@ -74,8 +74,11 @@ type DedupeReport struct {
 	SprawlItems           []SprawlItem     `json:"sprawl_items"`
 	StaleExceptions       []string         `json:"stale_exceptions,omitempty"`
 	NotCheckedExceptions  []string         `json:"not_checked_exceptions,omitempty"`
-	CleanlinessScore      float64          `json:"cleanliness_score"`
-	Passed                bool             `json:"passed"`
+	// FindingFunctions is the score's numerator: the distinct scanned functions that take part
+	// in a duplicate or sprawl finding (#241 asks for the raw counts beside the ratio).
+	FindingFunctions int     `json:"finding_functions"`
+	CleanlinessScore float64 `json:"cleanliness_score"`
+	Passed           bool    `json:"passed"`
 	// Applicable reports whether there was anything to scan. This detector reads Go sources
 	// only, so a repository with none is not clean -- it is unexamined, and the difference
 	// matters to every caller that reads the score.
@@ -993,7 +996,8 @@ func calculateScore(report *DedupeReport) {
 		report.Passed = false
 		return
 	}
-	deduction := 100 * float64(countFindingFunctions(report)) / float64(max(1, report.TotalFuncsScanned))
+	report.FindingFunctions = countFindingFunctions(report)
+	deduction := 100 * float64(report.FindingFunctions) / float64(max(1, report.TotalFuncsScanned))
 	score := 100.0 - deduction
 	if score < 0.0 {
 		score = 0.0

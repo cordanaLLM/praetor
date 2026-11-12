@@ -8,8 +8,8 @@ func TestScoreDistinctParticipants(t *testing.T) {
 	report := &DedupeReport{TotalFilesScanned: 1, TotalFuncsScanned: 10,
 		Duplicates: []DuplicateGroup{{Locations: []FileLocation{loc(1), loc(2)}}, {Locations: []FileLocation{loc(1), loc(3), loc(4), loc(5)}}}}
 	calculateScore(report)
-	if report.CleanlinessScore != 50 || report.Passed {
-		t.Fatalf("score=%v passed=%v; want 50 and false", report.CleanlinessScore, report.Passed)
+	if report.CleanlinessScore != 50 || report.Passed || report.FindingFunctions != 5 {
+		t.Fatalf("score=%v passed=%v functions=%d; want 50, false, 5", report.CleanlinessScore, report.Passed, report.FindingFunctions)
 	}
 }
 
