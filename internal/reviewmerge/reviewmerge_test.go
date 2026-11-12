@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// TestReviewMergeRules checks the review merge contract.
 func TestReviewMergeRules(t *testing.T) {
 	drafts := []Draft{{Model: "one", Kind: "code", Findings: []Finding{{ID: "a", Claim: "claim a", Pointer: "a.go:1", Evidence: "proof"}, {ID: "b", Claim: "claim b", Pointer: "b.go:2", Evidence: "proof"}}}}
 	good := Final{Combiner: "merge", Verdict: "approve", Kept: []KeptFinding{{ID: "a", Sources: []string{"one"}}}, Dropped: []DroppedClaim{{ID: "b", Claim: "claim b", Reason: "false", Pointer: "b.go:2"}}, Added: []Finding{{ID: "added:c"}}}
@@ -39,12 +40,16 @@ func TestReviewMergeRules(t *testing.T) {
 		})
 	}
 }
+
+// TestReviewDraftRejectsVerdict checks the review merge contract.
 func TestReviewDraftRejectsVerdict(t *testing.T) {
 	var d Draft
 	if err := json.Unmarshal([]byte(`{"model":"m","kind":"code","findings":[],"verdict":"approve"}`), &d); err == nil {
 		t.Fatal("draft verdict accepted")
 	}
 }
+
+// TestReviewMergeBounds checks the review merge contract.
 func TestReviewMergeBounds(t *testing.T) {
 	if p := Validate([]Draft{{Model: "m", Kind: "code"}}, Final{Combiner: "c", Verdict: "approve"}); len(p) > 0 {
 		t.Fatal(p)
@@ -74,5 +79,46 @@ func TestReviewMergeBounds(t *testing.T) {
 	d[0].Findings = append(findings, Finding{ID: "extra"})
 	if p := Validate(d, f); len(p) == 0 {
 		t.Fatal("finding cap")
+	}
+}
+
+// TestReviewMergeDifferentIDs verifies coverage and source attribution across draft IDs.
+func TestReviewMergeDifferentIDs(t *testing.T) {
+	drafts := []Draft{
+		{Model: "a", Kind: "code", Findings: []Finding{{ID: "a-1", Claim: "defect"}}},
+		{Model: "b", Kind: "code", Findings: []Finding{{ID: "b-3", Claim: "defect"}}},
+	}
+	cases := []struct{ name, input, want string }{
+		{"union", `{"combiner":"c","verdict":"approve","kept":[{"id":"a-1","merged_ids":["b-3"],"sources":["a","b"]}]}`, ""},
+		{"missing source", `{"combiner":"c","verdict":"approve","kept":[{"id":"a-1","merged_ids":["b-3"],"sources":["a"]}]}`, "missing source b"},
+		{"unknown merged", `{"combiner":"c","verdict":"approve","kept":[{"id":"a-1","merged_ids":["b-3","unknown"],"sources":["a","b"]}]}`, "unknown: merged id not raised in draft"},
+		{"extra source", `{"combiner":"c","verdict":"approve","kept":[{"id":"a-1","merged_ids":["b-3"],"sources":["a","b","c"]}]}`, "source did not raise finding: c"},
+		{"merged twice", `{"combiner":"c","verdict":"approve","kept":[{"id":"a-1","merged_ids":["b-3","b-3"],"sources":["a","b"]}]}`, "b-3: draft finding must occur exactly once"},
+		{"merged and kept", `{"combiner":"c","verdict":"approve","kept":[{"id":"a-1","merged_ids":["b-3"],"sources":["a","b"]},{"id":"b-3","sources":["b"]}]}`, "b-3: draft finding must occur exactly once"},
+		{"merged and added", `{"combiner":"c","verdict":"approve","kept":[{"id":"a-1","merged_ids":["b-3"],"sources":["a","b"]}],"added":[{"id":"b-3"}]}`, "b-3: added id already raised"},
+		{"merged and dropped", `{"combiner":"c","verdict":"approve","kept":[{"id":"a-1","merged_ids":["b-3"],"sources":["a","b"]}],"dropped":[{"id":"b-3","claim":"defect","reason":"duplicate","pointer":"x:1"}]}`, "b-3: draft finding must occur exactly once"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var f Final
+			if err := json.Unmarshal([]byte(tc.input), &f); err != nil {
+				t.Fatal(err)
+			}
+			problems := Validate(drafts, f)
+			if tc.want == "" && len(problems) != 0 {
+				t.Fatalf("unexpected: %v", problems)
+			}
+			if tc.want != "" && !strings.Contains(fmt.Sprint(problems), tc.want) {
+				t.Fatalf("missing %q: %v", tc.want, problems)
+			}
+		})
+	}
+}
+
+// TestReviewMergeMergedIDBounds checks the limit on merged IDs.
+func TestReviewMergeMergedIDBounds(t *testing.T) {
+	f := Final{Combiner: "c", Verdict: "approve", Kept: []KeptFinding{{ID: "a", MergedIDs: make([]string, MaxFindings+1)}}}
+	if p := Validate(nil, f); !strings.Contains(fmt.Sprint(p), "merged id count exceeds limit") {
+		t.Fatal(p)
 	}
 }

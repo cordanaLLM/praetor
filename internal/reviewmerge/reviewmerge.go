@@ -10,36 +10,50 @@ import (
 )
 
 const (
-	MaxDrafts    = 64
-	MaxFindings  = 256
-	AddedPrefix  = "added:"
+	// MaxDrafts limits the number of review drafts.
+	MaxDrafts = 64
+	// MaxFindings limits findings and merged IDs per entry.
+	MaxFindings = 256
+	// AddedPrefix distinguishes findings introduced by the combiner.
+	AddedPrefix = "added:"
+	// maxJSONBytes limits the size of a draft document.
 	maxJSONBytes = 4 << 20
 )
 
+// Finding records a review claim and its supporting evidence.
 type Finding struct {
 	ID       string `json:"id"`
 	Claim    string `json:"claim"`
 	Pointer  string `json:"pointer"`
 	Evidence string `json:"evidence"`
 }
+
+// Draft holds one model’s ungraded review.
 type Draft struct {
 	Model    string    `json:"model"`
 	Kind     string    `json:"kind"`
 	Findings []Finding `json:"findings"`
 }
+
+// KeptFinding records a retained finding and its attribution.
 type KeptFinding struct {
-	ID       string   `json:"id"`
-	Claim    string   `json:"claim"`
-	Pointer  string   `json:"pointer"`
-	Evidence string   `json:"evidence"`
-	Sources  []string `json:"sources"`
+	ID        string   `json:"id"`
+	Claim     string   `json:"claim"`
+	Pointer   string   `json:"pointer"`
+	Evidence  string   `json:"evidence"`
+	Sources   []string `json:"sources"`
+	MergedIDs []string `json:"merged_ids,omitempty"`
 }
+
+// DroppedClaim records a rejected draft claim and its rationale.
 type DroppedClaim struct {
 	ID      string `json:"id"`
 	Claim   string `json:"claim"`
 	Reason  string `json:"reason"`
 	Pointer string `json:"pointer"`
 }
+
+// Final holds the combiner’s review and disposition of draft findings.
 type Final struct {
 	Combiner string         `json:"combiner"`
 	Verdict  string         `json:"verdict"`
@@ -50,6 +64,7 @@ type Final struct {
 
 // UnmarshalJSON refuses unknown fields, including classifications, in a draft.
 func (d *Draft) UnmarshalJSON(raw []byte) error {
+	// plain avoids recursive draft decoding.
 	type plain Draft
 	var v plain
 	if err := strictjson.Decode(raw, &v, strictjson.Options{MaxBytes: maxJSONBytes, MaxDepth: 16}); err != nil {
@@ -59,11 +74,13 @@ func (d *Draft) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
+// Problem describes a contract violation.
 type Problem struct {
 	ID   string `json:"id"`
 	Rule string `json:"rule"`
 }
 
+// String formats a problem for human readers.
 func (p Problem) String() string { return fmt.Sprintf("%s: %s", p.ID, p.Rule) }
 
 // Validate reports every violation within the declared input bounds.
@@ -84,13 +101,17 @@ func Validate(drafts []Draft, final Final) []Problem {
 	return v.problems
 }
 
+// validator tracks draft coverage and validation problems.
 type validator struct {
 	problems       []Problem
 	raised, claims map[string][]string
 	counts         map[string]int
 }
 
+// add records a contract violation.
 func (v *validator) add(id, rule string) { v.problems = append(v.problems, Problem{id, rule}) }
+
+// checkBounds rejects inputs exceeding the contract limits.
 func (v *validator) checkBounds(drafts []Draft, f Final) bool {
 	if len(drafts) > MaxDrafts {
 		v.add("drafts", "draft count exceeds limit")
@@ -100,6 +121,12 @@ func (v *validator) checkBounds(drafts []Draft, f Final) bool {
 		v.add("final", "finding count exceeds limit")
 		return false
 	}
+	for _, k := range f.Kept {
+		if len(k.MergedIDs) > MaxFindings {
+			v.add(k.ID, "merged id count exceeds limit")
+			return false
+		}
+	}
 	for _, d := range drafts {
 		if len(d.Findings) > MaxFindings {
 			v.add(d.Model, "finding count exceeds limit")
@@ -108,6 +135,8 @@ func (v *validator) checkBounds(drafts []Draft, f Final) bool {
 	}
 	return true
 }
+
+// checkDrafts indexes draft findings and validates their origin.
 func (v *validator) checkDrafts(drafts []Draft) {
 	for _, d := range drafts {
 		if strings.TrimSpace(d.Model) == "" {
@@ -130,6 +159,8 @@ func (v *validator) checkDrafts(drafts []Draft) {
 		}
 	}
 }
+
+// checkFinal validates the combined review and draft coverage.
 func (v *validator) checkFinal(f Final) {
 	if strings.TrimSpace(f.Combiner) == "" {
 		v.add("final", "combiner required")
@@ -154,15 +185,26 @@ func (v *validator) checkFinal(f Final) {
 		v.checkAdded(a)
 	}
 }
+
+// checkKept checks coverage and attribution for a retained finding.
 func (v *validator) checkKept(k KeptFinding) {
 	v.counts[k.ID]++
 	if len(k.Sources) > MaxDrafts {
 		v.add(k.ID, "source count exceeds limit")
 		return
 	}
-	models, ok := v.raised[k.ID]
+	raised, ok := v.raised[k.ID]
+	models := append([]string(nil), raised...)
 	if !ok {
 		v.add(k.ID, "kept id not raised in draft")
+	}
+	for _, id := range k.MergedIDs {
+		v.counts[id]++
+		raisers, found := v.raised[id]
+		if !found {
+			v.add(id, "merged id not raised in draft")
+		}
+		models = append(models, raisers...)
 	}
 	for _, m := range models {
 		if !contains(k.Sources, m) {
@@ -175,6 +217,8 @@ func (v *validator) checkKept(k KeptFinding) {
 		}
 	}
 }
+
+// contains reports whether a string occurs in a list.
 func contains(items []string, value string) bool {
 	for _, s := range items {
 		if s == value {
@@ -183,6 +227,8 @@ func contains(items []string, value string) bool {
 	}
 	return false
 }
+
+// checkDropped checks the rationale and provenance of a dropped claim.
 func (v *validator) checkDropped(d DroppedClaim) {
 	v.counts[d.ID]++
 	if _, ok := v.raised[d.ID]; !ok {
@@ -203,6 +249,8 @@ func (v *validator) checkDropped(d DroppedClaim) {
 		v.add(d.ID, "drop pointer required")
 	}
 }
+
+// checkAdded checks the identity of a combiner-added finding.
 func (v *validator) checkAdded(f Finding) {
 	if !strings.HasPrefix(f.ID, AddedPrefix) || len(f.ID) == len(AddedPrefix) {
 		v.add(f.ID, "added id requires added: prefix")

@@ -11,14 +11,17 @@ import (
 	"github.com/cordanaLLM/praetor/internal/strictjson"
 )
 
+// mergeFileLimit bounds the size of each review input.
 const mergeFileLimit = 4 << 20
 
+// modelMergeFlags holds the merge-check command options.
 type modelMergeFlags struct {
 	drafts repeatedStringFlag
 	final  *string
 	json   *bool
 }
 
+// addModelMergeFlags registers the merge-check options.
 func addModelMergeFlags(fs *flag.FlagSet) *modelMergeFlags {
 	f := &modelMergeFlags{}
 	fs.Var(&f.drafts, "draft", "models merge-check: draft JSON (repeatable)")
@@ -26,12 +29,16 @@ func addModelMergeFlags(fs *flag.FlagSet) *modelMergeFlags {
 	f.json = fs.Bool("json", false, "models merge-check: JSON output")
 	return f
 }
+
+// modelMergeError reports an input or usage error.
 func modelMergeError(err error) error {
 	if _, e := fmt.Fprintln(os.Stderr, err); e != nil {
 		return fmt.Errorf("write error: %w", e)
 	}
 	return exitStatusError{code: 2}
 }
+
+// readMergeJSON decodes a bounded review document.
 func readMergeJSON(path string, target any) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -50,6 +57,8 @@ func readMergeJSON(path string, target any) error {
 	}
 	return nil
 }
+
+// handleModelsMerge validates review files and reports violations.
 func handleModelsMerge(f *modelMergeFlags) error {
 	if len(f.drafts) == 0 || len(f.drafts) > reviewmerge.MaxDrafts || *f.final == "" {
 		return modelMergeError(fmt.Errorf("merge-check requires 1..%d --draft files and --final", reviewmerge.MaxDrafts))
@@ -74,6 +83,7 @@ func handleModelsMerge(f *modelMergeFlags) error {
 	return nil
 }
 
+// printMergeProblems writes violations in the requested format.
 func printMergeProblems(problems []reviewmerge.Problem, asJSON bool) error {
 	if asJSON {
 		if problems == nil {
@@ -89,6 +99,7 @@ func printMergeProblems(problems []reviewmerge.Problem, asJSON bool) error {
 	return nil
 }
 
+// parseModelAction parses and validates the models command action.
 func parseModelAction(fs *flag.FlagSet, args []string) (string, error) {
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -104,6 +115,8 @@ func parseModelAction(fs *flag.FlagSet, args []string) (string, error) {
 	}
 	return action, err
 }
+
+// validateMergeAction checks arguments and flags for the selected action.
 func validateMergeAction(fs *flag.FlagSet, action string, count int) error {
 	if count > 1 {
 		return fmt.Errorf("models accepts one action")
