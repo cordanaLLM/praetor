@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -85,26 +84,17 @@ func pageInvariantIDs(content string) []string {
 	return ids
 }
 
-// compareInvariantIDs reports every canonical ID a page omits and every ID a page carries
-// beyond the canonical set, a repeated row included. Both the positive guard tests (against
-// the real sources) and the negative test (against synthetic fixtures) call it, so the
-// comparison itself is under test, not just its verdict against today's content.
-func compareInvariantIDs(canonical, page []string) (missing, invented []string) {
-	for _, id := range canonical {
-		if !slices.Contains(page, id) {
-			missing = append(missing, id)
-		}
+// assertWikiInvariantIDs checks exact invariant membership and comparison errors
+// for the named wiki page.
+func assertWikiInvariantIDs(t *testing.T, label string, canonical, actual []string) {
+	t.Helper()
+	missing, invented, err := hisscatalog.CompareIDs(canonical, actual)
+	if err != nil {
+		t.Fatalf("%s invariants: %v", label, err)
 	}
-	seen := make(map[string]bool, len(page))
-	for _, id := range page {
-		if !slices.Contains(canonical, id) || seen[id] {
-			invented = append(invented, id)
-		}
-		seen[id] = true
+	if len(missing)+len(invented) != 0 {
+		t.Errorf("%s invariants missing %v, invented %v", label, missing, invented)
 	}
-	sort.Strings(missing)
-	sort.Strings(invented)
-	return missing, invented
 }
 
 // TestHISSWiki_Positive_EveryCanonicalInvariantIsPublished replays both canonical sources
@@ -123,9 +113,7 @@ func TestHISSWiki_Positive_EveryCanonicalInvariantIsPublished(t *testing.T) {
 	rules := hisscatalog.Rules()
 
 	matrix := pages[hissMatrixPage+".md"].Content
-	if missing, invented := compareInvariantIDs(hisscatalog.RuleIDs(), pageInvariantIDs(matrix)); len(missing)+len(invented) != 0 {
-		t.Errorf("matrix: catalog invariants missing %v, invented %v", missing, invented)
-	}
+	assertWikiInvariantIDs(t, "matrix: catalog", hisscatalog.RuleIDs(), pageInvariantIDs(matrix))
 	gatedIDs := make([]string, 0, len(gated))
 	for _, row := range gated {
 		gatedIDs = append(gatedIDs, row.ID)
@@ -145,9 +133,7 @@ func TestHISSWiki_Positive_EveryCanonicalInvariantIsPublished(t *testing.T) {
 		}
 	}
 	invariants := pages[hissInvariantsPage+".md"].Content
-	if missing, invented := compareInvariantIDs(gatedIDs, pageInvariantIDs(invariants)); len(missing)+len(invented) != 0 {
-		t.Errorf("invariants page: gated invariants missing %v, invented %v", missing, invented)
-	}
+	assertWikiInvariantIDs(t, "invariants page: gated", gatedIDs, pageInvariantIDs(invariants))
 	if want := catalogRange(rules); !strings.Contains(invariants, want) || !strings.Contains(matrix, want) {
 		t.Errorf("HISS pages do not state the catalog range %q", want)
 	}
@@ -207,10 +193,13 @@ func TestGenerateWiki_Negative_UnreadableCanonicalTable(t *testing.T) {
 // above catches every drift direction, using fixtures instead of waiting for a source or
 // the generator to drift for real.
 func TestCompareInvariantIDs_Negative_MissingInventedAndRepeated(t *testing.T) {
-	missing, invented := compareInvariantIDs(
+	missing, invented, err := hisscatalog.CompareIDs(
 		[]string{"HISS-01", "HISS-02"},
 		[]string{"HISS-01", "HISS-99", "HISS-01"},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(missing) != 1 || missing[0] != "HISS-02" {
 		t.Errorf("expected HISS-02 reported as an omitted canonical row, got %v", missing)
 	}

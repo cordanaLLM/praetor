@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+type: fixed
+title: Detect missing, extra, and duplicate HISS rules in the adopted invariant table.
