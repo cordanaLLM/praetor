@@ -17,7 +17,14 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const sessionTickHold uint64 = 600
+const (
+	sessionHandshakeTimeout  = 5 * time.Second
+	sessionLockTimeout       = 5 * time.Second
+	sessionMaxReservationAge = uint64((sessionHandshakeTimeout + sessionLockTimeout) / (10 * time.Millisecond))
+	sessionTickHold          = uint64((sessionHandshakeTimeout + sessionLockTimeout + time.Second) / (10 * time.Millisecond))
+)
+
+var errSessionReservationLate = errors.New("session reservation too late")
 
 type sessionReservation struct {
 	Owner          int    `json:"owner"`
@@ -28,6 +35,22 @@ type sessionReservation struct {
 // Session reservations coordinate sandboxes of one user, not a rootful engine shared by users.
 func reserveSessionTick(ctx context.Context, path string, tick uint64, owner int) (bool, error) {
 	return updateSessionRegistry(ctx, path, tick, owner, false)
+}
+
+// reserveFreshSessionTickWithClock refuses a reservation whose start tick is too old to be safe.
+func reserveFreshSessionTickWithClock(ctx context.Context, path string, tick uint64, owner int, clock func() (uint64, error)) (bool, error) {
+	checkedClock := func() (uint64, error) {
+		now, err := clock()
+		if err == nil && now >= tick && now-tick >= sessionMaxReservationAge {
+			return 0, errSessionReservationLate
+		}
+		return now, err
+	}
+	ok, err := updateSessionRegistryWithClock(ctx, path, tick, owner, false, checkedClock)
+	if errors.Is(err, errSessionReservationLate) {
+		return false, nil
+	}
+	return ok, err
 }
 
 // updateSessionRegistry updates a reservation using the system clock so stale ticks can be pruned before reuse.
@@ -47,25 +70,56 @@ func updateSessionRegistryWithClock(ctx context.Context, path string, tick uint6
 		return false, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, release()) }()
-	entries, err := readSessionRegistry(path)
+	entries, err := sessionRead(ctx, func() (map[string]sessionReservation, error) {
+		return loadSessionRegistry(path, clock)
+	})
 	if err != nil {
 		return false, err
 	}
-	now, err := clock()
-	if err != nil {
-		return false, err
-	}
-	if err = pruneSessionRegistry(entries, now); err != nil {
-		return false, err
-	}
-	ok, err = mutateSessionRegistry(entries, tick, owner, remove)
+	ok, err = sessionRead(ctx, func() (bool, error) { return mutateSessionRegistry(entries, tick, owner, remove) })
 	if err != nil || !ok {
 		return ok, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
 	if err = writeSessionRegistry(path, entries); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// sessionRead returns on cancellation even if a filesystem operation has stalled.
+func sessionRead[T any](ctx context.Context, read func() (T, error)) (T, error) {
+	type result struct {
+		value T
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() { value, err := read(); done <- result{value, err} }()
+	select {
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	case got := <-done:
+		return got.value, got.err
+	}
+}
+
+// loadSessionRegistry validates and prunes registry entries using the supplied clock.
+func loadSessionRegistry(path string, clock func() (uint64, error)) (map[string]sessionReservation, error) {
+	entries, err := readSessionRegistry(path)
+	if err != nil {
+		return nil, err
+	}
+	now, err := clock()
+	if err != nil {
+		return nil, err
+	}
+	if err := pruneSessionRegistry(entries, now); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 // mutateSessionRegistry applies a release or creates a reservation with the owner's process identity.
@@ -206,7 +260,7 @@ func writeSessionRegistry(path string, entries map[string]sessionReservation) (r
 
 // sessionLock acquires the registry lock with a five-second deadline to bound contention.
 func sessionLock(ctx context.Context, root *os.Root, name string) (func() error, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, sessionLockTimeout)
 	defer cancel()
 	return sessionLockWithWait(ctx, root, name, sessionWait)
 }

@@ -4,6 +4,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -143,10 +144,33 @@ func removeSessionDir(dir string) (resultErr error) {
 }
 
 const sessionAttempts = 16
+const sessionInputLimit = 1 << 20
 
 // runSession launches a session with bounded retries so start-tick collisions cannot reuse an identity.
 func runSession(ctx context.Context, inv Invocation, sh string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	return retrySession(ctx, func() (bool, error) { return runSessionAttempt(ctx, inv, sh, command, stdin, stdout, stderr) }, admission.SleepContext)
+	input, err := sessionInput(stdin)
+	if err != nil {
+		return err
+	}
+	return retrySession(ctx, func() (bool, error) { return runSessionAttempt(ctx, inv, sh, command, input(), stdout, stderr) }, admission.SleepContext)
+}
+
+// sessionInput preserves file descriptors and makes bounded non-file input replayable across retries.
+func sessionInput(stdin io.Reader) (func() io.Reader, error) {
+	if stdin == nil {
+		return func() io.Reader { return nil }, nil
+	}
+	if _, ok := stdin.(*os.File); ok {
+		return func() io.Reader { return stdin }, nil
+	}
+	data, err := io.ReadAll(io.LimitReader(stdin, sessionInputLimit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read session input: %w", err)
+	}
+	if len(data) > sessionInputLimit {
+		return nil, errors.New("session input exceeds limit")
+	}
+	return func() io.Reader { return bytes.NewReader(data) }, nil
 }
 
 // retrySession retries collisions up to sixteen attempts with jitter and stops on cancellation or other errors.
@@ -189,37 +213,56 @@ func runSessionAttempt(ctx context.Context, inv Invocation, sh string, command [
 	}
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		done <- util.RunCommandPassthrough(childCtx, "", wrapped.Path, stdin, stdout, stderr, wrapped.Args...)
-	}()
-	handshake, stop := context.WithTimeout(childCtx, 5*time.Second)
+	started := time.Now()
+	done := startSessionChild(childCtx, wrapped, stdin, stdout, stderr)
+	handshake, stop := context.WithDeadline(childCtx, started.Add(sessionHandshakeTimeout))
 	defer stop()
-	tick, err := sessionTick(handshake, files, container, done)
-	if err != nil {
-		cancel()
-		childErr := <-done
-		return false, errors.Join(err, childErr)
-	}
-	reserved, err := reserveSessionTick(handshake, files.registry, tick, os.Getpid())
-	if err != nil || !reserved {
-		cancel()
-		childErr := <-done
-		if err != nil {
-			return false, errors.Join(err, childErr)
-		}
-		return true, nil
+	tick, collision, err := sessionHandshake(handshake, files, container, done, cancel)
+	if err != nil || collision {
+		return collision, err
 	}
 	defer func() {
-		_, err := updateSessionRegistry(context.WithoutCancel(ctx), files.registry, tick, os.Getpid(), true)
+		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), sessionLockTimeout)
+		defer stop()
+		_, err := updateSessionRegistry(cleanup, files.registry, tick, os.Getpid(), true)
 		resultErr = errors.Join(resultErr, err)
 	}()
-	if _, err = files.block.Write([]byte{1}); err != nil {
+	return false, releaseSessionChild(files.block, done, cancel)
+}
+
+// startSessionChild launches the wrapped sandbox and reports its exit through a buffered channel.
+func startSessionChild(ctx context.Context, inv Invocation, stdin io.Reader, stdout, stderr io.Writer) chan error {
+	done := make(chan error, 1)
+	go func() { done <- util.RunCommandPassthrough(ctx, "", inv.Path, stdin, stdout, stderr, inv.Args...) }()
+	return done
+}
+
+// sessionHandshake obtains and reserves the child identity, stopping the child on failure or collision.
+func sessionHandshake(ctx context.Context, files *sessionFiles, container bool, done chan error, cancel context.CancelFunc) (uint64, bool, error) {
+	tick, err := sessionTick(ctx, files, container, done)
+	if err == nil {
+		var reserved bool
+		reserved, err = reserveFreshSessionTickWithClock(ctx, files.registry, tick, os.Getpid(), currentSessionTick)
+		if err == nil && reserved {
+			return tick, false, nil
+		}
+	}
+	cancel()
+	childErr := <-done
+	if err != nil {
+		return 0, false, errors.Join(err, childErr)
+	}
+	return 0, true, nil
+}
+
+// releaseSessionChild releases the blocked sandbox and collects its exit status.
+func releaseSessionChild(block *os.File, done chan error, cancel context.CancelFunc) error {
+	if _, err := block.Write([]byte{1}); err != nil {
 		cancel()
 		childErr := <-done
-		return false, errors.Join(fmt.Errorf("release session sandbox: %w", err), childErr)
+		return errors.Join(fmt.Errorf("release session sandbox: %w", err), childErr)
 	}
-	return false, <-done
+	return <-done
 }
 
 // sessionTick resolves the sandbox child to a host PID when needed and reads its start tick for reservation.
@@ -234,7 +277,7 @@ func sessionTick(ctx context.Context, files *sessionFiles, container bool, done 
 			return 0, err
 		}
 	}
-	return procStartTick("/proc", child)
+	return sessionRead(ctx, func() (uint64, error) { return procStartTick("/proc", child) })
 }
 
 // readSessionInfo reads bounded handshake data and waits at most 500 times for a valid child PID.
@@ -288,13 +331,13 @@ func waitSessionInfo(ctx context.Context, done chan error) error {
 // hostSessionPID waits for the pasta PID file with a bounded retry count and resolves the namespace child to a host PID.
 func hostSessionPID(ctx context.Context, pidfile string, target int) (int, error) {
 	for i := 0; i < 500; i++ {
-		data, err := util.ReadFileLimited(pidfile, 64)
+		data, err := sessionRead(ctx, func() ([]byte, error) { return util.ReadFileLimited(pidfile, 64) })
 		if err == nil {
 			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 			if err != nil || pid < 1 {
 				return 0, fmt.Errorf("invalid pasta pid: %q", data)
 			}
-			return findSessionInit("/proc", pid, target)
+			return sessionRead(ctx, func() (int, error) { return findSessionInit("/proc", pid, target) })
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			return 0, err

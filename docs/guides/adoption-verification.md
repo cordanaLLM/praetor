@@ -917,13 +917,14 @@ the namespace; the prefetch stage still fetches modules first. This is network i
 with the caller's filesystem and environment retained for test fixtures.
 
 The wrapper reserves the sandbox init's start tick while each test binary runs and retains released
-reservations for at least six seconds after that tick, so concurrent
+reservations for at least eleven seconds after that tick, so concurrent
 sandboxes of the same user using the same runtime directory do not share the parent identity used
 by testcontainers-go. The reservation does not coordinate different runtime directories or different
 users sharing a rootful container engine. The [reservation implementation](https://github.com/cordanaLLM/praetor/blob/main/internal/sandbox/session_identity_linux.go)
 and [session launch implementation](https://github.com/cordanaLLM/praetor/blob/main/internal/sandbox/session_launch_linux.go)
-show the coordination scope and the init process identity; the [session tests](https://github.com/cordanaLLM/praetor/blob/main/internal/sandbox/session_identity_linux_test.go)
-exercise the retention window and handshake.
+show the coordination scope and the init process identity. The [session tests](https://github.com/cordanaLLM/praetor/blob/main/internal/sandbox/session_identity_linux_test.go)
+include `TestSessionReleasedTickHeld` for retention and `TestSessionHandshakeWithFakeSandbox` for
+the handshake. No test in this package establishes which parent identity testcontainers-go uses.
 
 The engine's Makefile Go test recipes, including fuzz and the schema module, use
 `praetorctl go test` through the source CLI to apply the same `-exec` wrapper. Each

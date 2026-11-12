@@ -53,6 +53,24 @@ func TestSessionReservationStaleAndReadError(t *testing.T) {
 	}
 }
 
+// TestSessionRegistryHelperErrors exercises load, clock, validation and owner-identity failures.
+func TestSessionRegistryHelperErrors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "registry")
+	clockErr := errors.New("clock failed")
+	if _, err := loadSessionRegistry(path, func() (uint64, error) { return 0, clockErr }); !errors.Is(err, clockErr) {
+		t.Fatalf("clock error: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"bad":{"owner":1,"released":false}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSessionRegistry(path, func() (uint64, error) { return 1, nil }); err == nil {
+		t.Fatal("invalid registry key accepted")
+	}
+	if _, err := mutateSessionRegistry(map[string]sessionReservation{}, 1, -1, false); err == nil {
+		t.Fatal("missing owner accepted")
+	}
+}
+
 // TestSessionReservationLockDeadline holds the registry lock and requires a competing reservation to honor its deadline.
 func TestSessionReservationLockDeadline(t *testing.T) {
 	dir := t.TempDir()
@@ -194,7 +212,17 @@ func TestSessionHandshakeWithFakeSandbox(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	fake := filepath.Join(dir, "sandbox")
-	script := "#!/bin/sh\nprintf '{\"child-pid\":%s}\\n' \"$$\" >&3\ndd bs=1 count=1 <&4 >/dev/null 2>/dev/null || exit 1\nprintf released\n"
+	script := fmt.Sprintf(`#!/bin/sh
+umask 077
+printf '{"child-pid":%%s}\n' "$$" >&3
+tick=$(awk '{print $22}' /proc/$$/stat)
+i=0
+while ! grep -Fq "\"$tick\":" %q 2>/dev/null; do
+  i=$((i+1)); [ "$i" -lt 400 ] || exit 2; sleep 0.01
+done
+dd bs=1 count=1 <&4 >/dev/null 2>/dev/null || exit 1
+printf released
+`, filepath.Join(dir, fmt.Sprintf("praetor-testexec-%d.registry", os.Getuid())))
 	// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- the fake sandbox script runs through PATH and needs the owner execute bit
 	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
 		t.Fatal(err)
@@ -205,6 +233,109 @@ func TestSessionHandshakeWithFakeSandbox(t *testing.T) {
 	err := runSession(ctx, Invocation{Path: fake, Args: []string{"--", "/test"}}, "/bin/sh", []string{"/test"}, nil, &out, io.Discard)
 	if err != nil || out.String() != "released" {
 		t.Fatalf("handshake output=%q error=%v", out.String(), err)
+	}
+}
+
+// TestSessionRetryReplaysInput requires a collision retry to receive the complete original input.
+func TestSessionRetryReplaysInput(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	fake := filepath.Join(dir, "sandbox")
+	registry := filepath.Join(dir, fmt.Sprintf("praetor-testexec-%d.registry", os.Getuid()))
+	script := fmt.Sprintf(`#!/bin/sh
+umask 077
+if [ ! -f %q ]; then
+  cat >/dev/null
+  : > %q
+  tick=$(awk '{print $22}' /proc/$$/stat)
+  printf '{"%%s":{"owner":%%s,"owner_start_tick":%%s,"released":false}}' "$tick" "$$" "$tick" > %q
+fi
+printf '{"child-pid":%%s}\n' "$$" >&3
+dd bs=1 count=1 <&4 >/dev/null 2>/dev/null || exit 1
+cat
+`, filepath.Join(dir, "first"), filepath.Join(dir, "first"), registry)
+	// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- the fake sandbox must be executable by its owner
+	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	err := runSession(ctx, Invocation{Path: fake, Args: []string{"--", "/test"}}, "/bin/sh", []string{"/test"}, strings.NewReader("whole input"), &out, io.Discard)
+	if err != nil || out.String() != "whole input" {
+		t.Fatalf("retry output=%q error=%v", out.String(), err)
+	}
+}
+
+// TestSessionInputBoundsAndFiles verifies the input limit and preserves file descriptors.
+func TestSessionInputBoundsAndFiles(t *testing.T) {
+	if _, err := sessionInput(strings.NewReader(strings.Repeat("x", sessionInputLimit+1))); err == nil || !strings.Contains(err.Error(), "session input exceeds limit") {
+		t.Fatalf("oversized input: %v", err)
+	}
+	file, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	input, err := sessionInput(file)
+	if err != nil || input() != file || input() != file {
+		t.Fatalf("file input was replaced: %v", err)
+	}
+}
+
+// TestSessionReleaseError requires a failed release to cancel and collect the child.
+func TestSessionReleaseError(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "closed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	childErr := errors.New("child failed")
+	done := make(chan error, 1)
+	done <- childErr
+	cancelled := false
+	err = releaseSessionChild(file, done, func() { cancelled = true })
+	if !cancelled || !errors.Is(err, childErr) || !strings.Contains(err.Error(), "release session sandbox") {
+		t.Fatalf("cancelled=%v error=%v", cancelled, err)
+	}
+}
+
+// TestSessionHandshakeError verifies cancellation when the child exits before reporting its identity.
+func TestSessionHandshakeError(t *testing.T) {
+	files, err := newSessionFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := files.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	done := make(chan error, 1)
+	childErr := errors.New("child failed")
+	done <- childErr
+	cancelled := false
+	_, collision, err := sessionHandshake(t.Context(), files, false, done, func() { cancelled = true })
+	if collision || !cancelled || !errors.Is(err, childErr) {
+		t.Fatalf("collision=%v cancelled=%v error=%v", collision, cancelled, err)
+	}
+}
+
+// TestSessionReadDeadline requires a stalled read to return when its context expires.
+func TestSessionReadDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	unblock := make(chan struct{})
+	go func() { time.Sleep(100 * time.Millisecond); close(unblock) }()
+	_, err := sessionRead(ctx, func() (int, error) { <-unblock; return 0, nil })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stalled read error: %v", err)
 	}
 }
 
@@ -229,7 +360,7 @@ func TestSessionStartTickReader(t *testing.T) {
 	}
 }
 
-// TestSessionReleasedTickHeld plants a released reservation and requires it to remain unavailable through the 600-tick boundary.
+// TestSessionReleasedTickHeld plants a released reservation and requires it to remain unavailable through the retention boundary.
 func TestSessionReleasedTickHeld(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry")
 	ctx := t.Context()
@@ -245,7 +376,7 @@ func TestSessionReleasedTickHeld(t *testing.T) {
 	}
 	ok, err = update(os.Getpid(), false)
 	checkSessionReservation(t, ok, err, false)
-	now += 600
+	now += sessionTickHold
 	ok, err = update(os.Getpid(), false)
 	checkSessionReservation(t, ok, err, false)
 	now++
@@ -254,6 +385,25 @@ func TestSessionReleasedTickHeld(t *testing.T) {
 	entries, err := readSessionRegistry(path)
 	if err != nil || entries["42"].Owner != os.Getpid() || entries["42"].Released {
 		t.Fatalf("replacement: %v %v", entries, err)
+	}
+}
+
+// TestSessionLateReservationRefused rejects attempts delayed beyond the safe retention window.
+func TestSessionLateReservationRefused(t *testing.T) {
+	if sessionTickHold <= sessionMaxReservationAge {
+		t.Fatal("retention must exceed the reservation age limit")
+	}
+	path := filepath.Join(t.TempDir(), "registry")
+	tick := uint64(42)
+	now := tick + sessionMaxReservationAge
+	ok, err := reserveFreshSessionTickWithClock(t.Context(), path, tick, os.Getpid(), func() (uint64, error) { return now, nil })
+	if err != nil || ok {
+		t.Fatalf("late reservation: %v %v", ok, err)
+	}
+	now--
+	ok, err = reserveFreshSessionTickWithClock(t.Context(), path, tick, os.Getpid(), func() (uint64, error) { return now, nil })
+	if err != nil || !ok {
+		t.Fatalf("timely reservation: %v %v", ok, err)
 	}
 }
 
