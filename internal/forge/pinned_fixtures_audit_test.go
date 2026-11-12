@@ -300,3 +300,72 @@ func TestAuditPinnedFixturesEOL_Negative_StaleExceptionFails(t *testing.T) {
 		t.Fatalf("AuditPinnedFixturesEOL err = %v, want failure naming stale exception", err)
 	}
 }
+
+// TestAuditPinnedFixturesEOL_EmptyFixtureExceptionReported: with the only named fixture empty, nothing
+// is pinned, and an exceptions entry for it excuses nothing; the audit fails instead of passing early
+// (PR #1929 review).
+func TestAuditPinnedFixturesEOL_EmptyFixtureExceptionReported(t *testing.T) {
+	root := initPinnedRepo(t, map[string]string{
+		"testdata/empty.txt": "",
+		"path_test.go":       "package main\nconst fixture = \"testdata/empty.txt\"\n",
+	})
+	ex := config.Exception{
+		Rule:    config.ExceptionRulePlatformNeutrality,
+		Path:    "testdata/empty.txt",
+		Reason:  "empty fixture",
+		Expires: "2026-12-30",
+	}
+	_, err := auditPinned(t, root, ex)
+	if err == nil || !strings.Contains(err.Error(), "excuses nothing") || !strings.Contains(err.Error(), "testdata/empty.txt") {
+		t.Fatalf("empty fixture with an exception: got %v; want the entry reported as excusing nothing", err)
+	}
+}
+
+// TestAuditPinnedFixturesEOL_NoFixtureNoExceptionPasses: no pinned fixture and no exceptions entry
+// still passes (boundary of the evaluation above).
+func TestAuditPinnedFixturesEOL_NoFixtureNoExceptionPasses(t *testing.T) {
+	root := initPinnedRepo(t, map[string]string{"main.go": "package main\n"})
+	out, err := auditPinned(t, root)
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("no fixture, no exception = %q, %v; want pass", out, err)
+	}
+}
+
+// TestAuditPinnedFixturesEOL_UnreadableZeroByteIsNotPinned: a zero-byte fixture that cannot be read is
+// still empty by its size, so a test naming its path pins nothing (PR #1929 review).
+func TestAuditPinnedFixturesEOL_UnreadableZeroByteIsNotPinned(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode 0 file; the unreadable case needs an unprivileged user")
+	}
+	root := initPinnedRepo(t, map[string]string{
+		"testdata/empty.txt": "",
+		"path_test.go":       "package main\nconst fixture = \"testdata/empty.txt\"\n",
+	})
+	full := filepath.Join(root, "testdata", "empty.txt")
+	if err := os.Chmod(full, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(full, 0o600); err != nil {
+			t.Errorf("restore fixture mode: %v", err)
+		}
+	})
+	out, err := auditPinned(t, root)
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("unreadable zero-byte fixture = %q, %v; want pass", out, err)
+	}
+}
+
+// TestAuditPinnedFixturesEOL_OversizedNamedFixtureStaysPinned: a fixture over the read limit cannot be
+// hashed, yet a test naming its path still pins it; a read error never hides a fixture (boundary).
+func TestAuditPinnedFixturesEOL_OversizedNamedFixtureStaysPinned(t *testing.T) {
+	big := strings.Repeat("line\n", maxFixtureFileReadBytes/5+2)
+	root := initPinnedRepo(t, map[string]string{
+		"testdata/big.txt": big,
+		"path_test.go":     "package main\nconst fixture = \"testdata/big.txt\"\n",
+	})
+	_, err := auditPinned(t, root)
+	if err == nil || !strings.Contains(err.Error(), "testdata/big.txt") {
+		t.Fatalf("oversized named fixture: got %v; want a finding naming it", err)
+	}
+}
