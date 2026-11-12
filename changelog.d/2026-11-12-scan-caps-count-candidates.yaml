@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+type: fixed
+title: Count only the files the image pin and release test-level scans read against their caps, so repositories above 10,000 tracked files can adopt.
+issue: "#1922"

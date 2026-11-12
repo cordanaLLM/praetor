@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -164,7 +165,7 @@ func TestWalkDirectoryFiles_Positive(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "ignored.js"), []byte("c"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	files, err := walkDirectoryFiles(t.Context(), dir)
+	files, err := walkDirectoryFiles(t.Context(), dir, nil)
 	if err != nil {
 		t.Fatalf("unexpected walk error: %v", err)
 	}
@@ -181,9 +182,125 @@ func TestWalkDirectoryFiles_Positive(t *testing.T) {
 
 // TestWalkDirectoryFiles_Negative verifies that walkDirectoryFiles returns an error for a nonexistent directory.
 func TestWalkDirectoryFiles_Negative(t *testing.T) {
-	_, err := walkDirectoryFiles(t.Context(), filepath.Join(t.TempDir(), "nonexistent"))
+	_, err := walkDirectoryFiles(t.Context(), filepath.Join(t.TempDir(), "nonexistent"), nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent directory, got nil")
+	}
+}
+
+func setMaxScannedFilesForTest(t *testing.T, capVal int) {
+	t.Helper()
+	orig := maxScannedFiles
+	maxScannedFiles = capVal
+	t.Cleanup(func() { maxScannedFiles = orig })
+}
+
+func writeNonGitCandidateFixture(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	return dir
+}
+
+const testPinnedDigest = "1111111111111111111111111111111111111111111111111111111111111111"
+
+// TestRepositoryFiles_Positive_CandidateBound proves non-candidates above maxScannedFiles do not fail git scans (HISS-15).
+func TestRepositoryFiles_Positive_CandidateBound(t *testing.T) {
+	setMaxScannedFilesForTest(t, 3)
+	pinned := "golang:1.27-alpine@sha256:" + testPinnedDigest
+	root := fixtureRepo(t, map[string]string{
+		"Dockerfile":          "FROM " + pinned + "\n",
+		"deploy.yaml":         "image: " + pinned + "\n",
+		"README.md":           "doc\n",
+		"docs/a.md":           "a\n",
+		"docs/b.md":           "b\n",
+		"notes.txt":           "n\n",
+		"testdata/Dockerfile": "FROM alpine:latest\n",
+	})
+	got, err := RepositoryFiles(t.Context(), root, ScannedFile)
+	if err != nil || !slices.Equal(got, []string{"Dockerfile", "deploy.yaml"}) {
+		t.Fatalf("RepositoryFiles = %v, err=%v; want [Dockerfile deploy.yaml]", got, err)
+	}
+	if pins, pinErr := ScanRepositoryPins(t.Context(), root); pinErr != nil || len(pins) != 2 {
+		t.Fatalf("ScanRepositoryPins = %v, err=%v; want 2 pins", pins, pinErr)
+	}
+	if findings, imageErr := ScanImageRefs(t.Context(), root); imageErr != nil || len(findings) != 0 {
+		t.Fatalf("ScanImageRefs = %v, err=%v; want 0 findings", findings, imageErr)
+	}
+}
+
+// TestRepositoryFiles_Boundary_CandidateBound proves candidates equal to maxScannedFiles pass git scans (HISS-15).
+func TestRepositoryFiles_Boundary_CandidateBound(t *testing.T) {
+	setMaxScannedFilesForTest(t, 3)
+	root := fixtureRepo(t, map[string]string{
+		"Dockerfile": "FROM golang:1.27-alpine@sha256:" + testPinnedDigest + "\n",
+		"a.yaml":     "k: v\n",
+		"b.yaml":     "k: v\n",
+		"README.md":  "doc\n",
+		"notes.txt":  "n\n",
+	})
+	got, err := RepositoryFiles(t.Context(), root, ScannedFile)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("boundary RepositoryFiles = %v, err=%v; want 3 candidates", got, err)
+	}
+}
+
+// TestRepositoryFiles_Negative_CandidateBound proves candidates above maxScannedFiles fail naming the bound (HISS-15).
+func TestRepositoryFiles_Negative_CandidateBound(t *testing.T) {
+	setMaxScannedFilesForTest(t, 3)
+	root := fixtureRepo(t, map[string]string{
+		"Dockerfile": "FROM golang:1.27-alpine@sha256:" + testPinnedDigest + "\n",
+		"a.yaml":     "k: v\n",
+		"b.yaml":     "k: v\n",
+		"c.yaml":     "k: v\n",
+	})
+	_, err := ScanRepositoryPins(t.Context(), root)
+	if err == nil || !strings.Contains(err.Error(), "3") || !strings.Contains(err.Error(), "scanned candidate") {
+		t.Fatalf("expected error naming bound 3 and scanned candidates, got: %v", err)
+	}
+}
+
+// TestWalkDirectoryFiles_Positive_CandidateBound proves non-git directory walks count only candidates (HISS-15).
+func TestWalkDirectoryFiles_Positive_CandidateBound(t *testing.T) {
+	setMaxScannedFilesForTest(t, 3)
+	dir := writeNonGitCandidateFixture(t, map[string]string{
+		"a.md": "a\n", "b.md": "b\n", "c.txt": "c\n", "d_test.go": "package p\n",
+		"Dockerfile": "FROM ubuntu:latest\n", "compose.yaml": "services:\n  app:\n    image: redis:7\n",
+	})
+	got, err := walkDirectoryFiles(t.Context(), dir, ScannedImageRefFile)
+	if err != nil || !slices.Equal(got, []string{"Dockerfile", "compose.yaml"}) {
+		t.Fatalf("walkDirectoryFiles = %v, err=%v; want [Dockerfile compose.yaml]", got, err)
+	}
+	if findings, scanErr := ScanImageRefs(t.Context(), dir); scanErr != nil || len(findings) != 2 {
+		t.Fatalf("ScanImageRefs = %v, err=%v; want 2 findings", findings, scanErr)
+	}
+}
+
+// TestWalkDirectoryFiles_Boundary_CandidateBound proves non-git candidates equal to maxScannedFiles pass (HISS-15).
+func TestWalkDirectoryFiles_Boundary_CandidateBound(t *testing.T) {
+	setMaxScannedFilesForTest(t, 3)
+	dir := writeNonGitCandidateFixture(t, map[string]string{
+		"a.md": "a\n", "b.txt": "b\n", "Dockerfile": "FROM scratch\n", "a.yaml": "k: v\n", "b.yaml": "k: v\n",
+	})
+	got, err := walkDirectoryFiles(t.Context(), dir, ScannedImageRefFile)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("boundary walkDirectoryFiles = %v, err=%v; want 3 candidates", got, err)
+	}
+}
+
+// TestWalkDirectoryFiles_Negative_CandidateBound proves non-git candidates above maxScannedFiles fail naming the bound (HISS-15).
+func TestWalkDirectoryFiles_Negative_CandidateBound(t *testing.T) {
+	setMaxScannedFilesForTest(t, 3)
+	dir := writeNonGitCandidateFixture(t, map[string]string{
+		"Dockerfile": "FROM scratch\n", "a.yaml": "k: v\n", "b.yaml": "k: v\n", "c.yaml": "k: v\n",
+	})
+	_, err := ScanImageRefs(t.Context(), dir)
+	if err == nil || !strings.Contains(err.Error(), "3") || !strings.Contains(err.Error(), "scanned candidate") {
+		t.Fatalf("expected error naming bound 3 and scanned candidates, got: %v", err)
 	}
 }
 

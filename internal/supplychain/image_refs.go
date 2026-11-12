@@ -17,8 +17,8 @@ import (
 // ImageRefRuleID is the HISS rule identifier for unpinned container image references.
 const ImageRefRuleID = "HISS-11"
 
-// maxScannedFiles bounds how many repository paths one scan reads (HISS-02).
-const maxScannedFiles = 8192
+// maxScannedFiles bounds how many candidate files one scan reads (HISS-02).
+var maxScannedFiles = 8192
 
 // maxImageRefFileBytes bounds one scanned file (HISS-02): a larger tracked file is refused by
 // util.ReadConfinedLimited and fails the scan with its name, never read in full or skipped.
@@ -131,7 +131,7 @@ func ScannedFile(rel string) bool {
 func ScanRepositoryPins(ctx context.Context, root string) ([]ImagePin, error) {
 	ctx, cancel := context.WithTimeout(ctx, imageRefScanTimeout)
 	defer cancel()
-	files, err := RepositoryFiles(ctx, root)
+	files, err := RepositoryFiles(ctx, root, ScannedFile)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +167,7 @@ func ScannedImageRefFile(rel string) bool {
 func ScanImageRefs(ctx context.Context, root string) ([]ImageRefFinding, error) {
 	ctx, cancel := context.WithTimeout(ctx, imageRefScanTimeout)
 	defer cancel()
-	files, err := imageRefCandidateFiles(ctx, root)
+	files, err := imageRefCandidateFiles(ctx, root, ScannedImageRefFile)
 	if err != nil {
 		return nil, err
 	}

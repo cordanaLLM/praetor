@@ -529,37 +529,99 @@ func TestAuditTestLevels_Negative_UntrackedFileInGitRepoDoesNotSatisfyLevel(t *t
 	}
 }
 
-// TestAuditTestLevels_Negative_FileScanCapOverflowFailsClosed proves that repository file lists
-// exceeding scan bounds fail closed with an error.
-func TestAuditTestLevels_Negative_FileScanCapOverflowFailsClosed(t *testing.T) {
+func setMaxRepoScanFilesForTest(t *testing.T, capVal int) {
+	t.Helper()
 	origCap := maxRepoScanFiles
-	maxRepoScanFiles = 3
+	maxRepoScanFiles = capVal
 	t.Cleanup(func() { maxRepoScanFiles = origCap })
+}
 
+func commitAllTestRepoFiles(t *testing.T, repo string) {
+	t.Helper()
+	runGitCmd(t, repo, "init", "-q")
+	runGitCmd(t, repo, "config", "user.name", "Test User")
+	runGitCmd(t, repo, "config", "user.email", "test@example.com")
+	runGitCmd(t, repo, "config", "commit.gpgsign", "false")
+	runGitCmd(t, repo, "add", ".")
+	runGitCmd(t, repo, "commit", "-q", "-m", "chore: initial tracked files")
+}
+
+// TestAuditTestLevels_Positive_CandidateCapIgnoresNonCandidates proves that non-candidate files
+// exceeding maxRepoScanFiles do not fail the scan and only candidate paths are returned (HISS-15).
+func TestAuditTestLevels_Positive_CandidateCapIgnoresNonCandidates(t *testing.T) {
+	setMaxRepoScanFilesForTest(t, 3)
 	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "pkg/helper.go", "package lib\n")
+	writeTestRepoFile(t, repo, "docs/guide.md", "# Guide\n")
+	writeTestRepoFile(t, repo, "README.md", "# Lib\n")
 	writeTestRepoFile(t, repo, "z_integration_test.go", "package lib\n")
 
-	// Non-Git walk exceeding maxRepoScanFiles must fail closed with an error instead of truncating.
-	if _, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: false}); err == nil || !strings.Contains(err.Error(), "scan") {
-		t.Fatalf("expected walk scan cap overflow to fail closed, got err=%v", err)
+	_, bindings, err := resolveLevelBindings(t.Context(), repo, nil)
+	if err != nil {
+		t.Fatalf("resolveLevelBindings: %v", err)
+	}
+	want := []string{"pkg/client_test.go", "z_integration_test.go"}
+	if got, walkErr := listLevelCandidateFiles(t.Context(), repo, bindings); walkErr != nil || !slices.Equal(got, want) {
+		t.Fatalf("walk listLevelCandidateFiles = %v, err=%v; want %v", got, walkErr, want)
+	}
+	if rep, auditErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions()); auditErr != nil || rep.Status != TestLevelStatusPass {
+		t.Fatalf("walk AuditTestLevels = %+v, err=%v; want PASS", rep, auditErr)
 	}
 
-	// Git-backed file list exceeding maxRepoScanFiles must also fail closed.
-	ctx := t.Context()
-	for _, args := range [][]string{
-		{"init", "-q"},
-		{"config", "user.name", "Test User"},
-		{"config", "user.email", "test@example.com"},
-		{"config", "commit.gpgsign", "false"},
-		{"add", "."},
-		{"commit", "-q", "-m", "chore: initial tracked files"},
-	} {
-		if out, err := util.RunGit(ctx, repo, args...); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
+	commitAllTestRepoFiles(t, repo)
+	if got, gitErr := listLevelCandidateFiles(t.Context(), repo, bindings); gitErr != nil || !slices.Equal(got, want) {
+		t.Fatalf("git listLevelCandidateFiles = %v, err=%v; want %v", got, gitErr, want)
 	}
-	if _, err := AuditTestLevels(ctx, repo, nil, TestLevelsOptions{FlagRelease: false}); err == nil || !strings.Contains(err.Error(), "scan") {
-		t.Fatalf("expected git file list cap overflow to fail closed, got err=%v", err)
+	if rep, auditErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions()); auditErr != nil || rep.Status != TestLevelStatusPass {
+		t.Fatalf("git AuditTestLevels = %+v, err=%v; want PASS", rep, auditErr)
+	}
+}
+
+// TestAuditTestLevels_Boundary_CandidatesAtScanCapPass proves that candidate files exactly at
+// maxRepoScanFiles pass both filesystem walk and git-backed scans (HISS-15).
+func TestAuditTestLevels_Boundary_CandidatesAtScanCapPass(t *testing.T) {
+	setMaxRepoScanFilesForTest(t, 3)
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "docs/guide.md", "# Guide\n")
+	writeTestRepoFile(t, repo, "pkg/extra_test.go", "package lib\n")
+	writeTestRepoFile(t, repo, "z_integration_test.go", "package lib\n")
+
+	if rep, err := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions()); err != nil || rep.Status != TestLevelStatusPass {
+		t.Fatalf("boundary walk AuditTestLevels = %+v, err=%v; want PASS", rep, err)
+	}
+	commitAllTestRepoFiles(t, repo)
+	_, bindings, err := resolveLevelBindings(t.Context(), repo, nil)
+	if err != nil {
+		t.Fatalf("resolveLevelBindings: %v", err)
+	}
+	if got, gitErr := listLevelCandidateFiles(t.Context(), repo, bindings); gitErr != nil || len(got) != 3 {
+		t.Fatalf("boundary git listLevelCandidateFiles = %v, err=%v; want 3 candidates", got, gitErr)
+	}
+	if rep, auditErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions()); auditErr != nil || rep.Status != TestLevelStatusPass {
+		t.Fatalf("boundary git AuditTestLevels = %+v, err=%v; want PASS", rep, auditErr)
+	}
+}
+
+// TestAuditTestLevels_Negative_FileScanCapOverflowFailsClosed proves that candidate file lists
+// exceeding maxRepoScanFiles fail closed naming the bound (HISS-15).
+func TestAuditTestLevels_Negative_FileScanCapOverflowFailsClosed(t *testing.T) {
+	setMaxRepoScanFilesForTest(t, 3)
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "pkg/a_test.go", "package lib\n")
+	writeTestRepoFile(t, repo, "pkg/b_test.go", "package lib\n")
+	writeTestRepoFile(t, repo, "z_integration_test.go", "package lib\n")
+
+	// Non-Git walk exceeding maxRepoScanFiles candidate bound must fail closed naming the bound.
+	if _, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: false}); err == nil ||
+		!strings.Contains(err.Error(), "scan") || !strings.Contains(err.Error(), "3") || !strings.Contains(err.Error(), "scanned candidate") {
+		t.Fatalf("expected walk candidate scan cap overflow naming bound 3, got err=%v", err)
+	}
+
+	// Git-backed candidate list exceeding maxRepoScanFiles must also fail closed naming the bound.
+	commitAllTestRepoFiles(t, repo)
+	if _, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: false}); err == nil ||
+		!strings.Contains(err.Error(), "scan") || !strings.Contains(err.Error(), "3") || !strings.Contains(err.Error(), "scanned candidate") {
+		t.Fatalf("expected git candidate scan cap overflow naming bound 3, got err=%v", err)
 	}
 }
 

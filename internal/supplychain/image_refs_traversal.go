@@ -31,9 +31,15 @@ const imageRefScanTimeout = time.Minute
 // imageRefIOTimeout bounds individual directory or file read operations during image reference scanning (HISS-02).
 const imageRefIOTimeout = 5 * time.Second
 
-// RepositoryFiles asks git which paths belong to root: tracked files plus untracked files
-// git is not ignoring.
-func RepositoryFiles(ctx context.Context, root string) ([]string, error) {
+// maxScanDirs bounds subdirectories queued during a non-git directory walk (HISS-02).
+const maxScanDirs = 8192
+
+// maxScanDirEntries bounds directory entries read from one directory during a non-git walk (HISS-02).
+const maxScanDirEntries = 8192
+
+// RepositoryFiles asks git which paths belong to root (tracked files plus untracked files
+// git is not ignoring) and returns those matching keep, bounded by maxScannedFiles.
+func RepositoryFiles(ctx context.Context, root string, keep func(string) bool) ([]string, error) {
 	out, err := util.RunGitProbe(ctx, root, maxScopeBytes,
 		"ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z", "--", ".")
 	if err != nil {
@@ -41,22 +47,22 @@ func RepositoryFiles(ctx context.Context, root string) ([]string, error) {
 	}
 	parts := strings.Split(string(out.Stdout), "\x00")
 	var files []string
-	for i := 0; i < len(parts); i++ {
+	for i := 0; i < len(parts) && i <= maxScopeBytes; i++ {
 		rel := parts[i]
-		if rel == "" {
+		if rel == "" || (keep != nil && !keep(rel)) {
 			continue
 		}
 		if len(files) >= maxScannedFiles {
-			return nil, fmt.Errorf("image pin scope passed %d files; narrow the listing", maxScannedFiles)
+			return nil, fmt.Errorf("image pin scope passed %d scanned candidate files; narrow the listing", maxScannedFiles)
 		}
 		files = append(files, rel)
 	}
 	return files, nil
 }
 
-// imageRefCandidateFiles lists files under root via git when root is a git worktree, or
-// via a bounded directory queue for fixture directories without .git.
-func imageRefCandidateFiles(ctx context.Context, root string) ([]string, error) {
+// imageRefCandidateFiles lists candidate files matching keep under root via git when root is a
+// git worktree, or via a bounded directory queue for fixture directories without .git.
+func imageRefCandidateFiles(ctx context.Context, root string, keep func(string) bool) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, imageRefScanTimeout)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
@@ -70,18 +76,18 @@ func imageRefCandidateFiles(ctx context.Context, root string) ([]string, error) 
 		return nil, fmt.Errorf("image scan root %s is not a directory", root)
 	}
 	if _, gitErr := os.Stat(filepath.Join(root, ".git")); gitErr == nil {
-		return RepositoryFiles(ctx, root)
+		return RepositoryFiles(ctx, root, keep)
 	}
-	return walkDirectoryFiles(ctx, root)
+	return walkDirectoryFiles(ctx, root, keep)
 }
 
-// walkDirectoryFiles enumerates relative file paths under root without recursion (HISS-01, HISS-02).
-func walkDirectoryFiles(ctx context.Context, root string) ([]string, error) {
+// walkDirectoryFiles enumerates relative file paths matching keep under root without recursion (HISS-01, HISS-02).
+func walkDirectoryFiles(ctx context.Context, root string, keep func(string) bool) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, imageRefScanTimeout)
 	defer cancel()
-	walk := imageRefDirectoryWalk{dirs: []string{"."}}
+	walk := imageRefDirectoryWalk{dirs: []string{"."}, keep: keep}
 	var d int
-	for d = 0; d < len(walk.dirs) && d < maxScannedFiles; d++ {
+	for d = 0; d < len(walk.dirs) && d < maxScanDirs; d++ {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("walk directory context: %w", err)
 		}
@@ -95,7 +101,7 @@ func walkDirectoryFiles(ctx context.Context, root string) ([]string, error) {
 		}
 	}
 	if d < len(walk.dirs) {
-		return nil, fmt.Errorf("image scan scope passed %d directories", maxScannedFiles)
+		return nil, fmt.Errorf("image scan scope passed %d directories", maxScanDirs)
 	}
 	return walk.files, nil
 }
@@ -103,9 +109,10 @@ func walkDirectoryFiles(ctx context.Context, root string) ([]string, error) {
 type imageRefDirectoryWalk struct {
 	dirs  []string
 	files []string
+	keep  func(string) bool
 }
 
-// readScanDirectory reads up to maxScannedFiles+1 directory entries under root/relDir,
+// readScanDirectory reads up to maxScanDirEntries+1 directory entries under root/relDir,
 // bounding memory allocation and I/O deadline before appendEntries enforces the limit (HISS-02).
 func readScanDirectory(ctx context.Context, root, relDir string) (entries []os.DirEntry, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, imageRefIOTimeout)
@@ -130,14 +137,14 @@ func readScanDirectory(ctx context.Context, root, relDir string) (entries []os.D
 	if err := setDirectoryDeadline(ctx, dir); err != nil {
 		return nil, err
 	}
-	entries, err = dir.ReadDir(maxScannedFiles + 1)
+	entries, err = dir.ReadDir(maxScanDirEntries + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("read directory entries: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("directory read context: %w", err)
 	}
-	if len(entries) <= maxScannedFiles {
+	if len(entries) <= maxScanDirEntries {
 		slices.SortFunc(entries, func(a, b os.DirEntry) int {
 			return cmp.Compare(a.Name(), b.Name())
 		})
@@ -162,32 +169,43 @@ func isIgnoredScanDir(name string) bool {
 	return name == ".git" || name == ".workingdir" || name == "node_modules" || name == "vendor"
 }
 
-// appendEntries filters and appends subdirectories and files to the walk state, enforcing safety limits.
+// appendEntries filters and appends subdirectories and candidate files to the walk state, enforcing safety limits.
 func (walk *imageRefDirectoryWalk) appendEntries(relDir string, entries []os.DirEntry) error {
-	if len(entries) > maxScannedFiles {
-		return fmt.Errorf("directory %s passed %d entries", relDir, maxScannedFiles)
+	if len(entries) > maxScanDirEntries {
+		return fmt.Errorf("directory %s passed %d entries", relDir, maxScanDirEntries)
 	}
-	for i := 0; i < len(entries) && i < maxScannedFiles; i++ {
-		name := entries[i].Name()
-		if isIgnoredScanDir(name) {
-			continue
+	for i := 0; i < len(entries) && i < maxScanDirEntries; i++ {
+		if err := walk.appendEntry(relDir, entries[i]); err != nil {
+			return err
 		}
-		child := name
-		if relDir != "." {
-			child = relDir + "/" + name
-		}
-		if entries[i].IsDir() {
-			if len(walk.dirs) >= maxScannedFiles {
-				return fmt.Errorf("image scan scope passed %d directories", maxScannedFiles)
-			}
-			walk.dirs = append(walk.dirs, child)
-			continue
-		}
-		if len(walk.files) >= maxScannedFiles {
-			return fmt.Errorf("image scan scope passed %d files", maxScannedFiles)
-		}
-		walk.files = append(walk.files, child)
 	}
+	return nil
+}
+
+// appendEntry classifies one directory entry into walk.dirs or walk.files when kept.
+func (walk *imageRefDirectoryWalk) appendEntry(relDir string, entry os.DirEntry) error {
+	name := entry.Name()
+	if isIgnoredScanDir(name) {
+		return nil
+	}
+	child := name
+	if relDir != "." {
+		child = relDir + "/" + name
+	}
+	if entry.IsDir() {
+		if len(walk.dirs) >= maxScanDirs {
+			return fmt.Errorf("image scan scope passed %d directories", maxScanDirs)
+		}
+		walk.dirs = append(walk.dirs, child)
+		return nil
+	}
+	if walk.keep != nil && !walk.keep(child) {
+		return nil
+	}
+	if len(walk.files) >= maxScannedFiles {
+		return fmt.Errorf("image scan scope passed %d scanned candidate files; narrow the listing", maxScannedFiles)
+	}
+	walk.files = append(walk.files, child)
 	return nil
 }
 
@@ -199,7 +217,7 @@ func iterateScannedFiles(ctx context.Context, root string, files []string, filte
 	ctx, cancel := context.WithTimeout(ctx, imageRefScanTimeout)
 	defer cancel()
 	if len(files) > maxScannedFiles {
-		return fmt.Errorf("image scan scope passed %d files", maxScannedFiles)
+		return fmt.Errorf("image scan scope passed %d scanned candidate files; narrow the listing", maxScannedFiles)
 	}
 	for i := 0; i < len(files) && i < maxScannedFiles; i++ {
 		// The caller's Done closes before cancellation reaches its children.
@@ -207,7 +225,7 @@ func iterateScannedFiles(ctx context.Context, root string, files []string, filte
 			return fmt.Errorf("scan files context: %w", err)
 		}
 		rel := files[i]
-		if !filter(rel) {
+		if filter != nil && !filter(rel) {
 			continue
 		}
 		content, readErr := readScannedFile(ctx, root, rel)
