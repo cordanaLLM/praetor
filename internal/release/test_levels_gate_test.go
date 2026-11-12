@@ -561,7 +561,7 @@ func TestAuditTestLevels_Positive_CandidateCapIgnoresNonCandidates(t *testing.T)
 		t.Fatalf("resolveLevelBindings: %v", err)
 	}
 	want := []string{"pkg/client_test.go", "z_integration_test.go"}
-	if got, walkErr := listLevelCandidateFiles(t.Context(), repo, bindings); walkErr != nil || !slices.Equal(got, want) {
+	if got, _, _, walkErr := listLevelCandidateFiles(t.Context(), repo, bindings); walkErr != nil || !slices.Equal(got, want) {
 		t.Fatalf("walk listLevelCandidateFiles = %v, err=%v; want %v", got, walkErr, want)
 	}
 	if rep, auditErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions()); auditErr != nil || rep.Status != TestLevelStatusPass {
@@ -569,7 +569,7 @@ func TestAuditTestLevels_Positive_CandidateCapIgnoresNonCandidates(t *testing.T)
 	}
 
 	commitAllTestRepoFiles(t, repo)
-	if got, gitErr := listLevelCandidateFiles(t.Context(), repo, bindings); gitErr != nil || !slices.Equal(got, want) {
+	if got, _, _, gitErr := listLevelCandidateFiles(t.Context(), repo, bindings); gitErr != nil || !slices.Equal(got, want) {
 		t.Fatalf("git listLevelCandidateFiles = %v, err=%v; want %v", got, gitErr, want)
 	}
 	if rep, auditErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions()); auditErr != nil || rep.Status != TestLevelStatusPass {
@@ -594,7 +594,7 @@ func TestAuditTestLevels_Boundary_CandidatesAtScanCapPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveLevelBindings: %v", err)
 	}
-	if got, gitErr := listLevelCandidateFiles(t.Context(), repo, bindings); gitErr != nil || len(got) != 3 {
+	if got, _, _, gitErr := listLevelCandidateFiles(t.Context(), repo, bindings); gitErr != nil || len(got) != 3 {
 		t.Fatalf("boundary git listLevelCandidateFiles = %v, err=%v; want 3 candidates", got, gitErr)
 	}
 	if rep, auditErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions()); auditErr != nil || rep.Status != TestLevelStatusPass {
@@ -902,7 +902,7 @@ func TestAuditTestLevels_LargeListingPassesCandidateCap(t *testing.T) {
 		t.Fatalf("resolveLevelBindings: %v", err)
 	}
 	want := []string{"pkg/client_test.go", "z_integration_test.go"}
-	if got, listErr := listLevelCandidateFiles(t.Context(), repo, bindings); listErr != nil || !slices.Equal(got, want) {
+	if got, _, _, listErr := listLevelCandidateFiles(t.Context(), repo, bindings); listErr != nil || !slices.Equal(got, want) {
 		t.Fatalf("listLevelCandidateFiles = %v, err=%v; want %v", got, listErr, want)
 	}
 	if rep, auditErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions()); auditErr != nil || rep.Status != TestLevelStatusPass {
@@ -958,7 +958,7 @@ func TestAuditTestLevels_QuotedAndSpacePrefixedTestFiles(t *testing.T) {
 		t.Fatalf("resolveLevelBindings: %v", err)
 	}
 	want := []string{" leading_integration_test.go", "测试_test.go"}
-	got, listErr := listLevelCandidateFiles(t.Context(), repo, bindings)
+	got, _, _, listErr := listLevelCandidateFiles(t.Context(), repo, bindings)
 	if listErr != nil || !slices.Equal(got, want) {
 		t.Fatalf("listLevelCandidateFiles = %q, err=%v; want %q", got, listErr, want)
 	}
@@ -1032,4 +1032,91 @@ func assertReleaseRustCheckStopsOnCancel(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || len(matched) != 0 {
 		t.Fatalf("expected context.Canceled and 0 matched files from Rust check, got matched=%v err=%v", matched, err)
 	}
+}
+
+// TestListLevelCandidateFiles_RefusedRustSourceIsSkippedWithReason plants a tracked symlink leaf under a
+// test directory: the snapshot reader refuses it, so it is not a candidate, it is reported as skipped with
+// its path and reason, the audit detail names it without failing, and a cancelled context still returns
+// the context error (HISS-15).
+func TestListLevelCandidateFiles_RefusedRustSourceIsSkippedWithReason(t *testing.T) {
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "z_integration_test.go", "package lib\n")
+	writeTestRepoFile(t, repo, "pkg/test/real.rs", "#[cfg(test)]\nmod tests {}\n")
+	if err := os.Symlink("real.rs", filepath.Join(repo, "pkg", "test", "link.rs")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	commitAllTestRepoFiles(t, repo)
+	_, bindings, err := resolveLevelBindings(t.Context(), repo, nil)
+	if err != nil {
+		t.Fatalf("resolveLevelBindings: %v", err)
+	}
+	assertRefusedRustSkipped(t, repo, bindings)
+	rep, auditErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
+	if auditErr != nil || rep.SkippedTotal != 1 || !strings.Contains(rep.Detail, "pkg/test/link.rs") || !strings.Contains(rep.Detail, "skipped 1 unreadable Rust source") {
+		t.Fatalf("AuditTestLevels = %+v, err=%v; want no failure and the skip named in the detail", rep, auditErr)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, _, _, ctxErr := listLevelCandidateFiles(ctx, repo, bindings); !errors.Is(ctxErr, context.Canceled) {
+		t.Fatalf("cancelled listLevelCandidateFiles err = %v; want context.Canceled", ctxErr)
+	}
+}
+
+// assertRefusedRustSkipped checks that the candidate listing keeps the readable Rust test file and reports the refused symlink once with its reason.
+func assertRefusedRustSkipped(t *testing.T, repo string, bindings []resolvedLevelBinding) {
+	t.Helper()
+	files, skipped, total, err := listLevelCandidateFiles(t.Context(), repo, bindings)
+	if err != nil {
+		t.Fatalf("listLevelCandidateFiles: %v", err)
+	}
+	if !slices.Contains(files, "pkg/test/real.rs") || slices.Contains(files, "pkg/test/link.rs") {
+		t.Fatalf("candidates = %v; want real.rs kept and the refused link.rs dropped", files)
+	}
+	if total != 1 || len(skipped) != 1 || skipped[0].Path != "pkg/test/link.rs" || !strings.Contains(skipped[0].Reason, "refused") {
+		t.Fatalf("skipped = %+v (total %d); want link.rs once with its refusal reason", skipped, total)
+	}
+}
+
+// levelsByCount returns n distinct synthetic test level names.
+func levelsByCount(prefix string, n int) []string {
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, fmt.Sprintf("%s%02d", prefix, i))
+	}
+	return out
+}
+
+// TestMergeProfileAndDeclaredLevels_CombinedLimit proves the combined binding limit is enforced once at
+// resolution: 33 bindings from profile defaults plus declared extras fail naming the limit and the count,
+// exactly 32 pass, and matching never fails per file on the binding count (HISS-15).
+func TestMergeProfileAndDeclaredLevels_CombinedLimit(t *testing.T) {
+	manifestWith := func(declared int) *config.Manifest {
+		levels := map[string]config.ReleaseTestLevelSpec{}
+		for _, lvl := range levelsByCount("declared", declared) {
+			levels[lvl] = config.ReleaseTestLevelSpec{Paths: []string{"**/*_test.go"}}
+		}
+		return &config.Manifest{Release: &config.ReleasePolicy{TestLevels: levels}}
+	}
+	profiles := []string{"p"}
+	t.Run("negative 33 combined bindings fail naming limit and count", func(t *testing.T) {
+		_, err := mergeProfileAndDeclaredLevels(profiles, map[string][]string{"p": levelsByCount("lvl", 20)}, manifestWith(13))
+		if err == nil || !strings.Contains(err.Error(), "33") || !strings.Contains(err.Error(), "limit is 32") {
+			t.Fatalf("err = %v; want a failure naming 33 bindings and the limit 32", err)
+		}
+	})
+	t.Run("boundary 32 combined bindings pass", func(t *testing.T) {
+		got, err := mergeProfileAndDeclaredLevels(profiles, map[string][]string{"p": levelsByCount("lvl", 20)}, manifestWith(12))
+		if err != nil || len(got) != config.MaxReleaseTestLevels {
+			t.Fatalf("got %d bindings, err=%v; want %d and no error", len(got), err, config.MaxReleaseTestLevels)
+		}
+	})
+	t.Run("positive matching never fails on the binding count", func(t *testing.T) {
+		bindings := make([]resolvedLevelBinding, 0, config.MaxReleaseTestLevels+1)
+		for _, lvl := range levelsByCount("lvl", config.MaxReleaseTestLevels+1) {
+			bindings = append(bindings, buildLevelBinding("p", lvl, nil))
+		}
+		if ok, err := fileMatchesAnyBinding(t.Context(), t.TempDir(), "pkg/a_test.go", bindings); err != nil || ok {
+			t.Fatalf("fileMatchesAnyBinding over %d bindings = (%v, %v); want no error", len(bindings), ok, err)
+		}
+	})
 }

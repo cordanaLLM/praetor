@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -75,5 +76,57 @@ func assertNegativeContextTestFileChecks(t *testing.T, root string) {
 	cancel()
 	if ok, err := IsTestFileContext(ctx, root, "src/inline.rs"); !errors.Is(err, context.Canceled) || ok {
 		t.Fatalf("expected context.Canceled on cancelled context before reading inline.rs, got ok=%v err=%v", ok, err)
+	}
+}
+
+// TestIsTestFileContext_RefusedRustSource_3D verifies that a Rust source the snapshot reader refuses
+// (a symlink leaf, non-UTF-8 text) returns an error wrapping ErrRustSourceRefused that names the path,
+// while a cancelled context still returns the context error unchanged and a readable source is unaffected.
+func TestIsTestFileContext_RefusedRustSource_3D(t *testing.T) {
+	root := t.TempDir()
+	writeForgeTestFile(t, root, "src/real.rs", "#[cfg(test)]\nmod tests {}\n")
+	writeForgeTestFile(t, root, "src/binary.rs", "\xff\xfe#[cfg(test)]\n")
+	if err := os.Symlink("real.rs", filepath.Join(root, "src", "link.rs")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Run("negative symlink leaf and non-UTF-8 source are refused with the path", func(t *testing.T) {
+		assertRustSourcesRefused(t, root, "src/link.rs", "src/binary.rs")
+	})
+	t.Run("boundary context errors pass through unchanged", func(t *testing.T) {
+		assertContextErrorsUnchanged(t, root)
+	})
+	t.Run("positive readable source is still a test file", func(t *testing.T) {
+		if ok, err := IsTestFileContext(t.Context(), root, "src/real.rs"); err != nil || !ok {
+			t.Fatalf("IsTestFileContext(real.rs) = (%v, %v); want true, nil", ok, err)
+		}
+	})
+}
+
+// assertRustSourcesRefused checks that each rel is reported as refused, wrapping ErrRustSourceRefused and naming the path.
+func assertRustSourcesRefused(t *testing.T, root string, rels ...string) {
+	t.Helper()
+	for _, rel := range rels {
+		ok, err := IsTestFileContext(t.Context(), root, rel)
+		if ok || !errors.Is(err, ErrRustSourceRefused) || !strings.Contains(err.Error(), rel) {
+			t.Fatalf("IsTestFileContext(%q) = (%v, %v); want false and an error wrapping ErrRustSourceRefused naming the path", rel, ok, err)
+		}
+	}
+}
+
+// assertContextErrorsUnchanged checks that contextReadError and IsTestFileContext return context errors without wrapping them as a refusal.
+func assertContextErrorsUnchanged(t *testing.T, root string) {
+	t.Helper()
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		if got := contextReadError(t.Context(), "src/x.rs", cause); got != cause { //nolint:errorlint // identity: the context error must not be wrapped
+			t.Fatalf("contextReadError(%v) = %v; want the error unchanged", cause, got)
+		}
+	}
+	if err := contextReadError(t.Context(), "src/x.rs", nil); err != nil {
+		t.Fatalf("contextReadError(nil) = %v on a live context; want nil", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if ok, err := IsTestFileContext(ctx, root, "src/link.rs"); ok || !errors.Is(err, context.Canceled) || errors.Is(err, ErrRustSourceRefused) {
+		t.Fatalf("cancelled IsTestFileContext = (%v, %v); want context.Canceled, not a refusal", ok, err)
 	}
 }

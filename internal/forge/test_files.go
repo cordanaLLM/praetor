@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,8 @@ import (
 const maxRustTestReadBytes = 64 * 1024
 
 // IsTestFileContext reports whether rel, a path below root, is a test file by its language's own
-// naming convention while honoring ctx on any Rust source read.
+// naming convention while honoring ctx on any Rust source read. A Rust source the snapshot reader
+// refuses returns (false, error wrapping ErrRustSourceRefused); a context error returns unchanged.
 func IsTestFileContext(ctx context.Context, root, rel string) (bool, error) {
 	if ctx == nil {
 		return false, errors.New("test file check requires a context")
@@ -59,25 +61,36 @@ func isRustTestDir(slash string) bool {
 	return strings.HasPrefix(slash, "tests/") || strings.Contains(slash, "/tests/")
 }
 
-// contextReadError returns a context cancellation or deadline unchanged and wraps any other read error with the file it came from.
-func contextReadError(ctx context.Context, err error) error {
+// ErrRustSourceRefused marks a Rust source the confined snapshot reader refuses to read: a symlink
+// leaf, a file that is not valid UTF-8 text, or one over the read bound. IsTestFileContext wraps it
+// with the path and the reader's reason, so a caller can tell a refused file from a failed audit.
+var ErrRustSourceRefused = errors.New("rust source refused by the snapshot reader")
+
+// contextReadError returns a context cancellation or deadline unchanged, wraps any other read
+// error with the file it came from under ErrRustSourceRefused, and returns the live context's
+// error when the read itself succeeded.
+func contextReadError(ctx context.Context, slash string, err error) error {
+	if err == nil {
+		return ctx.Err()
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	return ctx.Err()
+	return fmt.Errorf("read rust source %s: %w: %w", slash, ErrRustSourceRefused, err)
 }
 
 // isRustTestContext checks whether a Rust source file below root contains a #[cfg(test)] module
-// using the repository's confined context-bounded snapshot reader.
+// using the repository's confined context-bounded snapshot reader. A source the reader refuses
+// returns (false, error wrapping ErrRustSourceRefused); a context error returns unchanged.
 func isRustTestContext(ctx context.Context, root, slash string) (bool, error) {
 	if !filepath.IsLocal(filepath.FromSlash(slash)) {
 		return false, nil
 	}
 	data, exists, readErr := contextopt.ObserveSnapshotIn(ctx, root, filepath.FromSlash(slash))
-	if ctxErr := contextReadError(ctx, readErr); ctxErr != nil {
-		return false, ctxErr
+	if err := contextReadError(ctx, slash, readErr); err != nil {
+		return false, err
 	}
-	return readErr == nil && exists && bytes.Contains(data, []byte("#[cfg(test)]")), nil
+	return exists && bytes.Contains(data, []byte("#[cfg(test)]")), nil
 }
 
 // isRustTest reports whether a Rust source file at slash in root contains a #[cfg(test)] module.

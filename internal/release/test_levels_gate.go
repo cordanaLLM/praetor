@@ -100,7 +100,21 @@ type TestLevelsReport struct {
 	Levels      []string
 	LiveHealth  string
 	Findings    []TestLevelFinding
+	// Skipped lists Rust sources the snapshot reader refused (a symlink leaf, non-UTF-8 text or an
+	// oversized file), up to maxTestLevelSkips entries; SkippedTotal counts every one. Such a file
+	// is not a test file for the audit and never blocks it; the audit detail names each one.
+	Skipped      []TestLevelSkip
+	SkippedTotal int
 }
+
+// TestLevelSkip names one repository file the test levels audit skipped as not a test file, and why.
+type TestLevelSkip struct {
+	Path   string
+	Reason string
+}
+
+// maxTestLevelSkips bounds how many skipped files a report lists and its detail names.
+const maxTestLevelSkips = 16
 
 type resolvedLevelBinding struct {
 	Profile     string
@@ -253,22 +267,27 @@ func resolveLevelBindings(
 	if err != nil {
 		return nil, nil, err
 	}
-	return profiles, mergeProfileAndDeclaredLevels(profiles, byProfile, manifest), nil
+	bindings, err := mergeProfileAndDeclaredLevels(profiles, byProfile, manifest)
+	if err != nil {
+		return nil, nil, err
+	}
+	return profiles, bindings, nil
 }
 
 // mergeProfileAndDeclaredLevels combines profile-default test levels with manifest-declared
-// test level overrides into a deduplicated list of bindings.
+// test level overrides into a deduplicated list of bindings. It is the one place that enforces
+// config.MaxReleaseTestLevels on the combined count, and fails naming the limit and the count.
 func mergeProfileAndDeclaredLevels(
 	profiles []string,
 	byProfile map[string][]string,
 	manifest *config.Manifest,
-) []resolvedLevelBinding {
+) ([]resolvedLevelBinding, error) {
 	var bindings []resolvedLevelBinding
 	seen := make(map[string]bool)
 	for i := 0; i < len(profiles) && i < 16; i++ {
 		prof := profiles[i]
 		levels := byProfile[prof]
-		for j := 0; j < len(levels) && j < config.MaxReleaseTestLevels; j++ {
+		for j := 0; j < len(levels); j++ {
 			lvl := levels[j]
 			if seen[lvl] {
 				continue
@@ -277,23 +296,18 @@ func mergeProfileAndDeclaredLevels(
 			bindings = append(bindings, buildLevelBinding(prof, lvl, manifest))
 		}
 	}
-	return appendDeclaredExtraLevels(bindings, seen, profiles, manifest)
+	extras := declaredExtraLevels(seen, manifest)
+	if total := len(bindings) + len(extras); total > config.MaxReleaseTestLevels {
+		return nil, fmt.Errorf("release test levels resolve to %d bindings from profiles and declared test_levels; the limit is %d", total, config.MaxReleaseTestLevels)
+	}
+	return appendDeclaredExtraLevels(bindings, extras, profiles, manifest), nil
 }
 
-// appendDeclaredExtraLevels appends any test levels declared in manifest.Release.TestLevels
-// that were not already bound by archetype profiles.
-func appendDeclaredExtraLevels(
-	bindings []resolvedLevelBinding,
-	seen map[string]bool,
-	profiles []string,
-	manifest *config.Manifest,
-) []resolvedLevelBinding {
-	if manifest == nil || manifest.Release == nil || len(manifest.Release.TestLevels) == 0 {
-		return bindings
-	}
-	primaryProfile := "repository"
-	if len(profiles) > 0 {
-		primaryProfile = profiles[0]
+// declaredExtraLevels returns the sorted test levels declared in manifest.Release.TestLevels that
+// were not already bound by archetype profiles.
+func declaredExtraLevels(seen map[string]bool, manifest *config.Manifest) []string {
+	if manifest == nil || manifest.Release == nil {
+		return nil
 	}
 	var extras []string
 	for lvl := range manifest.Release.TestLevels {
@@ -302,9 +316,23 @@ func appendDeclaredExtraLevels(
 		}
 	}
 	slices.Sort(extras)
+	return extras
+}
+
+// appendDeclaredExtraLevels appends a binding for each declared extra level, attached to the
+// first profile, to bindings; the caller has already checked the combined count.
+func appendDeclaredExtraLevels(
+	bindings []resolvedLevelBinding,
+	extras []string,
+	profiles []string,
+	manifest *config.Manifest,
+) []resolvedLevelBinding {
+	primaryProfile := "repository"
+	if len(profiles) > 0 {
+		primaryProfile = profiles[0]
+	}
 	for i := 0; i < len(extras) && i < config.MaxReleaseTestLevels; i++ {
-		lvl := extras[i]
-		bindings = append(bindings, buildLevelBinding(primaryProfile, lvl, manifest))
+		bindings = append(bindings, buildLevelBinding(primaryProfile, extras[i], manifest))
 	}
 	return bindings
 }
@@ -411,10 +439,11 @@ func evaluateLevelBindings(
 	opts TestLevelsOptions,
 	report TestLevelsReport,
 ) (TestLevelsReport, error) {
-	files, err := listLevelCandidateFiles(ctx, repoPath, bindings)
+	files, skipped, skippedTotal, err := listLevelCandidateFiles(ctx, repoPath, bindings)
 	if err != nil {
 		return report, err
 	}
+	report.Skipped, report.SkippedTotal = skipped, skippedTotal
 	workflows, auxScripts, err := loadRepositoryWorkflows(ctx, repoPath)
 	if err != nil {
 		return report, err
@@ -497,28 +526,44 @@ func (live levelLiveHealth) levelRefusal(level, workflow string) string {
 }
 
 // listLevelCandidateFiles returns existing regular repository files matching at least one binding.
-func listLevelCandidateFiles(ctx context.Context, repoPath string, bindings []resolvedLevelBinding) ([]string, error) {
-	return listRepositoryFiles(ctx, repoPath, func(rel string) (bool, error) {
-		return fileMatchesAnyBinding(ctx, repoPath, rel, bindings)
+// A Rust source the snapshot reader refuses is not a candidate: it is returned in skipped (at most
+// maxTestLevelSkips entries, each with its path and reason) and counted in skippedTotal, so the
+// audit can name it instead of dropping it silently or failing on it.
+func listLevelCandidateFiles(ctx context.Context, repoPath string, bindings []resolvedLevelBinding) (files []string, skipped []TestLevelSkip, skippedTotal int, err error) {
+	files, err = listRepositoryFiles(ctx, repoPath, func(rel string) (bool, error) {
+		matched, matchErr := fileMatchesAnyBinding(ctx, repoPath, rel, bindings)
+		if errors.Is(matchErr, forge.ErrRustSourceRefused) {
+			skippedTotal++
+			if len(skipped) < maxTestLevelSkips {
+				skipped = append(skipped, TestLevelSkip{Path: rel, Reason: matchErr.Error()})
+			}
+			return false, nil
+		}
+		return matched, matchErr
 	})
+	return files, skipped, skippedTotal, err
 }
 
 // fileMatchesAnyBinding reports whether rel matches the path rules of any resolved level binding.
+// When no binding matches and a Rust source read was refused, it returns false with that refusal
+// (an error wrapping forge.ErrRustSourceRefused) so the caller can report the skip.
 func fileMatchesAnyBinding(ctx context.Context, root, rel string, bindings []resolvedLevelBinding) (bool, error) {
-	if len(bindings) > config.MaxReleaseTestLevels {
-		return false, fmt.Errorf("test level bindings passed %d levels", config.MaxReleaseTestLevels)
-	}
+	var refused error
 	for i := 0; i < len(bindings) && i < config.MaxReleaseTestLevels; i++ {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
 		hasPattern := strings.TrimSpace(bindings[i].Spec.Pattern) != ""
 		matched, err := fileMatchesLevelPaths(ctx, root, rel, bindings[i].Spec.Paths, hasPattern)
+		if errors.Is(err, forge.ErrRustSourceRefused) {
+			refused = err
+			continue
+		}
 		if err != nil || matched {
 			return matched, err
 		}
 	}
-	return false, nil
+	return false, refused
 }
 
 // matchFilesForLevel returns repository files matching the level's path globs, requiring
@@ -537,6 +582,9 @@ func matchFilesForLevel(ctx context.Context, root string, files []string, spec c
 			return nil, err
 		}
 		ok, err := fileMatchesLevelPaths(ctx, root, files[i], spec.Paths, hasPattern)
+		if errors.Is(err, forge.ErrRustSourceRefused) {
+			continue // a refused Rust source is not a test file for this level; the candidate listing already reported it
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -548,11 +596,14 @@ func matchFilesForLevel(ctx context.Context, root string, files []string, spec c
 }
 
 // fileMatchesLevelPaths reports whether rel matches any glob in paths; a directory glob without a
-// pattern accepts only a test file by its language convention (forge.IsTestFileContext).
+// pattern accepts only a test file by its language convention (forge.IsTestFileContext). A Rust
+// source the snapshot reader refuses is not a test file: later globs are still tried, and when none
+// matches the refusal (an error wrapping forge.ErrRustSourceRefused) is returned with false.
 func fileMatchesLevelPaths(ctx context.Context, root, rel string, paths []string, hasPattern bool) (bool, error) {
 	if len(paths) > config.MaxReleaseE2EPaths {
 		return false, fmt.Errorf("test level path globs passed %d entries", config.MaxReleaseE2EPaths)
 	}
+	var refused error
 	for i := 0; i < len(paths) && i < config.MaxReleaseE2EPaths; i++ {
 		if err := ctx.Err(); err != nil {
 			return false, err
@@ -565,11 +616,15 @@ func fileMatchesLevelPaths(ctx context.Context, root, rel string, paths []string
 			return true, nil
 		}
 		isTest, err := forge.IsTestFileContext(ctx, root, rel)
+		if errors.Is(err, forge.ErrRustSourceRefused) {
+			refused = err
+			continue
+		}
 		if err != nil || isTest {
 			return isTest, err
 		}
 	}
-	return false, nil
+	return false, refused
 }
 
 // isDirectoryGlob reports whether glob matches a directory tree rather than a specific file pattern.
@@ -1281,9 +1336,9 @@ func finalizeTestLevelsReport(report TestLevelsReport) (TestLevelsReport, error)
 		}
 		unbaselined = append(unbaselined, fmt.Sprintf("%s (%s): %s", f.Level, f.Profile, f.Reason))
 	}
-	suffix := ""
+	suffix := skippedFilesNote(report)
 	if report.LiveHealth != "" {
-		suffix = fmt.Sprintf(" [%s]", report.LiveHealth)
+		suffix = fmt.Sprintf(" [%s]", report.LiveHealth) + suffix
 	}
 	if len(unbaselined) == 0 {
 		report.Status = TestLevelStatusPass
@@ -1300,6 +1355,23 @@ func finalizeTestLevelsReport(report TestLevelsReport) (TestLevelsReport, error)
 	}
 	report.Status = TestLevelStatusWarn
 	return report, nil
+}
+
+// skippedFilesNote names the Rust sources the audit skipped because the snapshot reader refused
+// them, or returns "" when it skipped none; it lists at most maxTestLevelSkips of them.
+func skippedFilesNote(report TestLevelsReport) string {
+	if report.SkippedTotal == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(report.Skipped))
+	for i := 0; i < len(report.Skipped) && i < maxTestLevelSkips; i++ {
+		parts = append(parts, fmt.Sprintf("%s (%s)", report.Skipped[i].Path, report.Skipped[i].Reason))
+	}
+	note := fmt.Sprintf(" [skipped %d unreadable Rust source(s) as not test files: %s", report.SkippedTotal, strings.Join(parts, "; "))
+	if report.SkippedTotal > len(parts) {
+		note += fmt.Sprintf("; and %d more", report.SkippedTotal-len(parts))
+	}
+	return note + "]"
 }
 
 // testLevelRemedy tells an adopter the two ways out of a gap: a test bound to the level, or
