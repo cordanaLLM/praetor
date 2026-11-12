@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestScoreCountsSmallFunctions covers functions below the clone detection threshold.
@@ -35,7 +36,9 @@ func TestScoreFindsSprawlFunction(t *testing.T) {
 	}
 	report := &DedupeReport{}
 	var starts []adopterGitStart
-	if err := scanGoFile(context.Background(), token.NewFileSet(), path, "sample.go", map[string][]FileLocation{}, map[string]int{}, true, &starts, report); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := scanGoFile(ctx, token.NewFileSet(), path, "sample.go", map[string][]FileLocation{}, map[string]int{}, true, &starts, report); err != nil {
 		t.Fatal(err)
 	}
 	report.Duplicates = []DuplicateGroup{{Locations: []FileLocation{{Path: "sample.go", Line: 3}}}}
@@ -64,7 +67,9 @@ func TestScoreSprawlSharedDeclarationLine(t *testing.T) {
 	}
 	report := &DedupeReport{}
 	var starts []adopterGitStart
-	if err := scanGoFile(context.Background(), token.NewFileSet(), path, "sample.go", map[string][]FileLocation{}, map[string]int{}, true, &starts, report); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := scanGoFile(ctx, token.NewFileSet(), path, "sample.go", map[string][]FileLocation{}, map[string]int{}, true, &starts, report); err != nil {
 		t.Fatal(err)
 	}
 	if len(report.SprawlItems) != 2 || report.SprawlItems[0].funcLine != 3 || report.SprawlItems[1].funcLine != 4 {
