@@ -12,6 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
+// runModels dispatches the models subcommands: sync, list, route, outcome and merge-check.
 func runModels(args []string) error {
 	fs := flag.NewFlagSet("models", flag.ContinueOnError)
 	configPath := fs.String("config", router.DefaultConfigPath, "Path to model routing config")

@@ -3,12 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"os"
+	"path/filepath"
 	"slices"
 
 	"github.com/cordanaLLM/praetor/internal/reviewmerge"
 	"github.com/cordanaLLM/praetor/internal/strictjson"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // mergeFileLimit bounds the size of each review input.
@@ -40,17 +41,9 @@ func modelMergeError(err error) error {
 
 // readMergeJSON decodes a bounded review document.
 func readMergeJSON(path string, target any) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open %s: %w", path, err)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, mergeFileLimit+1))
-	closeErr := f.Close()
+	data, err := util.ReadFileLimited(filepath.Clean(path), mergeFileLimit)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close %s: %w", path, closeErr)
 	}
 	if err := strictjson.Decode(data, target, strictjson.Options{MaxBytes: mergeFileLimit, MaxDepth: 16}); err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)

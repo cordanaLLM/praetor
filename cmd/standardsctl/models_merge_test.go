@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// TestModelsMergeExitCodes checks merge-check exit codes: 0 for a valid merge, 1 for contract problems, 2 for usage or input errors.
 func TestModelsMergeExitCodes(t *testing.T) {
 	dir := t.TempDir()
 	draft := filepath.Join(dir, "draft.json")
