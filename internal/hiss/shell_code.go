@@ -131,7 +131,7 @@ func maskHeredocBody(line string, l *shellLexer) (string, bool) {
 	return line, true
 }
 
-// dataHeredocCommand accepts only data cat or tee commands on a command line.
+// dataHeredocCommand accepts data cat or tee commands and skips empty commands.
 func dataHeredocCommand(code, raw string) bool {
 	if strings.ContainsAny(raw, "|`") || strings.Contains(raw, "<(") || strings.Contains(raw, ">(") || strings.Contains(code, "$(") {
 		return false
@@ -141,6 +141,9 @@ func dataHeredocCommand(code, raw string) bool {
 		return false
 	}
 	for _, cmd := range cmds {
+		if len(cmd.words) == 0 {
+			continue
+		}
 		if !heredocWords(cmd.words) || !dataHeredocWords(cmd.words) {
 			return false
 		}

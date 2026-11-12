@@ -330,6 +330,18 @@
     "reason": "only data heredocs"
   },
   {
+    "name": "trailing-newline",
+    "input": "cat <<'EOF'\nsudo id\nEOF\n",
+    "masked": true,
+    "reason": "final empty command"
+  },
+  {
+    "name": "blank-between-data",
+    "input": "cat <<'A'\nsudo id\nA\n\ntee <<'B'\nsudo id\nB",
+    "masked": true,
+    "reason": "blank line between data heredocs"
+  },
+  {
     "name": "chain-extra-command",
     "input": "true && cat <<'EOF' && true\nsudo id\nEOF",
     "masked": false,
