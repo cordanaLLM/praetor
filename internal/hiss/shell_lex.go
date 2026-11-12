@@ -265,7 +265,7 @@ func (l *shellLexer) heredoc(text string, i int) int {
 		i++
 	}
 	delimiter, quoted, width, err := util.ShellHereDocDelimiter(text[i:])
-	if err != nil || len(l.pending) >= maxShellHeredocs {
+	if err != nil || (i+width < len(text) && !strings.ContainsRune(" \t;&|<>)", rune(text[i+width]))) || len(l.pending) >= maxShellHeredocs {
 		l.misread = true
 		return len(text)
 	}

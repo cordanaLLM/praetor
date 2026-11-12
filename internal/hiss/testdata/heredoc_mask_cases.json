@@ -244,5 +244,71 @@
     "input": "cat <<\"EOF\"\nsudo id $(echo ok)\nEOF",
     "masked": true,
     "reason": "quoted body does not expand"
+  },
+  {
+    "name": "partial-single",
+    "input": "cat <<'E'OF\nsudo id\nE",
+    "masked": false,
+    "reason": "delimiter is a partial shell word"
+  },
+  {
+    "name": "partial-double",
+    "input": "cat <<\"E\"OF\nsudo id\nE",
+    "masked": false,
+    "reason": "delimiter is a partial shell word"
+  },
+  {
+    "name": "partial-middle",
+    "input": "cat <<E'O'F\nsudo id\nE",
+    "masked": false,
+    "reason": "delimiter is a partial shell word"
+  },
+  {
+    "name": "partial-suffix",
+    "input": "cat <<'EOF'x\nsudo id\nEOF",
+    "masked": false,
+    "reason": "delimiter is a partial shell word"
+  },
+  {
+    "name": "quoted-backslash-after",
+    "input": "cat <<'EOF'\ndata\\\nEOF\nsudo id",
+    "masked": false,
+    "reason": "command after quoted body remains visible"
+  },
+  {
+    "name": "fifo",
+    "input": "mkfifo run/f; bash run/f & cat > run/f <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "named pipe"
+  },
+  {
+    "name": "shared-tee-path",
+    "input": "tee run/f <<'EOF'; sh run/f\nsudo id\nEOF",
+    "masked": false,
+    "reason": "output path used by another command"
+  },
+  {
+    "name": "plain-output",
+    "input": "cat > notes.md <<'EOF'\nsudo id\nEOF",
+    "masked": true,
+    "reason": "ordinary file output"
+  },
+  {
+    "name": "partial-open-paren",
+    "input": "cat <<'EOF'(\nsudo id\nEOF",
+    "masked": false,
+    "reason": "opening parenthesis is not an accepted delimiter boundary"
+  },
+  {
+    "name": "mknod",
+    "input": "mknod run/f p; cat > run/f <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "special file"
+  },
+  {
+    "name": "shared-cat-path",
+    "input": "sh run/f; cat > run/f <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "redirect target used by another command"
   }
 ]

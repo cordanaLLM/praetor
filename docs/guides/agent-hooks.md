@@ -885,6 +885,7 @@ always inspect the original text. The Go guard and the Python compatibility guar
 `TestPolicyHeredocFixtures` and the Python selftest, with no per-implementation
 expectation. Ordinary argument and quoted-string mentions above are covered by
 the replay fixtures; complete shell interpretation is outside this text rule.
+File reuse across separate tool calls is outside this text screen.
 
 The rules see only the commands that reach the pre-tool hook. A `core.hooksPath` set by any
 other route fails `praetorctl audit`

@@ -3,15 +3,15 @@
 PreToolUse & Local Git Hook Evasion Blocker
 Enforces HISS by intercepting attempts to bypass Git hooks, linters, or verification gates.
 """
-import sys
-import os
-import re
-import json
-from pathlib import Path
-import shutil
-import subprocess
 import contextlib
 import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
 
 MAX_INPUT_BYTES = 1 << 20
 MAX_REASON_BYTES = 4096
@@ -96,7 +96,7 @@ def join_line_continuations(command_str: str) -> str:
 # These conservative recognizers refuse ambiguous shell syntax rather than hiding it.
 HEREDOC_SHADOW = re.compile(r"(?:^|[^A-Za-z0-9_])(?:alias|function)(?:[^A-Za-z0-9_]|$)|[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)")
 HEREDOC_FD = re.compile(r"(?:^|[^0-9])[0-9]+[ \t]*[<>]|\{[^}]+\}[ \t]*[<>]|>[ \t]*&|/dev/fd/|/proc/self/fd/")
-HEREDOC_OP = re.compile(r"<<(-?)[ \t]*(?:'([^'\"$`\\\n]+)'|\"([^'\"$`\\\n]+)\"|([A-Za-z_0-9.-]+))")
+HEREDOC_OP = re.compile(r"<<(-?)[ \t]*(?:'([^'\"$`\\\n]+)'|\"([^'\"$`\\\n]+)\"|([A-Za-z_0-9.-]+))(?=$|[ \t;&|<>)])")
 HEREDOC_COMMAND = re.compile(r"^(?:(?:env|command|exec|[A-Za-z_][A-Za-z_0-9]*=[A-Za-z_0-9]*)[ \t]+)*(?:cat|tee|/bin/cat|/usr/bin/cat|/bin/tee|/usr/bin/tee)(?:[ \t]|$)")
 
 
@@ -119,34 +119,66 @@ def data_heredoc_header(line):
     return [(m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), bool(m.group(2) or m.group(3))) for m in matches]
 
 
+def heredoc_pending_header(line):
+    """Recognize all delimiters in a header or reject ambiguous input."""
+    if sum(line.count(mark) for mark in ";&|()") >= 1024:
+        return None
+    if "<<" not in line:
+        return None if any(mark in line for mark in ("\"", "'", "\\", "$", "`")) else []
+    headers = list(HEREDOC_OP.finditer(line))
+    if line.count("<<") != len(headers):
+        return None
+    safe = data_heredoc_header(line) is not None
+    return [(m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), bool(m.group(2) or m.group(3)), safe) for m in headers]
+
+
+def heredoc_body_line(line, pending):
+    """Process one pending body line and return its mask decision."""
+    delimiter, tabs, quoted, data = pending[0]
+    if (line.lstrip("\t") if tabs else line) == delimiter:
+        pending.pop(0)
+        return False
+    if not quoted and (line.endswith("\\") or any(mark in line for mark in ("`", "$(", "${"))):
+        return None
+    return data
+
+
+def heredoc_shared_output(command):
+    """Refuse special files or data output reused in another command."""
+    if re.search(r"(?:^|[^A-Za-z0-9_])(?:mkfifo|mknod)(?:[^A-Za-z0-9_]|$)", command):
+        return True
+    parts = re.split(r"[\n;&|]", command)
+    for i, part in enumerate(parts):
+        if "<<" not in part or not re.search(r"(?:^|[ \t/])(?:cat|tee)(?:[ \t<]|$)", part):
+            continue
+        clean = HEREDOC_OP.sub(" ", part)
+        paths = re.findall(r">[ \t]*([A-Za-z0-9_./-]+)", clean)
+        if re.search(r"(?:^|[ \t/])tee(?:[ \t]|$)", clean):
+            paths += re.findall(r"[A-Za-z0-9_./-]+", re.sub(r"^.*?\btee\b", "", clean))
+        for path in paths:
+            if any(path in re.findall(r"[A-Za-z0-9_./-]+", other) for j, other in enumerate(parts) if j != i):
+                return True
+    return False
+
+
 def mask_data_heredocs(command):
     """Mask only recognized data bodies; all uncertain input stays visible."""
-    if "\r" in command or HEREDOC_SHADOW.search(command) or HEREDOC_FD.search(command):
+    if "\r" in command or HEREDOC_SHADOW.search(command) or HEREDOC_FD.search(command) or heredoc_shared_output(command):
         return command
     lines = command.split("\n")
     out = list(lines)
     pending = []
     for index, line in enumerate(lines):
         if pending:
-            delimiter, tabs, quoted, data = pending[0]
-            if (line.lstrip("\t") if tabs else line) == delimiter:
-                pending.pop(0)
-            elif not quoted and (line.endswith("\\") or any(mark in line for mark in ("`", "$(", "${"))):
+            decision = heredoc_body_line(line, pending)
+            if decision is None:
                 return command
-            elif data:
+            if decision:
                 out[index] = ""
-            continue
-        if sum(line.count(mark) for mark in ";&|()") >= 1024:
-            return command
-        if "<<" not in line:
-            if any(mark in line for mark in ("\"", "'", "\\", "$", "`")):
+        else:
+            pending = heredoc_pending_header(line)
+            if pending is None:
                 return command
-            continue
-        headers = list(HEREDOC_OP.finditer(line))
-        if line.count("<<") != len(headers):
-            return command
-        safe = data_heredoc_header(line)
-        pending = [(m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), bool(m.group(2) or m.group(3)), safe is not None) for m in headers]
     return "\n".join(out)
 
 
@@ -155,18 +187,14 @@ def heredoc_selftest():
     path = Path(__file__).resolve().parents[3] / "internal/hiss/testdata/heredoc_mask_cases.json"
     cases = json.loads(path.read_text(encoding="utf-8"))
     failed = False
-    global check_admission
-    original_admission = check_admission
-    check_admission = lambda _command: True
     for case in cases:
         masked = mask_data_heredocs(case["input"])
         actual = "sudo id" not in masked
         with contextlib.redirect_stderr(io.StringIO()):
-            denied = not audit_command(case["input"])
+            denied = not text_rules_allow(case["input"])
         if actual != case["masked"] or denied == case["masked"]:
             print(f"FAIL {case['name']}: masked={actual} denied={denied}", file=sys.stderr)
             failed = True
-    check_admission = original_admission
     if not failed:
         print(f"heredoc fixtures: {len(cases)} passed")
     return not failed
@@ -216,10 +244,18 @@ def search(pattern, text):
 
 
 def audit_command(command_str: str) -> bool:
-    command_str = join_line_continuations(command_str)
+    """Judge one command: the built-in text rules first, then host admission on the joined command."""
+    if not text_rules_allow(command_str):
+        return False
+    return check_admission(join_line_continuations(command_str))
+
+
+def text_rules_allow(command_str: str) -> bool:
+    """The built-in text and topology rules alone (no admission), with plain-data heredoc bodies masked."""
     if not scannable(command_str):
         return False
-    masked = mask_data_heredocs(command_str).replace("${|", "$( ").replace("${", "$(")
+    masked = join_line_continuations(mask_data_heredocs(command_str)).replace("${|", "$( ").replace("${", "$(")
+    command_str = join_line_continuations(command_str)
     judged = without_read_only_words(masked)
     for pattern in BLOCKED_PATTERNS:
         text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else masked
@@ -239,7 +275,7 @@ def audit_command(command_str: str) -> bool:
             )
             return False
 
-    return check_admission(command_str)
+    return True
 
 
 # Host admission delegation to Go (`praetorctl admission-check`) when hooks.admission.enforce

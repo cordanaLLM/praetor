@@ -26,6 +26,7 @@ func TestPolicyHeredoc(t *testing.T) {
 		{"shell", "bash <<'EOF'\n" + word + " id\nEOF", Deny},
 		{"pipe", "cat <<'EOF' | sh\n" + word + " id\nEOF", Deny},
 		{"after", "cat <<'EOF'\ndata\nEOF\n" + word + " id", Deny},
+		{"quoted backslash before delimiter", "cat <<'EOF'\ndata\\\nEOF\n" + word + " id", Deny},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := p.Command(tc.command); got.Outcome != tc.want {
