@@ -864,11 +864,27 @@ prompt and post-tool registrations in `registrationTable`
 (`internal/agenthook/registrations.go`): the engine renders no OpenCode
 before-tool guard, so this refusal is **not enforced for OpenCode**.
 
-The text screen still scans literal here-document bodies. A quoted here-document
-containing `$(sudo true)` is therefore refused even though the shell would print
-that body without executing a substitution. Ordinary argument and quoted-string
-mentions above are covered by the replay fixtures; complete shell interpretation
-is outside this text rule.
+The built-in text rules skip a here-document body only when it is provably plain
+data (`hiss.MaskDataHeredocs`, `internal/hiss/shell_code.go`). Three conditions
+must all hold:
+
+- the command is `cat` or `tee` (bare, `/bin/` or `/usr/bin/`), not shadowed by a
+  function or alias anywhere in the command;
+- the command has no descriptor redirection, pipe or process substitution, and its
+  command list is read in full within the scan limit;
+- the body is quoted (`<<'EOF'`, `<<"EOF"`, `<<\EOF`), or unquoted with no
+  backtick, `$(`, `${`, `$((` and no trailing backslash.
+
+A quoted `cat <<'EOF'` body containing `$(sudo true)` is therefore allowed,
+because the shell prints it without running the substitution. The same body under
+an unquoted `<<EOF` is refused. Bodies fed to a shell (`bash <<'EOF'`) and any
+input the recognizer cannot prove safe stay fully scanned, and operator rules
+always inspect the original text. The Go guard and the Python compatibility guard
+(`.config/agent/hooks/block_evasion.py`) replay one shared fixture,
+`internal/hiss/testdata/heredoc_mask_cases.json`, in `TestMaskDataHeredocFixtures`,
+`TestPolicyHeredocFixtures` and the Python selftest, with no per-implementation
+expectation. Ordinary argument and quoted-string mentions above are covered by
+the replay fixtures; complete shell interpretation is outside this text rule.
 
 The rules see only the commands that reach the pre-tool hook. A `core.hooksPath` set by any
 other route fails `praetorctl audit`
