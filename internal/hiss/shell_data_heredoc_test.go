@@ -22,14 +22,14 @@ func TestMaskDataHeredocs(t *testing.T) {
 		{"unfinished", "cat <<'EOF'\nsecret", "cat <<'EOF'\n"},
 		{"same delimiters", "cat <<'A' <<'A'\none\nA\ntwo\nA", "cat <<'A' <<'A'\n\nA\n\nA"},
 		{"env wrapper", "env X=1 cat <<'EOF'\nsecret\nEOF", "env X=1 cat <<'EOF'\n\nEOF"},
-		{"chain", "true && cat <<'EOF' && true\nsecret\nEOF", "true && cat <<'EOF' && true\n\nEOF"},
+		{"chain", "true && cat <<'EOF' && true\nsecret\nEOF", "true && cat <<'EOF' && true\nsecret\nEOF"},
 		{"mixed", "cat <<'A'; bash <<'B'\none\nA\ntwo\nB", "cat <<'A'; bash <<'B'\none\nA\ntwo\nB"},
 		{"process substitution", "cat <<'EOF' > >(sh)\ncommand\nEOF", "cat <<'EOF' > >(sh)\ncommand\nEOF"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := MaskDataHeredocs(tc.input, 20)
-			if !ok || got != tc.want || strings.Count(got, "\n") != strings.Count(tc.input, "\n") {
-				t.Fatalf("got %q, %v; want %q", got, ok, tc.want)
+			got, _ := MaskDataHeredocs(tc.input, 20)
+			if got != tc.want || strings.Count(got, "\n") != strings.Count(tc.input, "\n") {
+				t.Fatalf("got %q; want %q", got, tc.want)
 			}
 		})
 	}

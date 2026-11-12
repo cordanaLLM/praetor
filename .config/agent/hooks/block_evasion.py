@@ -112,10 +112,10 @@ def data_heredoc_header(line):
         return None
     parts = re.split(r";|&", HEREDOC_OP.sub(" << ", line))
     for part in parts:
-        if "<<" in part:
-            part = part.replace("<<", " ").strip()
-            if not HEREDOC_COMMAND.match(part):
-                return None
+        if not part.strip():
+            continue
+        if "<<" not in part or not HEREDOC_COMMAND.match(part.replace("<<", " ").strip()):
+            return None
     return [(m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), bool(m.group(2) or m.group(3))) for m in matches]
 
 
@@ -124,12 +124,13 @@ def heredoc_pending_header(line):
     if sum(line.count(mark) for mark in ";&|()") >= 1024:
         return None
     if "<<" not in line:
-        return None if any(mark in line for mark in ("\"", "'", "\\", "$", "`")) else []
+        return [] if not line.strip() else None
     headers = list(HEREDOC_OP.finditer(line))
     if line.count("<<") != len(headers):
         return None
-    safe = data_heredoc_header(line) is not None
-    return [(m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), bool(m.group(2) or m.group(3)), safe) for m in headers]
+    if data_heredoc_header(line) is None:
+        return None
+    return [(m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), bool(m.group(2) or m.group(3)), True) for m in headers]
 
 
 def heredoc_body_line(line, pending):
@@ -143,27 +144,9 @@ def heredoc_body_line(line, pending):
     return data
 
 
-def heredoc_shared_output(command):
-    """Refuse special files or data output reused in another command."""
-    if re.search(r"(?:^|[^A-Za-z0-9_])(?:mkfifo|mknod)(?:[^A-Za-z0-9_]|$)", command):
-        return True
-    parts = re.split(r"[\n;&|]", command)
-    for i, part in enumerate(parts):
-        if "<<" not in part or not re.search(r"(?:^|[ \t/])(?:cat|tee)(?:[ \t<]|$)", part):
-            continue
-        clean = HEREDOC_OP.sub(" ", part)
-        paths = re.findall(r">[ \t]*([A-Za-z0-9_./-]+)", clean)
-        if re.search(r"(?:^|[ \t/])tee(?:[ \t]|$)", clean):
-            paths += re.findall(r"[A-Za-z0-9_./-]+", re.sub(r"^.*?\btee\b", "", clean))
-        for path in paths:
-            if any(path in re.findall(r"[A-Za-z0-9_./-]+", other) for j, other in enumerate(parts) if j != i):
-                return True
-    return False
-
-
 def mask_data_heredocs(command):
-    """Mask only recognized data bodies; all uncertain input stays visible."""
-    if "\r" in command or HEREDOC_SHADOW.search(command) or HEREDOC_FD.search(command) or heredoc_shared_output(command):
+    """Mask data bodies only when every command is a recognized data heredoc."""
+    if "\r" in command or HEREDOC_SHADOW.search(command) or HEREDOC_FD.search(command):
         return command
     lines = command.split("\n")
     out = list(lines)

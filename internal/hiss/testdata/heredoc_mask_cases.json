@@ -310,5 +310,29 @@
     "input": "sh run/f; cat > run/f <<'EOF'\nsudo id\nEOF",
     "masked": false,
     "reason": "redirect target used by another command"
+  },
+  {
+    "name": "relative-output-execution",
+    "input": "cat >x.sh <<'EOF'\nsudo id\nEOF\nsh ./x.sh",
+    "masked": false,
+    "reason": "another command executes the output"
+  },
+  {
+    "name": "body-mentions-output",
+    "input": "cat >x.sh <<'EOF'\nsudo id x.sh\nEOF",
+    "masked": true,
+    "reason": "body text is data"
+  },
+  {
+    "name": "consecutive-data",
+    "input": "cat <<'A'\nsudo id\nA\ntee <<'B'\nsudo id\nB",
+    "masked": true,
+    "reason": "only data heredocs"
+  },
+  {
+    "name": "chain-extra-command",
+    "input": "true && cat <<'EOF' && true\nsudo id\nEOF",
+    "masked": false,
+    "reason": "other commands in script"
   }
 ]

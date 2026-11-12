@@ -868,8 +868,8 @@ The built-in text rules skip a here-document body only when it is provably plain
 data (`hiss.MaskDataHeredocs`, `internal/hiss/shell_code.go`). Three conditions
 must all hold:
 
-- the command is `cat` or `tee` (bare, `/bin/` or `/usr/bin/`), not shadowed by a
-  function or alias anywhere in the command;
+- the script holds nothing but data `cat` or `tee` heredoc commands (bare, `/bin/`
+  or `/usr/bin/`), not shadowed by a function or alias;
 - the command has no descriptor redirection, pipe or process substitution, and its
   command list is read in full within the scan limit;
 - the body is quoted (`<<'EOF'`, `<<"EOF"`, `<<\EOF`), or unquoted with no

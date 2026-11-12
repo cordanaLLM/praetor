@@ -31,14 +31,14 @@ func ShellCode(script string, maxLines int) (lines []string, ok bool) {
 	return lines, true
 }
 
-// MaskDataHeredocs removes plain data bodies; unquoted substitutions remain unmasked.
+// MaskDataHeredocs removes plain data bodies only when every command is a data heredoc.
 // Unreadable constructs return the original script and false.
 func MaskDataHeredocs(script string, maxLines int) (string, bool) {
 	lines := strings.Split(script, "\n")
 	if len(lines) > maxLines || strings.Contains(script, "\r") {
 		return script, false
 	}
-	if heredocSharedOutput(script) || !heredocInputSafe(lines) {
+	if !heredocInputSafe(lines) {
 		return script, false
 	}
 	if !maskHeredocLines(lines) {
@@ -99,9 +99,11 @@ func maskHeredocHeader(line string, l *shellLexer) bool {
 		return false
 	}
 	code, _ := l.line(line)
-	data := dataHeredocCommand(code, line)
+	if !dataHeredocCommand(code, line) {
+		return false
+	}
 	for j := range l.bodies {
-		l.bodies[j].data = data
+		l.bodies[j].data = true
 	}
 	return true
 }
@@ -129,23 +131,21 @@ func maskHeredocBody(line string, l *shellLexer) (string, bool) {
 	return line, true
 }
 
-// dataHeredocCommand accepts only an unambiguous cat or tee invocation without a pipe.
+// dataHeredocCommand accepts only data cat or tee commands on a command line.
 func dataHeredocCommand(code, raw string) bool {
 	if strings.ContainsAny(raw, "|`") || strings.Contains(raw, "<(") || strings.Contains(raw, ">(") || strings.Contains(code, "$(") {
 		return false
 	}
-	cmds := splitShellCommands(code)
-	found := false
+	cmds, ok := splitShellCommandsBounded(code)
+	if !ok {
+		return false
+	}
 	for _, cmd := range cmds {
-		if !heredocWords(cmd.words) {
-			continue
-		}
-		found = true
-		if !dataHeredocWords(cmd.words) {
+		if !heredocWords(cmd.words) || !dataHeredocWords(cmd.words) {
 			return false
 		}
 	}
-	return found
+	return true
 }
 
 // heredocWords reports whether the lexer left a heredoc operator in a command.
@@ -177,64 +177,6 @@ func dataHeredocWords(words []string) bool {
 	switch name {
 	case "cat", "tee", "/bin/cat", "/usr/bin/cat", "/bin/tee", "/usr/bin/tee":
 		return true
-	}
-	return false
-}
-
-// heredoc path patterns conservatively identify output words across commands.
-var (
-	heredocSpecial        = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])(?:mkfifo|mknod)(?:[^A-Za-z0-9_]|$)`)
-	heredocParts          = regexp.MustCompile(`[\n;&|]`)
-	heredocPathWord       = regexp.MustCompile(`[A-Za-z0-9_./-]+`)
-	heredocOutputCommand  = regexp.MustCompile(`(?:^|[ \t/])(?:cat|tee)(?:[ \t<]|$)`)
-	heredocTee            = regexp.MustCompile(`(?:^|[ \t/])tee(?:[ \t]|$)`)
-	heredocOutputRedirect = regexp.MustCompile(`>[ \t]*([A-Za-z0-9_./-]+)`)
-	heredocRawOp          = regexp.MustCompile(`<<-?[ \t]*(?:'[^']+'|"[^"]+"|[A-Za-z_0-9.-]+)`)
-)
-
-// heredocOutputPaths collects conservative output path candidates from a data header.
-func heredocOutputPaths(part string) []string {
-	if !strings.Contains(part, "<<") || !heredocOutputCommand.MatchString(part) {
-		return nil
-	}
-	clean := heredocRawOp.ReplaceAllString(part, " ")
-	var paths []string
-	for _, match := range heredocOutputRedirect.FindAllStringSubmatch(clean, -1) {
-		paths = append(paths, match[1])
-	}
-	if loc := heredocTee.FindStringIndex(clean); loc != nil {
-		paths = append(paths, heredocPathWord.FindAllString(clean[loc[1]:], -1)...)
-	}
-	return paths
-}
-
-// heredocPathAppears reports whether another command contains an output path word.
-func heredocPathAppears(paths []string, parts []string, header int) bool {
-	for i, part := range parts {
-		if i == header {
-			continue
-		}
-		for _, word := range heredocPathWord.FindAllString(part, -1) {
-			for _, path := range paths {
-				if word == path {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// heredocSharedOutput refuses special files and output paths used by another command.
-func heredocSharedOutput(script string) bool {
-	if heredocSpecial.MatchString(script) {
-		return true
-	}
-	parts := heredocParts.Split(script, -1)
-	for i, part := range parts {
-		if heredocPathAppears(heredocOutputPaths(part), parts, i) {
-			return true
-		}
 	}
 	return false
 }
