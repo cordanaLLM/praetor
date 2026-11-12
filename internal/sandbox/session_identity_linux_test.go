@@ -412,6 +412,18 @@ func checkSessionReservation(t *testing.T, got bool, err error, want bool) {
 
 // TestSessionRetryBeyondFourCollisions plants repeated collisions and requires jittered retries through success and the sixteen-attempt limit.
 func TestSessionRetryBeyondFourCollisions(t *testing.T) {
+	if err := checkSessionCollisionRetries(t, 6, 7, 6); err != nil {
+		t.Fatalf("unexpected retry error: %v", err)
+	}
+	err := checkSessionCollisionRetries(t, 16, 16, 15)
+	if err == nil || !strings.Contains(err.Error(), "collision") || !strings.Contains(err.Error(), "16 attempts") {
+		t.Fatalf("expected 16-attempt collision error, got %v", err)
+	}
+}
+
+// checkSessionCollisionRetries runs retrySession for the planted collision count and verifies attempt, wait, and 10-40 ms delay bounds.
+func checkSessionCollisionRetries(t *testing.T, collisions, wantAttempts, wantWaits int) error {
+	t.Helper()
 	count, waits := 0, 0
 	waiter := func(_ context.Context, delay time.Duration) error {
 		waits++
@@ -420,15 +432,14 @@ func TestSessionRetryBeyondFourCollisions(t *testing.T) {
 		}
 		return nil
 	}
-	err := retrySession(t.Context(), func() (bool, error) { count++; return count <= 6, nil }, waiter)
-	if err != nil || count != 7 || waits != 6 {
-		t.Fatalf("attempts=%d waits=%d error=%v", count, waits, err)
+	err := retrySession(t.Context(), func() (bool, error) {
+		count++
+		return count <= collisions, nil
+	}, waiter)
+	if count != wantAttempts || waits != wantWaits {
+		t.Fatalf("attempts=%d want=%d waits=%d want=%d error=%v", count, wantAttempts, waits, wantWaits, err)
 	}
-	count, waits = 0, 0
-	err = retrySession(t.Context(), func() (bool, error) { count++; return true, nil }, waiter)
-	if err == nil || !strings.Contains(err.Error(), "collision") || !strings.Contains(err.Error(), "16 attempts") || count != 16 || waits != 15 {
-		t.Fatalf("attempts=%d waits=%d error=%v", count, waits, err)
-	}
+	return err
 }
 
 // TestSessionReusedOwnerPruned rejects an old reservation whose live PID has a different start tick.
@@ -510,17 +521,44 @@ func TestSessionRegistryWriteLimit(t *testing.T) {
 	}
 }
 
+// sessionStreamWriteTimeout bounds the streaming fixture write; it equals the 1 s attempt
+// context, so the success path keeps the window it had before the bound.
+const sessionStreamWriteTimeout = time.Second
+
+// errSessionInputWriteStalled marks a fixture write closed by its timeout path.
+var errSessionInputWriteStalled = errors.New("stalled session input write")
+
 // TestSessionStreamingInput starts the child before supplying input and keeps the pipe open until then.
 func TestSessionStreamingInput(t *testing.T) {
+	script := "printf '{\"child-pid\":%s}\\n' \"$$\" >&3\ndd bs=1 count=1 <&4 >/dev/null 2>/dev/null || exit 1\ncat\n"
+	out, writeErr, runErr := runStreamingSession(t, script)
+	if writeErr != nil {
+		t.Fatalf("stalled session input write: %v (session error: %v)", writeErr, runErr)
+	}
+	if runErr != nil || out != "stream" {
+		t.Fatalf("output=%q error=%v", out, runErr)
+	}
+}
+
+// TestSessionStreamingInputHandshakeFails requires a post-start handshake failure to bound the blocked pipe write and report the session error.
+func TestSessionStreamingInputHandshakeFails(t *testing.T) {
+	_, writeErr, runErr := runStreamingSession(t, "exit 1\n")
+	if !errors.Is(writeErr, errSessionInputWriteStalled) {
+		t.Fatalf("expected stalled write error, got %v (session error: %v)", writeErr, runErr)
+	}
+	if runErr == nil {
+		t.Fatal("expected session handshake error")
+	}
+}
+
+// runStreamingSession launches a fake sandbox that touches a start marker before executing body, then streams input and collects its exit error.
+func runStreamingSession(t *testing.T, body string) (string, error, error) {
+	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	fake := filepath.Join(dir, "sandbox")
-	script := fmt.Sprintf(`#!/bin/sh
-: > %q
-printf '{"child-pid":%%s}\n' "$$" >&3
-dd bs=1 count=1 <&4 >/dev/null 2>/dev/null || exit 1
-cat
-`, filepath.Join(dir, "started"))
+	marker := filepath.Join(dir, "started")
+	script := fmt.Sprintf("#!/bin/sh\n: > %q\n%s", marker, body)
 	// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fake sandbox requires owner execution
 	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
 		t.Fatal(err)
@@ -534,30 +572,55 @@ cat
 	go func() {
 		done <- runSession(ctx, Invocation{Path: fake, Args: []string{"--", "/test"}}, "/bin/sh", []string{"/test"}, reader, &out, io.Discard)
 	}()
+	waitForSessionStart(t, marker, cancel, reader, done)
+	writeErr := writeSessionStream(t.Context(), writer, "stream", sessionStreamWriteTimeout)
+	if writeErr != nil {
+		cancel()
+	}
+	runErr := <-done
+	return out.String(), writeErr, runErr
+}
+
+// waitForSessionStart waits for the fake sandbox start marker and cleans up the attempt if it never appears.
+func waitForSessionStart(t *testing.T, marker string, cancel context.CancelFunc, reader *io.PipeReader, done <-chan error) {
+	t.Helper()
 	for i := 0; i < 50; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "started")); err == nil {
-			break
+		if _, err := os.Stat(marker); err == nil {
+			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "started")); err != nil {
-		cancel()
-		if err := reader.Close(); err != nil {
-			t.Error(err)
+	if _, err := os.Stat(marker); err == nil {
+		return
+	}
+	cancel()
+	if err := reader.Close(); err != nil {
+		t.Error(err)
+	}
+	if err := <-done; err == nil {
+		t.Error("expected cancellation")
+	}
+	t.Fatal("child did not start before input")
+}
+
+// writeSessionStream writes streaming input and closes the pipe within the timeout so an unreleased reader cannot block forever.
+func writeSessionStream(ctx context.Context, writer *io.PipeWriter, data string, timeout time.Duration) error {
+	writeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	written := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(writer, data)
+		if err == nil {
+			err = writer.Close()
 		}
-		if err := <-done; err == nil {
-			t.Error("expected cancellation")
-		}
-		t.Fatal("child did not start before input")
-	}
-	if _, err := writer.Write([]byte("stream")); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil || out.String() != "stream" {
-		t.Fatalf("output=%q error=%v", out.String(), err)
+		written <- err
+	}()
+	select {
+	case err := <-written:
+		return err
+	case <-writeCtx.Done():
+		closeErr := writer.CloseWithError(errSessionInputWriteStalled)
+		return errors.Join(errSessionInputWriteStalled, closeErr, <-written)
 	}
 }
 
