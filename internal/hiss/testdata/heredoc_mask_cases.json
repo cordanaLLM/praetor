@@ -116,8 +116,8 @@
   {
     "name": "substitution-data",
     "input": "cat <<EOF\nsudo id $(echo ok)\nEOF",
-    "masked": true,
-    "reason": "literal data before a harmless substitution"
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
   },
   {
     "name": "substitution-command",
@@ -164,14 +164,14 @@
   {
     "name": "nested-substitution",
     "input": "cat <<EOF\nsudo id $(echo $(printf hi))\nEOF",
-    "masked": true,
-    "reason": "nested harmless substitution"
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
   },
   {
     "name": "quoted-substitution-data",
     "input": "cat <<EOF\nsudo id $(printf '%s' hello)\nEOF",
-    "masked": true,
-    "reason": "quoted literal within harmless substitution"
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
   },
   {
     "name": "limit-earlier-line",
@@ -182,8 +182,8 @@
   {
     "name": "double-nested-parity",
     "input": "cat <<EOF\nsudo id $(echo \"$(printf hi)\")\nEOF",
-    "masked": true,
-    "reason": "quoted nested harmless substitution"
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
   },
   {
     "name": "multiline-substitution",
@@ -194,13 +194,55 @@
   {
     "name": "escaped-substitution",
     "input": "cat <<EOF\nsudo id \\$(sudo id)\nEOF",
-    "masked": true,
-    "reason": "escaped substitution is data"
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
   },
   {
     "name": "nested-backtick",
     "input": "cat <<EOF\nsudo id $(echo `printf hi`)\nEOF",
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
+  },
+  {
+    "name": "backtick-parity",
+    "input": "cat <<EOF\nsudo id `echo ok`\nEOF",
+    "masked": false,
+    "reason": "unquoted backtick substitution"
+  },
+  {
+    "name": "arithmetic",
+    "input": "cat <<EOF\nsudo id $((1+1))\nEOF",
+    "masked": false,
+    "reason": "unquoted arithmetic substitution"
+  },
+  {
+    "name": "unquoted-plain",
+    "input": "cat <<EOF\nsudo id\nEOF",
     "masked": true,
-    "reason": "nested harmless backtick substitution"
+    "reason": "unquoted plain data"
+  },
+  {
+    "name": "quoted-backtick",
+    "input": "cat <<'EOF'\nsudo id `echo ok`\nEOF",
+    "masked": true,
+    "reason": "quoted body does not expand"
+  },
+  {
+    "name": "multiline-plain-before-substitution",
+    "input": "cat <<EOF\nsudo id\n$(echo ok)\nEOF",
+    "masked": false,
+    "reason": "whole body stays visible"
+  },
+  {
+    "name": "parameter-braces",
+    "input": "cat <<EOF\nsudo id ${USER}\nEOF",
+    "masked": false,
+    "reason": "unquoted parameter expansion"
+  },
+  {
+    "name": "double-quoted-substitution",
+    "input": "cat <<\"EOF\"\nsudo id $(echo ok)\nEOF",
+    "masked": true,
+    "reason": "quoted body does not expand"
   }
 ]

@@ -162,74 +162,6 @@ def data_heredoc_header(line):
     return [(m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), bool(m.group(2) or m.group(3))) for m in matches]
 
 
-def heredoc_backtick_end(line, start):
-    """Find a simple complete backquoted substitution."""
-    end = line.find("`", start + 1)
-    if end < 0 or any(char in line[start + 1:end] for char in "'\"#$\\"):
-        return -1
-    return end + 1
-
-
-def heredoc_substitution_end(line, start):
-    """Find a complete simple or nested substitution, refusing ambiguous shell syntax."""
-    if line[start] == "`":
-        return heredoc_backtick_end(line, start)
-    frames = [[1, ""]]
-    index = start + 2
-    while index < len(line):
-        depth, quote = frames[-1]
-        char = line[index]
-        if char == "\\" or (quote != "'" and line.startswith("${", index)):
-            return -1
-        if quote != "'" and char == "`":
-            index = heredoc_backtick_end(line, index)
-            if index < 0:
-                return -1
-            continue
-        if quote != "'" and line.startswith("$(", index):
-            if len(frames) >= 32:
-                return -1
-            frames.append([1, ""])
-            index += 2
-            continue
-        if quote:
-            if char == quote:
-                frames[-1][1] = ""
-        elif char in "'\"":
-            frames[-1][1] = char
-        elif char == "#":
-            return -1
-        elif char == "(":
-            frames[-1][0] = depth + 1
-        elif char == ")":
-            frames[-1][0] = depth - 1
-            if depth == 1:
-                frames.pop()
-                if not frames:
-                    return index + 1
-        index += 1
-    return -1
-
-
-def heredoc_substitutions(line):
-    """Keep complete command substitutions; return None on ambiguous input."""
-    spans = []
-    index = 0
-    while index < len(line):
-        if line[index] == "\\":
-            index += 2
-            continue
-        if line.startswith("$(", index) or line[index] == "`":
-            end = heredoc_substitution_end(line, index)
-            if end < 0:
-                return None
-            spans.append(line[index:end])
-            index = end
-        else:
-            index += 1
-    return "".join(spans)
-
-
 def mask_data_heredocs(command):
     """Mask only recognized data bodies; all uncertain input stays visible."""
     if "\r" in command or HEREDOC_SHADOW.search(command) or HEREDOC_FD.search(command):
@@ -242,17 +174,10 @@ def mask_data_heredocs(command):
             delimiter, tabs, quoted, data = pending[0]
             if (line.lstrip("\t") if tabs else line) == delimiter:
                 pending.pop(0)
-            elif data and quoted:
-                out[index] = ""
+            elif not quoted and (line.endswith("\\") or any(mark in line for mark in ("`", "$(", "${"))):
+                return command
             elif data:
-                if line.endswith("\\"):
-                    return command
-                if "${" in line:
-                    return command
-                expansions = heredoc_substitutions(line)
-                if expansions is None:
-                    return command
-                out[index] = expansions
+                out[index] = ""
             continue
         if sum(line.count(mark) for mark in ";&|()") >= 1024:
             return command

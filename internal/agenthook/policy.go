@@ -455,7 +455,7 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 
 // textVerdict ignores proven plain-data bodies of unshadowed cat/tee for built-ins
 // when descriptors and complete command scanning are safe. Executable bodies and
-// substitutions remain checked; operator rules inspect the original text.
+// unquoted bodies with substitutions are never masked; operator rules inspect the original text.
 func (p *Policy) textVerdict(command string) Verdict {
 	masked := command
 	if data, ok := hiss.MaskDataHeredocs(command, admissionMaxLines); ok {

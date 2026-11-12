@@ -31,7 +31,7 @@ func ShellCode(script string, maxLines int) (lines []string, ok bool) {
 	return lines, true
 }
 
-// MaskDataHeredocs removes plain data bodies while retaining executable substitutions.
+// MaskDataHeredocs removes plain data bodies; unquoted substitutions remain unmasked.
 // Unreadable constructs return the original script and false.
 func MaskDataHeredocs(script string, maxLines int) (string, bool) {
 	lines := strings.Split(script, "\n")
@@ -49,11 +49,11 @@ func MaskDataHeredocs(script string, maxLines int) (string, bool) {
 
 // maskHeredocLines classifies headers and processes each body with bounded lexer state.
 func maskHeredocLines(lines []string) bool {
-	var l, expansion shellLexer
+	var l shellLexer
 	for i, line := range lines {
 		if len(l.bodies) > 0 {
 			var ok bool
-			lines[i], ok = maskHeredocBody(line, &l, &expansion)
+			lines[i], ok = maskHeredocBody(line, &l)
 			if !ok {
 				return false
 			}
@@ -63,7 +63,7 @@ func maskHeredocLines(lines []string) bool {
 			return false
 		}
 	}
-	return !l.misread && !expansion.misread && len(expansion.stack) == 0 && len(l.stack) == 0
+	return !l.misread && len(l.stack) == 0
 }
 
 // heredocShadow catches definitions conservatively, including ambiguous data and comments.
@@ -107,7 +107,7 @@ func maskHeredocHeader(line string, l *shellLexer) bool {
 }
 
 // maskHeredocBody handles one body or closing delimiter line.
-func maskHeredocBody(line string, l, expansion *shellLexer) (string, bool) {
+func maskHeredocBody(line string, l *shellLexer) (string, bool) {
 	h := l.bodies[0]
 	end := strings.TrimSuffix(line, "\r")
 	if !h.quoted && strings.HasSuffix(end, `\`) {
@@ -118,24 +118,15 @@ func maskHeredocBody(line string, l, expansion *shellLexer) (string, bool) {
 	}
 	l.bodyLine(strings.TrimSuffix(line, "\r"))
 	if end == h.delimiter {
-		return line, len(expansion.stack) == 0
-	}
-	if !h.quoted && strings.Contains(line, "${") {
-		// Bash 5.3 substitutions may span lines; leave the entire script unmasked.
-		return line, false
-	}
-	if !h.data {
 		return line, true
 	}
-	if h.quoted {
-		return "", true
-	}
-	kept := heredocExpansions(line, expansion)
-	if len(expansion.stack) > 0 {
-		// A substitution crossing a line is left wholly visible to both guards.
+	if !h.quoted && (strings.Contains(line, "`") || strings.Contains(line, "$(") || strings.Contains(line, "${")) {
 		return line, false
 	}
-	return kept, true
+	if h.data {
+		return "", true
+	}
+	return line, true
 }
 
 // dataHeredocCommand accepts only an unambiguous cat or tee invocation without a pipe.
@@ -188,35 +179,4 @@ func dataHeredocWords(words []string) bool {
 		return true
 	}
 	return false
-}
-
-// heredocExpansions retains command substitutions in an expanding data body.
-func heredocExpansions(line string, l *shellLexer) string {
-	var out, discard strings.Builder
-	for i := 0; i < len(line); {
-		start := i
-		if len(l.stack) == 0 {
-			if line[i] == '\\' && i+1 < len(line) {
-				i += 2
-				continue
-			}
-			if strings.HasPrefix(line[i:], "$(") {
-				l.push(shellCommand)
-				i += 2
-			} else if line[i] == '`' {
-				l.push(shellBacktick)
-				i++
-			} else {
-				i++
-				continue
-			}
-		} else {
-			i = l.step(line, i, &discard)
-		}
-		if i > len(line) {
-			i = len(line)
-		}
-		out.WriteString(line[start:i])
-	}
-	return out.String()
 }
