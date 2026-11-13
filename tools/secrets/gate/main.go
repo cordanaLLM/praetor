@@ -125,33 +125,36 @@ func executeGitleaks(ctx context.Context, dir, cfg string) (findings []Finding, 
 	cmd := exec.CommandContext(ctx, "gitleaks", cmdArgs...)
 	cmd.Dir = dir
 	out, runErr := cmd.CombinedOutput()
+	return readGateReport(reportPath, runErr, out)
+}
 
-	data, readErr := os.ReadFile(reportPath)
-	if readErr != nil {
+func readGateReport(reportPath string, runErr error, out []byte) ([]Finding, error) {
+	if data, readErr := os.ReadFile(reportPath); readErr != nil {
 		if runErr != nil {
 			return nil, fmt.Errorf("gitleaks execution failed: %w: %s", runErr, out)
 		}
 		return nil, fmt.Errorf("read gitleaks report: %w", readErr)
+	} else {
+		return parseGateReport(data, runErr, out)
 	}
-	return parseGateReport(data, runErr, out)
 }
 
 func parseGateReport(data []byte, runErr error, out []byte) ([]Finding, error) {
-	trimmed := strings.TrimSpace(string(data))
-	if len(trimmed) == 0 {
+	if trimmed := strings.TrimSpace(string(data)); len(trimmed) == 0 {
 		if runErr != nil {
 			return nil, fmt.Errorf("gitleaks did not complete: %w: %s", runErr, out)
 		}
 		return nil, nil
+	} else {
+		var findings []Finding
+		if err := json.Unmarshal(data, &findings); err != nil {
+			return nil, fmt.Errorf("unmarshal report JSON: %w", err)
+		}
+		if len(findings) == 0 && runErr != nil {
+			return nil, fmt.Errorf("gitleaks did not complete: %w: %s", runErr, out)
+		}
+		return findings, nil
 	}
-	var findings []Finding
-	if err := json.Unmarshal(data, &findings); err != nil {
-		return nil, fmt.Errorf("unmarshal report JSON: %w", err)
-	}
-	if len(findings) == 0 && runErr != nil {
-		return nil, fmt.Errorf("gitleaks did not complete: %w: %s", runErr, out)
-	}
-	return findings, nil
 }
 
 func reportGateResult(res Result, stdout, stderr io.Writer) int {

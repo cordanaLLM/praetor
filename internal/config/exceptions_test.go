@@ -278,8 +278,7 @@ func TestValidateExceptionsWorkflowTarget(t *testing.T) {
 func TestValidateExceptionsReleaseTokenNamesAWorkflow(t *testing.T) {
 	entry := Exception{Rule: ExceptionRuleReleaseToken, Path: "scripts/release.sh", Reason: "custom release", Expires: "2026-11-28"}
 	err := ValidateExceptions([]Exception{entry}, exceptionsToday)
-	want := "rule release-token must name one workflow file directly in .github/workflows by path, such as .github/workflows/release.yml"
-	if err == nil || !strings.Contains(err.Error(), want) {
+	if want := "rule release-token must name one workflow file directly in .github/workflows by path, such as .github/workflows/release.yml"; err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("ValidateExceptions = %v; want %q", err, want)
 	}
 }
@@ -289,8 +288,7 @@ func TestValidateExceptionsReleaseTokenNamesAWorkflow(t *testing.T) {
 func TestValidateExceptionsTestTimeoutNamesAWorkflow(t *testing.T) {
 	entry := Exception{Rule: ExceptionRuleTestTimeout, Path: "scripts/test.sh", Reason: "longer timeout", Expires: "2026-11-28"}
 	err := ValidateExceptions([]Exception{entry}, exceptionsToday)
-	want := "rule test-timeout must name one workflow file directly in .github/workflows by path, such as .github/workflows/portability.yml"
-	if err == nil || !strings.Contains(err.Error(), want) {
+	if want := "rule test-timeout must name one workflow file directly in .github/workflows by path, such as .github/workflows/portability.yml"; err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("ValidateExceptions = %v; want %q", err, want)
 	}
 }
@@ -326,8 +324,7 @@ func TestValidateExceptionsTestTimeoutMakefile(t *testing.T) {
 func TestValidateExceptionsJobTimeoutNamesAWorkflow(t *testing.T) {
 	entry := Exception{Rule: ExceptionRuleJobTimeout, Path: "scripts/test.sh", Reason: "longer job timeout", Expires: "2026-11-28"}
 	err := ValidateExceptions([]Exception{entry}, exceptionsToday)
-	want := "rule job-timeout must name one workflow file directly in .github/workflows by path, such as .github/workflows/ci.yml"
-	if err == nil || !strings.Contains(err.Error(), want) {
+	if want := "rule job-timeout must name one workflow file directly in .github/workflows by path, such as .github/workflows/ci.yml"; err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("ValidateExceptions = %v; want %q", err, want)
 	}
 }
@@ -487,7 +484,7 @@ func TestValidateClangTidyDataPaths(t *testing.T) {
 		t.Fatalf("valid data paths refused: %v", err)
 	}
 
-	cases := map[string]struct {
+	for name, tc := range map[string]struct {
 		paths []string
 		want  string
 	}{
@@ -496,8 +493,7 @@ func TestValidateClangTidyDataPaths(t *testing.T) {
 		"dotdot prefix":  {[]string{"../data"}, "without trailing slash or '..'"},
 		"absolute path":  {[]string{"/tests/data"}, "without trailing slash or '..'"},
 		"repeated path":  {[]string{"tests/data", "tests/data"}, "repeats the path \"tests/data\""},
-	}
-	for name, tc := range cases {
+	} {
 		policy := &ClangTidyPolicy{Lanes: []ClangTidyLane{baseLane}, DataPaths: tc.paths}
 		if err := ValidateClangTidy(policy); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: ValidateClangTidy = %v, want error containing %q", name, err, tc.want)
@@ -708,8 +704,9 @@ func TestExceptionExpiringWithin_3D(t *testing.T) {
 	}
 }
 
+// TestFormatDaysLeft_Cases checks the display of remaining and expired exception durations.
 func TestFormatDaysLeft_Cases(t *testing.T) {
-	cases := []struct {
+	for _, tc := range []struct {
 		days int
 		want string
 	}{
@@ -718,8 +715,7 @@ func TestFormatDaysLeft_Cases(t *testing.T) {
 		{0, "0 days left"},
 		{-1, "expired 1 day ago (-1 days left)"},
 		{-5, "expired 5 days ago (-5 days left)"},
-	}
-	for _, tc := range cases {
+	} {
 		if got := FormatDaysLeft(tc.days); got != tc.want {
 			t.Errorf("FormatDaysLeft(%d) = %q, want %q", tc.days, got, tc.want)
 		}
@@ -1163,5 +1159,25 @@ func TestException_UILatencySource(t *testing.T) {
 	foreignPath.Path = "other.txt"
 	if err := ValidateExceptions([]Exception{foreignPath}, today); err == nil || !strings.Contains(err.Error(), "path must be .standards.yaml") {
 		t.Fatalf("foreign path must be refused, got: %v", err)
+	}
+}
+
+// TestValidateExceptions_HISS03ScannerRule verifies that HISS-03 and HISS-05 are treated as
+// HISS scanner rules for path-only targeting and optional function scoping.
+func TestValidateExceptions_HISS03ScannerRule(t *testing.T) {
+	for _, rule := range []string{"HISS-03", "HISS-05"} {
+		byPath := Exception{Rule: rule, Path: "internal/sim/tick.go", Reason: "warmup arena", Expires: "2026-11-28"}
+		if err := ValidateExceptions([]Exception{byPath}, exceptionsToday); err != nil {
+			t.Fatalf("%s path exception refused: %v", rule, err)
+		}
+		byFunc := byPath
+		byFunc.Function = "Tick"
+		if err := ValidateExceptions([]Exception{byFunc}, exceptionsToday); err != nil {
+			t.Fatalf("%s function-scoped exception refused: %v", rule, err)
+		}
+		byGlob := Exception{Rule: rule, Glob: "internal/sim/*.go", Reason: "warmup arena", Expires: "2026-11-28"}
+		if err := ValidateExceptions([]Exception{byGlob}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "one file by path") {
+			t.Fatalf("%s glob exception = %v, want path-only refusal", rule, err)
+		}
 	}
 }

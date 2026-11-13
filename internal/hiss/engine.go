@@ -255,6 +255,13 @@ func (goLanguage) scan(src sourceFile, rep *ScanReport, opts ScanOptions) bool {
 func (goLanguage) finish(ctx context.Context, rep *ScanReport, root string, paths []string) {
 	reportCallCycles(ctx, rep, paths, root)
 	resolveIOProofs(ctx, rep, root, paths)
+	if err := checkHotAllocations(ctx, rep, root, paths); err != nil {
+		if ctx.Err() != nil {
+			rep.Truncated = true
+		} else if rep.Skips.Unparsed == 0 {
+			rep.Skips.Unparsed++
+		}
+	}
 }
 
 // nativeLanguage reads C, C++, Objective-C++, CUDA and HIP line by line (rules.go scanNativeLines).

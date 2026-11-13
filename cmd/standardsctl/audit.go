@@ -281,8 +281,8 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
 	fmt.Printf("[INFO] %s\n", scanRep.CoverageEvidence())
-	if scanRep.Truncated {
-		return fmt.Errorf("[FAIL] Invariant audit failed: %w (%d infractions recorded before truncation)", hiss.ErrScanTruncated, scanRep.TotalInfractions)
+	if err := scanRep.CompletionError(); err != nil {
+		return fmt.Errorf("[FAIL] Invariant audit failed: %w (%d infractions recorded)", err, scanRep.TotalInfractions)
 	}
 	printLines(scanRep.Complexity.Lines())
 	current, err := auditedInfractions(scanRep, opts)
@@ -774,7 +774,7 @@ func auditRunnerMatrix(ctx context.Context, manifest *config.Manifest, rootDir s
 		return fmt.Errorf("[FAIL] Cascading runner config failed: %w", err)
 	}
 
-	targets := []struct {
+	for _, target := range []struct {
 		osName string
 		arch   string
 		isGPU  bool
@@ -784,9 +784,7 @@ func auditRunnerMatrix(ctx context.Context, manifest *config.Manifest, rootDir s
 		{"linux", "amd64", true},
 		{"darwin", "arm64", false},
 		{"darwin", "amd64", false},
-	}
-
-	for _, target := range targets {
+	} {
 		spec, err := runner.ResolveRunner(policy, target.osName, target.arch, target.isGPU)
 		if err != nil {
 			return fmt.Errorf("[FAIL] Runner matrix resolution failed for %s/%s (gpu=%v): %w", target.osName, target.arch, target.isGPU, err)

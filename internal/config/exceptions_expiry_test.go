@@ -10,9 +10,10 @@ import (
 	"time"
 )
 
+// TestValidateExceptionsCategoryCaps checks the permitted expiry limits for each exception category.
 func TestValidateExceptionsCategoryCaps(t *testing.T) {
 	today := time.Date(2026, 10, 21, 18, 0, 0, 0, time.UTC)
-	cases := []struct{ name, category, reason, entered, expires, want string }{
+	for _, tc := range []struct{ name, category, reason, entered, expires, want string }{
 		{"D 120 days", "D", "gap", "", "2027-02-18", ""},
 		{"D 121 days", "D", "gap", "", "2027-02-19", "category D requires expires on or before 2027-02-18 (120 days"},
 		{"C 10 days", "C", "gap", "", "2026-10-31", ""},
@@ -44,8 +45,7 @@ func TestValidateExceptionsCategoryCaps(t *testing.T) {
 		{"invalid entered", "D", "gap", "yesterday", "2027-02-18", "entered"},
 		{"invalid expiry", "D", "gap", "", "tomorrow", "must be a YYYY-MM-DD date"},
 		{"invalid category", "Z", "category D: gap", "", "2027-02-18", "must be A, B, C or D"},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entry := validException()
 			entry.Category, entry.Reason, entry.Entered, entry.Expires = tc.category, tc.reason, tc.entered, tc.expires
@@ -74,7 +74,7 @@ func TestExceptionWarningDaysReasonCategory(t *testing.T) {
 
 func TestValidateExceptionsHISS18CategoryCutoff(t *testing.T) {
 	today := time.Date(2026, 10, 21, 18, 0, 0, 0, time.UTC)
-	cases := []struct {
+	for _, tc := range []struct {
 		name, category, entered, expires, want string
 	}{
 		{"positive categorized past cutoff", "A", "2026-10-29", "2026-12-31", ""},
@@ -82,8 +82,7 @@ func TestValidateExceptionsHISS18CategoryCutoff(t *testing.T) {
 		{"boundary uncategorized without entered within grace", "", "", "2026-11-28", ""},
 		{"negative uncategorized entered on cutoff", "", "2026-10-29", "2026-11-01", "category is required (entered 2026-10-29 is on or after 2026-10-29"},
 		{"negative uncategorized without entered past grace", "", "", "2026-11-29", "category is required (entered is omitted and expires 2026-11-29 is after 2026-11-28"},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entry := Exception{
 				Rule:     ExceptionRuleWorkflowTriggers,

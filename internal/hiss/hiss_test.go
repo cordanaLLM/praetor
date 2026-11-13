@@ -77,8 +77,9 @@ func goFuncOfLOC(name string, loc int) string {
 // ignore lists (F259, F264)
 // ---------------------------------------------------------------------------
 
+// TestShouldIgnorePath checks which paths the scanner excludes from analysis.
 func TestShouldIgnorePath(t *testing.T) {
-	tests := []struct {
+	for _, tt := range []struct {
 		path   string
 		ignore bool
 	}{
@@ -109,16 +110,16 @@ func TestShouldIgnorePath(t *testing.T) {
 		{"src/modeling/x.go", false},
 		{"src/vendored/x.go", false},
 		{"", false},
-	}
-	for _, tt := range tests {
+	} {
 		if got := ShouldIgnorePath(tt.path); got != tt.ignore {
 			t.Errorf("ShouldIgnorePath(%q) = %v, want %v", tt.path, got, tt.ignore)
 		}
 	}
 }
 
+// TestShouldIgnoreDir checks which directories the scanner excludes from traversal.
 func TestShouldIgnoreDir(t *testing.T) {
-	tests := []struct {
+	for _, tt := range []struct {
 		name, rel string
 		ignore    bool
 	}{
@@ -140,8 +141,7 @@ func TestShouldIgnoreDir(t *testing.T) {
 		{"builder", "builder", false},
 		{"internal", "internal", false},
 		{"x", "", false},
-	}
-	for _, tt := range tests {
+	} {
 		if got := ShouldIgnoreDir(tt.name, tt.rel); got != tt.ignore {
 			t.Errorf("ShouldIgnoreDir(%q, %q) = %v, want %v", tt.name, tt.rel, got, tt.ignore)
 		}
@@ -181,9 +181,10 @@ func TestScan_IgnoreDirsOptionAndSkipAccounting(t *testing.T) {
 // per-language rule attribution (F266, F671)
 // ---------------------------------------------------------------------------
 
+// TestScan_CleanFixtureYieldsZero checks that a clean fixture produces no violations.
 func TestScan_CleanFixtureYieldsZero(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, root, "clean.go", "package clean\n\nimport \"os\"\n\nfunc Read(p string) ([]byte, error) {\n\tdata, err := os.ReadFile(p)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\t_, statErr := os.Stat(p)\n\tif statErr != nil {\n\t\treturn nil, statErr\n\t}\n\tfor i := 0; i < 3; i++ {\n\t\tprintln(i)\n\t}\n\treturn data, nil\n}\n")
+	writeFixture(t, root, "clean.go", "package clean\n\nimport \"os\"\n\nfunc Read(p string) ([]byte, error) {\n\tdata, err := os.ReadFile(p)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif _, statErr := os.Stat(p); statErr != nil {\n\t\treturn nil, statErr\n\t}\n\tfor i := 0; i < 3; i++ {\n\t\tprintln(i)\n\t}\n\treturn data, err\n}\n")
 	writeFixture(t, root, "clean.py", "def retrieval(n):\n    try:\n        return n\n    except ValueError:\n        return 0\n\n\nwhile_true_name = 1\n")
 	writeFixture(t, root, "clean.rs", "fn main() -> Result<(), String> {\n    let v: Option<i32> = Some(1);\n    match v {\n        Some(x) => println!(\"{}\", x),\n        None => {}\n    }\n    // SAFETY: the pointer is valid for the whole call.\n    unsafe { touch() }\n    Ok(())\n}\n")
 	writeFixture(t, root, "clean.c", "#include <stdio.h>\n\nint main(void) {\n    char buf[8];\n    fgets(buf, sizeof buf, stdin);\n    snprintf(buf, sizeof buf, \"x\");\n    strncpy(buf, \"y\", 2);\n    return 0;\n}\n")
@@ -494,8 +495,9 @@ func TestScan_NativeAndRustBracesInLiteralsDoNotDesync(t *testing.T) {
 	assertViolations(t, rep, []expectedViolation{{"HISS-04", "a.c", 5}, {"HISS-04", "a.rs", 5}})
 }
 
+// TestScan_NativeNonFunctionBlocksAreNotFunctions checks that native control blocks do not inflate function measurements.
 func TestScan_NativeNonFunctionBlocksAreNotFunctions(t *testing.T) {
-	cases := []struct {
+	for _, tc := range []struct {
 		name   string
 		file   string
 		prefix string
@@ -505,8 +507,7 @@ func TestScan_NativeNonFunctionBlocksAreNotFunctions(t *testing.T) {
 		{"anonymous namespace", "namespace.cpp", "namespace {\n", "int value;\n", "}\n"},
 		{"C linkage block", "linkage.cpp", "extern \"C\" {\n", "void exported(void);\n", "}\n"},
 		{"file-scope array initializer", "options.c", "static const int options[] = {\n", "    0,\n", "};\n"},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeFixture(t, root, tc.file, tc.prefix+strings.Repeat(tc.line, 76)+tc.suffix)
@@ -721,12 +722,12 @@ func TestScan_UnreadableSubtreeIsAnError(t *testing.T) {
 	}
 }
 
+// TestScan_ContextGuards checks that scanning respects context cancellation and deadlines.
 func TestScan_ContextGuards(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, "a.go", "package p\n")
 
-	var nilCtx context.Context
-	if _, err := Scan(nilCtx, root, ScanOptions{}); err == nil {
+	if _, err := Scan(context.Context(nil), root, ScanOptions{}); err == nil {
 		t.Error("nil context must be rejected")
 	}
 

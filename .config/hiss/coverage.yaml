@@ -27,6 +27,32 @@
 # the defect this mechanism exists to prevent.
 version: 1
 rules:
+  - id: HISS-05
+    coverage:
+      - language: go
+        state: partial
+        mechanism: internal/hiss go_narrow_scope.go checkNarrowScope, using go_scope.go
+        rationale: >-
+          Function-top var and short-declaration locals with no initializer or only
+          literals, proven constant identifiers, and composite literals with
+          literal/constant keys and values are reported when every read
+          and write lies inside one child if, for, range, switch, select or plain block,
+          including headers and their case clauses. Uses in sibling blocks or after
+          a loop keep the declaration. Address-taking and closure capture are
+          conservative exemptions. Potential mutation in a loop (including nested
+          loops, conditions and post statements) also keeps the declaration:
+          assignments, compound writes, increments/decrements, element/field writes,
+          delete/clear, address passing, method calls and arguments to calls that may
+          mutate them (negative/loop-call-argument.go). Fully reset locals stay
+          conservatively exempt without dominance proof; read-only loop uses remain
+          findings, and plain if/switch writes remain unaffected.
+          Calls, receives, indexes, variable reads,
+          unproven selectors, function literals and method values are excluded.
+          Constant proof uses local and same-file package declarations plus
+          unshadowed booleans, with a 1024-expression bound per declaration;
+          unresolved names and field keys are skipped.
+          Closure-only use within a child block and nested
+          declarations in shadowing chains remain gaps. Other languages are unchecked.
   - id: HISS-01
     coverage:
       - language: go
@@ -311,6 +337,21 @@ rules:
           the rate limit that stops a restart loop (systemd.unit(5)). A bounded oneshot and a
           restarting daemon under a rate limit are not. A drop-in (.conf) that overrides a unit is
           not read and is held as a gap.
+  - id: HISS-03
+    coverage:
+      - language: go
+        state: partial
+        mechanism: internal/hiss go_hot_alloc.go checkHotAllocations
+        rationale: >-
+          Go only: functions and methods whose doc comment carries a line //hiss:hot <reason>
+          must have a reachable testing.AllocsPerRun test asserting zero allocations where every
+          frame between the test entry and helper call (plainHelperCalls), between the measurement
+          statement and the zero check (hasZeroAssertion), and between the zero-check body and the
+          failure call (bodyFailsTest) is unconditional, with no if, switch, select, for/range,
+          go, defer or uninvoked function literal in between
+          (positive/conditional-zero-assertion.txtar, positive/switch-case-fatal.txtar;
+          negative/internal-test.txtar, negative/external-test.txtar). Unmarked code is unchecked;
+          Rust and C are not checked.
   - id: HISS-04
     coverage:
       - language: go
@@ -398,6 +439,67 @@ rules:
           its brace opens on, and reported at the workflow line of its header: 61 lines is
           reported and 60 is not. A function in a block of another shell, such as a python step,
           is not measured and is held as a gap.
+  - id: HISS-06
+    coverage:
+      - language: go
+        state: partial
+        mechanism: >-
+          internal/hiss go_fanout.go checkGoFanout, dispatched from go_ast.go inspect on every
+          *ast.GoStmt in production, generated and _test.go files
+        rationale: >-
+          A go statement inside a for or range body (directly, or inside a function literal
+          invoked inside that loop) is reported unless every bounded AST walk completes within
+          maxNodeStack (when a function's declaration or fact walk exceeds maxNodeStack, each
+          loop go statement in that function is reported locally as HISS-06 naming the analysis
+          bound without setting ScanReport.Truncated, so later functions and files remain
+          scanned) and the enclosing function bounds the launch by one of four shapes: a
+          dominating semaphore.Weighted Acquire or checked TryAcquire with a proven positive
+          weight (positive integer literal, declared positive literal constant, or len of a
+          nonzero fixed array) on a limiter declared once outside the loop whose capacity is
+          proven via semaphore.NewWeighted with isConstBoundExpr or documented by a //hiss:bound
+          comment on the declaring line, with typed semaphore bindings lacking a NewWeighted
+          constructor (such as parameters, zero var declarations, or typed struct-field reads)
+          accepted only when their declaring line carries //hiss:bound
+          (positive/len-sized-semaphore.go, positive/param-semaphore-unbounded.go;
+          negative/param-semaphore-hiss-bound.go), with Acquire accepted only when its error is
+          checked by an enclosing if-initializer/condition guard or immediately followed in the
+          same block by a terminating if err != nil guard on that assigned error name
+          (negative/semaphore-acquire.go, negative/acquire-split-guarded.go,
+          negative/tryacquire-checked.go; positive/acquire-unchecked.go,
+          positive/acquire-assigned-unchecked.go, positive/acquire-blank.go,
+          positive/tryacquire-ignored.go, positive/conditional-acquire.go,
+          positive/shadowed-semaphore.go), with no Release on that semaphore before the go
+          statement and a deferred or final-statement Release inside the goroutine, and with
+          failure-branch Fatal/Fatalf/Fatalln/FailNow accepted only on the enclosing function's
+          testing parameter or imported log.Fatal* (positive/acquire-released-before-launch.go,
+          positive/nonconst-weight.go, positive/fatal-non-testing.go); a dominating send on a
+          buffered token channel declared once outside the loop before the go statement whose
+          non-zero capacity is proven by isConstBoundExpr or documented by a //hiss:bound comment
+          on the declaring line, with no receive on that channel between the matched send and the
+          go statement and a matching receive deferred or at the end of the goroutine body
+          (negative/token-channel.go; positive/len-sized-chan-limiter.go,
+          positive/token-received-before-launch.go, positive/limiter-per-iteration.go,
+          positive/conditional-token-send.go); a range over a fixed array declared once outside
+          the loop, a range over a constant integer expression proven by isConstBoundExpr
+          (negative/range-int-literal.go, negative/range-int-const.go), or a constant-bounded
+          counter loop whose nonzero constant step moves toward the bound (with != requiring
+          integer-literal start and bound endpoints and a unit step) and whose body neither
+          writes to the counter nor takes its address (negative/constant-loop.go;
+          positive/unbounded-range-fanout.go, positive/fanout-in-func-literal.go,
+          positive/counter-zero-step.go, positive/counter-wrong-direction.go,
+          positive/counter-written-in-body.go, positive/multi-name-spec.go); or a worker pool
+          loop over a constant or an explicit int variable named with a bound value and reason in
+          a //hiss:bound comment on the loop (negative/hiss-bound-comment.go). Multi-name var
+          specs pair each declared identifier with its own initializer (or the shared type when
+          Values is empty) rather than applying an aggregate classification across all names, and
+          names redeclared in the same function carry no limiter or array fact so shadowing fails
+          closed. gap/ records what the per-function *ast.GoStmt syntax check does not decide: a
+          helper function called in a loop that launches its goroutine in its own body, != counter
+          loops with non-literal constant endpoints (reported unless rewritten with <, <=, > or
+          >=), and errgroup.Group.Go pools without a proven constant SetLimit
+          (gap/numcpu-pool.go). SetLimit does not bound raw go statements
+          (positive/errgroup-setlimit.go; positive/caller-variable-bound.go); calls to g.Go are
+          outside this raw-go check (negative/errgroup-setlimit.go).
   - id: HISS-08
     coverage:
       - language: c

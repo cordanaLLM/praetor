@@ -237,3 +237,14 @@ func TestSplitInvariantRow_Boundary_EscapedPipes(t *testing.T) {
 		t.Errorf("a row outside the section: %+v, %v", table, err)
 	}
 }
+
+// TestScannerRuleIDs_ExplicitMetadata pins ScannerRuleIDs to the scanner-decided rules
+// (HISS-01 through HISS-09), independent of Enforcement prose, while keeping HISS-13 out.
+func TestScannerRuleIDs_ExplicitMetadata(t *testing.T) {
+	if got, want := ScannerRuleIDs(), []string{
+		"HISS-01", "HISS-02", "HISS-03", "HISS-04", "HISS-05",
+		"HISS-06", "HISS-07", "HISS-08", "HISS-09",
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ScannerRuleIDs() = %v, want %v", got, want)
+	}
+}

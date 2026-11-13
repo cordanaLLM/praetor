@@ -36,6 +36,8 @@ const (
 	StagePrePush
 	// StagePostCommit is the generated lefthook post-commit hook, which cannot block.
 	StagePostCommit
+	// StageCommitMsg is the generated lefthook commit-msg hook.
+	StageCommitMsg
 )
 
 const (
@@ -50,7 +52,7 @@ const (
 )
 
 // stageOrder lists every stage in pipeline order, the order a table cell names them in.
-var stageOrder = [...]Stage{StageVerifyAll, StagePreCommit, StagePrePush, StagePostCommit}
+var stageOrder = [...]Stage{StageVerifyAll, StagePreCommit, StageCommitMsg, StagePrePush, StagePostCommit}
 
 // stageFacts is what one stage belongs to, how the harness names it, and what a failing check
 // there blocks; an empty consequence means the stage records and blocks nothing.
@@ -63,6 +65,7 @@ type stageFacts struct {
 var stages = map[Stage]stageFacts{
 	StageVerifyAll:  {pipeline: PipelineVerifyAll, consequence: "fails verify-all"},
 	StagePreCommit:  {pipeline: PipelineLefthook, hook: "pre-commit", consequence: "blocks commit"},
+	StageCommitMsg:  {pipeline: PipelineLefthook, hook: "commit-msg", consequence: "blocks commit"},
 	StagePrePush:    {pipeline: PipelineLefthook, hook: "pre-push", consequence: "blocks push"},
 	StagePostCommit: {pipeline: PipelineLefthook, hook: "post-commit"},
 }

@@ -4,9 +4,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
+	praetor "github.com/cordanaLLM/praetor"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
@@ -234,8 +238,7 @@ func TestLoadCatalogRejectsUnknownField(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("create config dir: %v", err)
 	}
-	body := "version: 1\nrules:\n  - id: HISS-01\n    title: t\n    covrage:\n      - language: go\n"
-	if err := os.WriteFile(filepath.Join(dir, "coverage.yaml"), []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "coverage.yaml"), []byte("version: 1\nrules:\n  - id: HISS-01\n    title: t\n    covrage:\n      - language: go\n"), 0o600); err != nil {
 		t.Fatalf("write catalog: %v", err)
 	}
 
@@ -431,5 +434,93 @@ func TestValidateTitleComparisonIsExact(t *testing.T) {
 	}
 	if got := unknown.Rules[0].CatalogTitle(); got != "Declared Only" {
 		t.Fatalf("CatalogTitle() of an unregistered rule = %q, want the declared title", got)
+	}
+}
+
+// TestVerifyFS_Positive_EmbeddedCorpusPasses replays the embedded corpus so broken declared coverage is detected.
+func TestVerifyFS_Positive_EmbeddedCorpusPasses(t *testing.T) {
+	catalog, err := LoadCatalogFS(t.Context(), praetor.EmbeddedCorpus)
+	if err != nil {
+		t.Fatalf("load embedded catalog: %v", err)
+	}
+	report, err := VerifyFS(t.Context(), praetor.EmbeddedCorpus, catalog)
+	if err != nil {
+		t.Fatalf("verify embedded corpus: %v", err)
+	}
+	if !report.Passed() {
+		t.Fatalf("embedded corpus claims must hold: %+v", report.Findings)
+	}
+	if report.Claims == 0 {
+		t.Fatal("expected at least one claim in embedded corpus")
+	}
+}
+
+// TestVerifyFS_Negative_PlantedBrokenClaimFails plants a false coverage claim to prove replay rejects it.
+func TestVerifyFS_Negative_PlantedBrokenClaimFails(t *testing.T) {
+	fsys := fstest.MapFS{
+		CatalogFile: &fstest.MapFile{
+			Data: []byte("version: 1\nrules:\n  - id: HISS-01\n    coverage:\n      - language: go\n        state: enforced\n        mechanism: internal/hiss\n        rationale: measured\n"),
+		},
+		FixtureDir + "/HISS-01/go/positive/recursion.go": &fstest.MapFile{
+			Data: []byte(cleanGo),
+		},
+	}
+	catalog, err := LoadCatalogFS(t.Context(), fsys)
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	report, err := VerifyFS(t.Context(), fsys, catalog)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if report.Passed() {
+		t.Fatal("planted clean fixture under enforced claim must fail verification")
+	}
+	if len(report.Findings) == 0 || !strings.Contains(report.Findings[0].Detail, "not reported") {
+		t.Fatalf("expected finding stating fixture went unreported, got: %+v", report.Findings)
+	}
+}
+
+// TestScannerRuleIDs_MatchesCoverageGoScannerClaims pins hisscatalog.ScannerRuleIDs to the
+// rule IDs whose Go coverage claims in .config/hiss/coverage.yaml are replayed by internal/hiss.
+func TestScannerRuleIDs_MatchesCoverageGoScannerClaims(t *testing.T) {
+	catalog, err := LoadCatalog(t.Context(), filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("load coverage catalog: %v", err)
+	}
+	var want []string
+	for i := 0; i < len(catalog.Rules); i++ {
+		rule := &catalog.Rules[i]
+		for j := 0; j < len(rule.Coverage); j++ {
+			if rule.Coverage[j].Language == "go" && rule.Coverage[j].ReplayedHere() {
+				want = append(want, rule.ID)
+				break
+			}
+		}
+	}
+	slices.Sort(want)
+	got := hisscatalog.ScannerRuleIDs()
+	if !slices.Equal(got, want) {
+		t.Fatalf("hisscatalog.ScannerRuleIDs() = %v, want Go scanner claims %v", got, want)
+	}
+}
+
+// TestVerifyFS_Negative_IncompleteFixtureScanFails proves that a fixture whose scan leaves
+// unparsed or truncated scope fails replay naming the fixture rather than counting as clean.
+func TestVerifyFS_Negative_IncompleteFixtureScanFails(t *testing.T) {
+	fsys := fstest.MapFS{
+		FixtureDir + "/HISS-01/go/positive/recursion.go": &fstest.MapFile{
+			Data: []byte(recursiveGo),
+		},
+		FixtureDir + "/HISS-01/go/negative/broken.go": &fstest.MapFile{
+			Data: []byte("package p\nfunc (\n"),
+		},
+	}
+	_, err := VerifyFS(t.Context(), fsys, catalogFor("HISS-01", "go", StatePartial))
+	if err == nil {
+		t.Fatal("VerifyFS succeeded on unparseable negative fixture, want incomplete scan error")
+	}
+	if !strings.Contains(err.Error(), "broken.go") || !errors.Is(err, hiss.ErrScanIncomplete) {
+		t.Fatalf("VerifyFS err = %v, want broken.go wrapping hiss.ErrScanIncomplete", err)
 	}
 }

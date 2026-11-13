@@ -227,6 +227,7 @@ func contains(list []string, item string) bool {
 // Positive 3D Tests
 // =========================================================================
 
+// TestAdopt_Positive_Greenfield checks that adoption creates the expected harness in a new repository.
 func TestAdopt_Positive_Greenfield(t *testing.T) {
 	repoPath := newTestRepo(t, "new-service")
 	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module github.com/test/service\n")
@@ -244,12 +245,11 @@ func TestAdopt_Positive_Greenfield(t *testing.T) {
 		t.Fatalf("expected framework archetype, got: %s", report.Archetype)
 	}
 
-	expectedCreated := []string{
+	for _, ef := range []string{
 		".standards.yaml", ".standards.lock", ".standards-baseline.json", "AGENTS.md", "CLAUDE.md",
 		".devcontainer/devcontainer.json", "Makefile", ".gitignore", ".vscode/settings.json",
 		".git/hooks/pre-commit",
-	}
-	for _, ef := range expectedCreated {
+	} {
 		if !contains(report.CreatedFiles, ef) {
 			t.Errorf("expected %s in CreatedFiles, got %v", ef, report.CreatedFiles)
 		}
@@ -266,8 +266,9 @@ func TestAdopt_Positive_Greenfield(t *testing.T) {
 		t.Error("greenfield AGENTS.md must end with the harness end marker")
 	}
 	makefile := mustRead(t, filepath.Join(repoPath, "Makefile"))
-	if !strings.Contains(makefile, "verify-all: compile-context-verify caveman-sources audit secrets test") ||
-		!strings.Contains(makefile, "caveman check --configured-sources") {
+	if !strings.Contains(makefile, "verify-all: compile-context-verify caveman-sources hiss-coverage audit secrets test") ||
+		!strings.Contains(makefile, "caveman check --configured-sources") ||
+		!strings.Contains(makefile, "hiss coverage --verify --embedded") {
 		t.Errorf("greenfield verify-all must run the real gates, got:\n%s", makefile)
 	}
 	if strings.Contains(makefile, "Running verification...") {
@@ -1044,8 +1045,9 @@ func TestDetectState_Negative_NonexistentPath(t *testing.T) {
 	}
 }
 
+// TestResolveArchetype_Markers checks that repository markers select the appropriate archetype.
 func TestResolveArchetype_Markers(t *testing.T) {
-	tests := []struct {
+	for _, tc := range []struct {
 		filename string
 		expected string
 	}{
@@ -1060,8 +1062,7 @@ func TestResolveArchetype_Markers(t *testing.T) {
 		{"package.json", "app-service"},
 		{"pyproject.toml", "app-service"},
 		{"Dockerfile", "container-image"},
-	}
-	for _, tc := range tests {
+	} {
 		tmpDir := t.TempDir()
 		mustWrite(t, filepath.Join(tmpDir, tc.filename), "dummy")
 		if arch := archetypeOf(tmpDir, "", nil); arch != tc.expected {
@@ -1572,12 +1573,12 @@ func TestAdopt_ExistingAgentsMDMerged(t *testing.T) {
 	}
 }
 
+// TestAdopt_AgentsMD_ForcePreservesCustomInstructions checks that forced adoption retains custom agent instructions.
 func TestAdopt_AgentsMD_ForcePreservesCustomInstructions(t *testing.T) {
-	cases := map[string]string{
+	for name, initial := range map[string]string{
 		"legacy-separator":           "<!-- markdownlint-disable -->\n# old Agent Operating Harness\n\n## Core Directives & Invariants\nold table\n\n---\n\n# Custom Repo Instructions\nDon't touch this proprietary text!\n",
 		"legacy-footer-no-separator": "# old Agent Operating Harness\n\n## Core Directives & Invariants\nold table\n\n## Primary Verification Commands\n\n```bash\nmake verify-all\n```\n\n# Custom Repo Instructions\nDon't touch this proprietary text!\n",
-	}
-	for name, initial := range cases {
+	} {
 		repoPath := newTestRepo(t, name)
 		mustWrite(t, filepath.Join(repoPath, "AGENTS.md"), initial)
 
@@ -2395,6 +2396,7 @@ func requiredStatusContexts(repoPath string) ([]string, error) {
 	return forge.RequiredStatusContexts(context.Background(), repoPath)
 }
 
+// TestRequiredStatusContexts_WorkflowTriggers checks that required status contexts account for workflow triggers.
 func TestRequiredStatusContexts_WorkflowTriggers(t *testing.T) {
 	repoPath := t.TempDir()
 	wf := filepath.Join(repoPath, ".github", "workflows")
@@ -2409,8 +2411,7 @@ func TestRequiredStatusContexts_WorkflowTriggers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"Verify Gate", "build", "Scalar Job"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
+	if want := []string{"Verify Gate", "build", "Scalar Job"}; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("contexts = %v, want %v", got, want)
 	}
 

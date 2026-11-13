@@ -474,6 +474,7 @@ func TestServer_Negative_NewServerRoot(t *testing.T) {
 
 // ---- explain_rule ------------------------------------------------------------------------------
 
+// TestServer_Positive_ExplainRuleCoversDocumentedInvariants checks that the server can explain every documented invariant.
 func TestServer_Positive_ExplainRuleCoversDocumentedInvariants(t *testing.T) {
 	srv, _ := newFixtureServer(t)
 
@@ -496,7 +497,11 @@ func TestServer_Positive_ExplainRuleCoversDocumentedInvariants(t *testing.T) {
 		t.Errorf("schema enum lists %d rules, catalog has %d", len(schema.Enum), len(hisscatalog.Rules()))
 	}
 	// The served text is the registry's, adopted-repository line included (BUG-804).
-	unenforced := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": "HISS-03"})
+	for _, id := range []string{"HISS-03", "HISS-05", "HISS-06"} {
+		enforced := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": id})
+		expectText(t, "enforced adopted rule "+id, enforced, "HISS scan in verify-all + lefthook pre-commit/pre-push")
+	}
+	unenforced := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": "HISS-18"})
 	expectText(t, "unenforced adopted rule", unenforced, "Adopted repositories: not enforced")
 
 	res := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": "UNKNOWN-99"})

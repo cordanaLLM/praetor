@@ -354,6 +354,10 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 		"    context-check:\n" + lefthookRun(governed("compile-context --verify")) +
 		"    hiss-audit:\n" + lefthookRun(governed(preCommitAuditArgs)) +
 		"\n" +
+		"commit-msg:\n" +
+		"  commands:\n" +
+		"    message-policy:\n" + lefthookRun(governed("forge check-message {1}")) +
+		"\n" +
 		"post-commit:\n" +
 		"  commands:\n" +
 		"    state-sync:\n" + lefthookRun(governed("state sync .")) +
@@ -361,6 +365,8 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 		"\n" +
 		"pre-push:\n" +
 		"  parallel: false\n" +
+		"  scripts:\n" +
+		"    " + commitPolicyScriptName + ":\n      runner: sh\n      use_stdin: true\n" +
 		"  commands:\n" +
 		lefthookPrePushJobs(shape) +
 		"    merge-check:\n" +
@@ -761,6 +767,9 @@ func reconcilePlannedEngineLauncher(ctx context.Context, s *adoptSession) error 
 // earlier adoption wrote under the other REUSE switch is migrated (migrateReuseSwitch), and any
 // other is rendered as writeLefthookConfig decides, prior marking an exact earlier rendering.
 func (s *adoptSession) renderLefthook(ctx context.Context, target lefthookTarget, existing []byte, prior bool) (bool, error) {
+	if err := reconcileCommitPolicyScript(ctx, s); err != nil {
+		return false, err
+	}
 	written, err := s.migrateReuseSwitch(target, existing)
 	if err != nil || written {
 		return written, err
@@ -994,13 +1003,17 @@ func (s *adoptSession) activateGitHooks(ctx context.Context, lefthookWritten boo
 		return s.planHookActivation(hookPath)
 	}
 	installed := fileExists(hookPath)
-	if _, err := util.RunCommand(ctx, s.repoPath, "lefthook", "install"); err == nil {
+	_, installErr := util.RunCommand(ctx, s.repoPath, "lefthook", "install")
+	if installErr == nil {
 		if !fileExists(hookPath) {
 			s.report.addError("git hooks: lefthook install completed but %s was not created", hookPath)
 			return nil
 		}
 		s.recordLefthookInstall(hookPath, installed)
 		return nil
+	}
+	if lefthookRunnable(ctx) {
+		s.report.addError("git hooks: lefthook install failed: %v; harness credits commit-msg message policy and pre-push commit policy; repair lefthook and rerun adopt", installErr)
 	}
 	return s.installFallbackHook(hookPath)
 }

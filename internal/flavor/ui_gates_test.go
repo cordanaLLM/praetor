@@ -110,6 +110,7 @@ func TestAuditUIGates_Negative_ThresholdAndDependencyPin(t *testing.T) {
 	}
 }
 
+// TestValidateUISpecTexts_Negative checks that invalid UI specification text is rejected.
 func TestValidateUISpecTexts_Negative(t *testing.T) {
 	if err := flavor.ValidateUIA11ySpecText("import AxeBuilder from '@axe-core/playwright';\nconst tags = ['wcag2a'];\n"); err == nil || !strings.Contains(err.Error(), "wcag22aa") {
 		t.Fatalf("ValidateUIA11ySpecText missing tags err = %v, want wcag22aa", err)
@@ -117,8 +118,7 @@ func TestValidateUISpecTexts_Negative(t *testing.T) {
 	if err := flavor.ValidateUIResponsivenessSpecText("const x = 1;\n"); err == nil || !strings.Contains(err.Error(), config.UIInputLatencyEnv) {
 		t.Fatalf("ValidateUIResponsivenessSpecText missing env err = %v, want %s", err, config.UIInputLatencyEnv)
 	}
-	literalSpec := "const x = process.env.PRAETOR_UI_INPUT_LATENCY_MS;\nnew PerformanceObserver(() => {}).observe({ durationThreshold: 16 });\nexpect(maxDurationMs).toBeLessThanOrEqual(100);\n// 5000 503\n"
-	if err := flavor.ValidateUIResponsivenessSpecText(literalSpec); err == nil || !strings.Contains(err.Error(), "numeric latency literal") {
+	if err := flavor.ValidateUIResponsivenessSpecText("const x = process.env.PRAETOR_UI_INPUT_LATENCY_MS;\nnew PerformanceObserver(() => {}).observe({ durationThreshold: 16 });\nexpect(maxDurationMs).toBeLessThanOrEqual(100);\n// 5000 503\n"); err == nil || !strings.Contains(err.Error(), "numeric latency literal") {
 		t.Fatalf("ValidateUIResponsivenessSpecText numeric literal err = %v, want numeric latency literal", err)
 	}
 }

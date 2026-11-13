@@ -841,10 +841,9 @@ documented only when its sheet extracted content (`DistilledDoc.Extracted`).
 answers say so explicitly:
 
 ```text
-Rule: HISS-05 (Variable Scoping)
-Enforcement: NOT ENFORCED. No executable check exists in this repository, and no configured
-linter decides this rule.
-Failure Action: None today; the rule is advisory until a check is attached.
+Rule: HISS-18 (CI Efficiency)
+Enforcement: CI filter step exporting run_* outputs that every heavy gate's condition consumes.
+Failure Action: CI optimization gate.
 Adopted repositories: not enforced; adoption generates no check for this rule.
 ```
 

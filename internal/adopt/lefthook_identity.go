@@ -22,6 +22,9 @@ const (
 	maxReportedJobs = 5
 )
 
+// priorCommitPolicyScriptDigest identifies the generated pre-push script before remote scoping.
+const priorCommitPolicyScriptDigest = "5cb5ea9820fbabebe81af433919b3aee77eaf232ea36be834f8b41e03e63910c"
+
 // priorLefthookDigests are the digests (priorRendering) of every lefthook.yml Praetor generated
 // before the current template, keyed to what produced them. Like isLegacyVerificationMakefile,
 // only these texts are recognised, in either consistent line-ending style: adoption migrates
@@ -47,7 +50,34 @@ const (
 // and without checkpoint jobs, REUSE job, and tool-module scanner, are the renderings before the
 // pre-push merge-check gate refused merge commits dropping first-parent work
 // (Order: engine-dropped-hunk-gate-20261027).
+// The "before HISS-14 commit policy" entries, one per language set with and without the REUSE
+// job, tool-module scanner and checkpoint jobs, are the renderings with the secrets, docstrings
+// and merge-check jobs but without the commit-message policy (lefthook_commit_policy_test.go).
 var priorLefthookDigests = map[string]string{
+	"b42bde5a48dcec7767e1fcb98191ed0aa6bc283e3ece36ddbfa452e643ea6fa0": "before commit policy stdin, commit-policy-before-stdin-0-false-false-false.lefthook.yml",
+	"8530aa565a687649a464dba762a01706f0088b7bc59d052316904b908ea2fed9": "before commit policy stdin, commit-policy-before-stdin-0-false-false-true.lefthook.yml",
+	"e3fc82935f63d68ae52dfa90aedfe2b29bff53105ac5f71517e9eab7d33d1c44": "before commit policy stdin, commit-policy-before-stdin-0-true-false-false.lefthook.yml",
+	"3d1262397e669abedeaa596ad158a4479490e920fce56124522adae60aa3b822": "before commit policy stdin, commit-policy-before-stdin-0-true-false-true.lefthook.yml",
+	"f99158c866acfbc7e5ac549d9b0ec27d06ae554d1e34220e79f05c328b7845d3": "before commit policy stdin, commit-policy-before-stdin-1-false-false-false.lefthook.yml",
+	"d57acc295bee9342edaa4a9b78c41291d2d9512fa011f0b2dcbc73ba27268073": "before commit policy stdin, commit-policy-before-stdin-1-false-false-true.lefthook.yml",
+	"1b4ea01929b25b7a4411ceaf95065e138deba527be9792708abafcde28d2bfce": "before commit policy stdin, commit-policy-before-stdin-1-false-true-false.lefthook.yml",
+	"b922af63f4d8ddd2956f5269b3d5b28a01abf9e8f63ff4f0be1dfcff6e0bf4e3": "before commit policy stdin, commit-policy-before-stdin-1-false-true-true.lefthook.yml",
+	"6557eac8fabacfc34543391ae62557fa19407d9deb0a9918e4971e151bd3440a": "before commit policy stdin, commit-policy-before-stdin-1-true-false-false.lefthook.yml",
+	"7a8ff906d87eb33ae996f1b65fcd2c55e9fce7f8ac5d62369e672e95368772ac": "before commit policy stdin, commit-policy-before-stdin-1-true-false-true.lefthook.yml",
+	"81174cd1bfd05ba277b30e683378848435f5dd946b4c789f2bf96e84a1e78806": "before commit policy stdin, commit-policy-before-stdin-1-true-true-false.lefthook.yml",
+	"7c2634beea1e99add55513c1d46c3fcc82b4153297b8ee6401ec87aa47cd4c0c": "before commit policy stdin, commit-policy-before-stdin-1-true-true-true.lefthook.yml",
+	"fcd6f276136e48a51da15122c365cae77dd179dc849e6ee91e8e1a5d030fffb3": "before commit policy stdin, commit-policy-before-stdin-2-false-false-false.lefthook.yml",
+	"d639301c9b0505d5c1ca28db8ed59683a3074365b815d67e4d18e924cc656468": "before commit policy stdin, commit-policy-before-stdin-2-false-false-true.lefthook.yml",
+	"bd0b1023ec7f0c62f3568995a7bc8b5a273a6bfd105686d6f87ebadf0a84d702": "before commit policy stdin, commit-policy-before-stdin-2-true-false-false.lefthook.yml",
+	"02daf1db4e2f57c163a93ce35c4de9412b52d77840383b35b4d7357cd3712042": "before commit policy stdin, commit-policy-before-stdin-2-true-false-true.lefthook.yml",
+	"4f99b48bd66b8bf0c710a4897094b87b431c4163249bbe975681139d399ba058": "before commit policy stdin, commit-policy-before-stdin-3-false-false-false.lefthook.yml",
+	"5b00e2b5fe5123ea7646c58f09a8b48dc203164e1787852e3152ebab37b8ae57": "before commit policy stdin, commit-policy-before-stdin-3-false-false-true.lefthook.yml",
+	"f48a88e66080377979a9df68f13699c7e2aebe13d70e423d851bf299469f9004": "before commit policy stdin, commit-policy-before-stdin-3-false-true-false.lefthook.yml",
+	"30edb5e18c80fe170da8c0e38d7f07a1316c0bcbdaf9e356bae03cfe03e352ec": "before commit policy stdin, commit-policy-before-stdin-3-false-true-true.lefthook.yml",
+	"e1087a7b767fbc9c0e912196ed8e7ce5e601f29d8589d03c1c74e8519198359a": "before commit policy stdin, commit-policy-before-stdin-3-true-false-false.lefthook.yml",
+	"73ea16e9119206a86a84980bd17248c846c1207bf02f450e1289c13b174e913c": "before commit policy stdin, commit-policy-before-stdin-3-true-false-true.lefthook.yml",
+	"b2dc7d2effcd9b1d165b4ba5e9de90e897e902236f5e00774ab49feb0d3e738d": "before commit policy stdin, commit-policy-before-stdin-3-true-true-false.lefthook.yml",
+	"7e435d5c6c717b2235720df2c4c15ffe98c73d88ac6ff12696dcff164042790a": "before commit policy stdin, commit-policy-before-stdin-3-true-true-true.lefthook.yml",
 	"b42730d0163c379cbd04622339fd63bc3cd9715599f256c85c12ea94d19be984": "before docstrings job, governance jobs only",
 	"3b94e71702d2bbcdbedc9880ccc3d627895eb1251a437277842cea5b8a05f017": "before docstrings job, governance jobs only, checkpoint jobs",
 	"606a44b0f9e3795c30be284d5f24d369e8d60a0238541314363f7b0deab0bcdf": "before docstrings job, governance jobs only, REUSE job",
@@ -166,6 +196,30 @@ var priorLefthookDigests = map[string]string{
 	"2681812cd4b8d0789f633cf4b154fa488fd097094082711b464a911b3bbe1a5f": "engine from PATH, Go and Rust jobs, checkpoint jobs",
 	"914f94f2ffc841524179447d91d30bc371703f17f01210a4815173bd03c4cc03": "engine from PATH, Go and Rust jobs, REUSE job",
 	"473316395ce9616099baf56df3d3cd399fbd2e961c5faa47150ee0483d7a685a": "engine from PATH, Go and Rust jobs, REUSE job, checkpoint jobs",
+	"b3d0ca49346deeb44a95cb3bd996612a6d53c52534a25a3f71a5dafc83578f1b": "before HISS-14 commit policy, governance jobs only",
+	"7a1cb9642dd6ad9f52e37c82f3ed773a064e5db3242360fe1ece89d1a1c567b0": "before HISS-14 commit policy, governance jobs only, checkpoint jobs",
+	"1267e84014aaa306e59d01d0b9139a258f2057ff4f1ecee6c51d69d0bfe85957": "before HISS-14 commit policy, governance jobs only, REUSE job",
+	"5fcbf2a25cc25eb5540c397e3f144fce590943367b0fdcd3dbda2407a34f00fd": "before HISS-14 commit policy, governance jobs only, REUSE job, checkpoint jobs",
+	"fb737a07b3225083a150399b9b987d59ac6ef46f11659954df7c0bdabde6d33f": "before HISS-14 commit policy, Go jobs",
+	"eb8716c5c2c218df5941472e3dde7880d30f6baab223b4f5a215b4cae473058e": "before HISS-14 commit policy, Go jobs, checkpoint jobs",
+	"fdefeedf7786f041e72d57a120ce827f91341c3b01a56925ea3b296793bd485d": "before HISS-14 commit policy, Go jobs, tool-module scanner",
+	"ead45c848ce3745f85cced1ae1449a341514933e90a520859763f6ac8af1309c": "before HISS-14 commit policy, Go jobs, tool-module scanner, checkpoint jobs",
+	"7336bf68bca8eb1b1fc1c066e8cb10f23b3cf580d996817139cd771a8b499604": "before HISS-14 commit policy, Go jobs, REUSE job",
+	"c925bff2bc56c68ff1dc663915890145065278addae2451654aea458e4f82c46": "before HISS-14 commit policy, Go jobs, REUSE job, checkpoint jobs",
+	"ca635d8cdcbd1c27f1d50a0a7e326d68fa9655e2bde5ec896192d5cc72681ca4": "before HISS-14 commit policy, Go jobs, REUSE job, tool-module scanner",
+	"86026b8f62a7cf4fdfdd1d9b77904142ba7954566a6510d71fbffc1f446e97c4": "before HISS-14 commit policy, Go jobs, REUSE job, tool-module scanner, checkpoint jobs",
+	"2df153c845935f84d2f589aba5533875ede67d88d8f30693c22ad2b56172af06": "before HISS-14 commit policy, Rust jobs",
+	"9e514714aef1ed95811364735e0377072555d02647f8a62813091917ca92922a": "before HISS-14 commit policy, Rust jobs, checkpoint jobs",
+	"cbed348190b32d9b3aee079371ffcb1fa3f9c3b4ebe4ef9864c1418e8fe7ab96": "before HISS-14 commit policy, Rust jobs, REUSE job",
+	"513b3cc00c84f5ab7fae3b9d4b1dfa9000162087fda2f4839b1fe5f916e5615e": "before HISS-14 commit policy, Rust jobs, REUSE job, checkpoint jobs",
+	"384f9e5fb127f1cb687e377ae95f41f681dba4c044b0abad3c9fdf7096e793de": "before HISS-14 commit policy, Go and Rust jobs",
+	"8b262f390a0241773f06ce850e3e2d695eca1727c9018f6dc3512eb65bc48413": "before HISS-14 commit policy, Go and Rust jobs, checkpoint jobs",
+	"0d86aea8cfce7cacff73f0cc7439bc1caf76192c5b287d4b97d2ecc7f4b2cfe1": "before HISS-14 commit policy, Go and Rust jobs, tool-module scanner",
+	"73c053c0404298b17b344b5079086a9341bd2fa8008d4ba021eaee2db51ccaa0": "before HISS-14 commit policy, Go and Rust jobs, tool-module scanner, checkpoint jobs",
+	"d477818ddaba277d7a698edbe7a8d74cf2841bb7bffe1b67188bcf55e185f8a0": "before HISS-14 commit policy, Go and Rust jobs, REUSE job",
+	"4bb6f1580c26e76118dd6a7595f9111119425de5bab257617b7ed5bdfa061b6f": "before HISS-14 commit policy, Go and Rust jobs, REUSE job, checkpoint jobs",
+	"7f617d52eb40a0cee2580a11ac9b649634003a2610d3d9e620d09f32eec7f8ff": "before HISS-14 commit policy, Go and Rust jobs, REUSE job, tool-module scanner",
+	"a8ccebda4be674b9ba4a0ee4986a7300ef597f73b8e4ed1df64de611dcf0f3f0": "before HISS-14 commit policy, Go and Rust jobs, REUSE job, tool-module scanner, checkpoint jobs",
 }
 
 // lefthookIdentity is what adoption concluded about an existing lefthook.yml.

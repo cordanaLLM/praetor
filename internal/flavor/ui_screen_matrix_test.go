@@ -33,7 +33,7 @@ func writeMatrixFixture(t *testing.T, root, data string, reference bool) {
 }
 
 func TestAuditUIGatesScreenMatrix(t *testing.T) {
-	cases := []struct {
+	for _, tc := range []struct {
 		name, data, want string
 		reference        bool
 	}{
@@ -41,8 +41,7 @@ func TestAuditUIGatesScreenMatrix(t *testing.T) {
 		{"malformed JSON", "{", "not valid JSON", true},
 		{"no reference", "{}", "must reference", false},
 		{"complete unpinned", "{}", "", true},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := writeBaseSvelteDir(t, `{"name":"ui","devDependencies":{"@axe-core/playwright":"4.11.1"}}`)
 			renderUISpecFixture(t, dir)

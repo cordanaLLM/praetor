@@ -115,11 +115,12 @@ func RunDiscovery(ctx context.Context, opts DiscoveryOptions) (*DiscoveryReport,
 
 func executeDiscovery(ctx context.Context, report *DiscoveryReport, policy DiscoveryPolicy) error {
 	var workers sync.WaitGroup
-	for worker := 0; worker < report.Options.Concurrency; worker++ {
+	concurrency := report.Options.Concurrency
+	for worker := 0; worker < concurrency && worker < MaxDiscoveryWorkers; worker++ {
 		workers.Add(1)
 		go func(offset int) {
 			defer workers.Done()
-			for index := offset; index < len(report.Cases) && index < MaxDiscoveryRepositories; index += report.Options.Concurrency {
+			for index := offset; index < len(report.Cases) && index < MaxDiscoveryRepositories; index += concurrency {
 				runDiscoveryCase(ctx, report.Options, policy, &report.Cases[index])
 			}
 		}(worker)
