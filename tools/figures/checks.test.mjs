@@ -312,7 +312,7 @@ function siteFixture(dir, config) {
   write(paths.config, config);
   write(join(paths.docs, 'index.md'), '# Home\n');
   write(join(paths.site, 'index.html'), '<html></html>');
-  return { ...paths, check: () => checkSite(paths.config, paths.docs, paths.site) };
+  return { ...paths, check: () => checkSite(paths.config, paths.docs, paths.site, undefined, dir) };
 }
 
 function figureSite(dir, config = HOOKED) {
@@ -358,8 +358,8 @@ test('site: pages MkDocs does not build are skipped, and the configuration can e
 
 test('site: an unbuilt site, a missing docs_dir or an unreadable configuration is a usage failure', () => withTempDir((dir) => {
   const fixture = siteFixture(dir, DECLARED);
-  assert.throws(() => checkSite(fixture.config, join(fixture.docs, 'absent'), fixture.site), /is not a directory/);
-  assert.throws(() => checkSite(join(dir, 'missing.yml'), fixture.docs, fixture.site), /cannot read/);
+  assert.throws(() => checkSite(fixture.config, join(fixture.docs, 'absent'), fixture.site, undefined, dir), /is not a directory/);
+  assert.throws(() => checkSite(join(dir, 'missing.yml'), fixture.docs, fixture.site, undefined, dir), /cannot read/);
   unlinkSync(join(fixture.site, 'index.html'));
   assert.throws(() => fixture.check(), /holds no built site/);
 }));
@@ -415,7 +415,7 @@ test('site: an unreleased player lock needs no loader, a released one and a loca
   assert.deepEqual(astro.check('/docs/').errors, [], 'Starlight with a released lock passes once the loader is injected');
 }));
 
-test('site: nested configuration below a repository root with unreleased player lock needs no loader', () => withTempDir((dir) => {
+test('site: nested configuration below a repository root with unreleased player lock needs no loader', () => withTempDir(async (dir) => {
   const nestedDir = join(dir, 'site');
   const fixture = figureSite(nestedDir);
   write(fixture.page, fillSlots(META, '../assets/figures'));
@@ -424,6 +424,15 @@ test('site: nested configuration below a repository root with unreleased player 
   assert.equal(svgOnlySite(fixture.config, dir), true, 'nested config with explicit root should have svgOnly true');
   assert.deepEqual(checkSite(fixture.config, fixture.docs, fixture.site, undefined, dir).errors, [],
     'nested site configuration with explicit repository root needs no loader');
+  const argv = ['site', '--config', fixture.config, '--docs', fixture.docs, '--site', fixture.site];
+  const run = await capture(() => main(argv, dir));
+  assert.equal(run.result, 0, run.output);
+  assert.match(run.output, /1 diagram\(s\) under .* render\./);
+  const toolRoot = await capture(() => main(argv, ROOT));
+  assert.equal(toolRoot.result, 1, toolRoot.output);
+  assert.match(toolRoot.output, /holds figures but loads no assets\/javascripts\/figures\/loader\.js/);
+  const defaultRoot = await capture(() => main(argv));
+  assert.deepEqual(defaultRoot, toolRoot, 'omitting the root still judges from the tool repository');
 }));
 
 test('site: every figure image must embed the props the player mounts, the static one included', () => withTempDir((dir) => {
@@ -506,7 +515,7 @@ function starlightSite(dir) {
   for (const name of ['loader.js', 'player.js']) write(join(paths.site, 'assets/javascripts/figures', name), 'export {};\n');
   const page = join(paths.site, 'guides', 'tour', 'index.html');
   write(page, `<head>${inlineLoader('/docs/')}</head>${fillSlots(META, '/docs/assets/figures')}`);
-  return { ...paths, page, check: (base) => checkSite(paths.config, paths.docs, paths.site, base) };
+  return { ...paths, page, check: (base) => checkSite(paths.config, paths.docs, paths.site, base, dir) };
 }
 
 test('the configuration name tells the generator: astro.config.* is Astro, any other file MkDocs', () => {
@@ -610,7 +619,7 @@ test('site: a Mermaid fence on a Starlight site is told to become a figure; an u
 
 test('site: an MkDocs configuration takes no base path; an unbuilt Astro site names astro build', () => withTempDir((dir) => {
   const fixture = figureSite(dir);
-  assert.throws(() => checkSite(fixture.config, fixture.docs, fixture.site, '/'), /a base path applies to an Astro site; .* is an MkDocs configuration/);
+  assert.throws(() => checkSite(fixture.config, fixture.docs, fixture.site, '/', dir), /a base path applies to an Astro site; .* is an MkDocs configuration/);
   const astro = starlightSite(join(dir, 'astro'));
   unlinkSync(join(astro.site, 'index.html'));
   assert.throws(() => astro.check('/docs/'), /holds no built site \(no index\.html\); run astro build first/);
