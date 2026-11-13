@@ -240,10 +240,10 @@ func TestPaperclipVerify_InReviewReceiptOnDisk(t *testing.T) {
 // The language walk runs at the entry ceiling, not the default: it counts generated output it
 // does not skip by name, such as the documentation site CI builds before the tests, so a checkout
 // grown past the default would fail this test for its size rather than for a stale harness.
+// Other bounds come from the manifest through RepositoryHISSFacts, as in the production audit.
 func TestDogfoodingPaperclipHarness(t *testing.T) {
 	root := filepath.Join("..", "..")
-	limits := adopt.DefaultVerificationLimits()
-	limits.MaxEntries = adopt.VerificationEntriesCeiling
+	limits := adopt.VerificationLimits{MaxEntries: adopt.VerificationEntriesCeiling}
 	facts, warnings, err := adopt.RepositoryHISSFacts(t.Context(), root, &limits)
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("RepositoryHISSFacts(repository root): warnings=%q err=%v", warnings, err)
