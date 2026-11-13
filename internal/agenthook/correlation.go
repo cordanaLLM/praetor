@@ -215,6 +215,7 @@ func (s correlationStore) active(ctx context.Context, client, session, agentID s
 	return found, err
 }
 
+// markHandbackValidated binds the first pending report and classifies flagged reviews as findings.
 func (s correlationStore) markHandbackValidated(ctx context.Context, client, session, agentID, toolID, text string) error {
 	active, err := correlationName("active", client, session, agentID)
 	if err != nil {
@@ -232,8 +233,18 @@ func (s correlationStore) markHandbackValidated(ctx context.Context, client, ses
 		if readErr != nil {
 			return readErr
 		}
+		if entry.HandbackDigest != "" {
+			return errors.New("subagent handback already pending")
+		}
 		entry.HandbackDigest = correlationHandbackDigest(toolID, text)
 		entry.HandbackVerdict = claudeVerdictWord(text)
+		if router.IsReviewTask(entry.Task) {
+			injection, err := validateReviewInjection(text)
+			if err != nil {
+				return err
+			}
+			entry.HandbackVerdict = reviewOutcomeVerdict(text, injection)
+		}
 		return s.write(active, entry)
 	})
 }

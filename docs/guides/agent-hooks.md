@@ -500,7 +500,9 @@ Claude Code 2.1.271 and later can deliver an auto-mode report through the docume
 `SubagentHandback.tool_input.message` field. The `pre-handback` hook checks that message
 before delivery, using the `session_id`, `agent_id`, and `tool_use_id` supplied to subagent
 tool hooks. It stores a digest binding that tool use to the validated report, together with its verdict
-word for receipts.
+word for receipts. A pending handback cannot be replaced until its matching failure or
+permission-denial event releases it (`TestReviewInjectionPendingHandback` in
+[review injection regression tests](../../internal/agenthook/review_injection_regression_test.go)).
 `handback-receipt` marks delivery after the tool succeeds and only when the delivered input
 matches that digest. Failure or permission denial clears only the matching provisional
 digest and verdict, so a stale event cannot alter a newer attempt. `SubagentStop.last_assistant_message`
@@ -549,10 +551,13 @@ fails closed:
   ([`judgeAgentReturn`](../../internal/agenthook/agent_traffic.go),
   `TestReviewInjectionOutcome/stop-finding`, `TestReviewInjectionSubagentStop` in
   [review injection tests](../../internal/agenthook/review_injection_test.go)).
-  At pre-handback the finding is also delivered as context to the agent calling the tool;
-  this context does not rewrite the message delivered to the dispatcher
+  At pre-handback the finding is delivered as context to the agent calling the tool and
+  prepended to the dispatcher's message through Claude's `updatedInput`, preserving all
+  other tool operands. The receipt must match that rewritten message; a delivered flagged
+  review records a non-passing outcome too
   (`evaluateAgentHandback` in [agent traffic](../../internal/agenthook/agent_traffic.go),
-  `TestReviewInjectionHandbackContext` in the regression tests).
+  `TestReviewInjectionHandbackContext`, `TestReviewInjectionDispatcherNotice`,
+  `TestReviewInjectionOutcome/delivered-finding` in the regression tests).
   Claude review dispatches append the required-field guidance to the reviewer's prompt,
   preserving any read-only projection and binding the final prompt to the launch receipt
   (`deliverReviewBrief` in [review injection](../../internal/agenthook/review_injection.go),

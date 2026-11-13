@@ -60,6 +60,7 @@ func decodeClaudeHandback(client string, canonical Canonical, object map[string]
 		return Canonical{}, err
 	}
 	canonical.Tool = tool
+	canonical.DispatchInput = object["tool_input"]
 	if canonical.AgentID, err = requiredString(object, "agent_id"); err != nil {
 		return Canonical{}, err
 	}

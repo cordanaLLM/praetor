@@ -230,7 +230,7 @@ func TestClaudeFailedOrDeniedHandbackRetainsFallbackValidation(t *testing.T) {
 	}
 }
 
-func TestClaudeHandbackTransitionsAreBoundToTheToolUse(t *testing.T) {
+func TestAgentTrafficHandbackTransitionsAreBoundToTheToolUse(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	prepareClaudeCorrelation(t, root, state, "session-tools", "dispatch-tool", "agent-tools", validBrief)
 	first := handbackEventPayloadWithID(t, "PreToolUse", "session-tools", "agent-tools", "handback-old", validReturn)
@@ -238,8 +238,19 @@ func TestClaudeHandbackTransitionsAreBoundToTheToolUse(t *testing.T) {
 		t.Fatalf("first pre-handback: %+v", response)
 	}
 	second := handbackEventPayloadWithID(t, "PreToolUse", "session-tools", "agent-tools", "handback-new", validReturn)
+	if response := runAgentHook(t, root, state, "claude", EventPreHandback, second); response.ExitCode != 2 {
+		t.Fatalf("pending handback replaced: %+v", response)
+	}
+	wrongAbort := handbackEventPayloadWithID(t, "PostToolUseFailure", "session-tools", "agent-tools", "handback-new", validReturn)
+	if response := runAgentHook(t, root, state, "claude", EventHandbackAbort, wrongAbort); response.ExitCode != 2 {
+		t.Fatalf("unvalidated abort accepted: %+v", response)
+	}
+	abort := handbackEventPayloadWithID(t, "PostToolUseFailure", "session-tools", "agent-tools", "handback-old", validReturn)
+	if response := runAgentHook(t, root, state, "claude", EventHandbackAbort, abort); response.ExitCode != 0 {
+		t.Fatalf("original abort: %+v", response)
+	}
 	if response := runAgentHook(t, root, state, "claude", EventPreHandback, second); response.ExitCode != 0 {
-		t.Fatalf("replacement pre-handback: %+v", response)
+		t.Fatalf("retry after abort: %+v", response)
 	}
 	stale := handbackEventPayloadWithID(t, "PostToolUseFailure", "session-tools", "agent-tools", "handback-old", validReturn)
 	if response := runAgentHook(t, root, state, "claude", EventHandbackAbort, stale); response.ExitCode != 2 ||

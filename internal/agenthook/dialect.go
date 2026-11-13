@@ -222,7 +222,8 @@ func (d Dialect) encodeDelivery(canonical Canonical, verdict Verdict) Response {
 		specific["permissionDecision"] = "allow"
 		specific["permissionDecisionReason"] = boundReason(verdict.Notice)
 		specific["updatedInput"] = verdict.UpdatedInput
-	} else {
+	}
+	if verdict.AddedContext != "" {
 		specific["additionalContext"] = verdict.AddedContext
 	}
 	data, err := json.Marshal(map[string]any{"hookSpecificOutput": specific})

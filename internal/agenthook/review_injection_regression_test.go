@@ -38,10 +38,12 @@ func TestReviewInjectionPendingHandback(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	store := seedReviewCorrelation(t, root, state, "review")
 	first := Canonical{ConversationID: "s", AgentID: "agent", ToolUseID: "first", Return: reviewReturn("true")}
+	first.DispatchInput = commandPayload(t, map[string]any{"message": first.Return})
 	row, in := Registration{Client: "claude"}, Invocation{CorrelationDir: state}
 	if got := evaluateAgentHandback(t.Context(), row, first, root, in); got.Outcome != Allow {
 		t.Fatalf("first handback: %+v", got)
 	}
+	first.Return = reviewInjectionNotice("review") + "\n\n" + first.Return
 	second := first
 	second.ToolUseID, second.Return = "second", reviewReturn("false")
 	if got := evaluateAgentHandback(t.Context(), row, second, root, in); got.Outcome != Deny {
@@ -103,6 +105,11 @@ func deliverReviewReturn(t *testing.T, root, state, body string) {
 		response := runAgentHook(t, root, state, "claude", event, handbackEventPayload(t, native, "s", "agent", body))
 		if response.ExitCode != 0 {
 			t.Fatalf("handback: %s", response.String())
+		}
+		if event == EventPreHandback && len(response.Stdout) > 0 {
+			specific := field[map[string]any](t, decodeStdout(t, response), "hookSpecificOutput")
+			input := field[map[string]any](t, specific, "updatedInput")
+			body = field[string](t, input, "message")
 		}
 	}
 }
@@ -180,6 +187,85 @@ func TestReviewInjectionHandbackContext(t *testing.T) {
 	}
 	if response.ExitCode != 0 || output.Specific.Context != ReviewInjectionMarker+"; task: review" {
 		t.Fatalf("finding context: %s", response.String())
+	}
+}
+
+// TestReviewInjectionDispatcherNotice checks every native handback dialect delivers the finding in the message.
+func TestReviewInjectionDispatcherNotice(t *testing.T) {
+	// Claude is the only dialect with a registered pre-delivery handback path.
+	flags := []string{"true", "false"}
+	for index := 0; index < len(flags) && index < 2; index++ {
+		flag := flags[index]
+		t.Run("claude/"+flag, func(t *testing.T) {
+			checkReviewDispatcherNotice(t, "claude", flag)
+		})
+	}
+}
+
+// checkReviewDispatcherNotice replays the approved tool input at receipt and checks message isolation.
+func checkReviewDispatcherNotice(t *testing.T, client, flag string) {
+	t.Helper()
+	root, state := repository(t, true), t.TempDir()
+	store := seedReviewCorrelation(t, root, state, "review")
+	body := reviewReturn(flag)
+	input := map[string]any{"message": body, "target": "dispatcher", "metadata": map[string]any{"keep": true}}
+	payload := commandPayload(t, map[string]any{
+		"hook_event_name": "PreToolUse", "session_id": "s", "agent_id": "agent",
+		"tool_name": "SubagentHandback", "tool_use_id": "handback-tool", "tool_input": input,
+	})
+	response := runAgentHook(t, root, state, client, EventPreHandback, payload)
+	if response.ExitCode != 0 {
+		t.Fatalf("pre-handback: %s", response.String())
+	}
+	if flag == "true" {
+		specific := field[map[string]any](t, decodeStdout(t, response), "hookSpecificOutput")
+		input = field[map[string]any](t, specific, "updatedInput")
+		want := reviewInjectionNotice("review") + "\n\n" + body
+		metadata := field[map[string]any](t, input, "metadata")
+		if field[string](t, input, "message") != want || input["target"] != "dispatcher" || !field[bool](t, metadata, "keep") {
+			t.Fatalf("dispatcher message or operands lost: %s", response.String())
+		}
+		if err := store.markHandbackDelivered(t.Context(), client, "s", "agent", "handback-tool", body); err == nil {
+			t.Fatal("receipt accepted without the dispatcher notice")
+		}
+	} else if len(response.Stdout) != 0 {
+		t.Fatalf("unflagged message rewritten: %s", response.String())
+	}
+	receipt := commandPayload(t, map[string]any{
+		"hook_event_name": "PostToolUse", "session_id": "s", "agent_id": "agent",
+		"tool_name": "SubagentHandback", "tool_use_id": "handback-tool", "tool_input": input,
+	})
+	if got := runAgentHook(t, root, state, client, EventHandbackReceipt, receipt); got.ExitCode != 0 {
+		t.Fatalf("delivered receipt: %s", got.String())
+	}
+}
+
+// TestReviewInjectionHandbackAbort releases only the matching rewritten message after failure or denial.
+func TestReviewInjectionHandbackAbort(t *testing.T) {
+	events := []string{"PostToolUseFailure", "PermissionDenied"}
+	for index := 0; index < len(events) && index < 2; index++ {
+		t.Run(events[index], func(t *testing.T) {
+			root, state := repository(t, true), t.TempDir()
+			store := seedReviewCorrelation(t, root, state, "review")
+			body := reviewReturn("true")
+			pre := handbackPayload(t, "s", "agent", body)
+			response := runAgentHook(t, root, state, "claude", EventPreHandback, pre)
+			if response.ExitCode != 0 {
+				t.Fatalf("pre-handback: %s", response.String())
+			}
+			specific := field[map[string]any](t, decodeStdout(t, response), "hookSpecificOutput")
+			input := field[map[string]any](t, specific, "updatedInput")
+			if err := store.cancelHandback(t.Context(), "claude", "s", "agent", "handback-tool", body); err == nil {
+				t.Fatal("unmodified abort released the rewritten report")
+			}
+			abort := handbackEventPayload(t, events[index], "s", "agent", field[string](t, input, "message"))
+			if got := runAgentHook(t, root, state, "claude", EventHandbackAbort, abort); got.ExitCode != 0 {
+				t.Fatalf("rewritten abort: %s", got.String())
+			}
+			if got := runAgentHook(t, root, state, "claude", EventPreHandback, pre); got.ExitCode != 0 {
+				t.Fatalf("retry after abort: %s", got.String())
+			}
+		})
 	}
 }
 
