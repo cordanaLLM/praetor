@@ -356,7 +356,9 @@ func TestReviewHelperArgumentBound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	res, err := util.RunCommandBytes(ctx, t.TempDir(), exe, 4096, args...)
-	if err != nil || strings.TrimSpace(string(res.Stdout)) != "PASS" {
+	// The first line is go test's verdict; a -cover run adds a coverage line after it.
+	first, _, _ := strings.Cut(strings.TrimSpace(string(res.Stdout)), "\n")
+	if err != nil || first != "PASS" {
 		t.Fatalf("unbounded helper scan: %s %v", res.Stdout, err)
 	}
 }
