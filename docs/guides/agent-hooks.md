@@ -540,7 +540,9 @@ fails closed:
 - Correlated returns for `code_review`, `review`, and `single_file_audits` require exactly one
   active `prompt_injection: true` or `prompt_injection: false` line (key case insensitive,
   value exact). Quoted, fenced, commented, and disabled declarations do not supply the
-  required field. Returns exceeding 1 MiB or 65,536 lines are denied before scanning;
+  required field. Single and double quotes in Markdown prose do not protect an HTML comment
+  opener: declarations inside that comment remain inactive even after a quote
+  (`TestReviewInjectionActiveDeclarations`). Returns exceeding 1 MiB or 65,536 lines are denied before scanning;
   missing, malformed, or duplicate active fields are denied too
   (`validateReviewInjection` in `internal/agenthook/review_injection.go`,
   `TestReviewInjectionActiveDeclarations`, `TestReviewInjectionBounds` in

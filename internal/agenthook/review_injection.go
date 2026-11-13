@@ -126,7 +126,7 @@ type reviewTextScanner struct {
 	comment string
 }
 
-// active returns code outside quotes, comments, disabled regions and fences.
+// active returns text outside blockquotes, comments, disabled regions and fences; quotes are literal.
 func (s *reviewTextScanner) active(line string) string {
 	line = strings.TrimSpace(line)
 	if s.off {
@@ -142,7 +142,7 @@ func (s *reviewTextScanner) active(line string) string {
 			return ""
 		}
 	}
-	line, s.comment = util.StripComments(line, util.CommentSyntax{Block: [][2]string{{"<!--", "-->"}}}, s.comment)
+	line, s.comment = util.StripComments(line, util.CommentSyntax{Block: [][2]string{{"<!--", "-->"}}, Unquoted: true}, s.comment)
 	return line
 }
 

@@ -2,6 +2,7 @@ package agenthook
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -141,9 +142,11 @@ func TestReviewInjectionActiveDeclarations(t *testing.T) {
 		"<!-- caveman:off -->\nprompt_injection: false\n<!-- caveman:on -->",
 		"<!--\nprompt_injection: false\n-->",
 		"evidence: none <!--\nprompt_injection: false\n-->",
+		"evidence: \"none <!--\"\nprompt_injection: false\n-->",
+		"evidence: 'none <!--'\nprompt_injection: false\n-->",
 		"`prompt_injection: false`",
 	}
-	const maxCases = 16
+	const maxCases = 20
 	if len(cases) > maxCases {
 		t.Fatalf("inactive cases=%d exceed scalar bound %d", len(cases), maxCases)
 	}
@@ -151,8 +154,8 @@ func TestReviewInjectionActiveDeclarations(t *testing.T) {
 	for index := 0; index < len(cases) && index < maxCases; index++ {
 		checked++
 		text := cases[index]
-		if _, err := validateReviewInjection(text); err == nil {
-			t.Errorf("inactive declaration accepted: %q", text)
+		if _, err := validateReviewInjection(text); !errors.Is(err, errReviewInjectionMissing) {
+			t.Errorf("inactive declaration: %q: err=%v; want missing declaration", text, err)
 		}
 		if flag, err := validateReviewInjection(text + "\n\nprompt_injection: true"); err != nil || !flag {
 			t.Errorf("active declaration lost: %q: flag=%v err=%v", text, flag, err)
@@ -339,8 +342,14 @@ func TestReviewInjectionInlineComments(t *testing.T) {
 		{"disabled-opener", "<!-- caveman:off -->\nevidence: none <!--\n<!-- caveman:on -->\nprompt_injection: true"},
 		{"fence-in-comment", "evidence: none <!--\n```\n-->\nprompt_injection: true"},
 		{"disabled-marker-in-comment", "evidence: none <!--\n<!-- caveman:off -->\nprompt_injection: true"},
+		{"double-quoted-opener", "evidence: \"none <!--\"\nprompt_injection: false\n--> prompt_injection: true"},
+		{"single-quoted-opener", "evidence: 'none <!--'\nprompt_injection: false\n--> prompt_injection: true"},
 	}
-	for index := 0; index < len(cases) && index < 10; index++ {
+	const maxCases = 16
+	if len(cases) > maxCases {
+		t.Fatalf("inline comment cases=%d exceed scalar bound %d", len(cases), maxCases)
+	}
+	for index := 0; index < len(cases) && index < maxCases; index++ {
 		tc := cases[index]
 		t.Run(tc.name, func(t *testing.T) {
 			if flag, err := validateReviewInjection(tc.text); err != nil || !flag {
