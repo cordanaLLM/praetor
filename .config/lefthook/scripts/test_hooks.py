@@ -271,27 +271,30 @@ def cli_path(repo):
     return str(repo / PRAETORCTL)
 
 
-def command(repo, *args, data=None, ok=True, maintain_state=True):
+def command(repo, *args, data=None, ok=True, maintain_state=True, env=None):
     """Run one command in the fixture repository, syncing Praetor state before a commit or push unless maintain_state is false."""
     # Most fixtures model an agent obeying the sync obligation. Negative state
     # tests opt out and execute the same real hooks against stale/missing state.
     if (maintain_state and args[:2] in (("git", "commit"), ("git", "push"))
             and (repo / PRAETORCTL).is_file()):
-        run_command(repo, (cli_path(repo), "state", "sync", "."), None, ok)
-    result = run_command(repo, args, data, ok)
+        run_command(repo, (cli_path(repo), "state", "sync", "."), None, ok, env)
+    result = run_command(repo, args, data, ok, env)
     if args[:2] == ("git", "init") and "--bare" not in args and (repo / ".git").is_dir():
-        run_command(repo, ("git", "config", "commit.gpgsign", "false"), None, False)
-        run_command(repo, ("git", "config", "tag.gpgsign", "false"), None, False)
+        run_command(repo, ("git", "config", "commit.gpgsign", "false"), None, False, env)
+        run_command(repo, ("git", "config", "tag.gpgsign", "false"), None, False, env)
     return result
 
 
-def run_command(repo, args, data, ok):
+def run_command(repo, args, data, ok, env=None):
     """Run one fixture command; command() adds the state sync a commit or push obliges.
 
     Kept apart from command() so the sync runs through the same environment without the
     helper calling itself (HISS-01).
     """
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", **LOCALE_ENV, **NO_AUTOCRLF_ENV)
+    if env is None:
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", **LOCALE_ENV, **NO_AUTOCRLF_ENV)
+    else:
+        env = dict(env)
     for key in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
         env.pop(key, None)
     # A test command without explicit input must see EOF, not inherit the operator's
@@ -4887,24 +4890,28 @@ class LauncherWorktree(unittest.TestCase):
 
     def setUp(self):
         """Create a main checkout, one linked worktree and a PATH holding only git."""
+        self.env = {key: value for key, value in os.environ.items()
+                    if not key.startswith("GIT_")}
+        self.env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-launcher-worktree-")
         self.addCleanup(self.temp.cleanup)
         base = Path(self.temp.name)
         self.main = base / "main"
         self.main.mkdir()
-        command(self.main, "git", "init", "-q", "-b", "main")
-        command(self.main, "git", "config", "user.name", "Fixture")
-        command(self.main, "git", "config", "user.email", "fixture@example.test")
-        command(self.main, "git", "commit", "-q", "--allow-empty", "-m", "initial")
+        command(self.main, "git", "init", "-q", "-b", "main", env=self.env)
+        command(self.main, "git", "config", "user.name", "Fixture", env=self.env)
+        command(self.main, "git", "config", "user.email", "fixture@example.test", env=self.env)
+        command(self.main, "git", "commit", "-q", "--allow-empty", "-m", "initial", env=self.env)
         self.worktree = base / "linked"
-        command(self.main, "git", "worktree", "add", "-q", "-b", "linked", str(self.worktree))
+        command(self.main, "git", "worktree", "add", "-q", "-b", "linked", str(self.worktree),
+                env=self.env)
         self.bin = base / "bin"
         self.bin.mkdir()
         (self.bin / "git").symlink_to(shutil.which("git"))
 
     def launch(self):
         """Run the hook launcher from the linked worktree with the stub PATH."""
-        env = dict(os.environ, PATH=str(self.bin))
+        env = dict(self.env, PATH=str(self.bin))
         return subprocess.run([shutil.which("sh") or "sh", str(ROOT / LAUNCHER), "hook.py"],
                               cwd=self.worktree, env=env, capture_output=True, timeout=60,
                               check=False)
@@ -4923,8 +4930,8 @@ class LauncherWorktree(unittest.TestCase):
     def test_launcher_refuses_tracked_main_worktree_venv(self):
         """A tracked interpreter in the main worktree is skipped for the PATH interpreter."""
         self.venv(self.main)
-        command(self.main, "git", "add", "-f", ".venv/bin/python3")
-        command(self.main, "git", "commit", "-q", "-m", "track interpreter")
+        command(self.main, "git", "add", "-f", ".venv/bin/python3", env=self.env)
+        command(self.main, "git", "commit", "-q", "-m", "track interpreter", env=self.env)
         candidate = interpreter_stand_in(self.bin, "python3", "3.13\\n")
         result = self.launch()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -4937,6 +4944,60 @@ class LauncherWorktree(unittest.TestCase):
         for candidate in (self.worktree / ".venv/bin/python3", self.main / ".venv/bin/python3"):
             self.assertIn(str(candidate).encode(), result.stderr)
         self.assertIn(b"python3, python, py -3", result.stderr)
+
+    def test_launcher_keep_index_refuses_tracked_main_worktree_venv(self):
+        """A linked commit's alternate index cannot hide a tracked main interpreter."""
+        import shlex
+
+        self.venv(self.main)
+        command(self.main, "git", "add", "-f", ".venv/bin/python3", env=self.env)
+        command(self.main, "git", "commit", "-q", "-m", "track interpreter", env=self.env)
+        linked_files = command(self.worktree, "git", "ls-files", "--", ".venv", env=self.env)
+        self.assertEqual(linked_files.stdout, b"")
+        candidate = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        shell = shlex.quote(shutil.which("sh") or "sh")
+        launcher = shlex.quote(str(ROOT / LAUNCHER))
+        stand_in(self.main / ".git/hooks", "pre-commit",
+                 f"{shell} {launcher} --keep-index hook.py\n")
+        result = command(self.worktree, "git", "commit", "-q", "--allow-empty", "-m", "linked hook",
+                         env=dict(self.env, PATH=str(self.bin)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"stub:{candidate}:1:hook.py".encode(), result.stdout + result.stderr)
+
+    def test_launcher_bounds_blocking_interpreter_and_tries_next_candidate(self):
+        """A stalled main interpreter expires before fallback and names its timeout."""
+        sleeper = shutil.which("sleep")
+        self.assertIsNotNone(sleeper, "POSIX watchdog fixture requires sleep")
+        stand_in(self.main / ".venv/bin", "python3", f'"{sleeper}" 15\n')
+        for fallback in (True, False):
+            with self.subTest(fallback=fallback):
+                candidate = self.bin / "python3"
+                if fallback:
+                    interpreter_stand_in(self.bin, "python3", "3.13\\n")
+                else:
+                    candidate.unlink()
+                started = time.monotonic()
+                result = self.launch()
+                elapsed = time.monotonic() - started
+                # At most two stalled probes (5 s bound each) run before the launcher gives up.
+                self.assertLess(elapsed, 14, f"version probe took {elapsed:.2f}s")
+                if fallback:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+                else:
+                    self.assertEqual(result.returncode, 127, result.stderr)
+                    timed_out = self.main / ".venv/bin/python3"
+                    self.assertIn(f"{timed_out} (version probe timed out after 5s)".encode(),
+                                  result.stderr)
+
+    def test_launcher_deadline_applies_only_to_version_probe(self):
+        """A proven interpreter may run its hook longer than the version deadline."""
+        candidate = stand_in(self.main / ".venv/bin", "python3",
+                             'if [ "$1" = -c ]; then printf "3.13\\n"; exit 0; fi\n'
+                             'command -p sleep 6\necho "hook:$0:$*"\nexit 7\n')
+        result = self.launch()
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"hook:{candidate}:hook.py")
 
     def test_launcher_prefers_checkout_venv(self):
         """The worktree's own virtualenv wins over the main worktree's."""

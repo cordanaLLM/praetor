@@ -44,33 +44,82 @@ if [ "$keep_index" != true ]; then                                              
   unset GIT_INDEX_FILE                                                                           #
 fi                                                                                               #
 #
+# Bound only the version query. command -p finds POSIX sleep even on a stub PATH.
+# The watchdog owns its sleep child and reaps it when a fast probe cancels it.
+# Capture in a private directory: a sleeping descendant cannot hold stdout open.
+# Missing temporary-file or POSIX utility support refuses the candidate by name.
+bounded_probe() ( #
+  probe_dir=$(command -p mktemp -d 2>/dev/null) || exit 125      #
+  trap 'command -p rm -rf "$probe_dir"' 0                        #
+  "$@" -c "$probe" >"$probe_dir/output" 2>/dev/null </dev/null & #
+  probe_pid=$!                                                   #
+  ( #
+    delay_pid=''                                                                                                           #
+    trap 'kill "$delay_pid" 2>/dev/null || :; wait "$delay_pid" 2>/dev/null || :' 0                                        #
+    trap 'exit 1' HUP INT TERM                                                                                             #
+    command -p sleep 5 &                                                                                                   #
+    delay_pid=$!                                                                                                           #
+    if ! wait "$delay_pid"; then                                                                                           #
+      : >"$probe_dir/unavailable"                                                                                          #
+    else                                                                                                                   #
+      : >"$probe_dir/timeout"                                                                                              #
+    fi                                                                                                                     #
+    trap - 0                                                                                                               #
+    kill -KILL "$probe_pid" 2>/dev/null                                                                                    #
+  ) >/dev/null 2>&1 &                                                                                                      #
+  watchdog_pid=$!                                                                                                          #
+  trap 'kill -KILL "$probe_pid" 2>/dev/null || :; kill "$watchdog_pid" 2>/dev/null || :; command -p rm -rf "$probe_dir"' 0 #
+  trap 'exit 1' HUP INT TERM                                                                                               #
+  status=0                                                                                                                 #
+  wait "$probe_pid" 2>/dev/null || status=$?                                                                               #
+  kill "$watchdog_pid" 2>/dev/null || :                                                                                    #
+  wait "$watchdog_pid" 2>/dev/null || :                                                                                    #
+  trap 'command -p rm -rf "$probe_dir"' 0                                                                                  #
+  if [ -f "$probe_dir/timeout" ]; then exit 124; fi                                                                        #
+  if [ -f "$probe_dir/unavailable" ]; then exit 125; fi                                                                    #
+  if [ "$status" -ne 0 ]; then exit 1; fi                                                                                  #
+  command -p cat "$probe_dir/output" || exit 125                                                                           #
+)                                                                                                                          #
+#
 # proven CANDIDATE [ARGUMENT]: it ran the probe and stated Python 3.floor or newer.
 # The probe reads nothing: the hook's own standard input stays untouched.
-proven() {                                                      #
-  tried="${tried}${tried:+, }$*"                                #
-  stated=$("$@" -c "$probe" 2>/dev/null </dev/null) || return 1 #
-  stated=${stated%"$cr"}                                        #
-  case "$stated" in                                             #
-    3.*) minor=${stated#3.} ;;                                  #
-    *) return 1 ;;                                              #
-  esac                                                          #
-  case "$minor" in                                              #
-    '' | *[!0-9]*) return 1 ;;                                  #
-  esac                                                          #
-  [ "$minor" -ge "$floor" ]                                     #
-}                                                               #
+proven() {                                                                                   #
+  tried="${tried}${tried:+, }$*"                                                             #
+  if stated=$(bounded_probe "$@"); then :; else                                              #
+    status=$?                                                                                #
+    if [ "$status" -eq 124 ]; then                                                           #
+      tried="$tried (version probe timed out after 5s)"                                      #
+    fi                                                                                       #
+    if [ "$status" -eq 125 ]; then                                                           #
+      tried="$tried (version probe unavailable: temporary capture or POSIX watchdog failed)" #
+    fi                                                                                       #
+    return 1                                                                                 #
+  fi                                                                                         #
+  stated=${stated%"$cr"}                                                                     #
+  case "$stated" in                                                                          #
+    3.*) minor=${stated#3.} ;;                                                               #
+    *) return 1 ;;                                                                           #
+  esac                                                                                       #
+  case "$minor" in                                                                           #
+    '' | *[!0-9]*) return 1 ;;                                                               #
+  esac                                                                                       #
+  [ "$minor" -ge "$floor" ]                                                                  #
+}                                                                                            #
 #
 # Check Git's index before trusting an interpreter inside a virtualenv.
-venv_candidate() {                                                                           #
-  venv="$1/.venv/bin/python3"                                                                #
-  directory=$1                                                                               #
-  shift                                                                                      #
-  if tracked=$(git -C "$directory" ls-files -- .venv 2>/dev/null) && [ -z "$tracked" ]; then #
-    if proven "$venv"; then                                                                  #
-      exec "$venv" "$@"                                                                      #
-    fi                                                                                       #
-  fi                                                                                         #
-}                                                                                            #
+venv_candidate() {            #
+  venv="$1/.venv/bin/python3" #
+  directory=$1                #
+  shift                       #
+  if tracked=$( #
+    unset GIT_INDEX_FILE                              #
+    git -C "$directory" ls-files -- .venv 2>/dev/null #
+  ) && [ -z "$tracked" ]; then                        #
+    if proven "$venv"; then                           #
+      exec "$venv" "$@"                               #
+    fi                                                #
+  fi                                                  #
+}                                                     #
 #
 root=$(git rev-parse --show-toplevel 2>/dev/null) || root=''                               #
 if [ -n "$root" ]; then                                                                    #
