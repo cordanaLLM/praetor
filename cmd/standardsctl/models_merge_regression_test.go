@@ -11,16 +11,31 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/reviewmerge"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// mergeReviewFile writes a bounded review fixture without accessing routing or credentials.
+// mergeReviewFile writes a review fixture through the context-aware snapshot writer under a 5-second deadline.
+// That writer refuses more than contextopt.MaxSourceBytes by design, so a fixture past the bound is written up
+// to it and then grown to its full size with one size-only truncate; the bytes past the bound read as NUL, which
+// the oversize tests never decode because the reader refuses the file by size first.
 func mergeReviewFile(t *testing.T, name, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	data := []byte(body)
+	if len(data) > contextopt.MaxSourceBytes {
+		data = data[:contextopt.MaxSourceBytes]
+	}
+	if err := contextopt.WriteSnapshot(ctx, path, data, 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if len(body) > len(data) {
+		if err := os.Truncate(path, int64(len(body))); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return path
 }

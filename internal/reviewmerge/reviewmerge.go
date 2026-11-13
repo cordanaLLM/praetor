@@ -178,6 +178,7 @@ func (v *validator) indexDraft(index int, d Draft) {
 		v.checkFinding(f)
 		if seen[f.ID] {
 			v.add(f.ID, "duplicate id in draft")
+			continue
 		}
 		seen[f.ID] = true
 		o := origin{key: originKey{draft: index, id: f.ID}, model: d.Model, finding: f}

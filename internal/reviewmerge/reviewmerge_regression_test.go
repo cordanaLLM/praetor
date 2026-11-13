@@ -1,11 +1,14 @@
 package reviewmerge
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // completeReview supplies an independent, fully populated draft and matching final.
@@ -188,9 +191,59 @@ func TestReviewMissingRuleFixtures(t *testing.T) {
 	}
 }
 
+// TestReviewDuplicateIndexBound keeps at most one origin per ID per draft at the input bounds.
+func TestReviewDuplicateIndexBound(t *testing.T) {
+	for _, count := range []int{0, 1, MaxFindings} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			v := newValidator()
+			finding := Finding{ID: "x", Claim: "defect", Pointer: "x.go:1", Evidence: "proof"}
+			findings := make([]Finding, count)
+			for i := 0; i < count; i++ {
+				findings[i] = finding
+			}
+			for i := 0; i < MaxDrafts; i++ {
+				v.indexDraft(i, Draft{Model: "same-model", Kind: "code", Findings: findings})
+			}
+			want := 0
+			if count > 0 {
+				want = MaxDrafts
+			}
+			origins := v.raised["x"]
+			if len(origins) != want {
+				t.Fatalf("%d findings per draft: indexed %d origins, want %d", count, len(origins), want)
+			}
+			if got := len(v.problems); got != MaxDrafts*max(0, count-1) {
+				t.Fatalf("duplicate diagnostics: %d, want %d", got, MaxDrafts*max(0, count-1))
+			}
+		})
+	}
+}
+
+// TestReviewDuplicateContentChecked still validates an invalid duplicate before skipping its origin.
+func TestReviewDuplicateContentChecked(t *testing.T) {
+	drafts, final := completeReview()
+	drafts[0].Findings = append(drafts[0].Findings, Finding{ID: "x", Pointer: "x.go:1", Evidence: "proof"})
+	requireReviewProblem(t, drafts, final, "duplicate id in draft")
+	requireReviewProblem(t, drafts, final, "claim required")
+	v := newValidator()
+	v.indexDraft(0, drafts[0])
+	v.indexDraft(1, drafts[0])
+	origins := v.raised["x"]
+	if len(origins) != 2 {
+		t.Fatalf("same model across drafts: %d origins, want 2", len(origins))
+	}
+	for i := 0; i < 2; i++ {
+		if origins[i].key != (originKey{draft: i, id: "x"}) || origins[i].finding != drafts[0].Findings[0] {
+			t.Fatalf("origin %d lost draft identity or first substance: %+v", i, origins[i])
+		}
+	}
+}
+
 // TestReviewMergeDocumentationReferences keeps contract claims traceable to code and tests.
 func TestReviewMergeDocumentationReferences(t *testing.T) {
-	data, err := os.ReadFile("../../docs/standards/model-routing-and-fanout.md")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	data, err := contextopt.ReadSnapshot(ctx, "../../docs/standards/model-routing-and-fanout.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,15 +252,24 @@ func TestReviewMergeDocumentationReferences(t *testing.T) {
 		t.Fatal("missing review merge guide")
 	}
 	for _, reference := range []string{
-		"../../internal/reviewmerge/reviewmerge.go",
-		"../../internal/reviewmerge/final.go",
-		"../../internal/reviewmerge/decode.go",
-		"../../internal/reviewmerge/reviewmerge_regression_test.go",
-		"../../cmd/standardsctl/models_merge.go",
-		"../../cmd/standardsctl/models_merge_regression_test.go",
+		"internal/reviewmerge/collect.go",
+		"internal/reviewmerge/collect_test.go",
+		"internal/reviewmerge/reviewmerge.go",
+		"internal/reviewmerge/final.go",
+		"internal/reviewmerge/decode.go",
+		"internal/reviewmerge/reviewmerge_test.go",
+		"internal/reviewmerge/reviewmerge_regression_test.go",
+		"internal/contextopt/artifacts.go",
+		"cmd/standardsctl/models_merge.go",
+		"cmd/standardsctl/models_merge_read.go",
+		"cmd/standardsctl/models_merge_regression_test.go",
+		"cmd/standardsctl/models_merge_unix_test.go",
 	} {
-		if !strings.Contains(section, reference) {
+		if !strings.Contains(section, "`"+reference+"`") {
 			t.Errorf("missing contract reference %s", reference)
 		}
+	}
+	if strings.Contains(section, "](../../") {
+		t.Error("source references must use code spans rather than links outside docs")
 	}
 }
