@@ -15,10 +15,17 @@ func Validate(b Bundle) error {
 	if len(b.Files) > limits.MaxFiles {
 		return fmt.Errorf("bundle exceeds %d files", limits.MaxFiles)
 	}
+	cut := make(map[string]bool, len(b.Cut))
+	for i := 0; i < len(b.Cut); i++ {
+		cut[b.Cut[i]] = true
+	}
 	total := 0
 	for i := 0; i < len(b.Files); i++ {
 		if err := validateFile(b.Files[i], limits.MaxFileBytes); err != nil {
 			return err
+		}
+		if b.Files[i].Truncated != cut[b.Files[i].Path] {
+			return fmt.Errorf("file %q has inconsistent TRUNCATED mark and Cut entry", b.Files[i].Path)
 		}
 		total += len(b.Files[i].Content)
 		if total > limits.MaxBundleBytes {

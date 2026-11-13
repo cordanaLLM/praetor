@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -48,7 +49,7 @@ func appendFiles(ctx context.Context, repo string, data []byte, b *Bundle) error
 // readFile uses exact tree entries and blob objects, avoiding text conversion and working-tree reads.
 func readFile(ctx context.Context, repo, tree, path string, limit int) (File, error) {
 	f := File{Path: path}
-	out, err := util.RunGitProbe(ctx, repo, util.MaxCommandOutputBytes, "ls-tree", "--full-tree", "-l", "-z", tree, "--", path)
+	out, err := util.RunGitProbe(ctx, repo, util.MaxCommandOutputBytes, "--literal-pathspecs", "ls-tree", "--full-tree", "-l", "-z", tree, "--", path)
 	if err != nil {
 		return f, fmt.Errorf("tree entry: %w", err)
 	}
@@ -73,7 +74,7 @@ func readFile(ctx context.Context, repo, tree, path string, limit int) (File, er
 	return f, nil
 }
 
-// readBlob retains only limit bytes but samples Git's first 8000 bytes for binary NULs.
+// readBlob retains at most limit bytes but samples Git's first 8000 bytes for binary NULs.
 // An overflow-cancelled read is accepted only at the known blob's prefix boundary, with live caller.
 func readBlob(ctx context.Context, repo string, entry util.GitTreeEntry, limit int) (File, error) {
 	f := File{Path: entry.Path}
@@ -86,7 +87,7 @@ func readBlob(ctx context.Context, repo string, entry util.GitTreeEntry, limit i
 		f.Binary = true
 		return f, nil
 	}
-	f.Content = string(out.Stdout[:min(limit, len(out.Stdout))])
+	f.Content = textPrefix(out.Stdout, limit, entry.Size > int64(limit))
 	omitted := entry.Size - int64(len(f.Content))
 	if omitted > int64(int(^uint(0)>>1)) {
 		return f, fmt.Errorf("blob size exceeds supported byte count")
@@ -96,6 +97,23 @@ func readBlob(ctx context.Context, repo string, entry util.GitTreeEntry, limit i
 		f.TruncatedBytes = int(omitted)
 	}
 	return f, nil
+}
+
+// textPrefix keeps at most limit bytes of data. Only a cut blob drops an incomplete final UTF-8 rune
+// at the budget boundary; a blob kept whole keeps every byte, invalid UTF-8 included, and is never marked cut.
+func textPrefix(data []byte, limit int, cut bool) string {
+	end := min(limit, len(data))
+	if !cut {
+		return string(data[:end])
+	}
+	for i := 0; i < utf8.UTFMax && end > 0; i++ {
+		r, size := utf8.DecodeLastRune(data[:end])
+		if r != utf8.RuneError || size != 1 {
+			break
+		}
+		end--
+	}
+	return string(data[:end])
 }
 
 // expectedPrefix distinguishes a bounded-output cancellation from caller cancellation or Git failure.
