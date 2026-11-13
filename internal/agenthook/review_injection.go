@@ -157,9 +157,9 @@ func activeReviewText(lines []string) string {
 	return maskReviewParagraphs(strings.Join(lines, "\n"), false)
 }
 
-// maskReviewParagraphs keeps code spans inside their paragraph across soft line breaks.
+// maskReviewParagraphs keeps code spans across soft line breaks, bounded by whitespace-only blank lines.
 func maskReviewParagraphs(text string, commentOpenersOnly bool) string {
-	paragraphs := strings.Split(text, "\n\n")
+	paragraphs := blankLine.Split(text, util.MaxMarkedBlockLines)
 	var scanner reviewTextScanner
 	for index := 0; index < len(paragraphs) && index < util.MaxMarkedBlockLines; index++ {
 		if commentOpenersOnly {
