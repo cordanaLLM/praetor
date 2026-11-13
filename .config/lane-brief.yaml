@@ -2,17 +2,26 @@
 # SPDX-License-Identifier: EUPL-1.2
 # Lane briefs for this repository (read by the lane launcher's brief check before a lane starts).
 # Fix and implementation lanes must run the pre-push gate's own checks, so a lane result never
-# reaches the gate untested on them: gosec, the permissions semgrep rules, the caveman inventory
-# of agent-facing text (register.sources in .standards.yaml) and the documentation references.
+# reaches the gate untested on them: gosec, govulncheck, the semgrep scan with the Go permissions
+# rules named explicitly (a scan with another configuration does not satisfy it), the caveman
+# inventory of agent-facing text (register.sources in .standards.yaml) and the documentation
+# references. A brief may name a check as skipped with its reason when it cannot apply.
+# Enforcement lives in the ops repository: tools/lanes/brief_stage.py `required`, with planted
+# negative and positive cases in its selftest and tools/lanes/agy-run-brief-required-test.sh;
+# agy-run.sh refuses a brief missing a required line before the lane starts.
 # Review, audit and research lanes stay free of these requirements.
 required_by_stage:
   fix:
     - "gosec"
+    - "govulncheck"
     - "semgrep scan"
+    - "--config .config/semgrep/go-permissions.yml"
     - "caveman check --configured-sources"
     - "docs references --path=."
   impl:
     - "gosec"
+    - "govulncheck"
     - "semgrep scan"
+    - "--config .config/semgrep/go-permissions.yml"
     - "caveman check --configured-sources"
     - "docs references --path=."
