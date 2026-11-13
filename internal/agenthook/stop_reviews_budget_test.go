@@ -143,7 +143,7 @@ func testStopReviewOverrunRejectsCache(t *testing.T, tc rejectedStopReviewCache)
 	t.Helper()
 	root, reader, now := installBudgetStopReviews(t, 1, 0)
 	reader.fail = 1
-	cache := stopReviewCache{Repository: tc.repository, Head: "other-head", CheckedAt: now.Add(-tc.age),
+	cache := stopReviewCache{Repository: tc.repository, Head: "fixture-head", CheckedAt: now.Add(-tc.age),
 		Verdict: Verdict{Outcome: tc.outcome, Notice: tc.notice}}
 	path := filepath.Join(root, "praetor-stop-reviews.json")
 	if tc.name != "absent" {
