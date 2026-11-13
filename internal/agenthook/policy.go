@@ -356,8 +356,11 @@ func BuiltinRules() []BuiltinRule {
 var builtinMessages = map[string]string{"HISS": evasionMessage, "DEV-01": topologyMessage}
 
 // Policy is the compiled command policy: built-in rules first, operator rules after,
-// followed by two opt-in act checks configured under hooks.*:
+// followed by opt-in act checks configured under hooks.*. Lane holds run first
+// so their refusal names the holding order:
 //
+//   - hooks.holds (holds.go): refuses configured program basenames while their
+//     hold files exist, naming the hold and its launcher.
 //   - hooks.admission.enforce (admission.go): refuses heavy build, test, gate and push
 //     commands outside `praetorctl admit` or an admitted systemd-run scope, and caps -j.
 //   - hooks.worktrees.enforce (worktrees.go): refuses `git [-C <dir>] worktree add
@@ -371,6 +374,8 @@ type Policy struct {
 	admission *admissionCheck
 	// worktrees is the git worktree add location check of hooks.worktrees; nil unless it is enforced.
 	worktrees *worktreeCheck
+	// holds guards configured program basenames while their hold files exist.
+	holds *holdCheck
 	// workDir is the default working directory Command uses when CommandIn is not called directly.
 	workDir string
 }
@@ -433,15 +438,13 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
 	command = joinLineContinuations(command)
-	judged := withoutReadOnlyWords(command)
-	for _, rule := range p.rules {
-		text := command
-		if rule.readOnlyExempt {
-			text = judged
+	if p.holds != nil {
+		if verdict := p.holds.judge(ctx, command, workDir); verdict.Outcome != Allow {
+			return verdict
 		}
-		if containsRequiredLiteral(text, rule.requiredAny) && rule.matches(text) {
-			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
-		}
+	}
+	if verdict := p.commandRules(command); verdict.Outcome != Allow {
+		return verdict
 	}
 	verdict := Verdict{Outcome: Allow}
 	if p.admission != nil {
@@ -455,6 +458,20 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 		}
 	}
 	return verdict
+}
+
+func (p *Policy) commandRules(command string) Verdict {
+	judged := withoutReadOnlyWords(command)
+	for _, rule := range p.rules {
+		text := command
+		if rule.readOnlyExempt {
+			text = judged
+		}
+		if containsRequiredLiteral(text, rule.requiredAny) && rule.matches(text) {
+			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
+		}
+	}
+	return Verdict{Outcome: Allow}
 }
 
 // containsRequiredLiteral applies the declared prefilter without interpreting literals as regexes.

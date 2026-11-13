@@ -67,10 +67,11 @@ func checkSetting(layer string, spec settingSpec, setting OperatorSetting) error
 	return spec.check(layer, setting)
 }
 
-// kindMembers lists which of Value, List and Argv each value kind may carry.
-var kindMembers = map[settingKind][3]bool{
-	kindText: {true, false, false}, kindBool: {true, false, false}, kindInt: {true, false, false},
-	kindList: {false, true, false}, kindArgv: {false, false, true}, kindEntry: {false, false, false},
+// kindMembers lists which of Value, List, Argv and Holds each value kind may carry.
+var kindMembers = map[settingKind][4]bool{
+	kindText: {true, false, false, false}, kindBool: {true, false, false, false}, kindInt: {true, false, false, false},
+	kindList: {false, true, false, false}, kindArgv: {false, false, true, false}, kindEntry: {false, false, false, false},
+	kindHolds: {false, false, false, true},
 }
 
 func checkShape(spec settingSpec, setting OperatorSetting) error {
@@ -78,7 +79,7 @@ func checkShape(spec settingSpec, setting OperatorSetting) error {
 	if !ok {
 		return fmt.Errorf("%s is a section, not a value", setting.Path)
 	}
-	present := [3]bool{setting.Value != "", setting.List != nil, setting.Argv != nil}
+	present := [4]bool{setting.Value != "", setting.List != nil, setting.Argv != nil, setting.Holds != nil}
 	for i := range present {
 		if present[i] && !allowed[i] {
 			return fmt.Errorf("%s has an invalid value", setting.Path)
@@ -145,6 +146,9 @@ func (m *operatorMerge) replace(layer string, setting OperatorSetting) {
 }
 
 func (m *operatorMerge) appendList(layer string, spec settingSpec, setting OperatorSetting) error {
+	if spec.kind == kindHolds {
+		return m.appendHolds(layer, spec, setting)
+	}
 	if len(setting.List) == 0 {
 		return nil
 	}
@@ -172,11 +176,13 @@ func (m *operatorMerge) named(path string) string { return strings.Join(m.contri
 
 func sameSetting(a, b OperatorSetting) bool {
 	return a.Value == b.Value && slices.Equal(a.List, b.List) &&
-		slices.EqualFunc(a.Argv, b.Argv, func(x, y []string) bool { return slices.Equal(x, y) })
+		slices.EqualFunc(a.Argv, b.Argv, func(x, y []string) bool { return slices.Equal(x, y) }) &&
+		slices.EqualFunc(a.Holds, b.Holds, sameHold)
 }
 
 func cloneSetting(setting OperatorSetting) OperatorSetting {
 	setting.List = slices.Clone(setting.List)
+	setting.Holds = cloneHolds(setting.Holds)
 	argv := make([][]string, len(setting.Argv))
 	for i, candidate := range setting.Argv {
 		argv[i] = slices.Clone(candidate)
@@ -268,6 +274,7 @@ func (h *HookSettings) targets() map[string]any {
 		"hooks.admission.max_jobs_divisor": &h.Admission.MaxJobsDivisor, "hooks.admission.commands": &h.Admission.Commands,
 		"hooks.merge.helper":      &h.Merge.Helper,
 		"hooks.worktrees.enforce": &h.Worktrees.Enforce,
+		"hooks.holds":             &h.Holds,
 	}
 }
 
@@ -332,6 +339,8 @@ func assignTarget(targets map[string]any, key string, setting OperatorSetting) e
 		*field = slices.Clone(setting.List)
 	case *[][]string:
 		*field = cloneSetting(setting).Argv
+	case *[]HoldSettings:
+		*field = cloneHolds(setting.Holds)
 	case *time.Duration:
 		*field, err = time.ParseDuration(setting.Value)
 	default:

@@ -91,6 +91,15 @@ type HookSettings struct {
 	Admission     AdmissionSettings     `json:"admission,omitzero"`
 	Merge         MergeSettings         `json:"merge,omitzero"`
 	Worktrees     WorktreeSettings      `json:"worktrees,omitzero"`
+	Holds         []HoldSettings        `json:"holds,omitempty"`
+}
+
+// HoldSettings guards program basenames while File exists. Via names launchers
+// that retain their own hold refusal. No hold is installed by default.
+type HoldSettings struct {
+	File     string   `json:"file"`
+	Commands []string `json:"commands"`
+	Via      []string `json:"via"`
 }
 
 // MergeSettings names the operator's merge helper. Empty leaves direct merges allowed.

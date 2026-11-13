@@ -13,12 +13,14 @@ import (
 
 // OperatorSetting is one decoded key of an operator section (operatorSectionNames). Path is
 // the dotted key, for example clients.selected.agy.required. A scalar carries its canonical
-// text in Value, a sequence of strings carries List, and hooks.python carries Argv.
+// text in Value, a sequence of strings carries List, hooks.python carries Argv,
+// and hooks.holds carries Holds.
 type OperatorSetting struct {
 	Path  string
 	Value string
 	List  []string
 	Argv  [][]string
+	Holds []HoldSettings
 	Line  int
 }
 
@@ -103,6 +105,8 @@ func decodeSettingValue(node *yaml.Node, path string, spec settingSpec) (Operato
 		setting.List, err = stringSequence(node, path, spec.maxItems)
 	case kindArgv:
 		setting.Argv, err = argvSequence(node, path)
+	case kindHolds:
+		setting.Holds, err = holdsSequence(node, path)
 	default:
 		setting.Value, err = stringScalar(node, path)
 	}

@@ -57,6 +57,7 @@ const (
 	kindArgv                       // sequence of candidates: a string or a sequence of strings
 	kindEntry                      // clients.selected.<id>, framework.targets.<language>: lists the entry, holds its keys
 	kindMapping                    // a nested mapping with keys of its own
+	kindHolds                      // sequence of hold file / command / launcher records
 )
 
 type mergeRule uint8
@@ -110,6 +111,7 @@ var operatorSpecs = map[string]settingSpec{
 	"hooks.admission.commands":              {kind: kindList, rule: ruleAppend, maxItems: MaxAdmissionCommands, check: admissionList},
 	"hooks.worktrees":                       {kind: kindMapping},
 	"hooks.worktrees.enforce":               {kind: kindBool, rule: ruleTighten, strict: "true"},
+	"hooks.holds":                           {kind: kindHolds, rule: ruleAppend, maxItems: MaxHookHolds, check: holdList},
 	"hooks.python":                          {kind: kindArgv, check: pythonCandidates},
 	"hooks.merge":                           {kind: kindMapping},
 	"hooks.merge.helper":                    {check: matching(mergeHelperPattern, "empty or a single shell word without spaces, at most 256 characters")},
