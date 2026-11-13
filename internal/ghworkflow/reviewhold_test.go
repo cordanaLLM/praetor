@@ -304,6 +304,7 @@ case "$endpoint" in
       cat "$FIXTURE_DIR/checks-next.json"
     else cat "$FIXTURE_DIR/checks.json"; fi ;;
   */statuses) cat "$FIXTURE_DIR/statuses.json" ;;
+  */pulls\?state=open*) jq --binary -c '[.[] | select((.state // "open") == "open")]' "$FIXTURE_DIR/prs.json" ;;
   */pulls\?*) cat "$FIXTURE_DIR/prs.json" ;;
   */portability.yml/runs\?*) cat "$FIXTURE_DIR/runs.json" ;;
   */attempts/*/jobs) cat "$FIXTURE_DIR/jobs.json" ;;
@@ -583,14 +584,18 @@ func reviewForkRun(repository, sha string) string {
 // TestReviewHoldReleaseForkAssociation permits only unique repository/SHA fallback matches.
 func TestReviewHoldReleaseForkAssociation(t *testing.T) {
 	cases := []struct {
-		name, peerRepo, peerSHA, reruns string
-		late                            bool
+		name, peerRepo, peerSHA, peerState, reruns string
+		late                                       bool
 	}{
-		{"unique", "", "", "42\n", false},
-		{"other repository", "other/fork", "head", "42\n", false},
-		{"other SHA", "fixture/fork", "other-head", "42\n", false},
-		{"shared SHA", "fixture/fork", "head", "", false},
-		{"new ambiguous PR before rerun", "fixture/fork", "head", "", true},
+		{"unique", "", "", "open", "42\n", false},
+		{"other repository", "other/fork", "head", "open", "42\n", false},
+		{"other SHA", "fixture/fork", "other-head", "open", "42\n", false},
+		{"shared SHA", "fixture/fork", "head", "open", "", false},
+		{"closed shared SHA", "fixture/fork", "head", "closed", "", false},
+		{"closed other repository", "other/fork", "head", "closed", "42\n", false},
+		{"closed other SHA", "fixture/fork", "other-head", "closed", "42\n", false},
+		{"new ambiguous PR before rerun", "fixture/fork", "head", "open", "", true},
+		{"closed ambiguous PR before rerun", "fixture/fork", "head", "closed", "", true},
 	}
 	for _, event := range []string{"schedule", "pull_request_review", "pull_request_review_comment"} {
 		for _, tc := range cases {
@@ -603,26 +608,26 @@ func TestReviewHoldReleaseForkAssociation(t *testing.T) {
 					if tc.late {
 						file = "prs-after-head.json"
 					}
-					writeReviewFixture(t, dir, file, reviewSharedForkPRs(tc.peerRepo, tc.peerSHA))
+					writeReviewFixture(t, dir, file, reviewSharedForkPRs(tc.peerRepo, tc.peerSHA, tc.peerState))
 				}
 				prefix := "GITHUB_EVENT_NAME=" + event + "\n"
 				if event != "schedule" {
 					prefix += "REVIEW_PR_NUMBER=1\n"
 				}
-				assertReviewForkRelease(t, dir, prefix, tc.reruns)
+				assertReviewForkRelease(t, dir, prefix, tc.reruns, tc.peerState)
 			})
 		}
 	}
 }
 
-// reviewSharedForkPRs adds a second open head to the target PR's API collection.
-func reviewSharedForkPRs(repository, sha string) string {
-	return `[{"number":1,"head":{"sha":"head","repo":{"full_name":"fixture/fork"}}},` +
-		`{"number":2,"head":{"sha":"` + sha + `","repo":{"full_name":"` + repository + `"}}}]`
+// reviewSharedForkPRs adds a peer head and state to the target PR's API collection.
+func reviewSharedForkPRs(repository, sha, state string) string {
+	return `[{"number":1,"state":"open","head":{"sha":"head","repo":{"full_name":"fixture/fork"}}},` +
+		`{"number":2,"state":"` + state + `","head":{"sha":"` + sha + `","repo":{"full_name":"` + repository + `"}}}]`
 }
 
 // assertReviewForkRelease verifies reruns and actionable ambiguity summaries.
-func assertReviewForkRelease(t *testing.T, dir, prefix, want string) {
+func assertReviewForkRelease(t *testing.T, dir, prefix, want, peerState string) {
 	t.Helper()
 	out, err := runReviewScript(t, dir, prefix+reviewHoldReleaseScript)
 	if err != nil {
@@ -639,8 +644,11 @@ func assertReviewForkRelease(t *testing.T, dir, prefix, want string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want == "" && !strings.Contains(string(summary), "PR 1: ambiguous fork run for fixture/fork at head; also open PR(s): 2; manual rerun required") {
+	if want == "" && !strings.Contains(string(summary), "PR 1: ambiguous fork run for fixture/fork at head; also PR(s): 2 ("+peerState+"); manual rerun required") {
 		t.Errorf("missing named ambiguity and manual rerun instruction: %s", summary)
+	}
+	if want != "" && !strings.Contains(string(summary), "Released PR 1: run 42 attempt 1") {
+		t.Errorf("missing release summary: %s", summary)
 	}
 }
 
@@ -649,7 +657,7 @@ func TestReviewHoldReleaseForkReadFailure(t *testing.T) {
 	dir := reviewFixtures(t)
 	writeReviewFixture(t, dir, "runs.json", reviewForkRun("fixture/fork", "head"))
 	writeReviewFixture(t, dir, "current-pr.json", `{"number":1,"state":"open","head":{"sha":"head","repo":{"full_name":"fixture/fork"}}}`)
-	writeReviewFixture(t, dir, "fail-endpoint-1", "repos/fixture/repo/pulls?state=open&sort=created&direction=asc")
+	writeReviewFixture(t, dir, "fail-endpoint-1", "repos/fixture/repo/pulls?state=all&sort=created&direction=asc")
 	out, err := runReviewScript(t, dir, "REVIEW_PR_NUMBER=1\n"+reviewHoldReleaseScript)
 	if err == nil || !strings.Contains(out, "fork association read failed") {
 		t.Fatalf("out=%s err=%v; want failed uniqueness read", out, err)

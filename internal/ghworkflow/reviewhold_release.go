@@ -16,18 +16,18 @@ const (
 	// must not cause an unrelated failure to be rerun indefinitely.
 	reviewHoldReleaseScript = reviewHoldLibrary + `RELEASE_TITLE='Review hold release read failed'
 trap 'HOLD_TITLE="$RELEASE_TITLE"; review_error' ERR
-# Empty run associations need a unique fork repository/SHA across all open PRs,
+# Empty run associations need a unique fork repository/SHA across all PRs,
 # including on review events that otherwise read only their target PR.
 review_release_unique_head() {
   local peers matches
   if [[ $(jq --binary '.pull_requests == []' "$run") != true ]]; then return; fi
   HOLD_CAUSE="fork association read failed: pull request $PR_NUMBER"
-  peers=$(review_pages "repos/$GITHUB_REPOSITORY/pulls?state=open&sort=created&direction=asc" '')
+  peers=$(review_pages "repos/$GITHUB_REPOSITORY/pulls?state=all&sort=created&direction=asc" '')
   matches=$(jq --binary -r --arg repo "$HEAD_REPOSITORY" --arg head "$HEAD_SHA" --argjson number "$PR_NUMBER" '
     [.[] | select(.number != $number and .head.repo.full_name == $repo and .head.sha == $head) |
-      .number | tostring] | join(", ")' "$peers")
+      "\(.number) (\(.state))"] | join(", ")' "$peers")
   if [[ -n "$matches" ]]; then
-    printf 'PR %s: ambiguous fork run for %s at %s; also open PR(s): %s; manual rerun required\n' \
+    printf 'PR %s: ambiguous fork run for %s at %s; also PR(s): %s; manual rerun required\n' \
       "$PR_NUMBER" "$HEAD_REPOSITORY" "$HEAD_SHA" "$matches" >> "$GITHUB_STEP_SUMMARY"
     exit 0
   fi
@@ -46,7 +46,7 @@ review_release_pr() (
   runs=$(review_pages "repos/$GITHUB_REPOSITORY/actions/workflows/portability.yml/runs?head_sha=$HEAD_SHA" workflow_runs)
   run="$REVIEW_TMP/run.json"
   # Explicit associations take precedence; empty associations require both head
-  # fields here and the open-PR uniqueness check below before any release.
+  # fields here and the all-PR uniqueness check below before any release.
   jq --binary -c --arg head "$HEAD_SHA" --arg repo "$HEAD_REPOSITORY" --argjson number "$PR_NUMBER" '
     [.[] | select(.head_sha == $head and (.event == "pull_request" or .event == "pull_request_review")) |
       select(any(.pull_requests[]; .number == $number) or
