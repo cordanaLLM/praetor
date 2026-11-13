@@ -22,7 +22,7 @@ import (
 var currentCheckpointDigests = map[string]string{
 	checkpointScript:   "6d22fbcab1cdd08efcb0975ad0c09cfc46107346365e16a05e06b2ce9b565691",
 	checkpointCommon:   "a8d89c11f41cb3a5ca6497e84ec5dd66e38cb83c9916b56f0985f9fd8a9d854f",
-	checkpointLauncher: "83d787820a839e57c395bf2dcafd0498aae674481924dc4c3644e3108e9e9427",
+	checkpointLauncher: "6c9d40693c6e685c49345cb5a97932fecc57de4b48fc2a95a59a61f403b43c4c",
 }
 
 // AuditCheckpointBundle returns one warning line per checkpoint bundle file of the repository

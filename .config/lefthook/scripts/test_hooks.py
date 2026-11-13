@@ -5211,6 +5211,33 @@ class PythonLauncherWorktree(unittest.TestCase):
                     self.assertIn(f"{timed_out} (version probe timed out after 5s)".encode(),
                                   result.stderr)
 
+    def test_launcher_bounds_delayed_watchdog_startup(self):
+        """Delaying the timer helper cannot postpone the interpreter's deadline."""
+        import shlex
+
+        # Widen scheduling between the watchdog fork and its external sleep starting.
+        # The shim preserves privileged Bash startup and only delays that timer helper.
+        bash = shutil.which("bash")
+        (self.bin / "bash").unlink()
+        prefix = ('command() {\n'
+                  '  if [ "$1" = -p ] && [ "${2-}" = sleep ] && [ "${3-}" = 5 ]; then\n'
+                  '    builtin command -p sleep 6\n'
+                  '  fi\n'
+                  '  builtin command "$@"\n'
+                  '}\n')
+        stand_in(self.bin, "bash", 'test "$1" = -p && test "$2" = -c || exit 99\n'
+                 'script=$3; shift 3\n'
+                 f'exec {shlex.quote(bash)} -p -c {shlex.quote(prefix)}"$script" "$@"\n')
+        pid_file = self.python_descendant()
+        candidate = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        started = time.monotonic()
+        result = self.launch()
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+        self.assert_python_descendant_stopped(pid_file)
+        self.assertLess(elapsed, 8, f"delayed watchdog postponed deadline to {elapsed:.2f}s")
+
     def test_launcher_deadline_applies_only_to_version_probe(self):
         """A proven interpreter may run its hook longer than the version deadline."""
         candidate = stand_in(self.main / ".venv/bin", "python3",

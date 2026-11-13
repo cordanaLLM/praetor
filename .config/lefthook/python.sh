@@ -49,8 +49,8 @@ if [ "$keep_index" != true ]; then                                              
   unset GIT_INDEX_FILE                                                                           #
 fi                                                                                               #
 #
-# Bash monitor mode gives each background job its own process group, without an
-# optional setsid/timeout utility. Disable
+# Bash monitor mode gives the probe its own process group. A builtin timed read
+# owns the deadline: a separately scheduled sleep cannot postpone it. Disable
 # startup-file and imported-function processing with -p. Only the query is timed.
 bounded_probe() ( #
   status=0 #
@@ -63,12 +63,8 @@ bounded_probe() ( #
     set -m #
     probe=$1; shift #
     probe_dir=$(command -p mktemp -d 2>/dev/null) || exit 125 #
-    probe_pid=""; watchdog_pid="" #
+    probe_pid="" #
     cleanup() { #
-      if [ -n "$watchdog_pid" ]; then #
-        kill -TERM -- "-$watchdog_pid" 2>/dev/null || : #
-        wait "$watchdog_pid" 2>/dev/null || : #
-      fi #
       if [ -n "$probe_pid" ]; then #
         kill -KILL -- "-$probe_pid" 2>/dev/null || : #
         wait "$probe_pid" 2>/dev/null || : #
@@ -77,39 +73,27 @@ bounded_probe() ( #
     } #
     trap cleanup EXIT #
     trap "exit 1" HUP INT TERM #
-    "$@" -c "$probe" >"$probe_dir/output" 2>/dev/null </dev/null & #
-    probe_pid=$! #
     ( #
       set +m #
-      delay_pid="" #
-      stop_delay() { #
-        if [ -n "$delay_pid" ]; then #
-          kill "$delay_pid" 2>/dev/null || : #
-          wait "$delay_pid" 2>/dev/null || : #
-        fi #
+      trap - EXIT #
+      status=0 #
+      IFS= read -r -t 5 status < <( #
+        status=0 #
+        "$@" -c "$probe" >"$probe_dir/output" 2>/dev/null </dev/null || status=$? #
+        printf "%s\n" "$status" #
+      ) || { #
+        read_status=$? #
+        if [ "$read_status" -gt 128 ]; then exit 124; fi #
+        exit 125 #
       } #
-      trap stop_delay EXIT #
-      trap "exit 1" HUP INT TERM #
-      command -p sleep 5 & #
-      delay_pid=$! #
-      if wait "$delay_pid"; then #
-        : >"$probe_dir/timeout" #
-      else #
-        : >"$probe_dir/unavailable" #
-      fi #
-      kill -KILL -- "-$probe_pid" 2>/dev/null || : #
-    ) >/dev/null 2>&1 & #
-    watchdog_pid=$! #
+      if [ "$status" != 0 ]; then exit 1; fi #
+    ) & #
+    # Monitor mode establishes this group before returning its PID. Its leader #
+    # waits only for the builtin deadline, never for the stalled program. #
+    probe_pid=$! #
     status=0 #
     wait "$probe_pid" 2>/dev/null || status=$? #
-    kill -TERM -- "-$watchdog_pid" 2>/dev/null || : #
-    watchdog_status=0 #
-    wait "$watchdog_pid" 2>/dev/null || watchdog_status=$? #
-    watchdog_pid="" #
-    case "$watchdog_status" in 0 | 1 | 143) ;; *) exit 125 ;; esac #
-    if [ -f "$probe_dir/timeout" ]; then exit 124; fi #
-    if [ -f "$probe_dir/unavailable" ]; then exit 125; fi #
-    if [ "$status" -ne 0 ]; then exit 1; fi #
+    case "$status" in 0) ;; 124 | 125) exit "$status" ;; *) exit 1 ;; esac #
     command -p cat "$probe_dir/output" || exit 125 #
   '                                                                                #
   "$probe_bash" -p -c "$probe_script" probe "$probe" "$@" 2>/dev/null || status=$? #
@@ -118,33 +102,33 @@ bounded_probe() ( #
 #
 # proven CANDIDATE [ARGUMENT]: it ran the probe and stated Python 3.floor or newer.
 # The probe reads nothing: the hook's own standard input stays untouched.
-proven() {                                                                                                #
-  tried="${tried}${tried:+, }$*"                                                                          #
-  if stated=$(bounded_probe "$@"); then :; else                                                           #
-    status=$?                                                                                             #
-    if [ "$status" -eq 124 ]; then                                                                        #
-      tried="$tried (version probe timed out after 5s)"                                                   #
-    fi                                                                                                    #
-    if [ "$status" -eq 125 ]; then                                                                        #
-      tried="$tried (version probe unavailable: temporary capture or Bash process-group watchdog failed)" #
-    fi                                                                                                    #
-    return 1                                                                                              #
-  fi                                                                                                      #
-  stated=${stated%"$cr"}                                                                                  #
-  case "$stated" in                                                                                       #
-    3.*) minor=${stated#3.} ;;                                                                            #
-    *) return 1 ;;                                                                                        #
-  esac                                                                                                    #
-  case "$minor" in                                                                                        #
-    '' | *[!0-9]*) return 1 ;;                                                                            #
-  esac                                                                                                    #
-  [ "$minor" -ge "$floor" ] || return 1                                                                   #
-  if [ "$resolve" = true ]; then                                                                          #
-    printf '%s\000' "$stated" "$@"                                                                        #
-    exit 0                                                                                                #
-  fi                                                                                                      #
-  return 0                                                                                                #
-}                                                                                                         #
+proven() {                                                                                    #
+  tried="${tried}${tried:+, }$*"                                                              #
+  if stated=$(bounded_probe "$@"); then :; else                                               #
+    status=$?                                                                                 #
+    if [ "$status" -eq 124 ]; then                                                            #
+      tried="$tried (version probe timed out after 5s)"                                       #
+    fi                                                                                        #
+    if [ "$status" -eq 125 ]; then                                                            #
+      tried="$tried (version probe unavailable: temporary capture or Bash timed read failed)" #
+    fi                                                                                        #
+    return 1                                                                                  #
+  fi                                                                                          #
+  stated=${stated%"$cr"}                                                                      #
+  case "$stated" in                                                                           #
+    3.*) minor=${stated#3.} ;;                                                                #
+    *) return 1 ;;                                                                            #
+  esac                                                                                        #
+  case "$minor" in                                                                            #
+    '' | *[!0-9]*) return 1 ;;                                                                #
+  esac                                                                                        #
+  [ "$minor" -ge "$floor" ] || return 1                                                       #
+  if [ "$resolve" = true ]; then                                                              #
+    printf '%s\000' "$stated" "$@"                                                            #
+    exit 0                                                                                    #
+  fi                                                                                          #
+  return 0                                                                                    #
+}                                                                                             #
 #
 # Check Git's index before trusting an interpreter inside a virtualenv.
 venv_candidate() { #
