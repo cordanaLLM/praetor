@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+type: changed
+title: The job-timeout exception pass line names each excused job and its finding kind (cancel-risk, runaway or static-ceiling), so an exception no longer hides which risk it covers.

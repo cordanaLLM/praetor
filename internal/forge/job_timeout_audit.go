@@ -11,20 +11,28 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
 const (
-	jobTimeoutGate       = "job-timeout"
-	staticCeilingMinutes = 120
-	ceilingFloorMinutes  = 30.0
-	runawayMultiplier    = 4.0
-	cancelRiskMultiplier = 1.25
-	maxWorkflowRuns      = 3
+	jobTimeoutGate              = "job-timeout"
+	jobTimeoutKindCancelRisk    = "cancel-risk"
+	jobTimeoutKindRunaway       = "runaway"
+	jobTimeoutKindStaticCeiling = "static-ceiling"
+	jobTimeoutKindMissing       = "missing-timeout"
+	jobTimeoutKindUnreadable    = "unreadable-timeout"
+	staticCeilingMinutes        = 120
+	ceilingFloorMinutes         = 30.0
+	runawayMultiplier           = 4.0
+	cancelRiskMultiplier        = 1.25
+	maxWorkflowRuns             = 3
 )
 
 // JobTimeoutOptions is what AuditJobTimeouts reads: the repository root, the manifest's
@@ -43,6 +51,7 @@ type jobTimeoutFinding struct {
 	Workflow string
 	Line     int
 	JobID    string
+	Kind     string
 	Reason   string
 }
 
@@ -167,12 +176,13 @@ func accumulateJobVerdict(res *workflowAuditResult, v jobVerdict, hadReadError b
 	}
 }
 
+// judgeJob classifies one workflow job for timeout-minutes: missing, unreadable, measured or static limits.
 func judgeJob(rel, jobID string, job ghworkflow.Job, jobLine int, hasS bool, s float64) jobVerdict {
 	if job.Uses != "" || len(job.Steps) == 0 {
 		return jobVerdict{}
 	}
 	if job.TimeoutMinutes.Kind == 0 || (job.TimeoutMinutes.Value == "" && job.TimeoutMinutes.Tag == "!!null") {
-		f := &jobTimeoutFinding{Workflow: rel, Line: jobLine, JobID: jobID, Reason: "declares no timeout-minutes"}
+		f := &jobTimeoutFinding{Workflow: rel, Line: jobLine, JobID: jobID, Kind: jobTimeoutKindMissing, Reason: "declares no timeout-minutes"}
 		return jobVerdict{finding: f, isMeasured: hasS, isStatic: !hasS}
 	}
 	line := job.TimeoutMinutes.Line
@@ -187,7 +197,7 @@ func judgeJob(rel, jobID string, job ghworkflow.Job, jobLine int, hasS bool, s f
 	}
 	declared, err := strconv.Atoi(val)
 	if err != nil {
-		f := &jobTimeoutFinding{Workflow: rel, Line: line, JobID: jobID, Reason: fmt.Sprintf("timeout-minutes %q is unreadable", val)}
+		f := &jobTimeoutFinding{Workflow: rel, Line: line, JobID: jobID, Kind: jobTimeoutKindUnreadable, Reason: fmt.Sprintf("timeout-minutes %q is unreadable", val)}
 		return jobVerdict{finding: f, isMeasured: hasS, isStatic: !hasS}
 	}
 	if hasS {
@@ -196,28 +206,34 @@ func judgeJob(rel, jobID string, job ghworkflow.Job, jobLine int, hasS bool, s f
 	return judgeStaticJob(rel, line, jobID, declared)
 }
 
+// judgeMeasuredJob compares declared timeout-minutes against slowest measured duration s.
 func judgeMeasuredJob(rel string, line int, jobID string, declared int, s float64) jobVerdict {
 	declFloat := float64(declared)
 	if declFloat < cancelRiskMultiplier*s {
 		reason := fmt.Sprintf("timeout-minutes %d is below 1.25 x measured duration %.1fm (cancel risk)", declared, s)
-		return jobVerdict{finding: &jobTimeoutFinding{Workflow: rel, Line: line, JobID: jobID, Reason: reason}, isMeasured: true}
+		f := &jobTimeoutFinding{Workflow: rel, Line: line, JobID: jobID, Kind: jobTimeoutKindCancelRisk, Reason: reason}
+		return jobVerdict{finding: f, isMeasured: true}
 	}
 	ceil := math.Max(ceilingFloorMinutes, runawayMultiplier*s)
 	if declFloat > ceil {
 		reason := fmt.Sprintf("timeout-minutes %d is above max(30, 4 x %.1fm) bound of %.0fm (runaway)", declared, s, ceil)
-		return jobVerdict{finding: &jobTimeoutFinding{Workflow: rel, Line: line, JobID: jobID, Reason: reason}, isMeasured: true}
+		f := &jobTimeoutFinding{Workflow: rel, Line: line, JobID: jobID, Kind: jobTimeoutKindRunaway, Reason: reason}
+		return jobVerdict{finding: f, isMeasured: true}
 	}
 	return jobVerdict{isMeasured: true}
 }
 
+// judgeStaticJob checks declared timeout-minutes against staticCeilingMinutes when unmeasured.
 func judgeStaticJob(rel string, line int, jobID string, declared int) jobVerdict {
 	if declared > staticCeilingMinutes {
 		reason := fmt.Sprintf("timeout-minutes %d is above %dm bound", declared, staticCeilingMinutes)
-		return jobVerdict{finding: &jobTimeoutFinding{Workflow: rel, Line: line, JobID: jobID, Reason: reason}, isStatic: true}
+		f := &jobTimeoutFinding{Workflow: rel, Line: line, JobID: jobID, Kind: jobTimeoutKindStaticCeiling, Reason: reason}
+		return jobVerdict{finding: f, isStatic: true}
 	}
 	return jobVerdict{isStatic: true}
 }
 
+// applyExceptions formats workflow findings against live and unused job-timeout exceptions.
 func applyExceptions(findings []jobTimeoutFinding, entries []config.Exception, today time.Time) []string {
 	used := make([]bool, len(entries))
 	byWorkflow := make(map[string][]jobTimeoutFinding)
@@ -233,13 +249,13 @@ func applyExceptions(findings []jobTimeoutFinding, entries []config.Exception, t
 		wFindings := byWorkflow[wf]
 		live, _ := config.ExceptionFor(entries, wf, today, used)
 		if live != nil {
-			lines = append(lines, fmt.Sprintf("[PASS] %s: %s excepted until %s: %s",
-				jobTimeoutGate, wf, live.Expires, live.Reason))
+			lines = append(lines, fmt.Sprintf("[PASS] %s: %s excepted until %s: %s; excuses %s",
+				jobTimeoutGate, wf, live.Expires, live.Reason, formatExcusedFindings(wFindings)))
 			continue
 		}
 		for _, f := range wFindings {
 			lines = append(lines, fmt.Sprintf("[WARN] %s: %s:%d job %s: %s",
-				jobTimeoutGate, f.Workflow, f.Line, f.JobID, f.Reason))
+				jobTimeoutGate, f.Workflow, f.Line, auditJobID(f.JobID), f.Reason))
 		}
 	}
 	for i := 0; i < len(entries) && i < config.MaxExceptions; i++ {
@@ -249,6 +265,44 @@ func applyExceptions(findings []jobTimeoutFinding, entries []config.Exception, t
 		}
 	}
 	return lines
+}
+
+// auditJobID returns jobID with terminal control characters replaced so audit lines cannot be forged.
+// IDs exceeding the workflow reader's byte limit produce a diagnostic marker.
+func auditJobID(jobID string) string {
+	if len(jobID) > contextopt.MaxSourceBytes {
+		return "[oversized job ID]"
+	}
+	var b strings.Builder
+	b.Grow(len(jobID))
+	for i := 0; i < len(jobID) && i < contextopt.MaxSourceBytes; {
+		r, size := utf8.DecodeRuneInString(jobID[i:])
+		i += size
+		if unicode.IsControl(r) {
+			b.WriteByte('.')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// formatExcusedFindings formats wFindings as comma-separated "job <id> <kind>" entries in finding order.
+func formatExcusedFindings(wFindings []jobTimeoutFinding) string {
+	n := len(wFindings)
+	if n > ghworkflow.MaxJobsPerFile {
+		n = ghworkflow.MaxJobsPerFile
+	}
+	parts := make([]string, 0, n)
+	for i := 0; i < len(wFindings) && i < ghworkflow.MaxJobsPerFile; i++ {
+		f := wFindings[i]
+		kind := f.Kind
+		if kind == "" {
+			kind = "unknown"
+		}
+		parts = append(parts, strings.TrimSpace(fmt.Sprintf("job %s %s", auditJobID(f.JobID), kind)))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func readWorkflowSlowestJobs(ctx context.Context, reader ActionsReader, workflow, branch string, spec *ghworkflow.Spec) workflowRunMetrics {
