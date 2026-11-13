@@ -5345,9 +5345,11 @@ class PythonHookInterpreter(unittest.TestCase):
                                r"python \(does not answer .*\); py -3 \(does not answer"):
                 toolchain.python_program(which=only(directory))
 
+    @unittest.skipIf(os.name == "nt", "the Bash PATH fixture needs optional Windows symlink privileges")
     def test_no_candidate_on_path_is_a_missing_dependency(self):
-        # Boundary, on every platform: nothing under any candidate name. The launcher needs
-        # nothing but its shell to say so.
+        """With no Python candidate on PATH the launcher and toolchain both name each missing one."""
+        # POSIX boundary: nothing under any candidate name. The fixture exposes only Bash
+        # through a symlink so the launcher can report the missing Python dependency.
         with tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as empty:
             self.refused(self.launch("-B", "hook.py", path=empty))
             with self.assertRaisesRegex(HookError, r"python3 \(not on PATH\); python \(not on "
