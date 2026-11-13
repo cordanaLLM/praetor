@@ -19,46 +19,44 @@ import (
 	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// bundleGit runs fixture Git with no inherited Git settings and bounded output.
-func bundleGit(t *testing.T, dir string, args ...string) string {
+// bundleGit runs isolated fixture Git and fails at the first refused step.
+func bundleGit(t testing.TB, dir string, args ...string) string {
 	t.Helper()
-	env := util.FilterEnvironment(os.Environ(), func(name string) bool { return strings.HasPrefix(strings.ToUpper(name), "GIT_") })
-	env = append(env, "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
-	ctx, err := util.WithCommandEnvironment(t.Context(), env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	argv := append([]string{"-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.DevNull, "-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)
-	out, err := util.RunGitProbe(ctx, dir, 1<<20, argv...)
-	if err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out.Stderr)
-	}
-	return strings.TrimSpace(string(out.Stdout))
+	argv := append([]string{"-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.autocrlf=false"}, args...)
+	return testsupport.RunFixtureGit(t, dir, argv)
 }
 
-// bundleWrite stages byte-exact fixture content; snapshots handle supported text paths.
-// Git stdin stages binary data and control-character paths that text snapshots reject.
+// bundleWrite stages exact fixture bytes, including binary content and literal Git paths.
 func bundleWrite(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if utf8.ValidString(content) && utf8.ValidString(name) && !strings.ContainsRune(content, 0) && !strings.ContainsAny(name, "\n\r") {
-		if err := contextopt.WriteSnapshot(t.Context(), filepath.Join(dir, name), []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		bundleGit(t, dir, "--literal-pathspecs", "add", "--", name)
-		return
-	}
-	ctx, err := util.WithCommandStdin(t.Context(), []byte(content))
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := util.RunGitProbe(ctx, dir, 1024, "hash-object", "-w", "--stdin")
-	if err != nil {
-		t.Fatal(err)
+	bundleGit(t, dir, "--literal-pathspecs", "add", "--", name)
+}
+
+// TestBundleFixtureFailure checks Git diagnostics and termination before the next fixture step.
+func TestBundleFixtureFailure(t *testing.T) {
+	dir := bundleRepo(t)
+	continued := false
+	message := testsupport.RecordFatal(t, func(tb testing.TB) {
+		bundleGit(tb, dir, "rev-parse", "--verify", "refs/heads/absent")
+		continued = true
+	})
+	if continued || !strings.Contains(message, "exit status") || !strings.Contains(message, "refs/heads/absent") {
+		t.Fatalf("fixture failure continued=%t, diagnostic=%q", continued, message)
 	}
-	bundleGit(t, dir, "update-index", "--add", "--cacheinfo", "100644", strings.TrimSpace(string(out.Stdout)), name)
+	message = testsupport.RecordFatal(t, func(tb testing.TB) {
+		bundleGit(tb, dir, "rev-parse", "--verify", "HEAD")
+		continued = true
+	})
+	if !continued || message != "" {
+		t.Fatalf("successful fixture stopped: continued=%t, diagnostic=%q", continued, message)
+	}
 }
 
 // bundleCommit commits all fixture changes without accessing signing credentials.
@@ -67,15 +65,41 @@ func bundleCommit(t *testing.T, dir string) {
 	bundleGit(t, dir, "commit", "-qm", "fixture")
 }
 
-// bundleRepo creates a common ancestor and a head branch for independent edits.
+// bundleRepo uses topic: head aliases HEAD on case-insensitive filesystems.
 func bundleRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	bundleGit(t, dir, "init", "-q", "-b", "target")
 	bundleWrite(t, dir, "shared.txt", "first\n"+strings.Repeat("middle\n", 12)+"last\n")
 	bundleCommit(t, dir)
-	bundleGit(t, dir, "checkout", "-qb", "head")
+	bundleGit(t, dir, "checkout", "-qb", "topic")
 	return dir
+}
+
+// TestBundleFixtureRefs models a case-insensitive head lookup through a fixture-only alias.
+func TestBundleFixtureRefs(t *testing.T) {
+	dir := bundleRepo(t)
+	bundleWrite(t, dir, "shared.txt", "topic edit\n")
+	bundleCommit(t, dir)
+	bundleGit(t, dir, "checkout", "-q", "target")
+	alias := filepath.Join(dir, ".git", "head")
+	if _, err := os.Lstat(alias); errors.Is(err, os.ErrNotExist) {
+		if runtime.GOOS == "windows" {
+			t.Skip("case-sensitive Windows fixture needs symlink privileges to model head aliasing HEAD")
+		}
+		if err := os.Symlink("HEAD", alias); err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Build(t.Context(), dir, "target", "topic", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Target == b.Head || len(b.Files) != 1 || b.Files[0].Content != "topic edit\n" {
+		t.Fatalf("fixture refs alias HEAD: %+v", b)
+	}
 }
 
 // TestBundleStaleBranch proves contents come from the predicted merge, preserving target edits.
@@ -87,14 +111,14 @@ func TestBundleStaleBranch(t *testing.T) {
 	bundleWrite(t, dir, "shared.txt", "first\n"+strings.Repeat("middle\n", 12)+"target-last\n")
 	bundleWrite(t, dir, "target-only.txt", "new target work\n")
 	bundleCommit(t, dir)
-	b, err := Build(t.Context(), dir, "target", "head", Options{})
+	b, err := Build(t.Context(), dir, "target", "topic", Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(b.Files) != 1 || !strings.Contains(b.Files[0].Content, "target-last") || !strings.Contains(b.Files[0].Content, "head-first") {
 		t.Fatalf("stale content: %+v", b)
 	}
-	if raw := bundleGit(t, dir, "show", "head:shared.txt"); strings.Contains(raw, "target-last") {
+	if raw := bundleGit(t, dir, "show", "topic:shared.txt"); strings.Contains(raw, "target-last") {
 		t.Fatal("head unexpectedly contains target advance")
 	}
 	ids := []string{b.Tree, b.MergeBase, b.Target, b.Head}
@@ -116,7 +140,7 @@ func TestBundleConflict(t *testing.T) {
 	bundleGit(t, dir, "checkout", "-q", "target")
 	bundleWrite(t, dir, "shared.txt", "target\n")
 	bundleCommit(t, dir)
-	b, err := Build(t.Context(), dir, "target", "head", Options{})
+	b, err := Build(t.Context(), dir, "target", "topic", Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +175,7 @@ func TestBundleBounds(t *testing.T) {
 	for i := 0; i < len(cases); i++ {
 		tc := cases[i]
 		t.Run(tc.name, func(t *testing.T) {
-			b, err := Build(t.Context(), dir, "target", "head", tc.limits)
+			b, err := Build(t.Context(), dir, "target", "topic", tc.limits)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -188,7 +212,7 @@ func TestBundleValidateTruncation(t *testing.T) {
 	dir := bundleRepo(t)
 	bundleWrite(t, dir, "large.txt", strings.Repeat("x", 64<<10+1))
 	bundleCommit(t, dir)
-	b, err := Build(t.Context(), dir, "target", "head", Options{})
+	b, err := Build(t.Context(), dir, "target", "topic", Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +259,7 @@ func bundlePathNames(t *testing.T, paths []string) {
 		bundleWrite(t, dir, paths[i], expected[paths[i]].Content)
 	}
 	bundleCommit(t, dir)
-	b, err := Build(t.Context(), dir, "target", "head", Options{})
+	b, err := Build(t.Context(), dir, "target", "topic", Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +288,7 @@ func TestBundleTargetRename(t *testing.T) {
 	bundleGit(t, dir, "mv", "shared.txt", "renamed.txt")
 	bundleWrite(t, dir, "target-only.txt", "independent target addition\n")
 	bundleCommit(t, dir)
-	b, err := Build(t.Context(), dir, "target", "head", Options{})
+	b, err := Build(t.Context(), dir, "target", "topic", Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +319,7 @@ func TestBundleUTF8Truncation(t *testing.T) {
 		dir := bundleRepo(t)
 		bundleWrite(t, dir, "utf8.txt", tc.source)
 		bundleCommit(t, dir)
-		b, err := Build(t.Context(), dir, "target", "head", Options{MaxFileBytes: tc.limit})
+		b, err := Build(t.Context(), dir, "target", "topic", Options{MaxFileBytes: tc.limit})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -333,7 +357,7 @@ func TestBundleUTF8WholeBlobKeepsBytes(t *testing.T) {
 		dir := bundleRepo(t)
 		bundleWrite(t, dir, "latin1.txt", tc.source)
 		bundleCommit(t, dir)
-		b, err := Build(t.Context(), dir, "target", "head", Options{MaxFileBytes: tc.limit})
+		b, err := Build(t.Context(), dir, "target", "topic", Options{MaxFileBytes: tc.limit})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -403,7 +427,7 @@ func TestBundleDeletedAndBinary(t *testing.T) {
 	bundleGit(t, dir, "rm", "--", "shared.txt")
 	bundleWrite(t, dir, "binary", "abc\x00def")
 	bundleCommit(t, dir)
-	b, err := Build(t.Context(), dir, "target", "head", Options{MaxFileBytes: 2})
+	b, err := Build(t.Context(), dir, "target", "topic", Options{MaxFileBytes: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,13 +448,13 @@ func TestBundleErrors(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := Build(ctx, dir, "target", "head", Options{}); !errors.Is(err, context.Canceled) {
+	if _, err := Build(ctx, dir, "target", "topic", Options{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel: %v", err)
 	}
-	if _, err := Build(t.Context(), dir, "target", "head", Options{MaxFiles: -1}); err == nil {
+	if _, err := Build(t.Context(), dir, "target", "topic", Options{MaxFiles: -1}); err == nil {
 		t.Fatal("negative limit accepted")
 	}
-	b, err := Build(t.Context(), dir, "target", "head", Options{})
+	b, err := Build(t.Context(), dir, "target", "topic", Options{})
 	if err != nil || len(b.Files) != 0 {
 		t.Fatalf("empty diff: %+v, %v", b, err)
 	}
