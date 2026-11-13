@@ -7,6 +7,7 @@ package forge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
 type fakeJobTimeoutReader struct {
@@ -508,6 +510,52 @@ func TestJobTimeout_ExcusedKind_Negative_UnexcusedAndExpired(t *testing.T) {
 	}
 	if !strings.Contains(outExpired, wantWarn) || strings.Contains(outExpired, "excuses") {
 		t.Errorf("expired exception must keep [WARN] line without excuses; got:\n%s", outExpired)
+	}
+}
+
+// An excused workflow whose only finding is a missing timeout-minutes names "missing-timeout".
+func TestJobTimeout_ExcusedKind_MissingTimeout(t *testing.T) {
+	content := "on: push\njobs:\n  bare:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo bare\n"
+	want := "[PASS] job-timeout: .github/workflows/missing.yml excepted until 2026-12-31: waived; excuses job bare missing-timeout"
+	assertExcusedJobTimeoutPass(t, "missing.yml", content, nil, "--offline", "waived", want)
+}
+
+// An excused workflow whose only finding is an unreadable timeout-minutes names "unreadable-timeout".
+func TestJobTimeout_ExcusedKind_UnreadableTimeout(t *testing.T) {
+	content := "on: push\njobs:\n  bad:\n    timeout-minutes: five\n    steps:\n      - run: echo bad\n"
+	want := "[PASS] job-timeout: .github/workflows/unreadable.yml excepted until 2026-12-31: waived; excuses job bad unreadable-timeout"
+	assertExcusedJobTimeoutPass(t, "unreadable.yml", content, nil, "--offline", "waived", want)
+}
+
+// formatExcusedFindings must not let terminal control characters in a job key forge audit-log lines.
+func TestFormatExcusedFindings_SanitizesControlCharJobID(t *testing.T) {
+	rawID := "gate\x1bforged"
+	got := formatExcusedFindings([]jobTimeoutFinding{
+		{JobID: rawID, Kind: jobTimeoutKindCancelRisk},
+	})
+	if strings.Contains(got, "\x1b") {
+		t.Fatalf("control character must not reach formatted output; got %q", got)
+	}
+	if !strings.Contains(got, "job gate.forged cancel-risk") {
+		t.Fatalf("expected sanitized job id in output; got %q", got)
+	}
+}
+
+// formatExcusedFindings stops after ghworkflow.MaxJobsPerFile entries (HISS-02 scalar cap).
+func TestFormatExcusedFindings_Boundary_MaxJobsPerFile(t *testing.T) {
+	var findings []jobTimeoutFinding
+	for i := 0; i < ghworkflow.MaxJobsPerFile+2; i++ {
+		findings = append(findings, jobTimeoutFinding{
+			JobID: fmt.Sprintf("j%d", i), Kind: jobTimeoutKindStaticCeiling,
+		})
+	}
+	got := formatExcusedFindings(findings)
+	parts := strings.Split(got, ", ")
+	if len(parts) != ghworkflow.MaxJobsPerFile {
+		t.Fatalf("expected %d formatted entries, got %d: %q", ghworkflow.MaxJobsPerFile, len(parts), got)
+	}
+	if !strings.HasSuffix(parts[len(parts)-1], "static-ceiling") {
+		t.Fatalf("last entry must be j%d; got %q", ghworkflow.MaxJobsPerFile-1, parts[len(parts)-1])
 	}
 }
 

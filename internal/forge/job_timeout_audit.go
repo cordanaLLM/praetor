@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
@@ -23,6 +24,8 @@ const (
 	jobTimeoutKindCancelRisk    = "cancel-risk"
 	jobTimeoutKindRunaway       = "runaway"
 	jobTimeoutKindStaticCeiling = "static-ceiling"
+	jobTimeoutKindMissing       = "missing-timeout"
+	jobTimeoutKindUnreadable    = "unreadable-timeout"
 	staticCeilingMinutes        = 120
 	ceilingFloorMinutes         = 30.0
 	runawayMultiplier           = 4.0
@@ -171,12 +174,13 @@ func accumulateJobVerdict(res *workflowAuditResult, v jobVerdict, hadReadError b
 	}
 }
 
+// judgeJob classifies one workflow job for timeout-minutes: missing, unreadable, measured or static limits.
 func judgeJob(rel, jobID string, job ghworkflow.Job, jobLine int, hasS bool, s float64) jobVerdict {
 	if job.Uses != "" || len(job.Steps) == 0 {
 		return jobVerdict{}
 	}
 	if job.TimeoutMinutes.Kind == 0 || (job.TimeoutMinutes.Value == "" && job.TimeoutMinutes.Tag == "!!null") {
-		f := &jobTimeoutFinding{Workflow: rel, Line: jobLine, JobID: jobID, Reason: "declares no timeout-minutes"}
+		f := &jobTimeoutFinding{Workflow: rel, Line: jobLine, JobID: jobID, Kind: jobTimeoutKindMissing, Reason: "declares no timeout-minutes"}
 		return jobVerdict{finding: f, isMeasured: hasS, isStatic: !hasS}
 	}
 	line := job.TimeoutMinutes.Line
@@ -191,7 +195,7 @@ func judgeJob(rel, jobID string, job ghworkflow.Job, jobLine int, hasS bool, s f
 	}
 	declared, err := strconv.Atoi(val)
 	if err != nil {
-		f := &jobTimeoutFinding{Workflow: rel, Line: line, JobID: jobID, Reason: fmt.Sprintf("timeout-minutes %q is unreadable", val)}
+		f := &jobTimeoutFinding{Workflow: rel, Line: line, JobID: jobID, Kind: jobTimeoutKindUnreadable, Reason: fmt.Sprintf("timeout-minutes %q is unreadable", val)}
 		return jobVerdict{finding: f, isMeasured: hasS, isStatic: !hasS}
 	}
 	if hasS {
@@ -249,7 +253,7 @@ func applyExceptions(findings []jobTimeoutFinding, entries []config.Exception, t
 		}
 		for _, f := range wFindings {
 			lines = append(lines, fmt.Sprintf("[WARN] %s: %s:%d job %s: %s",
-				jobTimeoutGate, f.Workflow, f.Line, f.JobID, f.Reason))
+				jobTimeoutGate, f.Workflow, f.Line, auditJobID(f.JobID), f.Reason))
 		}
 	}
 	for i := 0; i < len(entries) && i < config.MaxExceptions; i++ {
@@ -261,12 +265,34 @@ func applyExceptions(findings []jobTimeoutFinding, entries []config.Exception, t
 	return lines
 }
 
+// auditJobID returns jobID with terminal control characters replaced so audit lines cannot be forged.
+func auditJobID(jobID string) string {
+	var b strings.Builder
+	b.Grow(len(jobID))
+	for _, r := range jobID {
+		if unicode.IsControl(r) {
+			b.WriteByte('.')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // formatExcusedFindings formats wFindings as comma-separated "job <id> <kind>" entries in finding order.
 func formatExcusedFindings(wFindings []jobTimeoutFinding) string {
-	parts := make([]string, 0, len(wFindings))
-	for i := 0; i < len(wFindings); i++ {
+	n := len(wFindings)
+	if n > ghworkflow.MaxJobsPerFile {
+		n = ghworkflow.MaxJobsPerFile
+	}
+	parts := make([]string, 0, n)
+	for i := 0; i < len(wFindings) && i < ghworkflow.MaxJobsPerFile; i++ {
 		f := wFindings[i]
-		parts = append(parts, strings.TrimSpace(fmt.Sprintf("job %s %s", f.JobID, f.Kind)))
+		kind := f.Kind
+		if kind == "" {
+			kind = "unknown"
+		}
+		parts = append(parts, strings.TrimSpace(fmt.Sprintf("job %s %s", auditJobID(f.JobID), kind)))
 	}
 	return strings.Join(parts, ", ")
 }
