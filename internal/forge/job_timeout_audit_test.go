@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
@@ -525,6 +526,38 @@ func TestJobTimeout_ExcusedKind_UnreadableTimeout(t *testing.T) {
 	content := "on: push\njobs:\n  bad:\n    timeout-minutes: five\n    steps:\n      - run: echo bad\n"
 	want := "[PASS] job-timeout: .github/workflows/unreadable.yml excepted until 2026-12-31: waived; excuses job bad unreadable-timeout"
 	assertExcusedJobTimeoutPass(t, "unreadable.yml", content, nil, "--offline", "waived", want)
+}
+
+// Accepted job IDs retain every sanitized character, including multibyte runes at the input limit.
+func TestAuditJobID_Boundary_PreservesCompleteSanitizedID(t *testing.T) {
+	prefix := strings.Repeat("a", contextopt.MaxSourceBytes-len("界\x00"))
+	raw := prefix + "界\x00"
+	if got := auditJobID(raw); got != prefix+"界." {
+		t.Fatalf("sanitized boundary ID changed: got %d bytes, want %d", len(got), len(raw))
+	}
+	if got := auditJobID(""); got != "" {
+		t.Fatalf("empty ID = %q, want empty", got)
+	}
+	if got := auditJobID("build\n界\u0085done"); got != "build.界.done" {
+		t.Fatalf("sanitized ID = %q, want %q", got, "build.界.done")
+	}
+}
+
+// IDs beyond the workflow input bound produce a diagnostic marker in both audit paths.
+func TestAuditJobID_Negative_RejectsOversizedInput(t *testing.T) {
+	raw := strings.Repeat("a", contextopt.MaxSourceBytes+1)
+	const want = "[oversized job ID]"
+	if got := auditJobID(raw); got != want {
+		t.Fatalf("oversized ID: got %d bytes, want %q", len(got), want)
+	}
+	finding := jobTimeoutFinding{Workflow: ".github/workflows/ci.yml", JobID: raw, Kind: jobTimeoutKindMissing}
+	if got := formatExcusedFindings([]jobTimeoutFinding{finding}); got != "job "+want+" missing-timeout" {
+		t.Fatalf("excused oversized ID: got %d bytes", len(got))
+	}
+	lines := applyExceptions([]jobTimeoutFinding{finding}, nil, time.Time{})
+	if len(lines) != 1 || !strings.Contains(lines[0], "job "+want+":") {
+		t.Fatal("warning path did not mark the oversized ID")
+	}
 }
 
 // formatExcusedFindings must not let terminal control characters in a job key forge audit-log lines.

@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
@@ -266,10 +268,16 @@ func applyExceptions(findings []jobTimeoutFinding, entries []config.Exception, t
 }
 
 // auditJobID returns jobID with terminal control characters replaced so audit lines cannot be forged.
+// IDs exceeding the workflow reader's byte limit produce a diagnostic marker.
 func auditJobID(jobID string) string {
+	if len(jobID) > contextopt.MaxSourceBytes {
+		return "[oversized job ID]"
+	}
 	var b strings.Builder
 	b.Grow(len(jobID))
-	for _, r := range jobID {
+	for i := 0; i < len(jobID) && i < contextopt.MaxSourceBytes; {
+		r, size := utf8.DecodeRuneInString(jobID[i:])
+		i += size
 		if unicode.IsControl(r) {
 			b.WriteByte('.')
 			continue
