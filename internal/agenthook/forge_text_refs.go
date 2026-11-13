@@ -69,12 +69,14 @@ type ghTextFile struct {
 }
 
 // ghWriteCall holds the raw command text, resolved file arguments and any file-collection
-// refusal for a single scoped gh write invocation.
+// refusal for a single scoped gh write invocation, plus arguments and create classification.
 type ghWriteCall struct {
-	raw     string
-	files   []ghTextFile
-	fileErr string
-	dir     string
+	raw      string
+	files    []ghTextFile
+	fileErr  string
+	dir      string
+	prCreate bool
+	args     []string
 }
 
 // ghDirPolicy holds the resolved trusted organisations, missing-list flag, diagnostic
@@ -584,7 +586,8 @@ func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghW
 	if readsStdin {
 		raw = fullCommand
 	}
-	return ghWriteCall{raw: raw, files: files, fileErr: fileErr, dir: cmdDir}, workDir, true
+	prCreate := subcmd == "pr" && unquoteShellWord(args[len(args)-len(rest)-1]) == "create"
+	return ghWriteCall{raw: raw, files: files, fileErr: fileErr, dir: cmdDir, prCreate: prCreate, args: args}, workDir, true
 }
 
 // classifyGHCall identifies the gh subcommand and remaining arguments for a scoped write

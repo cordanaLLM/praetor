@@ -182,6 +182,8 @@ type ForgeSettings struct {
 	ClaimStale time.Duration `json:"claim_stale,omitzero"`
 	// OwnOrganizations permits references to additional owners in repository forge text.
 	OwnOrganizations []string `json:"own_organizations,omitzero"`
+	// PRTitleLimits bounds explicit pull request titles for configured repositories.
+	PRTitleLimits []PRTitleLimit `json:"pr_title_limits,omitzero"`
 }
 
 // DefaultClaimStale is the built-in stale window of an issue claim.

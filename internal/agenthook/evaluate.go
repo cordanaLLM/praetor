@@ -78,8 +78,13 @@ func evaluate(ctx context.Context, dialect Dialect, row Registration, in Invocat
 	return canonical, verdict
 }
 
-// judge resolves the governed root, checks the environment and dispatches the event.
+// judge checks operator title limits everywhere, resolves governance and dispatches the event.
 func judge(ctx context.Context, row Registration, canonical Canonical, in Invocation) Verdict {
+	if row.Event == EventPreTool {
+		if verdict := evaluatePRTitleLimits(ctx, canonical, in); verdict.Outcome != Allow {
+			return verdict
+		}
+	}
 	root, verdict, ok := resolveGovernedRoot(ctx, row, canonical, in)
 	if !ok {
 		return verdict

@@ -292,6 +292,25 @@ An operator-policy load or validation error refuses the write, including plain t
 
 Tests: `TestForgeTextRefsRefusedPerForm`, `TestForgeTextRefsAcceptedCases`, `TestForgeTextRefsBoundaryAndFailClosedCases` and `TestForgeTextRefsOrganizationResolutionCases` in `internal/agenthook/forge_text_refs_test.go`. Order: `engine-forge-text-outside-ref-guard-20261031`.
 
+## Pull request title limits
+
+Operator layers can configure `forge.pr_title_limits` without embedding repository conventions in the engine. The guard selects these documents through `PRAETOR_FLEET_CONFIG` and `PRAETOR_WORKSTATION_CONFIG` using `loadOperatorForgeSettings`:
+
+```yaml
+forge:
+  pr_title_limits:
+    - repo: example/widget
+      max: 64
+```
+
+The list defaults to empty and accepts at most 64 records with `max` from 20 to 256. Repository names compare case-insensitively. Layers merge by repository key, with the later layer winning; an empty list preserves earlier records. Duplicate keys within a layer, malformed repositories, invalid maxima and merged lists over 64 records are refused by `config.ValidatePRTitleLimits` (`internal/config/operator_pr_title_limits.go`).
+
+Every registered `pre-tool` client evaluates this operator rule before checkout governance, including ungoverned checkouts. For each `gh pr create` collected by the existing shell reader, the guard reads `--title` or `-t` (separate, attached short or `=VALUE` forms), unquotes it with `unquoteShellWord`, and counts Unicode code points. A title over the target repository's limit is refused with rule `pr-title-limit`, the repository, observed length, limit and title. Exactly the limit passes. Calls without an explicit title, including `--fill` and interactive creation, are not judged. Repositories without a configured limit pass this check.
+
+The target comes from `--repo`/`-R`, then `GH_REPO`, then the command directory's origin remote through `util.ResolveRemoteIdentity`, the identity reader used by the forge-text policy. Directory changes reuse `collectGHWriteCalls`. Settings-read failures deny by name; with configured limits, an unresolved target also denies rather than guessing which limit applies. Static inspection does not evaluate shell substitutions in title or repository arguments.
+
+Implementation and boundary evidence: `internal/agenthook/pr_title_limits.go`, `TestPRTitleLimitsPreToolPlants65And64`, `TestPRTitleLimitsResolutionAndForms`, `TestPRTitleLimitsEveryPreToolClient`, and `internal/config/operator_pr_title_limits_test.go`.
+
 ## Clock on every prompt
 
 Agents that estimate the time write wrong timestamps into ledgers and commit bodies, so
