@@ -61,13 +61,37 @@ func handleModelsBundle(args []string) error {
 	if err != nil {
 		return fmt.Errorf("build: %w", err)
 	}
-	if *asJSON {
-		if err := json.NewEncoder(os.Stdout).Encode(b); err != nil {
-			return fmt.Errorf("bundle JSON: %w", err)
+	return writeModelBundleOutput(ctx, os.Stdout, b, *asJSON)
+}
+
+// writeModelBundleOutput bounds both output formats by the build's remaining deadline.
+// A blocked writer may outlive this call until the command exits; the buffered result
+// lets its goroutine finish if the writer subsequently unblocks.
+func writeModelBundleOutput(ctx context.Context, w io.Writer, b reviewbundle.Bundle, asJSON bool) error {
+	name := "bundle text"
+	if asJSON {
+		name = "bundle JSON"
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		if asJSON {
+			done <- json.NewEncoder(w).Encode(b)
+			return
+		}
+		done <- writeModelBundle(w, b)
+	}()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("%s: %w", name, ctx.Err())
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
 		}
 		return nil
 	}
-	return writeModelBundle(os.Stdout, b)
 }
 
 // validateModelBundleArgs requires two refs, a repository and no trailing positional arguments.
