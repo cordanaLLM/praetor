@@ -12,6 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
+// runModels dispatches the models subcommands: sync, list, route, outcome and merge-check.
 func runModels(args []string) error {
 	fs := flag.NewFlagSet("models", flag.ContinueOnError)
 	configPath := fs.String("config", router.DefaultConfigPath, "Path to model routing config")
@@ -21,16 +22,10 @@ func runModels(args []string) error {
 	probeAliases := fs.Bool("probe-aliases", false, "models sync: probe each gateway alias entry once and record whether it answers; sends the gateway key_env value to the declared gateway address")
 	route := addModelRouteFlags(fs)
 	outcome := addModelOutcomeFlags(fs)
+	merge := addModelMergeFlags(fs)
 
-	positional, err := parseInterspersed(fs, args)
+	action, err := parseModelAction(fs, args)
 	if err != nil {
-		return err
-	}
-	action := positionalAt(positional, 0, "list")
-	if len(positional) > 1 {
-		return fmt.Errorf("models accepts one action")
-	}
-	if err := validateModelRouteFlags(fs, action); err != nil {
 		return err
 	}
 
@@ -46,10 +41,12 @@ func runModels(args []string) error {
 		return handleModelsList(*configPath)
 	case "route":
 		return handleModelsRoute(ctx, *configPath, route)
+	case "merge-check":
+		return handleModelsMerge(merge)
 	case "outcome":
 		return handleModelsOutcome(ctx, *configPath, *route.task, outcome)
 	default:
-		return fmt.Errorf("unknown action: %s (supported: sync, list, route, outcome)", action)
+		return fmt.Errorf("unknown action: %s (supported: sync, list, route, outcome, merge-check)", action)
 	}
 }
 
