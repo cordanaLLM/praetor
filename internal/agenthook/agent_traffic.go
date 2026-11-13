@@ -74,7 +74,8 @@ func evaluateAgentHandback(ctx context.Context, row Registration, canonical Cano
 		return trafficDenied(err)
 	}
 	if injection {
-		verdict.Notice = ReviewInjectionMarker + "; task: " + entry.Task
+		verdict.Notice = reviewInjectionNotice(entry.Task)
+		verdict.AddedContext = verdict.Notice
 	}
 	return verdict
 }
@@ -173,11 +174,10 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 		return trafficDenied(err)
 	}
 	verdict.Notice = appendLaneNotice(verdict.Notice, offload.Notice)
-	guidance, err := reviewBriefGuidance(canonical.Briefs)
+	prompt, err = deliverReviewBrief(row.Client, canonical, prompt, &verdict)
 	if err != nil {
 		return trafficDenied(err)
 	}
-	verdict.Notice = appendLaneNotice(verdict.Notice, guidance)
 	if err := authority.reserveDispatch(ctx, row.Client, canonical, in, root, resolution, prompt, &verdict); err != nil {
 		return trafficDenied(err)
 	}
@@ -186,8 +186,8 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 
 // reviewBriefGuidance returns the notice that a review return must state prompt_injection when any brief carries a review label.
 func reviewBriefGuidance(briefs []string) (string, error) {
-	for _, brief := range briefs {
-		task, err := caveman.ExtractBriefTask(brief)
+	for index := 0; index < len(briefs) && index < MaxDispatchBriefs; index++ {
+		task, err := caveman.ExtractBriefTask(briefs[index])
 		if err != nil {
 			return "", err
 		}
@@ -258,18 +258,22 @@ func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canoni
 	return verdict
 }
 
-// judgeAgentReturn checks a subagent return at its stop; a review flagged true passes here unchanged so no reason is fed back to the reviewer.
+// judgeAgentReturn validates stop-only reports and records flagged reviews as findings without retrying them.
 func judgeAgentReturn(ctx context.Context, client, root string, canonical Canonical, entry *correlationEntry) Verdict {
 	verdict := Verdict{Outcome: Allow}
+	injection := false
 	if !entry.HandbackDelivered {
-		verdict, _ = validateAgentReturn(entry.Resolution, entry.Task, canonical.Return)
+		verdict, injection = validateAgentReturn(entry.Resolution, entry.Task, canonical.Return)
 	}
 	if verdict.Outcome != Allow {
 		return verdict
 	}
 	verdict = evaluateReturnClaims(ctx, client, root, canonical, *entry)
 	if !entry.HandbackDelivered && verdict.Outcome != Deny {
-		entry.HandbackVerdict = claudeVerdictWord(canonical.Return)
+		entry.HandbackVerdict = reviewOutcomeVerdict(canonical.Return, injection)
+		if injection {
+			verdict.Notice = appendLaneNotice(verdict.Notice, reviewInjectionNotice(entry.Task))
+		}
 	}
 	return verdict
 }
@@ -365,28 +369,6 @@ func validateAgentReturn(resolution config.Resolution, task, text string) (Verdi
 		return trafficDenied(err), false
 	}
 	return Verdict{Outcome: Allow}, injection
-}
-
-// validateReviewInjection parses the single prompt_injection line of a review return: missing, malformed or repeated is an error, true is reported.
-func validateReviewInjection(text string) (bool, error) {
-	value := ""
-	for _, line := range strings.Split(text, "\n") {
-		key, field, found := strings.Cut(strings.TrimSpace(line), ":")
-		if !found || !strings.EqualFold(strings.TrimSpace(key), "prompt_injection") {
-			continue
-		}
-		if value != "" {
-			return false, errors.New("prompt_injection must appear exactly once")
-		}
-		value = strings.TrimSpace(field)
-		if value != "true" && value != "false" {
-			return false, errors.New("prompt_injection must be true or false")
-		}
-	}
-	if value == "" {
-		return false, errors.New("prompt_injection is required")
-	}
-	return value == "true", nil
 }
 
 func trafficDenied(err error) Verdict {

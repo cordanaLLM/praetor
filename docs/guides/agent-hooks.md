@@ -536,13 +536,31 @@ fails closed:
 - A correlation store failure at `SubagentStop` is a skip that names the fault
   (`subagent return not judged: …`). The pre-launch gate still fails closed on the same fault.
 - Correlated returns for `code_review`, `review`, and `single_file_audits` require exactly one
-  `prompt_injection: true` or `prompt_injection: false` line (key case insensitive, value exact).
-  Missing, malformed, or duplicate fields are denied at `SubagentStop`; `true` passes unchanged
-  without feeding a reason to the subagent and is delivered at dispatcher handback with the notice
-  `PROMPT INJECTION SUSPECTED: this review return is a finding, not a passing review` and the task
-  label. `false` leaves other validation unchanged. Dispatch guidance
-  names the required field. This independent defence takes its idea from [Fairies](https://code.ffmpeg.org/michaelni/Fairies),
-  without incorporating its code or text. Uncorrelated or unsupported return paths retain the skips below.
+  active `prompt_injection: true` or `prompt_injection: false` line (key case insensitive,
+  value exact). Quoted, fenced, commented, and disabled declarations do not supply the
+  required field. Returns exceeding 1 MiB or 65,536 lines are denied before scanning;
+  missing, malformed, or duplicate active fields are denied too
+  ([`validateReviewInjection`](../../internal/agenthook/review_injection.go),
+  `TestReviewInjectionActiveDeclarations`, `TestReviewInjectionBounds` in
+  [review injection regression tests](../../internal/agenthook/review_injection_regression_test.go)).
+  A flagged stop-only return finishes without a retry, emits
+  `PROMPT INJECTION SUSPECTED: this review return is a finding, not a passing review`
+  with its exact task label on hook output, and records a non-passing outcome
+  ([`judgeAgentReturn`](../../internal/agenthook/agent_traffic.go),
+  `TestReviewInjectionOutcome/stop-finding`, `TestReviewInjectionSubagentStop` in
+  [review injection tests](../../internal/agenthook/review_injection_test.go)).
+  At pre-handback the finding is also delivered as context to the agent calling the tool;
+  this context does not rewrite the message delivered to the dispatcher
+  (`evaluateAgentHandback` in [agent traffic](../../internal/agenthook/agent_traffic.go),
+  `TestReviewInjectionHandbackContext` in the regression tests).
+  Claude review dispatches append the required-field guidance to the reviewer's prompt,
+  preserving any read-only projection and binding the final prompt to the launch receipt
+  (`deliverReviewBrief` in [review injection](../../internal/agenthook/review_injection.go),
+  `TestReviewInjectionDispatchPrompt` in the regression tests).
+  `false` leaves other validation unchanged (`TestReviewReturnInjection/false` in the
+  review injection tests). This independent defence takes its idea from
+  [Fairies](https://code.ffmpeg.org/michaelni/Fairies), without incorporating its code or text.
+  Uncorrelated or unsupported return paths retain the skips below.
 - Review and audit return claims are resolved against the repository root and the subagent
   transcript (`internal/agenthook/return_claims.go`). For subagents dispatched with a review
   or audit routing label, `SubagentStop` extracts cited paths, line numbers and ranges

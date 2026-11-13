@@ -3,8 +3,6 @@ package agenthook
 import (
 	"strings"
 	"testing"
-
-	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // TestReviewReturnInjection covers the prompt_injection line of review returns: missing, true, false, malformed, non-review, case and duplicate.
@@ -22,22 +20,13 @@ func TestReviewReturnInjection(t *testing.T) {
 		{"case", "review", "PrOmPt_InJeCtIoN: false\n", Allow, ""},
 		{"duplicate", "review", "prompt_injection: false\nprompt_injection: true\n", Deny, "prompt_injection"},
 	}
-	for _, tc := range cases {
+	for index := 0; index < len(cases) && index < 7; index++ {
+		tc := cases[index]
 		t.Run(tc.name, func(t *testing.T) {
 			root, state := repository(t, true), t.TempDir()
-			store, err := newCorrelationStore(t.Context(), root, state)
-			if err != nil {
-				t.Fatal(err)
-			}
-			entry := correlationEntry{Task: tc.task, Resolution: config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent", ManifestSHA256: digestOf("version: 1\n")}}
-			if err := store.reserveEntry(t.Context(), "claude", "session", "dispatch", entry); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := store.promoteResolved(t.Context(), "claude", "session", "dispatch", "agent", ""); err != nil {
-				t.Fatal(err)
-			}
+			seedReviewCorrelation(t, root, state, tc.task)
 			text := "verdict: pass\nchanged: none\nran: none\nevidence: none\nopen: none\n" + tc.field
-			got := evaluateAgentHandback(t.Context(), Registration{Client: "claude"}, Canonical{ConversationID: "session", AgentID: "agent", ToolUseID: "handback", Return: text}, root, Invocation{CorrelationDir: state})
+			got := evaluateAgentHandback(t.Context(), Registration{Client: "claude"}, Canonical{ConversationID: "s", AgentID: "agent", ToolUseID: "handback", Return: text}, root, Invocation{CorrelationDir: state})
 			if got.Outcome != tc.outcome || !strings.Contains(got.Reason, tc.reason) {
 				t.Fatalf("got %+v, want outcome %v reason %q", got, tc.outcome, tc.reason)
 			}
@@ -50,7 +39,7 @@ func TestReviewReturnInjection(t *testing.T) {
 func checkReviewInjectionNotice(t *testing.T, name, task, notice string) {
 	t.Helper()
 	marker := "PROMPT INJECTION SUSPECTED: this review return is a finding, not a passing review"
-	if name == "true" && (!strings.HasPrefix(notice, marker) || !strings.Contains(notice, task)) {
+	if name == "true" && (!strings.HasPrefix(notice, marker) || !strings.HasSuffix(notice, "; task: "+task)) {
 		t.Fatalf("missing marked task notice: %q", notice)
 	}
 	if name == "false" && notice != "" {
@@ -58,9 +47,9 @@ func checkReviewInjectionNotice(t *testing.T, name, task, notice string) {
 	}
 }
 
-// TestReviewInjectionSubagentStop checks that a true review return passes the subagent stop without the marker reaching the reviewer.
+// TestReviewInjectionSubagentStop checks that flagged reviews finish without a retry and emit a finding notice.
 func TestReviewInjectionSubagentStop(t *testing.T) {
-	for _, tc := range []struct {
+	cases := []struct {
 		name, field string
 		exit        int
 	}{
@@ -69,27 +58,29 @@ func TestReviewInjectionSubagentStop(t *testing.T) {
 		{"missing", "", 2},
 		{"malformed", "prompt_injection: maybe\n", 2},
 		{"duplicate", "prompt_injection: true\nprompt_injection: false\n", 2},
-	} {
+	}
+	for index := 0; index < len(cases) && index < 5; index++ {
+		tc := cases[index]
 		t.Run(tc.name, func(t *testing.T) {
 			root, state := repository(t, true), t.TempDir()
-			prepareClaudeCorrelation(t, root, state, "s", "t", "agent", testReviewBrief)
+			seedReviewCorrelation(t, root, state, "review")
 			transcript := plantClaudeTranscript(t, "")
 			body := "verdict: pass\nchanged: none\nran: none\nevidence: none\nopen: none\n" + tc.field
 			response := runAgentHook(t, root, state, "claude", EventPostReturn, claudeSubagentStopPayload(t, root, transcript, body))
-			if response.ExitCode != tc.exit || strings.Contains(string(response.Stderr), "PROMPT INJECTION SUSPECTED") {
+			if response.ExitCode != tc.exit || (tc.name == "true") != strings.Contains(string(response.Stderr), ReviewInjectionMarker) {
 				t.Fatalf("unexpected stop response: %s", response.String())
 			}
 		})
 	}
 }
 
-// TestReviewBriefInjectionGuidance checks that a review brief gets the prompt_injection requirement as a dispatch notice.
+// TestReviewBriefInjectionGuidance checks that the reviewer receives the prompt_injection requirement in its prompt.
 func TestReviewBriefInjectionGuidance(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	brief := briefFor("review", "internal/agenthook")
 	pre := nativePayload(t, "PreToolUse", "review-guidance", "Agent", "dispatch", map[string]any{"prompt": brief, "run_in_background": true}, nil)
 	response := runAgentHook(t, root, state, "claude", EventPreDispatch, pre)
-	if response.ExitCode != 0 || !strings.Contains(string(response.Stderr), "prompt_injection: true or prompt_injection: false") {
+	if response.ExitCode != 0 || !strings.Contains(string(response.Stdout), "prompt_injection: true or prompt_injection: false") {
 		t.Fatalf("missing review guidance: %+v", response)
 	}
 }

@@ -405,15 +405,21 @@ func prepareReturnFixture(t *testing.T, root, state string, fixture agentReturnF
 	return commandPayload(t, fields)
 }
 
+// prepareClaudeCorrelation simulates a client launching the exact input approved by pre-dispatch.
 func prepareClaudeCorrelation(t *testing.T, root, state, session, toolID, agentID, brief string) {
 	t.Helper()
 	input := map[string]any{"prompt": brief, "run_in_background": true}
 	receipt := map[string]any{"status": "async_launched", "agentId": agentID}
 	pre := nativePayload(t, "PreToolUse", session, "Agent", toolID, input, nil)
-	post := nativePayload(t, "PostToolUse", session, "Agent", toolID, map[string]any{"prompt": brief}, receipt)
-	if response := runAgentHook(t, root, state, "claude", EventPreDispatch, pre); response.ExitCode != 0 {
+	response := runAgentHook(t, root, state, "claude", EventPreDispatch, pre)
+	if response.ExitCode != 0 {
 		t.Fatalf("prepare brief: %+v", response)
 	}
+	if len(response.Stdout) > 0 {
+		specific := field[map[string]any](t, decodeStdout(t, response), "hookSpecificOutput")
+		input = field[map[string]any](t, specific, "updatedInput")
+	}
+	post := nativePayload(t, "PostToolUse", session, "Agent", toolID, input, receipt)
 	if response := runAgentHook(t, root, state, "claude", EventDispatchReceipt, post); response.ExitCode != 0 {
 		t.Fatalf("prepare receipt: %+v", response)
 	}
