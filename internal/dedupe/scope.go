@@ -29,9 +29,10 @@ const goLanguage = "go"
 // found. The count is what lets a report say that a verdict over eight Go files says nothing
 // about eighty Rust files beside them (#161).
 type sourceScope struct {
-	goFiles      []string
-	foreignFiles []string
-	unscanned    map[string]int
+	goFiles           []string
+	foreignFiles      []string
+	unscanned         map[string]int
+	linguistGenerated map[string]struct{}
 }
 
 func isWorkflowYAML(path string) bool {
@@ -175,6 +176,14 @@ func gitSourceFiles(ctx context.Context, repoPath string) (sourceScope, error) {
 			scope.add(language, path)
 		}
 	}
+	allPaths := make([]string, 0, len(scope.goFiles)+len(scope.foreignFiles))
+	allPaths = append(allPaths, scope.goFiles...)
+	allPaths = append(allPaths, scope.foreignFiles...)
+	generated, err := linguistGeneratedPaths(ctx, repoPath, allPaths)
+	if err != nil {
+		return sourceScope{}, err
+	}
+	scope.linguistGenerated = generated
 	finalizeScope(&scope)
 	return scope, nil
 }

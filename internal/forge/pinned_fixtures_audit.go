@@ -233,6 +233,8 @@ func fixtureSubpath(rel string) string {
 	return ""
 }
 
+// checkAttributes returns the pinned fixtures git does not keep byte-stable on checkout: neither text unset
+// nor an explicit eol, read through the shared check-attr reader.
 func checkAttributes(ctx context.Context, root string, pinned []pinnedFixture) ([]pinnedFixture, error) {
 	var paths []string
 	for i := 0; i < len(pinned) && i < maxTrackedFiles; i++ {
@@ -247,7 +249,7 @@ func checkAttributes(ctx context.Context, root string, pinned []pinnedFixture) (
 	if err != nil {
 		return nil, fmt.Errorf("git check-attr in %s: %w", root, err)
 	}
-	attrMap, err := parseCheckAttrOutput(res.Stdout)
+	attrMap, err := util.ParseCheckAttrOutput(res.Stdout)
 	if err != nil {
 		return nil, err
 	}
@@ -263,22 +265,6 @@ func checkAttributes(ctx context.Context, root string, pinned []pinnedFixture) (
 
 func passesAttribute(textVal, eolVal string) bool {
 	return textVal == "unset" || eolVal == "lf" || eolVal == "crlf"
-}
-
-func parseCheckAttrOutput(out []byte) (map[string]map[string]string, error) {
-	fields := strings.Split(string(out), "\x00")
-	if len(fields)%3 != 1 || fields[len(fields)-1] != "" {
-		return nil, errors.New("git check-attr answer is not a sequence of NUL-terminated records")
-	}
-	result := make(map[string]map[string]string)
-	for i := 0; i+2 < len(fields) && i < maxTrackedFiles*3; i += 3 {
-		p, attr, val := fields[i], fields[i+1], fields[i+2]
-		if _, ok := result[p]; !ok {
-			result[p] = make(map[string]string, 2)
-		}
-		result[p][attr] = val
-	}
-	return result, nil
 }
 
 // evaluateFindings applies live exceptions to the fixtures without an eol rule, fails on expired

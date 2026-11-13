@@ -75,7 +75,7 @@ func RunFakeJscpd(args []string, defaultVersion string, stdout, stderr io.Writer
 		}
 		return 1
 	}
-	if err := writeInDir(outDir, "jscpd-report.json", fakeJscpdReport()); err != nil {
+	if err := writeInDir(outDir, "jscpd-report.json", fakeJscpdReport(args)); err != nil {
 		if _, werr := fmt.Fprintln(stderr, "fake jscpd: write report:", err); werr != nil {
 			return 2
 		}
@@ -133,7 +133,9 @@ func fakeJscpdOutDir(args []string) (string, error) {
 }
 
 // fakeJscpdReport is the report the fake writes: oversized, the canned content, or no duplicates.
-func fakeJscpdReport() []byte {
+// Canned duplicate pairs whose files were not passed on the scan argv are dropped so tests can
+// observe dedupe filters without hand-editing every fixture report.
+func fakeJscpdReport(args []string) []byte {
 	if os.Getenv(FakeJscpdOversizedEnv) == "1" {
 		oversized := make([]byte, fakeJscpdOversizedBytes)
 		for i := range oversized {
@@ -142,7 +144,68 @@ func fakeJscpdReport() []byte {
 		return oversized
 	}
 	if canned := os.Getenv(FakeJscpdReportEnv); canned != "" {
-		return []byte(canned)
+		return filterFakeJscpdReport([]byte(canned), jscpdScanPaths(args))
 	}
 	return []byte(`{"duplicates":[]}`)
+}
+
+// jscpdScanPaths returns the cleaned paths after -s on the fake jscpd argv: the files the scanner asked about.
+func jscpdScanPaths(args []string) map[string]struct{} {
+	paths := make(map[string]struct{})
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-s" {
+			for j := i + 1; j < len(args); j++ {
+				paths[filepath.Clean(args[j])] = struct{}{}
+			}
+			break
+		}
+	}
+	return paths
+}
+
+type fakeJscpdReportWire struct {
+	Duplicates []fakeJscpdDuplicateWire `json:"duplicates"`
+}
+
+type fakeJscpdDuplicateWire struct {
+	Format     string            `json:"format"`
+	Lines      int               `json:"lines"`
+	Tokens     int               `json:"tokens"`
+	FirstFile  fakeJscpdFileWire `json:"firstFile"`
+	SecondFile fakeJscpdFileWire `json:"secondFile"`
+}
+
+type fakeJscpdFileWire struct {
+	Name  string `json:"name"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+}
+
+// filterFakeJscpdReport keeps the canned duplicate pairs whose both files are in allowed; with no allowed set or
+// an unreadable report it returns data unchanged.
+func filterFakeJscpdReport(data []byte, allowed map[string]struct{}) []byte {
+	if len(allowed) == 0 {
+		return data
+	}
+	var rep fakeJscpdReportWire
+	if err := json.Unmarshal(data, &rep); err != nil {
+		return data
+	}
+	filtered := make([]fakeJscpdDuplicateWire, 0, len(rep.Duplicates))
+	for i := 0; i < len(rep.Duplicates); i++ {
+		d := rep.Duplicates[i]
+		if _, ok := allowed[filepath.Clean(d.FirstFile.Name)]; !ok {
+			continue
+		}
+		if _, ok := allowed[filepath.Clean(d.SecondFile.Name)]; !ok {
+			continue
+		}
+		filtered = append(filtered, d)
+	}
+	rep.Duplicates = filtered
+	out, err := json.Marshal(rep)
+	if err != nil {
+		return data
+	}
+	return out
 }

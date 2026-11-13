@@ -77,7 +77,7 @@ func TestRunFakeJscpd_Negative_RefusesMissingConfig(t *testing.T) {
 // UseFakeJscpd points the scanner at this test binary.
 func TestRunFakeJscpd_Boundary_OversizedReportAndUse(t *testing.T) {
 	t.Setenv(FakeJscpdOversizedEnv, "1")
-	if got := len(fakeJscpdReport()); got != 17<<20 {
+	if got := len(fakeJscpdReport(nil)); got != 17<<20 {
 		t.Fatalf("oversized report %d bytes, want %d", got, 17<<20)
 	}
 	t.Setenv(FakeJscpdEnv, "")
