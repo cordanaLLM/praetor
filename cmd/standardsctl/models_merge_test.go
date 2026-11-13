@@ -12,14 +12,14 @@ func TestModelsMergeExitCodes(t *testing.T) {
 	dir := t.TempDir()
 	draft := filepath.Join(dir, "draft.json")
 	final := filepath.Join(dir, "final.json")
-	if err := os.WriteFile(draft, []byte(`{"model":"m","kind":"code","findings":[{"id":"x"}]}`), 0600); err != nil {
+	if err := os.WriteFile(draft, []byte(`{"model":"m","kind":"code","findings":[{"id":"x","claim":"defect","pointer":"x:1","evidence":"proof"}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		name, body string
 		want       int
 	}{
-		{"valid", `{"combiner":"c","verdict":"approve","kept":[{"id":"x","sources":["m"]}]}`, 0},
+		{"valid", `{"combiner":"c","verdict":"approve","kept":[{"id":"x","claim":"defect","pointer":"x:1","evidence":"proof","sources":["m"]}]}`, 0},
 		{"omitted", `{"combiner":"c","verdict":"approve"}`, 1},
 		{"malformed", `{`, 2},
 	} {

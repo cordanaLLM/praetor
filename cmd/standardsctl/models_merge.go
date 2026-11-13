@@ -1,19 +1,21 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
-	"slices"
+	"strconv"
 
 	"github.com/cordanaLLM/praetor/internal/reviewmerge"
-	"github.com/cordanaLLM/praetor/internal/strictjson"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // mergeFileLimit bounds the size of each review input.
 const mergeFileLimit = 4 << 20
+
+// mergeInputLimit caps retained input across all draft and final documents.
+const mergeInputLimit = 4 * mergeFileLimit
 
 // modelMergeFlags holds the merge-check command options.
 type modelMergeFlags struct {
@@ -33,37 +35,27 @@ func addModelMergeFlags(fs *flag.FlagSet) *modelMergeFlags {
 
 // modelMergeError reports an input or usage error.
 func modelMergeError(err error) error {
-	if _, e := fmt.Fprintln(os.Stderr, err); e != nil {
+	message := strconv.Quote(err.Error())
+	if _, e := fmt.Fprintln(os.Stderr, message[1:len(message)-1]); e != nil {
 		return fmt.Errorf("write error: %w", e)
 	}
 	return exitStatusError{code: 2}
 }
 
-// readMergeJSON decodes a bounded review document.
-func readMergeJSON(path string, target any) error {
-	data, err := util.ReadFileLimited(filepath.Clean(path), mergeFileLimit)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
-	}
-	if err := strictjson.Decode(data, target, strictjson.Options{MaxBytes: mergeFileLimit, MaxDepth: 16}); err != nil {
-		return fmt.Errorf("decode %s: %w", path, err)
-	}
-	return nil
+// handleModelsMerge derives the invocation deadline before reading any review files.
+func handleModelsMerge(f *modelMergeFlags) error {
+	ctx, cancel := commandContext(modelsTimeout)
+	defer cancel()
+	return handleModelsMergeContext(ctx, f)
 }
 
-// handleModelsMerge validates review files and reports violations.
-func handleModelsMerge(f *modelMergeFlags) error {
-	if len(f.drafts) == 0 || len(f.drafts) > reviewmerge.MaxDrafts || *f.final == "" {
-		return modelMergeError(fmt.Errorf("merge-check requires 1..%d --draft files and --final", reviewmerge.MaxDrafts))
+// handleModelsMergeContext validates bounded inputs and selects the documented exit status.
+func handleModelsMergeContext(ctx context.Context, f *modelMergeFlags) error {
+	if err := validateMergeInputs(f); err != nil {
+		return modelMergeError(err)
 	}
-	drafts := make([]reviewmerge.Draft, len(f.drafts))
-	for i, path := range f.drafts {
-		if err := readMergeJSON(path, &drafts[i]); err != nil {
-			return modelMergeError(err)
-		}
-	}
-	var final reviewmerge.Final
-	if err := readMergeJSON(*f.final, &final); err != nil {
+	drafts, final, err := loadMergeInputs(ctx, f, mergeInputLimit)
+	if err != nil {
 		return modelMergeError(err)
 	}
 	problems := reviewmerge.Validate(drafts, final)
@@ -74,6 +66,29 @@ func handleModelsMerge(f *modelMergeFlags) error {
 		return exitStatusError{code: 1}
 	}
 	return nil
+}
+
+// validateMergeInputs refuses invalid draft counts and missing final paths before I/O.
+func validateMergeInputs(f *modelMergeFlags) error {
+	if len(f.drafts) == 0 || len(f.drafts) > reviewmerge.MaxDrafts || *f.final == "" {
+		return fmt.Errorf("merge-check requires 1..%d --draft files and --final", reviewmerge.MaxDrafts)
+	}
+	return nil
+}
+
+// loadMergeInputs shares one byte budget across the bounded draft list and the final review.
+func loadMergeInputs(ctx context.Context, f *modelMergeFlags, remaining int) ([]reviewmerge.Draft, reviewmerge.Final, error) {
+	drafts := make([]reviewmerge.Draft, len(f.drafts))
+	var final reviewmerge.Final
+	for i, path := range f.drafts {
+		if err := readMergeJSON(ctx, path, &drafts[i], &remaining); err != nil {
+			return nil, final, err
+		}
+	}
+	if err := readMergeJSON(ctx, *f.final, &final, &remaining); err != nil {
+		return nil, final, err
+	}
+	return drafts, final, nil
 }
 
 // printMergeProblems writes violations in the requested format.
@@ -92,21 +107,45 @@ func printMergeProblems(problems []reviewmerge.Problem, asJSON bool) error {
 	return nil
 }
 
-// parseModelAction parses and validates the models command action.
+// parseModelAction preserves help and distinguishes action tokens from flag values.
 func parseModelAction(fs *flag.FlagSet, args []string) (string, error) {
+	selected := selectedModelAction(fs, args)
 	positional, err := parseInterspersed(fs, args)
+	if errors.Is(err, flag.ErrHelp) {
+		return "", err
+	}
 	if err != nil {
-		if slices.Contains(args, "merge-check") {
+		if selected == "merge-check" {
 			return "", modelMergeError(err)
 		}
 		return "", err
 	}
 	action := positionalAt(positional, 0, "list")
 	err = validateMergeAction(fs, action, len(positional))
-	if err != nil && action == "merge-check" {
+	if err != nil && (action == "merge-check" || mergeOnlyFlagsSet(fs)) {
 		return "", modelMergeError(err)
 	}
 	return action, err
+}
+
+// selectedModelAction uses the shared parser's flag/value boundary rules without parsing twice.
+func selectedModelAction(fs *flag.FlagSet, args []string) string {
+	if len(args) > maxCLIArgs {
+		args = args[:maxCLIArgs]
+	}
+	end, terminated := flagRunEnd(args, boolFlagNames(fs))
+	if terminated {
+		end++
+	}
+	if end >= len(args) {
+		return "list"
+	}
+	return args[end]
+}
+
+// mergeOnlyFlagsSet reports explicit use of options reserved for merge-check.
+func mergeOnlyFlagsSet(fs *flag.FlagSet) bool {
+	return flagWasSet(fs, "draft") || flagWasSet(fs, "final") || flagWasSet(fs, "json")
 }
 
 // validateMergeAction checks arguments and flags for the selected action.
@@ -117,7 +156,7 @@ func validateMergeAction(fs *flag.FlagSet, action string, count int) error {
 	if err := validateModelRouteFlags(fs, action); err != nil {
 		return err
 	}
-	if action != "merge-check" && (flagWasSet(fs, "draft") || flagWasSet(fs, "final") || flagWasSet(fs, "json")) {
+	if action != "merge-check" && mergeOnlyFlagsSet(fs) {
 		return fmt.Errorf("--draft, --final and --json require models merge-check")
 	}
 	return nil
