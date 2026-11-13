@@ -45,10 +45,11 @@ func handleModelsBundle(args []string) error {
 	maxFile := fs.Int("max-file-bytes", 64<<10, "Maximum retained bytes per file")
 	maxFiles := fs.Int("max-files", 200, "Maximum included files")
 	asJSON := fs.Bool("json", false, "Emit JSON instead of text")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return fmt.Errorf("bundle flags: %w", err)
 	}
-	if err := validateModelBundleArgs(fs, *repo, *target, *head); err != nil {
+	if err := validateModelBundleArgs(positional, *repo, *target, *head); err != nil {
 		return err
 	}
 	if *maxFile <= 0 || *maxFiles <= 0 {
@@ -70,8 +71,8 @@ func handleModelsBundle(args []string) error {
 }
 
 // validateModelBundleArgs requires two refs, a repository and no trailing positional arguments.
-func validateModelBundleArgs(fs *flag.FlagSet, repo, target, head string) error {
-	if fs.NArg() != 0 || repo == "" || target == "" || head == "" {
+func validateModelBundleArgs(positional []string, repo, target, head string) error {
+	if len(positional) != 0 || repo == "" || target == "" || head == "" {
 		return fmt.Errorf("%s", modelBundleUsage)
 	}
 	return nil
