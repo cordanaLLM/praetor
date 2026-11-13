@@ -23,9 +23,9 @@ import (
 const imageRefLinkOutside = "link outside the repository, not followed"
 
 // imageRefScanTimeout bounds the overall duration of an image reference repository scan (HISS-02).
-// The repository pin scan measured 1.49s plain and 13.81s under -race; one minute
-// leaves over 4x race-mode headroom while maxScannedFiles and maxImageRefFileBytes
-// bound the work and imageRefIOTimeout still bounds each read.
+// TestScanRepositoryPinsContention enforces a one-fifth scan budget with two Go
+// execution threads; BenchmarkScanRepositoryPins records listing, read and
+// extraction costs. File-count, byte and per-read bounds remain independent.
 const imageRefScanTimeout = time.Minute
 
 // imageRefIOTimeout bounds individual directory or file read operations during image reference scanning (HISS-02).
@@ -404,13 +404,19 @@ func iterateScannedFiles(ctx context.Context, root string, files []string, filte
 
 // readScannedFile reads one candidate file under root with a bounded I/O context timeout (HISS-02).
 func readScannedFile(ctx context.Context, root, rel string) ([]byte, error) {
+	return readScannedFileUsing(ctx, root, rel, util.ReadConfinedLimited)
+}
+
+// readScannedFileUsing keeps the bounded read injectable for slow-reader deadline tests.
+func readScannedFileUsing(ctx context.Context, root, rel string, read func(string, string, int64) ([]byte, error)) ([]byte, error) {
+	callerCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, imageRefIOTimeout)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("read %s context: %w", rel, err)
 	}
-	content, err := util.ReadConfinedLimited(root, filepath.FromSlash(rel), maxImageRefFileBytes)
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	content, err := read(root, filepath.FromSlash(rel), maxImageRefFileBytes)
+	if ctxErr := cmp.Or(callerCtx.Err(), ctx.Err()); ctxErr != nil {
 		return nil, fmt.Errorf("read %s context: %w", rel, ctxErr)
 	}
 	return content, err
