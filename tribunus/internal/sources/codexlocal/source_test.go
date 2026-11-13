@@ -23,14 +23,16 @@ func writeSession(t *testing.T, dir, name, body string, modTime time.Time) strin
 	return path
 }
 
-const validLine = `{"timestamp":"2026-09-13T12:56:47.753Z","ordinal":1,"type":"event_msg","payload":{"type":"token_count","info":{},"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":92.0,"window_minutes":10080,"resets_at":1789858494},"secondary":null,"credits":{"has_credits":false,"unlimited":false,"balance":"0"},"plan_type":"pro"}}}`
+const validLine = /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"timestamp":"2026-09-13T12:56:47.753Z","ordinal":1,"type":"event_msg","payload":{"type":"token_count","info":{},"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":92.0,"window_minutes":10080,"resets_at":1789858494},"secondary":null,"credits":{"has_credits":false,"unlimited":false,"balance":"0"},"plan_type":"pro"}}}`
 
+// TestFetch_Positive pins positive cases for fetch.
 func TestFetch_Positive(t *testing.T) {
+	today := time.Now()
 	dir := t.TempDir()
-	writeSession(t, dir, "old.jsonl", validLine, time.Now().Add(-time.Hour))
+	writeSession(t, dir, "old.jsonl", validLine, today.Add(-time.Hour))
 	// Newest file carries a later rate_limits reading than the older one.
 	newer := strings.Replace(validLine, `"used_percent":92.0`, `"used_percent":45.5`, 1)
-	writeSession(t, dir, "new.jsonl", validLine+"\n"+newer, time.Now())
+	writeSession(t, dir, "new.jsonl", validLine+"\n"+newer, today)
 
 	res := Fetch(context.Background(), dir)
 	if res.Status != catalog.StatusOK {
@@ -54,7 +56,9 @@ func TestFetch_Positive(t *testing.T) {
 	}
 }
 
+// TestFetch_Negative pins negative cases for fetch.
 func TestFetch_Negative(t *testing.T) {
+	today := time.Now()
 	t.Run("missing directory", func(t *testing.T) {
 		res := Fetch(context.Background(), filepath.Join(t.TempDir(), "does-not-exist"))
 		if res.Status != catalog.StatusSkip {
@@ -64,7 +68,7 @@ func TestFetch_Negative(t *testing.T) {
 
 	t.Run("no jsonl files", func(t *testing.T) {
 		dir := t.TempDir()
-		writeSession(t, dir, "notes.txt", "irrelevant", time.Now())
+		writeSession(t, dir, "notes.txt", "irrelevant", today)
 		res := Fetch(context.Background(), dir)
 		if res.Status != catalog.StatusSkip {
 			t.Fatalf("Status = %v, want skip when no *.jsonl files exist", res.Status)
@@ -73,7 +77,7 @@ func TestFetch_Negative(t *testing.T) {
 
 	t.Run("malformed newest session is not silently guessed", func(t *testing.T) {
 		dir := t.TempDir()
-		writeSession(t, dir, "broken.jsonl", "not json at all\n{\"payload\":", time.Now())
+		writeSession(t, dir, "broken.jsonl", "not json at all\n{\"payload\":", today)
 		res := Fetch(context.Background(), dir)
 		// Malformed lines are skipped individually; a file with none parseable
 		// yields a skip (no rate_limits found), never a fabricated record.
@@ -84,7 +88,7 @@ func TestFetch_Negative(t *testing.T) {
 
 	t.Run("canceled context", func(t *testing.T) {
 		dir := t.TempDir()
-		writeSession(t, dir, "new.jsonl", validLine, time.Now())
+		writeSession(t, dir, "new.jsonl", validLine, today)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		res := Fetch(ctx, dir)
@@ -99,7 +103,7 @@ func TestFetch_Negative(t *testing.T) {
 // than fabricate.
 func TestFetch_Boundary(t *testing.T) {
 	dir := t.TempDir()
-	line := `{"timestamp":"2026-09-13T12:56:47.753Z","ordinal":1,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"plan_type":"pro"}}}`
+	line := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"timestamp":"2026-09-13T12:56:47.753Z","ordinal":1,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"plan_type":"pro"}}}`
 	writeSession(t, dir, "new.jsonl", line, time.Now())
 
 	res := Fetch(context.Background(), dir)
@@ -116,7 +120,7 @@ func TestFetch_Boundary(t *testing.T) {
 // the last line.
 func TestFetch_SessionEndsWithNullPrimary(t *testing.T) {
 	dir := t.TempDir()
-	nullPrimaryLine := `{"timestamp":"2026-09-13T13:13:28.673Z","ordinal":2,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"plan_type":"pro"}}}`
+	nullPrimaryLine := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"timestamp":"2026-09-13T13:13:28.673Z","ordinal":2,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"plan_type":"pro"}}}`
 	writeSession(t, dir, "new.jsonl", validLine+"\n"+nullPrimaryLine, time.Now())
 
 	res := Fetch(context.Background(), dir)

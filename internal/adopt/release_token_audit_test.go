@@ -115,7 +115,7 @@ func TestAuditReleaseToken_LiveEntryPasses(t *testing.T) {
 	root := supplyChainRepo(t, map[string]string{
 		".github/workflows/release.yml": failingReleaseWorkflow,
 	})
-	entry := releaseTokenEntry(".github/workflows/release.yml", "2026-10-12", "2026-10-22", "C")
+	entry := releaseTokenEntry(".github/workflows/release.yml", releaseTokenToday.AddDate(0, 0, -3).Format(config.ExceptionDateLayout), releaseTokenToday.AddDate(0, 0, 7).Format(config.ExceptionDateLayout), "C")
 	out, err := AuditReleaseToken(context.Background(), ReleaseTokenOptions{
 		Root:       root,
 		Exceptions: []config.Exception{entry},
@@ -124,7 +124,7 @@ func TestAuditReleaseToken_LiveEntryPasses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuditReleaseToken failed: %v", err)
 	}
-	if !strings.Contains(out, "excepted until 2026-10-22 by the exceptions entry") {
+	if !strings.Contains(out, "excepted until "+releaseTokenToday.AddDate(0, 0, 7).Format(config.ExceptionDateLayout)+" by the exceptions entry") {
 		t.Errorf("output = %q; want excepted notice", out)
 	}
 	if !strings.Contains(out, "app token migration in progress") {
@@ -137,7 +137,7 @@ func TestAuditReleaseToken_ExpiredEntryFails(t *testing.T) {
 	root := supplyChainRepo(t, map[string]string{
 		".github/workflows/release.yml": failingReleaseWorkflow,
 	})
-	entry := releaseTokenEntry(".github/workflows/release.yml", "2026-10-01", "2026-10-11", "C")
+	entry := releaseTokenEntry(".github/workflows/release.yml", releaseTokenToday.AddDate(0, 0, -14).Format(config.ExceptionDateLayout), releaseTokenToday.AddDate(0, 0, -4).Format(config.ExceptionDateLayout), "C")
 	_, err := AuditReleaseToken(context.Background(), ReleaseTokenOptions{
 		Root:       root,
 		Exceptions: []config.Exception{entry},
@@ -146,7 +146,7 @@ func TestAuditReleaseToken_ExpiredEntryFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("AuditReleaseToken passed; want failure for expired entry")
 	}
-	want := "expired on 2026-10-11, so the release-please step above in .github/workflows/release.yml fails as if it were not declared"
+	want := "expired on " + releaseTokenToday.AddDate(0, 0, -4).Format(config.ExceptionDateLayout) + ", so the release-please step above in .github/workflows/release.yml fails as if it were not declared"
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("error = %q; want %q", err.Error(), want)
 	}
@@ -158,7 +158,7 @@ func TestAuditReleaseToken_StaleEntryFails(t *testing.T) {
 		root := supplyChainRepo(t, map[string]string{
 			".github/workflows/release.yml": failingReleaseWorkflow,
 		})
-		entry := releaseTokenEntry(".github/workflows/ci.yml", "2026-10-12", "2026-10-22", "C")
+		entry := releaseTokenEntry(".github/workflows/ci.yml", releaseTokenToday.AddDate(0, 0, -3).Format(config.ExceptionDateLayout), releaseTokenToday.AddDate(0, 0, 7).Format(config.ExceptionDateLayout), "C")
 		_, err := AuditReleaseToken(context.Background(), ReleaseTokenOptions{
 			Root:       root,
 			Exceptions: []config.Exception{entry},
@@ -176,7 +176,7 @@ func TestAuditReleaseToken_StaleEntryFails(t *testing.T) {
 		root := supplyChainRepo(t, map[string]string{
 			".github/workflows/release.yml": passingReleaseWorkflow,
 		})
-		entry := releaseTokenEntry(".github/workflows/release.yml", "2026-10-12", "2026-10-22", "C")
+		entry := releaseTokenEntry(".github/workflows/release.yml", releaseTokenToday.AddDate(0, 0, -3).Format(config.ExceptionDateLayout), releaseTokenToday.AddDate(0, 0, 7).Format(config.ExceptionDateLayout), "C")
 		_, err := AuditReleaseToken(context.Background(), ReleaseTokenOptions{
 			Root:       root,
 			Exceptions: []config.Exception{entry},
@@ -194,7 +194,7 @@ func TestAuditReleaseToken_StaleEntryFails(t *testing.T) {
 		root := supplyChainRepo(t, map[string]string{
 			".github/workflows/ci.yml": "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo 1\n",
 		})
-		entry := releaseTokenEntry(".github/workflows/release.yml", "2026-10-12", "2026-10-22", "C")
+		entry := releaseTokenEntry(".github/workflows/release.yml", releaseTokenToday.AddDate(0, 0, -3).Format(config.ExceptionDateLayout), releaseTokenToday.AddDate(0, 0, 7).Format(config.ExceptionDateLayout), "C")
 		_, err := AuditReleaseToken(context.Background(), ReleaseTokenOptions{
 			Root:       root,
 			Exceptions: []config.Exception{entry},
@@ -215,7 +215,7 @@ func TestAuditReleaseToken_CategoryCOlderThan10Days(t *testing.T) {
 		".github/workflows/release.yml": failingReleaseWorkflow,
 	})
 	// 20 days between entered and expires exceeds category C 10-day bound
-	entry := releaseTokenEntry(".github/workflows/release.yml", "2026-10-01", "2026-10-21", "C")
+	entry := releaseTokenEntry(".github/workflows/release.yml", releaseTokenToday.AddDate(0, 0, -14).Format(config.ExceptionDateLayout), releaseTokenToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout), "C")
 	_, err := AuditReleaseToken(context.Background(), ReleaseTokenOptions{
 		Root:       root,
 		Exceptions: []config.Exception{entry},
@@ -305,7 +305,7 @@ func TestAuditReleaseToken_PassCount_BothExcepted(t *testing.T) {
 	root := supplyChainRepo(t, map[string]string{
 		".github/workflows/release.yml": twoFailingStepsReleaseWorkflow,
 	})
-	entry := releaseTokenEntry(".github/workflows/release.yml", "2026-10-12", "2026-10-22", "C")
+	entry := releaseTokenEntry(".github/workflows/release.yml", releaseTokenToday.AddDate(0, 0, -3).Format(config.ExceptionDateLayout), releaseTokenToday.AddDate(0, 0, 7).Format(config.ExceptionDateLayout), "C")
 	out, err := AuditReleaseToken(context.Background(), ReleaseTokenOptions{
 		Root:       root,
 		Exceptions: []config.Exception{entry},
@@ -326,7 +326,7 @@ func TestAuditReleaseToken_PassCount_PartialExcepted(t *testing.T) {
 		".github/workflows/release.yml": twoPassingStepsReleaseWorkflow,
 		".github/workflows/legacy.yml":  failingReleaseWorkflow,
 	})
-	entry := releaseTokenEntry(".github/workflows/legacy.yml", "2026-10-12", "2026-10-22", "C")
+	entry := releaseTokenEntry(".github/workflows/legacy.yml", releaseTokenToday.AddDate(0, 0, -3).Format(config.ExceptionDateLayout), releaseTokenToday.AddDate(0, 0, 7).Format(config.ExceptionDateLayout), "C")
 	out, err := AuditReleaseToken(context.Background(), ReleaseTokenOptions{
 		Root:       root,
 		Exceptions: []config.Exception{entry},

@@ -185,9 +185,9 @@ func TestRecord_Identity(t *testing.T) {
 // positive, the same debt under another commit and timestamp, and at another line (#29);
 // negative, one changed field; boundary, nil snapshots and empty debt.
 func TestBaselineSameDebt_3D(t *testing.T) {
-	recorded := &Baseline{Version: 1, GeneratedAt: "2020-01-01T00:00:00Z", Repository: "acme/widgets",
+	recorded := &Baseline{Version: 1, GeneratedAt: /* testdate: fact: recorded audit timestamp; baseline identity, no clock comparison */ "2020-01-01T00:00:00Z", Repository: "acme/widgets",
 		CommitSHA: "abc", Infractions: sampleInfractions(2), TotalInfractions: 2}
-	rescanned := &Baseline{Version: 1, GeneratedAt: "2026-09-29T00:00:00Z", Repository: "acme/widgets",
+	rescanned := &Baseline{Version: 1, GeneratedAt: /* testdate: fact: recorded audit timestamp; baseline identity, no clock comparison */ "2026-09-29T00:00:00Z", Repository: "acme/widgets",
 		CommitSHA: "def", Infractions: sampleInfractions(2)}
 	if !recorded.SameDebt(rescanned) {
 		t.Fatal("the same debt under a later commit and timestamp must compare equal")

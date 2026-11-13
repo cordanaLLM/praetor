@@ -307,9 +307,9 @@ func TestAuditWorkflowTriggers_FollowsNeedsInsideLocalCallee(t *testing.T) {
 func TestAuditWorkflowTriggers_Exceptions(t *testing.T) {
 	root := triggerRepository(t, map[string]string{"everywhere.yml": "on: push\njobs:\n  b:\n    runs-on: x\n    steps:\n      - run: make\n",
 		"gate.yml": hostedGateWorkflow})
-	live := auditTriggers(t, root, triggerEntry("everywhere.yml", "2026-10-07"))
+	live := auditTriggers(t, root, triggerEntry("everywhere.yml", triggersToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)))
 	for _, want := range []string{
-		"[PASS] Workflow triggers (HISS-18): .github/workflows/everywhere.yml excepted until 2026-10-07 by the exceptions entry " +
+		"[PASS] Workflow triggers (HISS-18): .github/workflows/everywhere.yml excepted until " + triggersToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout) + " by the exceptions entry " +
 			"(rule HISS-18, .github/workflows/everywhere.yml): runs on every branch push by design",
 		"\n  - .github/workflows/everywhere.yml:1: push runs on every branch and tag",
 		"\n[PASS] Workflow triggers (HISS-18): workflows read: 2; no push trigger runs on every branch and no job a pull " +
@@ -323,12 +323,12 @@ func TestAuditWorkflowTriggers_Exceptions(t *testing.T) {
 		t.Errorf("live entry: a finding was still reported:\n%s", live)
 	}
 	expired, err := AuditWorkflowTriggers(t.Context(), WorkflowTriggerOptions{Root: root, Today: triggersToday.AddDate(0, 0, 1),
-		Exceptions: []config.Exception{triggerEntry("everywhere.yml", "2026-10-07"), triggerEntry("gate.yml", "2026-12-31")}})
+		Exceptions: []config.Exception{triggerEntry("everywhere.yml", triggersToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)), triggerEntry("gate.yml", triggersToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout))}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"[WARN] Workflow triggers (HISS-18): the exceptions entry (rule HISS-18, .github/workflows/everywhere.yml) expired on 2026-10-07",
+		"[WARN] Workflow triggers (HISS-18): the exceptions entry (rule HISS-18, .github/workflows/everywhere.yml) expired on " + triggersToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout),
 		"[WARN] Workflow triggers (HISS-18): .github/workflows/everywhere.yml:1: push runs on every branch and tag",
 		"[WARN] Workflow triggers (HISS-18): the exceptions entry (rule HISS-18, .github/workflows/gate.yml) excuses no finding",
 		"1 of 2 workflows start runs this check counts as wasted (findings: 1)",
@@ -337,12 +337,12 @@ func TestAuditWorkflowTriggers_Exceptions(t *testing.T) {
 			t.Errorf("expired entry: output lacks %q:\n%s", want, expired)
 		}
 	}
-	other := triggerEntry("everywhere.yml", "2026-12-31")
+	other := triggerEntry("everywhere.yml", triggersToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout))
 	other.Rule = config.ExceptionRuleSupplyChain
 	if out := auditTriggers(t, root, other); !strings.Contains(out, "[WARN] Workflow triggers (HISS-18): .github/workflows/everywhere.yml:1") {
 		t.Errorf("an entry of another rule excused the workflow:\n%s", out)
 	}
-	malformed := triggerEntry("everywhere.yml", "2026-12-31")
+	malformed := triggerEntry("everywhere.yml", triggersToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout))
 	malformed.Path = "everywhere.yml"
 	if _, err := AuditWorkflowTriggers(t.Context(), WorkflowTriggerOptions{Root: root, Exceptions: []config.Exception{malformed},
 		Today: triggersToday}); err == nil || !strings.Contains(err.Error(), "[FAIL] Workflow triggers (HISS-18): exceptions[0] rule HISS-18 must name one workflow file") {
@@ -359,7 +359,7 @@ func TestAuditWorkflowTriggers_SkipsWithoutWorkflowsAndFailsUnread(t *testing.T)
 		".github/workflows, so no trigger was judged." {
 		t.Fatalf("no workflows: %q", out)
 	}
-	stale := auditTriggers(t, empty, triggerEntry("gone.yml", "2026-12-31"))
+	stale := auditTriggers(t, empty, triggerEntry("gone.yml", triggersToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout)))
 	if !strings.HasPrefix(stale, "[WARN] Workflow triggers (HISS-18): the exceptions entry (rule HISS-18, .github/workflows/gone.yml) excuses no finding") ||
 		!strings.HasSuffix(stale, "so no trigger was judged.") {
 		t.Fatalf("a stale entry without workflows: %q", stale)

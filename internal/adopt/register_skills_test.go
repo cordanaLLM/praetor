@@ -355,7 +355,7 @@ func skillNeedsLicense(t *testing.T, text string) bool {
 
 // creditPattern is the credit a shipped register skill carries: upstream author, upstream URL and
 // licence terms, in this order.
-var creditPattern = regexp.MustCompile(`^Adapted from .*https://.*MIT (?:licence|terms at adaptation \(2026-09-18\))\.$`)
+var creditPattern = regexp.MustCompile( /* testdate: fact: recorded upstream attribution/schema date; text matching, no clock comparison */ `^Adapted from .*https://.*MIT (?:licence|terms at adaptation \(2026-09-18\))\.$`)
 
 // skillCredit returns the paragraph of text that opens with "Adapted from", joined to one line, or
 // "" when no paragraph opens so. The skills are wrapped at 80 columns, so the credit spans several
@@ -397,10 +397,10 @@ func TestShippedSkills_CreditAndLicense(t *testing.T) {
 func TestSkillCredit(t *testing.T) {
 	const wrapped = "# Title\n\nAdapted from [Up](https://example.org/up) by A. Author and\n[contributors](https://example.org/up/c);\nMIT licence.\n\nBody.\n"
 	accepted := map[string]string{
-		"wrapped":         wrapped,
-		"one line":        "# Title\n\nAdapted from [Up](https://example.org/up) by A. Author; MIT licence.\n\nBody.\n",
-		"CRLF checkout":   strings.ReplaceAll(wrapped, "\n", "\r\n"),
-		"terms by date":   "Adapted from [Up](https://example.org/up) by A. Author;\nMIT terms at adaptation (2026-09-18).\n",
+		"wrapped":       wrapped,
+		"one line":      "# Title\n\nAdapted from [Up](https://example.org/up) by A. Author; MIT licence.\n\nBody.\n",
+		"CRLF checkout": strings.ReplaceAll(wrapped, "\n", "\r\n"),
+		"terms by date":/* testdate: fact: recorded upstream attribution/schema date; text matching, no clock comparison */ "Adapted from [Up](https://example.org/up) by A. Author;\nMIT terms at adaptation (2026-09-18).\n",
 		"last paragraph":  "# Title\n\nAdapted from [Up](https://example.org/up); MIT licence.",
 		"credit is first": "Adapted from [Up](https://example.org/up); MIT licence.\n\nBody.\n",
 	}

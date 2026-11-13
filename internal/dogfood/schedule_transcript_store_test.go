@@ -14,7 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/buildid"
 )
 
-const scheduleClaudeRecord = `{"type":"user","uuid":"record-id","parentUuid":"parent-id","sessionId":"session-id","timestamp":"2026-09-12T12:00:00.123Z","message":{"role":"user","content":"synthetic prompt"}}`
+const scheduleClaudeRecord = /* testdate: fact: recorded transcript/report timestamp; parsing, no clock comparison */ `{"type":"user","uuid":"record-id","parentUuid":"parent-id","sessionId":"session-id","timestamp":"2026-09-12T12:00:00.123Z","message":{"role":"user","content":"synthetic prompt"}}`
 
 func scheduleTranscriptSource(t *testing.T, record string) (string, *ScheduleConfig, SuiteTranscript) {
 	t.Helper()

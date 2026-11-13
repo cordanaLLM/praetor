@@ -49,7 +49,7 @@ func TestGeneratedMCPTypesRoundTripWithoutLoss(t *testing.T) {
 			func() any { return new(mcpwire.ListToolsResult) }},
 		"JSONRPCResultResponse": {`{"jsonrpc":"2.0","id":7,"result":{"tools":[{"name":"t","inputSchema":{"type":"object"}}],"_meta":{"a":1}}}`,
 			func() any { return new(mcpwire.JSONRPCResultResponse) }},
-		"InitializeResult": {`{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":true},"experimental":{"x":{"y":1}},"logging":{}},"serverInfo":{"name":"s","version":"1"},"x-extension":true}`,
+		"InitializeResult": { /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":true},"experimental":{"x":{"y":1}},"logging":{}},"serverInfo":{"name":"s","version":"1"},"x-extension":true}`,
 			func() any { return new(mcpwire.InitializeResult) }},
 		"CallToolResult": {`{"content":[{"type":"text","text":"ok","annotations":{"audience":["user"],"vendor":1}}],"isError":false,"structuredContent":{"a":{"b":[]}}}`,
 			func() any { return new(mcpwire.CallToolResult) }},

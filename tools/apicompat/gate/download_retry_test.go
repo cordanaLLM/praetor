@@ -138,12 +138,13 @@ func TestBuildModule_Boundary_CancelDuringWaitReturnsAtOnce(t *testing.T) {
 
 // Negative: exception for module plus download failure still fails gate.
 func TestGate_Negative_ExceptionForModulePlusDownloadFailureStillFailsGate(t *testing.T) {
+	today := time.Now()
 	t.Parallel()
 	repo := repository{
 		root:  retryFixtureRoot(t, "excepted"),
-		today: time.Now().UTC(),
+		today: today.UTC(),
 		exceptions: []exception{
-			{Path: "excepted/go.mod", Reason: "needs libfoo", Expires: "2099-12-31"},
+			{Path: "excepted/go.mod", Reason: "needs libfoo", Expires: today.UTC().AddDate(0, 0, 30).Format(time.DateOnly)},
 		},
 		runner: func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
 			if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {

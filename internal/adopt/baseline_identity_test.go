@@ -107,7 +107,7 @@ func TestReconcileBaseline_KeepsUnchangedBaseline_3D(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const old = "2020-01-01T00:00:00Z"
+	const old = /* testdate: fact: recorded upstream attribution/schema date; text matching, no clock comparison */ "2020-01-01T00:00:00Z"
 	planted := strings.Replace(mustRead(t, full), `"generated_at": "`+first.GeneratedAt+`"`, `"generated_at": "`+old+`"`, 1)
 	if !strings.Contains(planted, old) {
 		t.Fatal("fixture did not plant the old timestamp")

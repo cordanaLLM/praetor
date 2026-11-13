@@ -26,11 +26,11 @@ var versionPinPattern = regexp.MustCompile(`^v?\d+\.\d+(\.\d+)?`)
 
 // frozenTemplatesPins allow-lists the five frozen templates constants kept for API stability.
 var frozenTemplatesPins = map[string]string{
-	"GoSecurityGovulnVersion":   "frozen 2026-10-26 for API stability; live pin in internal/toolpins",
-	"GoSecurityGosecVersion":    "frozen 2026-10-26 for API stability; live pin in internal/toolpins",
-	"GoSecurityGitleaksVersion": "frozen 2026-10-26 for API stability; live pin in internal/toolpins",
-	"GoSecurityXToolsVersion":   "frozen 2026-10-26 for API stability; live pin in internal/toolpins",
-	"GoSecurityXToolsFloor":     "frozen 2026-10-26 for API stability; live pin in internal/toolpins",
+	"GoSecurityGovulnVersion":/* testdate: fact: recorded API freeze date; compatibility metadata, no clock comparison */ "frozen 2026-10-26 for API stability; live pin in internal/toolpins",
+	"GoSecurityGosecVersion":/* testdate: fact: recorded API freeze date; compatibility metadata, no clock comparison */ "frozen 2026-10-26 for API stability; live pin in internal/toolpins",
+	"GoSecurityGitleaksVersion":/* testdate: fact: recorded API freeze date; compatibility metadata, no clock comparison */ "frozen 2026-10-26 for API stability; live pin in internal/toolpins",
+	"GoSecurityXToolsVersion":/* testdate: fact: recorded API freeze date; compatibility metadata, no clock comparison */ "frozen 2026-10-26 for API stability; live pin in internal/toolpins",
+	"GoSecurityXToolsFloor":/* testdate: fact: recorded API freeze date; compatibility metadata, no clock comparison */ "frozen 2026-10-26 for API stability; live pin in internal/toolpins",
 }
 
 type pinViolation struct {

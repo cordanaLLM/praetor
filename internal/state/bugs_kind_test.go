@@ -87,7 +87,7 @@ func TestBugKind_Negative_RefusesUnknownKinds(t *testing.T) {
 	if err := SetBugKind(root, "BUG-404", BugKindDefect); err == nil {
 		t.Fatal("SetBugKind accepted an unknown ID")
 	}
-	record := `"context":"","created_at":"2026-10-07T00:00:00Z","resolved_at":"0001-01-01T00:00:00Z"`
+	record := /* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ `"context":"","created_at":"2026-10-07T00:00:00Z","resolved_at":"0001-01-01T00:00:00Z"`
 	for name, kind := range map[string]string{"unknown": `,"kind":"feature"`, "empty": `,"kind":""`, "null": `,"kind":null`} {
 		writeIntegrityFile(t, filepath.Join(root, WorkingDirName, bugMetaName), `{"version":1,"bugs":{"BUG-001":{`+record+kind+`}}}`)
 		if bugs, err := ListBugs(root, "all"); err == nil {
@@ -101,7 +101,7 @@ func TestBugKind_Negative_QuestionsRefuseAKind(t *testing.T) {
 	row := defaultQuestionsMD() + "| `Q-001` | q |  | pending |  | " + questionMetadataRef + "\n"
 	root := writeQuestionFixture(t, row)
 	writeIntegrityFile(t, filepath.Join(root, WorkingDirName, questionMetaName),
-		`{"version":1,"questions":{"Q-001":{"context":"c","created_at":"2026-09-25T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z","kind":"defect"}}}`)
+		/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ `{"version":1,"questions":{"Q-001":{"context":"c","created_at":"2026-09-25T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z","kind":"defect"}}}`)
 	if qs, err := ListQuestions(root, "all"); err == nil || !strings.Contains(err.Error(), "kind is not a questions member") {
 		t.Fatalf("question with a kind: %+v %v", qs, err)
 	}

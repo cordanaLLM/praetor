@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const sidecarRecord = `{"context":"from sidecar","created_at":"2026-09-12T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z"}`
+const sidecarRecord = /* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ `{"context":"from sidecar","created_at":"2026-09-12T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z"}`
 
 func TestBugSidecarWritersAndMixedForms(t *testing.T) {
 	root, ledger := migrationLedger(t, migrationBugs[:2])
@@ -36,20 +36,21 @@ func TestBugSidecarWritersAndMixedForms(t *testing.T) {
 	}
 }
 
+// TestBugSidecarRejectsInvalidMetadata pins bug sidecar rejects invalid metadata.
 func TestBugSidecarRejectsInvalidMetadata(t *testing.T) {
 	row := "| `BUG-001` | title | p1 | open | file |  | " + bugMetadataRef + "\n"
 	cases := map[string]string{
-		"missing sidecar":   "",
-		"missing record":    `{"version":1,"bugs":{}}`,
-		"wrong version":     `{"version":2,"bugs":{"BUG-001":` + sidecarRecord + `}}`,
-		"no version":        `{"bugs":{"BUG-001":` + sidecarRecord + `}}`,
-		"null bugs":         `{"version":1,"bugs":null}`,
-		"unknown member":    `{"version":1,"bugs":{},"extra":1}`,
-		"noncanonical id":   `{"version":1,"bugs":{"BUG-1":` + sidecarRecord + `}}`,
-		"duplicate id":      `{"version":1,"bugs":{"BUG-001":` + sidecarRecord + `,"BUG-001":` + sidecarRecord + `}}`,
-		"missing field":     `{"version":1,"bugs":{"BUG-001":{"context":"","created_at":"2026-09-12T10:00:00Z"}}}`,
-		"null record":       `{"version":1,"bugs":{"BUG-001":null}}`,
-		"nul in context":    `{"version":1,"bugs":{"BUG-001":{"context":"a\u0000b","created_at":"2026-09-12T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z"}}}`,
+		"missing sidecar": "",
+		"missing record":  `{"version":1,"bugs":{}}`,
+		"wrong version":   `{"version":2,"bugs":{"BUG-001":` + sidecarRecord + `}}`,
+		"no version":      `{"bugs":{"BUG-001":` + sidecarRecord + `}}`,
+		"null bugs":       `{"version":1,"bugs":null}`,
+		"unknown member":  `{"version":1,"bugs":{},"extra":1}`,
+		"noncanonical id": `{"version":1,"bugs":{"BUG-1":` + sidecarRecord + `}}`,
+		"duplicate id":    `{"version":1,"bugs":{"BUG-001":` + sidecarRecord + `,"BUG-001":` + sidecarRecord + `}}`,
+		"missing field":/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ `{"version":1,"bugs":{"BUG-001":{"context":"","created_at":"2026-09-12T10:00:00Z"}}}`,
+		"null record": `{"version":1,"bugs":{"BUG-001":null}}`,
+		"nul in context":/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ `{"version":1,"bugs":{"BUG-001":{"context":"a\u0000b","created_at":"2026-09-12T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z"}}}`,
 		"not json":          `version 1`,
 		"trailing garbage":  `{"version":1,"bugs":{}} x`,
 		"oversized sidecar": `{"version":1,"bugs":{}}` + strings.Repeat(" ", maxLedgerBytes),

@@ -178,8 +178,9 @@ func TestValidateLockfileCatalogBoundaries(t *testing.T) {
 	}
 }
 
+// TestValidateLockfileGeneratedAtIsOptional pins validate lockfile generated at is optional.
 func TestValidateLockfileGeneratedAtIsOptional(t *testing.T) {
-	for name, value := range map[string]any{"omitted": nil, "empty": "", "stamped": "2026-09-12T00:00:00Z"} {
+	for name, value := range map[string]any{"omitted": nil, "empty": "", "stamped": /* testdate: fact: recorded manifest/lock timestamp; decoding, no clock comparison */ "2026-09-12T00:00:00Z"} {
 		t.Run(name, func(t *testing.T) {
 			doc := lockTestDocument()
 			if value != nil {

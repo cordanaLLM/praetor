@@ -115,7 +115,7 @@ func TestCheck_Positive_RelativeEntriesAndLiveExceptions(t *testing.T) {
 	data := `[{"directory": ` + jsonString(t, filepath.Join(root, "build")) + `, "file": "../src/a.c", "command": "cc -c ../src/a.c"}]`
 	writeFile(t, root, "build/compile_commands.json", data)
 	report := check(t, root, []config.ClangTidyLane{cpuLane},
-		exception("src/win32/getopt.c", "2026-12-31"), exception("fixtures/**/*.c", "2026-10-06"))
+		exception("src/win32/getopt.c", today.AddDate(0, 0, 86).Format(config.ExceptionDateLayout)), exception("fixtures/**/*.c", today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)))
 	if !report.Passed() {
 		t.Fatalf("findings:\n%s", findingsText(report))
 	}
@@ -145,9 +145,9 @@ func TestCheck_Negative_ExpiredAndStaleExceptions(t *testing.T) {
 	root := fixtureRepo(t, map[string]string{"src/a.c": "int a;\n", "src/win32/getopt.c": "int g;\n"})
 	writeCompileDatabase(t, root, "src/a.c")
 	report := check(t, root, []config.ClangTidyLane{cpuLane},
-		exception("src/win32/getopt.c", "2026-10-05"), exception("src/a.c", "2026-12-31"), exception("src/gone.c", "2026-12-31"))
+		exception("src/win32/getopt.c", today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)), exception("src/a.c", today.AddDate(0, 0, 86).Format(config.ExceptionDateLayout)), exception("src/gone.c", today.AddDate(0, 0, 86).Format(config.ExceptionDateLayout)))
 	want := []string{
-		"src/win32/getopt.c: read by no clang-tidy lane; its exception expired on 2026-10-05",
+		"src/win32/getopt.c: read by no clang-tidy lane; its exception expired on " + today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout),
 		"exceptions entry src/a.c (clang-tidy-coverage): excuses no translation unit that every lane leaves unread; remove the entry",
 		"exceptions entry src/gone.c (clang-tidy-coverage): excuses no translation unit that every lane leaves unread; remove the entry",
 	}
@@ -187,9 +187,9 @@ func TestCheck_Negative_UnreadableLaneFailsClosed(t *testing.T) {
 			}
 		})
 	}
-	invalid := []config.Exception{exception("src/a.c", "2027-06-30")}
+	invalid := []config.Exception{exception("src/a.c", today.AddDate(0, 0, 267).Format(config.ExceptionDateLayout))}
 	if _, err := Check(t.Context(), Options{Root: root, Exceptions: invalid, Today: today}); err == nil ||
-		!strings.Contains(err.Error(), "category A requires expires on or before 2027-01-04 (90 days after today); got 2027-06-30") {
+		!strings.Contains(err.Error(), "category A requires expires on or before "+today.AddDate(0, 0, 90).Format(config.ExceptionDateLayout)+" (90 days after today); got "+today.AddDate(0, 0, 267).Format(config.ExceptionDateLayout)) {
 		t.Fatalf("an exception expiring too far ahead must be refused, got %v", err)
 	}
 	if _, err := Check(t.Context(), Options{Root: t.TempDir(), Today: today}); err == nil {
@@ -203,7 +203,7 @@ func TestCheck_Negative_UnreadableLaneFailsClosed(t *testing.T) {
 func TestCheck_Boundary_SkipAndEdges(t *testing.T) {
 	root := fixtureRepo(t, map[string]string{"main.go": "package main\n", "include/a.h": "int h;\n"})
 	writeFile(t, root, "scratch/untracked.c", "int u;\n")
-	report := check(t, root, []config.ClangTidyLane{cpuLane}, exception("src/a.c", "2026-12-31"))
+	report := check(t, root, []config.ClangTidyLane{cpuLane}, exception("src/a.c", today.AddDate(0, 0, 86).Format(config.ExceptionDateLayout)))
 	if !report.Passed() || !strings.Contains(report.Skipped, "tracks no C, C++, CUDA, HIP or Objective-C++ translation unit") {
 		t.Fatalf("report = %+v", report)
 	}
@@ -212,11 +212,11 @@ func TestCheck_Boundary_SkipAndEdges(t *testing.T) {
 	if err != nil || strings.Join(units, ",") != "src/Engine.CPP,src/k.hip,src/view.mm" {
 		t.Fatalf("trackedUnits = %v, %v", units, err)
 	}
-	onExpiryDay := check(t, upper, nil, exception("src/**", "2026-10-06"))
+	onExpiryDay := check(t, upper, nil, exception("src/**", today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)))
 	if !onExpiryDay.Passed() || len(onExpiryDay.Excepted) != 3 {
 		t.Fatalf("an exception must hold on its expires day: %+v", onExpiryDay)
 	}
-	dayAfter, err := Check(t.Context(), Options{Root: upper, Exceptions: []config.Exception{exception("src/**", "2026-10-06")},
+	dayAfter, err := Check(t.Context(), Options{Root: upper, Exceptions: []config.Exception{exception("src/**", today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout))},
 		Today: today.AddDate(0, 0, 1)})
 	if err != nil || dayAfter.Passed() || len(dayAfter.Findings) != 3 {
 		t.Fatalf("an exception must stop holding the day after its expires day: %+v, %v", dayAfter, err)

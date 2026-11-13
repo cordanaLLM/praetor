@@ -51,6 +51,7 @@ func TestUnexcusedImageRefInfractions_UnresolvableRef(t *testing.T) {
 	}
 }
 
+// TestUnexcusedImageRefInfractions_LiveException pins unexcused image ref infractions live exception.
 func TestUnexcusedImageRefInfractions_LiveException(t *testing.T) {
 	root := fixtureRepo(t, map[string]string{
 		"Dockerfile": "FROM golang:1.27-alpine\n",
@@ -60,7 +61,7 @@ func TestUnexcusedImageRefInfractions_LiveException(t *testing.T) {
 			Rule:     config.ExceptionRuleSupplyChain,
 			Path:     "Dockerfile",
 			Category: "A",
-			Expires:  "2026-12-31",
+			Expires:  testSupplychainToday.AddDate(0, 0, 63).Format(config.ExceptionDateLayout),
 			Reason:   "planned upgrade",
 		},
 	}
@@ -73,6 +74,7 @@ func TestUnexcusedImageRefInfractions_LiveException(t *testing.T) {
 	}
 }
 
+// TestUnexcusedImageRefInfractions_ExpiredException pins unexcused image ref infractions expired exception.
 func TestUnexcusedImageRefInfractions_ExpiredException(t *testing.T) {
 	root := fixtureRepo(t, map[string]string{
 		"Dockerfile": "FROM golang:1.27-alpine\n",
@@ -81,7 +83,7 @@ func TestUnexcusedImageRefInfractions_ExpiredException(t *testing.T) {
 		{
 			Rule:    config.ExceptionRuleSupplyChain,
 			Path:    "Dockerfile",
-			Expires: "2026-01-01",
+			Expires: testSupplychainToday.AddDate(0, 0, -301).Format(config.ExceptionDateLayout),
 			Reason:  "expired exception",
 		},
 	}

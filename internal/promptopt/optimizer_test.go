@@ -10,11 +10,12 @@ import (
 	"github.com/cordanaLLM/praetor/internal/notebook"
 )
 
-func experiment(t *testing.T) Experiment {
+// experiment constructs a prompt optimization experiment for testing.
+func experiment(t *testing.T, today time.Time) Experiment {
 	t.Helper()
 	h := notebook.Digest([]byte("synthetic contract"))
 	id := Identity{Provider: "fixture", Model: "fixture-model", Revision: "v1", AdapterSHA256: h, DatasetSHA256: h, ContractSHA256: h}
-	c := Candidate{ID: "baseline", Prompt: "keep constraints", Identity: id, HeldOut: true, ObservedAt: "2026-09-12T00:00:00Z",
+	c := Candidate{ID: "baseline", Prompt: "keep constraints", Identity: id, HeldOut: true, ObservedAt: today.Add(-time.Hour).Format(time.RFC3339),
 		Results: []Observation{{Case: "positive", Quality: .9, CostUSD: .1, LatencyMS: 100, ContractPassed: true}, {Case: "negative", Quality: 1, CostUSD: .1, LatencyMS: 100, ContractPassed: true}}}
 	c.PromptSHA256 = notebook.Digest([]byte(c.Prompt))
 	other := c
@@ -26,39 +27,46 @@ func experiment(t *testing.T) Experiment {
 	return Experiment{Format: "praetor-prompt-experiment-v1", Identity: id, BaselineID: c.ID, MinQuality: .8, MaxAgeHours: 24, Candidates: []Candidate{c, other}}
 }
 
-func evaluate(t *testing.T, e Experiment) (*Selection, error) {
+// evaluate runs scoring evaluation on an experiment fixture.
+func evaluate(t *testing.T, e Experiment, today time.Time) (*Selection, error) {
 	t.Helper()
 	raw, err := json.Marshal(e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Select(context.Background(), raw, time.Date(2026, 9, 12, 1, 0, 0, 0, time.UTC))
+	return Select(context.Background(), raw, today)
 }
 
+// TestSelectMeasuredImprovementAndPreserveBaseline pins select measured improvement and preserve baseline.
 func TestSelectMeasuredImprovementAndPreserveBaseline(t *testing.T) {
-	e := experiment(t)
-	s, err := evaluate(t, e)
+	today := time.Now().UTC().Truncate(time.Second)
+	e := experiment(t, today)
+	s, err := evaluate(t, e, today)
 	if err != nil || !s.Changed || s.SelectedID != "candidate" {
 		t.Fatalf("selection %+v, %v", s, err)
 	}
 	e.Candidates[1].Results[0].Quality = .85
-	s, err = evaluate(t, e)
+	s, err = evaluate(t, e, today)
 	if err != nil || s.Changed {
 		t.Fatalf("per-case quality regression selected: %+v, %v", s, err)
 	}
 	e.Candidates[1].Results[0].Quality = .9
 	e.Candidates[1].Results[0].ContractPassed = false
-	s, err = evaluate(t, e)
+	s, err = evaluate(t, e, today)
 	if err != nil || s.Changed {
 		t.Fatalf("contract regression selected: %+v, %v", s, err)
 	}
 }
 
+// TestRejectUncomparableEvidence pins reject uncomparable evidence.
 func TestRejectUncomparableEvidence(t *testing.T) {
+	today := time.Now().UTC().Truncate(time.Second)
 	for _, mutate := range []func(*Experiment){
 		func(e *Experiment) { e.Candidates[1].HeldOut = false },
 		func(e *Experiment) { e.Candidates[1].Identity.Revision = "v2" },
-		func(e *Experiment) { e.Candidates[1].ObservedAt = "2020-01-01T00:00:00Z" },
+		func(e *Experiment) {
+			e.Candidates[1].ObservedAt = today.Add(-25 * time.Hour).Format(time.RFC3339)
+		},
 		func(e *Experiment) { e.Candidates[1].PromptSHA256 = "wrong" },
 		func(e *Experiment) { e.Candidates[1].Results[1].Case = "different" },
 		func(e *Experiment) { e.Candidates[1].Results[1].Case = "positive" },
@@ -66,16 +74,18 @@ func TestRejectUncomparableEvidence(t *testing.T) {
 		func(e *Experiment) { e.Candidates[1].Results = e.Candidates[1].Results[:1] },
 		func(e *Experiment) { e.Candidates[0].Results[0].ContractPassed = false },
 	} {
-		e := experiment(t)
+		e := experiment(t, today)
 		mutate(&e)
-		if _, err := evaluate(t, e); err == nil {
+		if _, err := evaluate(t, e, today); err == nil {
 			t.Fatal("invalid experiment accepted")
 		}
 	}
 }
 
+// TestSelectRequiresExplicitMeasurementsAndFloor pins select requires explicit measurements and floor.
 func TestSelectRequiresExplicitMeasurementsAndFloor(t *testing.T) {
-	raw, err := json.Marshal(experiment(t))
+	today := time.Now().UTC().Truncate(time.Second)
+	raw, err := json.Marshal(experiment(t, today))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +103,7 @@ func TestSelectRequiresExplicitMeasurementsAndFloor(t *testing.T) {
 				if !json.Valid([]byte(input)) {
 					t.Fatal("invalid test JSON")
 				}
-				if _, err := Select(context.Background(), []byte(input), time.Date(2026, 9, 12, 1, 0, 0, 0, time.UTC)); err == nil {
+				if _, err := Select(context.Background(), []byte(input), today); err == nil {
 					t.Fatal("absent evidence accepted")
 				}
 			})
@@ -101,8 +111,10 @@ func TestSelectRequiresExplicitMeasurementsAndFloor(t *testing.T) {
 	}
 }
 
+// TestSelectAcceptsExplicitZeroAndFalse pins select accepts explicit zero and false.
 func TestSelectAcceptsExplicitZeroAndFalse(t *testing.T) {
-	e := experiment(t)
+	today := time.Now().UTC().Truncate(time.Second)
+	e := experiment(t, today)
 	e.MinQuality = 0
 	for i := range e.Candidates {
 		for j := range e.Candidates[i].Results {
@@ -112,14 +124,16 @@ func TestSelectAcceptsExplicitZeroAndFalse(t *testing.T) {
 		}
 	}
 	e.Candidates[1].Results[0].ContractPassed = false
-	s, err := evaluate(t, e)
+	s, err := evaluate(t, e, today)
 	if err != nil || s.Changed || s.MeanQuality != 0 || s.TotalCostUSD != 0 || s.MeanLatencyMS != 0 {
 		t.Fatalf("explicit zero or false rejected: %+v, %v", s, err)
 	}
 }
 
+// TestSelectStillRejectsUnknownAndDuplicateFields pins select still rejects unknown and duplicate fields.
 func TestSelectStillRejectsUnknownAndDuplicateFields(t *testing.T) {
-	raw, err := json.Marshal(experiment(t))
+	today := time.Now().UTC().Truncate(time.Second)
+	raw, err := json.Marshal(experiment(t, today))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,8 +144,44 @@ func TestSelectStillRejectsUnknownAndDuplicateFields(t *testing.T) {
 		{`"quality":0.9`, `"quality":0.9,"quality":1`},
 	} {
 		input := strings.Replace(string(raw), mutation[0], mutation[1], 1)
-		if _, err := Select(context.Background(), []byte(input), time.Date(2026, 9, 12, 1, 0, 0, 0, time.UTC)); err == nil {
+		if _, err := Select(context.Background(), []byte(input), today); err == nil {
 			t.Fatalf("ambiguous evidence accepted: %s", mutation[1])
 		}
+	}
+}
+
+// TestExperimentUsesTestClock pins experiment uses test clock.
+func TestExperimentUsesTestClock(t *testing.T) {
+	today := time.Now().UTC().Truncate(time.Second)
+	e := experiment(t, today)
+	for _, c := range e.Candidates {
+		if c.ObservedAt != today.Add(-time.Hour).Format(time.RFC3339) {
+			t.Errorf("candidate %s does not use the shared test clock: %s", c.ID, c.ObservedAt)
+		}
+	}
+}
+
+// TestSelectEvidenceAgeBoundary pins select evidence age boundary.
+func TestSelectEvidenceAgeBoundary(t *testing.T) {
+	today := time.Now().UTC().Truncate(time.Second)
+	for _, tc := range []struct {
+		name    string
+		age     time.Duration
+		wantErr bool
+	}{
+		{"fresh", time.Hour, false},
+		{"age limit inclusive", 24 * time.Hour, false},
+		{"stale", 24*time.Hour + time.Second, true},
+		{"future", -time.Second, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := experiment(t, today)
+			for i := range e.Candidates {
+				e.Candidates[i].ObservedAt = today.Add(-tc.age).Format(time.RFC3339)
+			}
+			if _, err := evaluate(t, e, today); (err != nil) != tc.wantErr {
+				t.Fatalf("age %s: error %v, want rejection %v", tc.age, err, tc.wantErr)
+			}
+		})
 	}
 }

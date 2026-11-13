@@ -10,10 +10,11 @@ import (
 	"github.com/cordanaLLM/praetor/internal/notebook"
 )
 
+// TestNotebookMCPMetadataAndConfinement pins notebook MCP metadata and confinement.
 func TestNotebookMCPMetadataAndConfinement(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	content := "PRIVATE fixture requirement"
-	b := notebook.Bundle{Format: notebook.Format, NotebookID: "fixture", Title: "Fixture", CapturedAt: "2026-09-12T00:00:00Z",
+	b := notebook.Bundle{Format: notebook.Format, NotebookID: "fixture", Title: "Fixture", CapturedAt: /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "2026-09-12T00:00:00Z",
 		Connector: "synthetic", Coverage: []string{"fixture only"}, Sources: []notebook.Source{{ID: "s1", Title: "Scope", Role: "source", Locator: "fixture", Content: content, SHA256: notebook.Digest([]byte(content))}}}
 	raw, err := json.Marshal(b)
 	if err != nil {

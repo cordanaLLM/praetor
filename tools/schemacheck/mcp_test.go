@@ -140,7 +140,7 @@ func TestStandardsMCPResponsesConformToTheMCPSchema(t *testing.T) {
 		t.Skip("short mode: building and starting standards-mcp is skipped")
 	}
 	requests := []string{
-		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"schemacheck","version":"1"}}}`,
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"schemacheck","version":"1"}}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"no_such_tool","arguments":{}}}`,

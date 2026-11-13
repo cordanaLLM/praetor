@@ -105,7 +105,7 @@ func TestTranscribeDiscussionToADR_Positive_RedactedRecordReported(t *testing.T)
 	adr := transcribeOrFail(t, disc, dir)
 	content := rewriteRecord(t, adr.FilePath, func(s string) string {
 		s = strings.Replace(s, "private-org/ops-repo", "<owner>/<repo>", 1)
-		return s + "\n## Redactions\n\n- 2026-10-03: an operator-private repository became `<owner>/<repo>`.\n"
+		return s + /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "\n## Redactions\n\n- 2026-10-03: an operator-private repository became `<owner>/<repo>`.\n"
 	})
 	requireExistingRecord(t, disc, dir, adr, "Accepted", content)
 }

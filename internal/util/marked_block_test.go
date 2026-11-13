@@ -255,10 +255,10 @@ func TestRemoveMarkdownSectionBoundaryPreservesFencedExample(t *testing.T) {
 // Positive: an ATX heading yields its text without the opening and closing '#' runs.
 func TestMarkdownHeadingTextPositive(t *testing.T) {
 	for line, want := range map[string]string{
-		"## In-Flight Tasks":               "In-Flight Tasks",
-		"# Title ##":                       "Title",
-		"###\tTabbed\t#":                   "Tabbed",
-		"## Discharged Tasks [2026-10-07]": "Discharged Tasks [2026-10-07]",
+		"## In-Flight Tasks": "In-Flight Tasks",
+		"# Title ##":         "Title",
+		"###\tTabbed\t#":     "Tabbed",
+		/* testdate: fact: recorded source text; parsing, no clock comparison */ "## Discharged Tasks [2026-10-07]":/* testdate: fact: recorded source text; parsing, no clock comparison */ "Discharged Tasks [2026-10-07]",
 	} {
 		if got, ok := MarkdownHeadingText(line); !ok || got != want {
 			t.Errorf("MarkdownHeadingText(%q) = %q, %v; want %q, true", line, got, ok, want)

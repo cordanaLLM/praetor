@@ -48,6 +48,7 @@ func TestCreateAndLoadFragments_Positive(t *testing.T) {
 	}
 }
 
+// TestRenderRelease_Positive pins positive cases for render release.
 func TestRenderRelease_Positive(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -69,7 +70,9 @@ func TestRenderRelease_Positive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = RenderRelease(tmpDir, "1.1.0", "2026-09-11")
+	err = RenderRelease(tmpDir, "1.1.0",
+		/* testdate: fact: recorded release date; changelog parsing, no clock comparison */
+		"2026-09-11")
 	if err != nil {
 		t.Fatalf("RenderRelease failed: %v", err)
 	}
@@ -82,7 +85,9 @@ func TestRenderRelease_Positive(t *testing.T) {
 	}
 	content := string(data)
 
-	if !strings.Contains(content, "## [1.1.0] - 2026-09-11") {
+	if !strings.Contains(content,
+		/* testdate: fact: recorded release date; changelog parsing, no clock comparison */
+		"## [1.1.0] - 2026-09-11") {
 		t.Errorf("missing version header in changelog:\n%s", content)
 	}
 	if !strings.Contains(content, "- **BREAKING**: Fleet dependency unification subsystem") {
@@ -128,6 +133,7 @@ func TestLoadFragments_Boundary_EmptyOrMissingDir(t *testing.T) {
 	}
 }
 
+// TestRenderRelease_Positive_IssueHashNormalisation pins positive issue hash normalisation for render release.
 func TestRenderRelease_Positive_IssueHashNormalisation(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -158,7 +164,9 @@ func TestRenderRelease_Positive_IssueHashNormalisation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := RenderRelease(tmpDir, "1.2.0", "2026-10-09"); err != nil {
+	if err := RenderRelease(tmpDir, "1.2.0",
+		/* testdate: fact: recorded release date; changelog parsing, no clock comparison */
+		"2026-10-09"); err != nil {
 		t.Fatalf("RenderRelease failed: %v", err)
 	}
 

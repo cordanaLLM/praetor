@@ -126,13 +126,14 @@ func testExceptionsLifecycle_Unexcused(t *testing.T) {
 	}
 }
 
+// testExceptionsLifecycle_Unexpired tests secret scan exception lifecycle with unexpired entries.
 func testExceptionsLifecycle_Unexpired(t *testing.T) {
 	report := checkOrdinaryLeak(t, []config.Exception{
 		{
 			Rule:    config.ExceptionRuleSecrets,
 			Path:    "creds.py",
 			Tool:    "generic-api-key",
-			Expires: "2026-11-01",
+			Expires: testDay.AddDate(0, 0, 14).Format(config.ExceptionDateLayout),
 			Reason:  "temporary test waiver",
 		},
 	})
@@ -144,13 +145,14 @@ func testExceptionsLifecycle_Unexpired(t *testing.T) {
 	}
 }
 
+// testExceptionsLifecycle_Expired tests secret scan exception lifecycle with expired entries.
 func testExceptionsLifecycle_Expired(t *testing.T) {
 	report := checkOrdinaryLeak(t, []config.Exception{
 		{
 			Rule:    config.ExceptionRuleSecrets,
 			Path:    "creds.py",
 			Tool:    "generic-api-key",
-			Expires: "2026-10-01",
+			Expires: testDay.AddDate(0, 0, -17).Format(config.ExceptionDateLayout),
 			Reason:  "expired waiver",
 		},
 	})
@@ -159,13 +161,14 @@ func testExceptionsLifecycle_Expired(t *testing.T) {
 	}
 }
 
+// testExceptionsLifecycle_Unused tests secret scan exception lifecycle with unused entries.
 func testExceptionsLifecycle_Unused(t *testing.T) {
 	report := checkOrdinaryLeak(t, []config.Exception{
 		{
 			Rule:    config.ExceptionRuleSecrets,
 			Path:    "other.py",
 			Tool:    "generic-api-key",
-			Expires: "2026-11-01",
+			Expires: testDay.AddDate(0, 0, 14).Format(config.ExceptionDateLayout),
 			Reason:  "waiver for other file",
 		},
 	})
@@ -709,6 +712,7 @@ func TestResolveScanner_PlantedMiseUntrustedProof(t *testing.T) {
 	}
 }
 
+// TestUnexcusedSecretInfractions pins unexcused secret infractions.
 func TestUnexcusedSecretInfractions(t *testing.T) {
 	dir := t.TempDir()
 	writeManifest(t, dir, []config.Exception{
@@ -718,7 +722,7 @@ func TestUnexcusedSecretInfractions(t *testing.T) {
 			Tool:        "generic-api-key",
 			Fingerprint: "fp-excused",
 			Category:    "A",
-			Expires:     "2026-12-31",
+			Expires:     testDay.AddDate(0, 0, 74).Format(config.ExceptionDateLayout),
 			Reason:      "test fixture exception",
 		},
 	})

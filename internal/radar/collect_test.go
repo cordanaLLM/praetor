@@ -48,10 +48,10 @@ func TestCollect_Positive_AcceptanceFixture(t *testing.T) {
 	}
 	out := string(Render(digest))
 	for _, want := range []string{
-		"- 2026-10-05 [example-org created repository example-org/new-parser](https://github.com/example-org/new-parser)",
-		"- 2026-10-03 [example-org pushed to main in example-org/tokenizer](https://github.com/example-org/tokenizer/compare/1111111...2222222)",
-		"- 2026-10-02 [Linear-time byte-pair merging for tokenizers](https://example.org/papers/abs/2610.00001)",
-		"- 2026-10-06 [v2.0.0](https://github.com/example-org/example-project/releases/tag/v2.0.0)",
+		"- " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -2).Format(time.DateOnly) + " [example-org created repository example-org/new-parser](https://github.com/example-org/new-parser)",
+		"- " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -4).Format(time.DateOnly) + " [example-org pushed to main in example-org/tokenizer](https://github.com/example-org/tokenizer/compare/1111111...2222222)",
+		"- " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -5).Format(time.DateOnly) + " [Linear-time byte-pair merging for tokenizers](https://example.org/papers/abs/2610.00001)",
+		"- " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1).Format(time.DateOnly) + " [v2.0.0](https://github.com/example-org/example-project/releases/tag/v2.0.0)",
 	} {
 		if strings.Count(out, want) != 1 {
 			t.Errorf("digest lists %q %d times:\n%s", want, strings.Count(out, want), out)

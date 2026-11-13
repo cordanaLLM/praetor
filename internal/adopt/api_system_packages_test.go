@@ -59,7 +59,7 @@ func TestAdoptRendersTheAPIWorkflowFromTheManifest(t *testing.T) {
 		t.Fatal("a repository without api settings did not get the canonical workflow")
 	}
 	s := familySession(t, false)
-	declareAPIPackages(t, s, time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02"), "libudev-dev", "libopenal-dev")
+	declareAPIPackages(t, s, time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly), "libudev-dev", "libopenal-dev")
 	for run := 0; run < 2; run++ {
 		if err := reconcileManagedFamily(t.Context(), s, family); err != nil {
 			t.Fatal(err)
@@ -124,14 +124,15 @@ func TestAdoptRefreshesUneditedRenderingsWhenTheManifestChanges(t *testing.T) {
 // the rendered workflow, and an unedited copy refreshes without --force. Negative: the entry
 // reaches the workflow's environment line, so a stale copy would carry the old expiry.
 func TestAdoptRefreshesTheWorkflowWhenOnlyAnExceptionChanges(t *testing.T) {
+	today := time.Now()
 	family := apiManagedFamily(t)
 	s := familySession(t, false)
 	declareAPIPackages(t, s, "")
 	if err := reconcileManagedFamily(t.Context(), s, family); err != nil {
 		t.Fatal(err)
 	}
-	first := time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02")
-	renewed := time.Now().UTC().AddDate(0, 0, 60).Format("2006-01-02")
+	first := today.UTC().AddDate(0, 0, 30).Format(time.DateOnly)
+	renewed := today.UTC().AddDate(0, 0, 60).Format(time.DateOnly)
 	for _, expires := range []string{first, renewed} {
 		before := workflowOf(t, s)
 		declareAPIPackages(t, s, expires)

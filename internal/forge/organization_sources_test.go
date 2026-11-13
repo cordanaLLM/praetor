@@ -15,7 +15,7 @@ import (
 // TestOrganizationSourcesInvalidManifest pins untrusted source exclusion when the repository manifest is invalid.
 func TestOrganizationSourcesInvalidManifest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".standards.yaml")
-	data := "version: 1\nforge:\n  own_organizations: [untrusted]\nexceptions:\n  - rule: HISS-11\n    path: .github/workflows/release.yml\n    reason: migration\n    expires: 2099-01-01\n"
+	data := "version: 1\nforge:\n  own_organizations: [untrusted]\nexceptions:\n  - rule: HISS-11\n    path: .github/workflows/release.yml\n    reason: migration\n    expires: " + testToday.AddDate(1, 0, 0).Format(time.DateOnly) + "\n"
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}

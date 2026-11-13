@@ -10,13 +10,15 @@ import (
 	"testing"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // reviveRulesFirst is a configuration whose first `rules:` key is revive's settings, not the
 // exclusion list the generated block belongs in.
-const reviveRulesFirst = "version: \"2\"\nlinters:\n  enable:\n    - funlen\n    - revive\n" +
+var reviveRulesFirst = "version: \"2\"\nlinters:\n  enable:\n    - funlen\n    - revive\n" +
 	"  settings:\n    revive:\n      rules:\n        - name: exported\n" +
-	"  exclusions:\n    rules:\n      # category A, expires 2026-12-01, #100\n      - path: internal/hand/\n        linters:\n          - funlen\n" +
+	"  exclusions:\n    rules:\n      # category A, expires " + testToday.AddDate(0, 0, 50).Format(config.ExceptionDateLayout) + ", #100\n      - path: internal/hand/\n        linters:\n          - funlen\n" +
 	"formatters:\n  enable:\n    - gofmt\n"
 
 // sequenceLengths returns the lengths of linters.settings.revive.rules and
@@ -45,12 +47,13 @@ func sequenceLengths(t *testing.T, path string) (revive, exclusions int) {
 	return len(config.Linters.Settings.Revive.Rules), len(config.Linters.Exclusions.Rules)
 }
 
+// generateInto runs linters generation into the specified directory.
 func generateInto(t *testing.T, cfgContent string) (string, error) {
 	t.Helper()
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, []LinterPair{{File: "internal/pkg/a_test.go", Linter: "funlen", Function: "TestOversized"}})
 	_, err := GenerateExceptions(GenerateExceptionsOptions{
 		ConfigPath: cfgPath, ReportPath: repPath, Issue: 1030, Category: "C",
-		Today: parseTestDate(t, "2026-10-19"), Write: true, Stdout: &strings.Builder{},
+		Today: testToday.AddDate(0, 0, 7), Write: true, Stdout: &strings.Builder{},
 	})
 	return cfgPath, err
 }

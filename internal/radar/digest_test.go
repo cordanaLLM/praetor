@@ -150,15 +150,15 @@ func TestRender_Positive_SectionsAndFailures(t *testing.T) {
 	}}}, Failed: []Failure{{Source: Source{ID: "broken"}, Reason: "read fixture broken.xml: missing | @x"}}}
 	out := string(Render(d))
 	for _, want := range []string{
-		"# Radar digest 2026-09-30 to 2026-10-07\n",
-		"Window: 2026-09-30T00:00:00Z <= t < 2026-10-07T00:00:00Z (UTC). Sources read: 1, failed: 1.",
+		"# Radar digest " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -7).Format(time.DateOnly) + " to " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly) + "\n",
+		"Window: " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -7).Format(time.DateOnly) + "T00:00:00Z <= t < " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly) + "T00:00:00Z (UTC). Sources read: 1, failed: 1.",
 		"## example-blog (feed)\n\nSource: <https://example.org/feed.xml>",
-		"- 2026-10-02 [Hello someone # 1](https://example.org/hello)\n",
-		"- 2026-10-02 Bug report (`https://github.com/example-org/x/issues/5`)\n",
-		"- 2026-10-02 Sneaky\n",
-		"- 2026-10-02 (untitled)\n",
-		"- 2026-10-02 [Encoded](https://example.org/v1%2B2)\n",
-		"- 2026-10-02 Spaced\n",
+		"- " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -5).Format(time.DateOnly) + " [Hello someone # 1](https://example.org/hello)\n",
+		"- " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -5).Format(time.DateOnly) + " Bug report (`https://github.com/example-org/x/issues/5`)\n",
+		"- " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -5).Format(time.DateOnly) + " Sneaky\n",
+		"- " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -5).Format(time.DateOnly) + " (untitled)\n",
+		"- " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -5).Format(time.DateOnly) + " [Encoded](https://example.org/v1%2B2)\n",
+		"- " + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -5).Format(time.DateOnly) + " Spaced\n",
 		"2 entries of this source carry no readable date and are in no window.",
 		"## Failed sources\n\n- broken: read fixture broken.xml: missing ¦ x\n",
 	} {
@@ -190,11 +190,11 @@ func TestRender_Boundary_SectionCap(t *testing.T) {
 		return string(Render(Digest{Window: digestWindow(t), Read: 1, Sections: []Section{{Source: source, Items: items}}}))
 	}
 	full := render(MaxSectionItems)
-	if strings.Count(full, "- 2026-10-01 item") != MaxSectionItems || strings.Contains(full, "more not shown") {
+	if strings.Count(full, "- "+time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -6).Format(time.DateOnly)+" item") != MaxSectionItems || strings.Contains(full, "more not shown") {
 		t.Errorf("%d items:\n%s", MaxSectionItems, full)
 	}
 	over := render(MaxSectionItems + 1)
-	if strings.Count(over, "- 2026-10-01 item") != MaxSectionItems || !strings.Contains(over, "- 1 more not shown (section cap 50).") {
+	if strings.Count(over, "- "+time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -6).Format(time.DateOnly)+" item") != MaxSectionItems || !strings.Contains(over, "- 1 more not shown (section cap 50).") {
 		t.Errorf("%d items:\n%s", MaxSectionItems+1, over)
 	}
 }

@@ -225,8 +225,8 @@ var catalog = []Rule{
 	{
 		ID:            "HISS-15",
 		Title:         "3D Test Discipline",
-		Specification: "Mandatory Positive, Negative, and Boundary tests for all public interfaces. Touched-file clean rule enforced.",
-		Enforcement:   "CI coverage gate (go test -race -coverprofile with a minimum statement-coverage floor enforced by 'go tool cover') and PR checklist validation of the 3D test attestation.",
+		Specification: "Mandatory Positive, Negative, and Boundary tests for all public interfaces. Touched-file clean rule enforced. Clock-sensitive fixture dates derive from one test clock; only reasoned recorded facts or golden bytes independent of that clock may retain literal dates.",
+		Enforcement:   "CI coverage gate (go test -race -coverprofile with a minimum statement-coverage floor enforced by 'go tool cover') and PR checklist validation of the 3D test attestation. The Go/Python source scanner checks fixture date integrity as a partial touched-file clean check; it does not establish test dimensions.",
 		FailureAction: "Merge gate rejection.",
 		Scope:         "3D testing",
 		Directive:     []Clause{{Text: "positive + negative + boundary tests, every public interface"}},

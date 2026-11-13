@@ -10,11 +10,11 @@ import (
 
 const (
 	siteArticle = `{"@context":"https://schema.org","@type":"TechArticle","headline":"H","description":"D",` +
-		`"author":{"@type":"Organization","name":"cordanaLLM"},"dateModified":"2026-09-25"}`
+		/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `"author":{"@type":"Organization","name":"cordanaLLM"},"dateModified":"2026-09-25"}`
 	siteCode = `{"@context":"https://schema.org","@type":"SoftwareSourceCode","name":"praetor",` +
 		`"programmingLanguage":"Go","codeRepository":"https://github.com/cordanaLLM/praetor"}`
 	siteSitemap = `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">` +
-		`<url><loc>https://example.com/</loc><lastmod>2026-09-25</lastmod></url></urlset>`
+		/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `<url><loc>https://example.com/</loc><lastmod>2026-09-25</lastmod></url></urlset>`
 	siteRobots = "User-agent: *\nDisallow: /private/\nSitemap: https://example.com/sitemap.xml\n"
 )
 
@@ -106,10 +106,13 @@ func TestAuditSite_Positive_StarlightShapedSitemapIndexWithoutRobots(t *testing.
 	}
 }
 
+// TestAuditSite_Negative_RequiredTechArticleFieldsFail pins negative required tech article fields fail for audit site.
 func TestAuditSite_Negative_RequiredTechArticleFieldsFail(t *testing.T) {
 	root := writeSite(t, map[string]string{
-		"a/index.html": page(jsonLD(strings.Replace(siteArticle, `"2026-09-25"`, `""`, 1))),
-		"b/index.html": page(jsonLD(`{"@context":"https://schema.org","@type":"TechArticle","headline":"H","description":"D","dateModified":"2026-09-25"}`)),
+		"a/index.html": page(jsonLD(strings.Replace(siteArticle,
+			/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */
+			`"2026-09-25"`, `""`, 1))),
+		"b/index.html": page(jsonLD( /* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `{"@context":"https://schema.org","@type":"TechArticle","headline":"H","description":"D","dateModified":"2026-09-25"}`)),
 		"sitemap.xml":  siteSitemap,
 	})
 	report := auditSite(t, root, SiteAuditOptions{})

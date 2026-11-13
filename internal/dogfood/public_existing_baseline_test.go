@@ -14,7 +14,7 @@ const publicDebtSource = "package fixture\n\nfunc run() {\n\t_ = doSomething()\n
 
 // publicRecordedBaseline renders a baseline file recording one infraction in file.
 func publicRecordedBaseline(file string) string {
-	return `{"version":1,"generated_at":"2026-01-01T00:00:00Z","repository":"","commit_sha":"","total_infractions":1,` +
+	return /* testdate: fact: recorded transcript/report timestamp; parsing, no clock comparison */ `{"version":1,"generated_at":"2026-01-01T00:00:00Z","repository":"","commit_sha":"","total_infractions":1,` +
 		`"infractions":[{"rule_id":"HISS-07","file_path":"` + file + `","line_number":4,` +
 		`"message":"Legacy unchecked error assignment","fingerprint":"` + file + `:4:HISS-07"}]}` + "\n"
 }

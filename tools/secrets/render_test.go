@@ -20,6 +20,7 @@ jobs:
         run: go run -tags=secretsgate ./tools/secrets/gate
 `
 
+// TestRenderWorkflow_RoundTrip_3D pins render workflow round trip 3D.
 func TestRenderWorkflow_RoundTrip_3D(t *testing.T) {
 	// Empty entries: plain unchanged
 	out, err := secrets.RenderWorkflow(sampleWorkflow, nil)
@@ -32,10 +33,10 @@ func TestRenderWorkflow_RoundTrip_3D(t *testing.T) {
 
 	entries := []rules.Entry{
 		{
-			Path:    "creds.py",
-			RuleID:  "generic-api-key",
-			Expires: "2026-11-01",
-			Reason:  "test waiver",
+			Path:   "creds.py",
+			RuleID: "generic-api-key",
+			Expires:/* testdate: golden: exact serialized report/configuration bytes; no clock reads */ "2026-11-01",
+			Reason: "test waiver",
 		},
 	}
 
@@ -56,6 +57,7 @@ func TestRenderWorkflow_RoundTrip_3D(t *testing.T) {
 	}
 }
 
+// TestRenderWorkflow_NegativeMissingMarker pins render workflow negative missing marker.
 func TestRenderWorkflow_NegativeMissingMarker(t *testing.T) {
 	badWorkflow := `name: Security
 jobs:
@@ -63,7 +65,7 @@ jobs:
     steps:
       - run: gitleaks detect
 `
-	entries := []rules.Entry{{Path: "a", RuleID: "b", Expires: "2026-11-01", Reason: "c"}}
+	entries := []rules.Entry{{Path: "a", RuleID: "b", Expires: /* testdate: golden: exact serialized report/configuration bytes; no clock reads */ "2026-11-01", Reason: "c"}}
 	_, err := secrets.RenderWorkflow(badWorkflow, entries)
 	if err == nil {
 		t.Fatal("expected error when gate step is missing, got nil")

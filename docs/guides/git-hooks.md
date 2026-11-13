@@ -221,6 +221,40 @@ The root `.dockerignore` also excludes this directory and Git history from local
 container builds; Docker applies its [build-context ignore rules](https://docs.docker.com/build/concepts/context/#dockerignore-files)
 separately from Git.
 
+## Calendar dates in test fixtures
+
+The local source audit runs HISS-15's clock fixture check in
+`internal/hiss/test_dates.go` (Go) and `internal/hiss/test_dates_python.go`
+(Python). Python-only source changes also select that audit,
+including files under `scripts/`. It checks Go `*_test.go` files and Python
+`test_*.py`, `*_test.py`, `*_selftest.py` and `selftest.py` files. A calendar date
+inside a quoted string, including a YAML or JSON fixture embedded in that string,
+is refused with its file, physical line and “derive it from the test clock”.
+This includes future expiry dates: moving a fixed expiry forward leaves the same
+failure waiting for another midnight.
+
+Derive expiry and expected output from the clock the implementation reads:
+`time.Now().AddDate(0, 0, 14).Format(config.ExceptionDateLayout)` for a real
+clock, or `base.AddDate(0, 0, 14)` for an injected clock. Preserve the offset for
+expired, today, warning-window and interval-boundary cases. Python fixtures use
+`base + datetime.timedelta(days=14)` and `isoformat()`.
+
+Comments are allowed because they are prose. Use Go reference layout constants such as
+`time.DateOnly` or `config.ExceptionDateLayout` for format syntax. Recorded facts parsed
+without a clock comparison and golden bytes compared verbatim without a clock
+read may retain dates. Mark each such literal with its form and concrete reason:
+`/* testdate: fact: recorded release date; parser input, no clock */` immediately
+before a Go string, or `# testdate: golden: exact serialized output; no clock`
+before the Python literal's line. An annotation applies only to that Go literal
+or the first Python literal on the immediately following line (including a spanning literal); it is not a file exemption. A trailing comment never exempts an earlier value, and permission never crosses a Go argument comma. Decoded constant concatenations are checked as values, including Python escapes. Shared pytest fixtures (`conftest.py`, `tests/` and `test/`) are included. An expiry waiver or
+freshness fixture is not a recorded fact.
+
+The positive and negative fixtures under `.config/hiss/testdata/HISS-15/`
+replay through the existing HISS coverage catalog in both directions.
+`TestFixtureDatesReplay` exercises the same fixtures through the scanner and
+checks actionable findings. Test dimensions remain a separate obligation; this
+rule does not establish positive, negative and boundary coverage.
+
 ## Linter version floors
 
 `shellcheck`, `actionlint`, `hadolint` and `yamllint` run by name from `PATH`, so the hook

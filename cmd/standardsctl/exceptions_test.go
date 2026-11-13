@@ -42,12 +42,13 @@ func writeExceptionsManifest(t *testing.T, entries ...config.Exception) string {
 	return manifestPath
 }
 
+// TestExceptionsList_Positive_ListsEntries pins positive lists entries for exceptions list.
 func TestExceptionsList_Positive_ListsEntries(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 	manifest := writeExceptionsManifest(t,
-		config.Exception{Rule: "HISS-11", Path: ".github/workflows/rel.yml", Reason: "Level 2 builder", Expires: "2026-10-24"},
-		config.Exception{Rule: "clang-tidy-coverage", Path: "src/win.c", Reason: "Windows only", Expires: "2026-11-09"},
-		config.Exception{Rule: "HISS-02", Path: "src/browser.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: "2026-11-09"},
+		config.Exception{Rule: "HISS-11", Path: ".github/workflows/rel.yml", Reason: "Level 2 builder", Expires: today.AddDate(0, 0, 14).Format(config.ExceptionDateLayout)},
+		config.Exception{Rule: "clang-tidy-coverage", Path: "src/win.c", Reason: "Windows only", Expires: today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)},
+		config.Exception{Rule: "HISS-02", Path: "src/browser.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)},
 	)
 
 	out, err := captureStdout(t, func() error {
@@ -68,15 +69,15 @@ func TestExceptionsList_Positive_ListsEntries(t *testing.T) {
 // entry expiring today still holds.
 func TestExceptionsList_FailsOnAnExpiredEntry(t *testing.T) {
 	manifest := writeExceptionsManifest(t,
-		config.Exception{Rule: config.ExceptionRuleBacklogCapsForgeAlerts, Tool: "backlog", Reason: "alerts triaged", Expires: "2026-10-28"})
+		config.Exception{Rule: config.ExceptionRuleBacklogCapsForgeAlerts, Tool: "backlog", Reason: "alerts triaged", Expires: targetsToday.AddDate(0, 0, 18).Format(config.ExceptionDateLayout)})
 	for _, tc := range []struct {
 		today   string
 		failing bool
-	}{{"2026-10-28", false}, {"2026-10-29", true}} {
+	}{{targetsToday.AddDate(0, 0, 18).Format(config.ExceptionDateLayout), false}, {targetsToday.AddDate(0, 0, 19).Format(config.ExceptionDateLayout), true}} {
 		out, err := captureStdout(t, func() error {
 			return dispatchCommand("exceptions", []string{"list", "--config=" + manifest, "--today=" + tc.today})
 		})
-		if (err != nil) != tc.failing || (err != nil && !strings.Contains(err.Error(), "1 exceptions entries expired (first: rule backlog.caps.forge_alerts, backlog, expires 2026-10-28)")) {
+		if (err != nil) != tc.failing || (err != nil && !strings.Contains(err.Error(), "1 exceptions entries expired (first: rule backlog.caps.forge_alerts, backlog, expires "+targetsToday.AddDate(0, 0, 18).Format(config.ExceptionDateLayout)+")")) {
 			t.Errorf("today %s: error %v, want failing %v", tc.today, err, tc.failing)
 		}
 		if !strings.Contains(out, "rule: backlog.caps.forge_alerts") {
@@ -85,11 +86,12 @@ func TestExceptionsList_FailsOnAnExpiredEntry(t *testing.T) {
 	}
 }
 
+// TestExceptionsList_Positive_FiltersByExpiringWithin pins positive filters by expiring within for exceptions list.
 func TestExceptionsList_Positive_FiltersByExpiringWithin(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 	manifest := writeExceptionsManifest(t,
-		config.Exception{Rule: "clang-tidy-coverage", Path: "src/a.c", Reason: "first debt", Expires: "2026-10-15"},
-		config.Exception{Rule: "clang-tidy-coverage", Path: "src/b.c", Reason: "second debt", Expires: "2026-11-09"},
+		config.Exception{Rule: "clang-tidy-coverage", Path: "src/a.c", Reason: "first debt", Expires: today.AddDate(0, 0, 5).Format(config.ExceptionDateLayout)},
+		config.Exception{Rule: "clang-tidy-coverage", Path: "src/b.c", Reason: "second debt", Expires: today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)},
 	)
 
 	out, err := captureStdout(t, func() error {
@@ -104,12 +106,13 @@ func TestExceptionsList_Positive_FiltersByExpiringWithin(t *testing.T) {
 	}
 }
 
+// TestExceptionsList_Boundary_ExactDaysAndZero pins boundary exact days and zero for exceptions list.
 func TestExceptionsList_Boundary_ExactDaysAndZero(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 	manifest := writeExceptionsManifest(t,
-		config.Exception{Rule: "clang-tidy-coverage", Path: "src/at-14.c", Reason: "exact boundary", Expires: "2026-10-24"},
-		config.Exception{Rule: "clang-tidy-coverage", Path: "src/at-15.c", Reason: "one over boundary", Expires: "2026-10-25"},
-		config.Exception{Rule: "clang-tidy-coverage", Path: "src/at-0.c", Reason: "expires today", Expires: "2026-10-10"},
+		config.Exception{Rule: "clang-tidy-coverage", Path: "src/at-14.c", Reason: "exact boundary", Expires: today.AddDate(0, 0, 14).Format(config.ExceptionDateLayout)},
+		config.Exception{Rule: "clang-tidy-coverage", Path: "src/at-15.c", Reason: "one over boundary", Expires: today.AddDate(0, 0, 15).Format(config.ExceptionDateLayout)},
+		config.Exception{Rule: "clang-tidy-coverage", Path: "src/at-0.c", Reason: "expires today", Expires: today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)},
 	)
 
 	out, err := captureStdout(t, func() error {
@@ -124,6 +127,7 @@ func TestExceptionsList_Boundary_ExactDaysAndZero(t *testing.T) {
 	}
 }
 
+// TestExceptionsList_Boundary_EmptyAndNoMatches pins boundary empty and no matches for exceptions list.
 func TestExceptionsList_Boundary_EmptyAndNoMatches(t *testing.T) {
 	manifest := writeExceptionsManifest(t)
 	out, err := captureStdout(t, func() error {
@@ -135,9 +139,9 @@ func TestExceptionsList_Boundary_EmptyAndNoMatches(t *testing.T) {
 	mustContain(t, out, "No exceptions declared.")
 
 	manifestFuture := writeExceptionsManifest(t,
-		config.Exception{Rule: "clang-tidy-coverage", Path: "src/future.c", Category: "D", Reason: "future debt", Expires: "2026-12-01"},
+		config.Exception{Rule: "clang-tidy-coverage", Path: "src/future.c", Category: "D", Reason: "future debt", Expires: targetsToday.AddDate(0, 0, 52).Format(config.ExceptionDateLayout)},
 	)
-	today := "2026-10-10"
+	today := targetsToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)
 	outFilter, err := captureStdout(t, func() error {
 		return dispatchCommand("exceptions", []string{"list", "--expiring-within=7", "--config=" + manifestFuture, "--today=" + today})
 	})

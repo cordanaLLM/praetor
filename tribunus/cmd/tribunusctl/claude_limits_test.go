@@ -8,12 +8,13 @@ import (
 	"testing"
 )
 
+// TestClaudeLimitsPrintsOnlyCounts pins claude limits prints only counts.
 func TestClaudeLimitsPrintsOnlyCounts(t *testing.T) {
 	dir := t.TempDir()
 	secret := "sk-" + "ant-" + strings.Repeat("Q", 30)
 	lines := strings.Join([]string{
-		`{"timestamp":"2026-10-13T09:00:00Z","message":"` + secret + `","quotaLimits":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1}}`,
-		`{"timestamp":"2026-10-13T09:01:00Z","message":"x","quotaLimits":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1}}`,
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"timestamp":"2026-10-13T09:00:00Z","message":"` + secret + `","quotaLimits":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1}}`,
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"timestamp":"2026-10-13T09:01:00Z","message":"x","quotaLimits":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1}}`,
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(dir, "s.jsonl"), []byte(lines), 0o600); err != nil {
 		t.Fatal(err)

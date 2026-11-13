@@ -216,7 +216,7 @@ All public methods require three-dimensional test coverage:
 1. **Positive Tests**: Assert correct results under valid operational inputs.
 2. **Negative Tests**: Assert correct error returns under invalid inputs.
 3. **Boundary Tests**: Assert correct handling at numeric, string, and buffer limits ($0, 1, N_{\max}$).
-4. **Clean Rule**: Any file modified in a pull request must have all historical debt resolved.
+4. **Clean Rule**: Any file modified in a pull request must have all historical debt resolved. Clock-sensitive fixture dates derive from one test clock; reasoned `testdate:` annotations permit only recorded facts or golden bytes independent of that clock. The Go/Python fixture scanner is partial evidence for this clean rule, alongside the independent coverage floor and 3D attestation.
 
 ### HISS-16: Agentic Fleet Governance & Server-Side Enforcement
 

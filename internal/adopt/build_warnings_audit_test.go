@@ -35,7 +35,7 @@ func auditBuildWarningsIn(t *testing.T, files map[string]string, entries ...conf
 
 // buildWarningsEntry is a HISS-10 exceptions entry for the workflow path, expiring on expires.
 func buildWarningsEntry(path, expires string) config.Exception {
-	return config.Exception{Rule: config.ExceptionRuleBuildWarnings, Path: path, Entered: "2026-10-07", Category: "A",
+	return config.Exception{Rule: config.ExceptionRuleBuildWarnings, Path: path, Entered: buildWarningsToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout), Category: "A",
 		Reason: "the vendored decoder still warns under MSVC; upstream fix pending", Expires: expires}
 }
 
@@ -111,7 +111,7 @@ func TestAuditBuildWarningsPassesAnExceptedWorkflow(t *testing.T) {
 			"      - run: cargo build --locked\n      - run: go build ./...\n"),
 		".github/workflows/native.yml": ciSteps("      - run: cargo test\n        env:\n          RUSTFLAGS: -Dwarnings\n"),
 	}
-	for _, expires := range []string{"2026-12-31", "2026-10-07"} {
+	for _, expires := range []string{buildWarningsToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout), buildWarningsToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)} {
 		out, err := auditBuildWarningsIn(t, files, buildWarningsEntry(".github/workflows/ci.yml", expires))
 		if err != nil {
 			t.Fatalf("expires %s: AuditBuildWarnings: %v", expires, err)
@@ -170,17 +170,17 @@ func TestAuditBuildWarningsRefusesExpiredStaleAndMalformedEntries(t *testing.T) 
 		entry config.Exception
 		want  []string
 	}{
-		"an expired entry": {failing, buildWarningsEntry(".github/workflows/ci.yml", "2026-10-06"),
+		"an expired entry": {failing, buildWarningsEntry(".github/workflows/ci.yml", buildWarningsToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)),
 			[]string{"Cargo builds without warnings as errors",
-				"the exceptions entry (rule HISS-10, .github/workflows/ci.yml) expired on 2026-10-06, so the lanes above in .github/workflows/ci.yml fail"}},
-		"an entry for another workflow": {failing, buildWarningsEntry(".github/workflows/release.yml", "2026-12-31"),
+				"the exceptions entry (rule HISS-10, .github/workflows/ci.yml) expired on " + buildWarningsToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout) + ", so the lanes above in .github/workflows/ci.yml fail"}},
+		"an entry for another workflow": {failing, buildWarningsEntry(".github/workflows/release.yml", buildWarningsToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout)),
 			[]string{"Cargo builds without warnings as errors", "for .github/workflows/release.yml excuse no lane"}},
-		"an entry without a lane": {map[string]string{"README.md": "x\n"}, buildWarningsEntry(".github/workflows/ci.yml", "2026-12-31"),
+		"an entry without a lane": {map[string]string{"README.md": "x\n"}, buildWarningsEntry(".github/workflows/ci.yml", buildWarningsToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout)),
 			[]string{"excuse no lane, because no workflow step builds C, C++, Rust or Go code; remove them"}},
-		"a malformed entry": {failing, buildWarningsEntry("ci.yml", "2026-12-31"),
+		"a malformed entry": {failing, buildWarningsEntry("ci.yml", buildWarningsToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout)),
 			[]string{"rule HISS-10 must name one workflow file directly in .github/workflows by path, such as .github/workflows/ci.yml"}},
-		"an entry past the bound": {failing, buildWarningsEntry(".github/workflows/ci.yml", "2027-01-06"),
-			[]string{"category A requires expires on or before 2027-01-05 (90 days after entered 2026-10-07); got 2027-01-06"}},
+		"an entry past the bound": {failing, buildWarningsEntry(".github/workflows/ci.yml", buildWarningsToday.AddDate(0, 0, 91).Format(config.ExceptionDateLayout)),
+			[]string{"category A requires expires on or before " + buildWarningsToday.AddDate(0, 0, 90).Format(config.ExceptionDateLayout) + " (90 days after entered " + buildWarningsToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout) + "); got " + buildWarningsToday.AddDate(0, 0, 91).Format(config.ExceptionDateLayout)}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

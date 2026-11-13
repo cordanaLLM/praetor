@@ -59,7 +59,11 @@ func TestDisableContainerTelemetry_Positive_GoReadsOff(t *testing.T) {
 // Negative: a mode file holding another mode, local or on, with or without its date, is
 // rewritten to off.
 func TestDisableContainerTelemetry_Negative_OtherModeRewritten(t *testing.T) {
-	for _, text := range []string{"local", "on 2026-01-01\n", "local 2026-10-17"} {
+	for _, text := range []string{"local",
+		/* testdate: fact: recorded telemetry mode date; mode parsing, no clock comparison */
+		"on 2026-01-01\n",
+		/* testdate: fact: recorded telemetry mode date; mode parsing, no clock comparison */
+		"local 2026-10-17"} {
 		home := t.TempDir()
 		modeFile := filepath.Join(home, filepath.FromSlash(containerTelemetryModeRel))
 		if err := os.MkdirAll(filepath.Dir(modeFile), 0o700); err != nil {
@@ -86,13 +90,13 @@ func TestDisableContainerTelemetry_Boundary_KeptOffAndUnwritable(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(modeFile), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(modeFile, []byte("off 2026-10-17"), 0o600); err != nil {
+	if err := os.WriteFile(modeFile, []byte( /* testdate: fact: recorded telemetry mode date; mode parsing, no clock comparison */ "off 2026-10-17"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := disableContainerTelemetry(home); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := os.ReadFile(modeFile); err != nil || string(got) != "off 2026-10-17" {
+	if got, err := os.ReadFile(modeFile); err != nil || string(got) != /* testdate: fact: recorded telemetry mode date; mode parsing, no clock comparison */ "off 2026-10-17" {
 		t.Fatalf("an off mode file was rewritten: %q, %v", got, err)
 	}
 	blocked := t.TempDir()

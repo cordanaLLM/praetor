@@ -2379,6 +2379,7 @@ class SnapshotRefs(unittest.TestCase):
 
 
 class SnapshotSweep(unittest.TestCase):
+    # testdate: fact: recorded protocol/history metadata; parsed, no clock comparison
     """A snapshot directory a killed hook left behind (0.6-0.7 GB each, 2026-10-19) is removed by the
     next snapshot once it is older than SNAPSHOT_STALE_S; fresh ones and other names stay."""
 

@@ -19,6 +19,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// testToday fixes the reference time for driver test fixtures.
+var testToday = time.Date(2026, time.October, 31, 10, 0, 0, 0, time.UTC)
+
 // recordedRulesetRequest captures one API call made by the driver.
 type recordedRulesetRequest struct {
 	Method        string
@@ -348,7 +351,7 @@ func TestListPullRequestsByHead_GitHub_Positive(t *testing.T) {
 			t.Errorf("unexpected github request: %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
 		w.WriteHeader(http.StatusOK)
-		if _, err := io.WriteString(w, `[{"number":42,"state":"closed","merged_at":"2026-10-31T10:00:00Z","head":{"ref":"topic"}},{"number":43,"state":"open","merged_at":null,"head":{"ref":"topic"}},{"number":44,"state":"closed","merged_at":null,"head":{"ref":"other"}}]`); err != nil {
+		if _, err := io.WriteString(w, fmt.Sprintf(`[{"number":42,"state":"closed","merged_at":%q,"head":{"ref":"topic"}},{"number":43,"state":"open","merged_at":null,"head":{"ref":"topic"}},{"number":44,"state":"closed","merged_at":null,"head":{"ref":"other"}}]`, testToday.Format(time.RFC3339))); err != nil {
 			t.Errorf("write github response: %v", err)
 		}
 	}))
@@ -560,7 +563,7 @@ func TestReadPullRequestsByHead_GitHub_TokenOnlyToGitHubHTTPS(t *testing.T) {
 func TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered(t *testing.T) {
 	mergedPR := func(num int, ref, label, fullName, owner string) map[string]any {
 		return map[string]any{
-			"number": num, "state": "closed", "merged": true, "merged_at": "2026-10-31T10:00:00Z",
+			"number": num, "state": "closed", "merged": true, "merged_at": testToday.Format(time.RFC3339),
 			"head": map[string]any{
 				"ref": ref, "label": label,
 				"repo": map[string]any{"full_name": fullName, "name": "widgets", "owner": map[string]any{"login": owner}},
@@ -618,7 +621,7 @@ func TestListPullRequestsByHead_Planted_FullUnrelatedPage(t *testing.T) {
 	fullPage := make([]map[string]any, HeadPullRequestsPerPage)
 	for i := range fullPage {
 		fullPage[i] = map[string]any{
-			"number": i + 1, "state": "closed", "merged": true, "merged_at": "2026-10-31T10:00:00Z",
+			"number": i + 1, "state": "closed", "merged": true, "merged_at": testToday.Format(time.RFC3339),
 			"head": map[string]any{"ref": "other-branch"},
 		}
 	}

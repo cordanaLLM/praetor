@@ -11,27 +11,28 @@ import (
 	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 )
 
+// TestCategoryExpiryCaps pins category expiry caps.
 func TestCategoryExpiryCaps(t *testing.T) {
 	cases := []struct{ name, category, entered, expires, want string }{
-		{"A stated", "A", "2026-10-18", "2027-01-16", ""},
-		{"A beyond 90 days", "A", "2026-10-18", "2027-01-17", "category A requires expires on or before 2027-01-16 (90 days"},
+		{"A stated", "A", testToday.AddDate(0, 0, 0).Format(rules.DateLayout), testToday.AddDate(0, 0, 90).Format(rules.DateLayout), ""},
+		{"A beyond 90 days", "A", testToday.AddDate(0, 0, 0).Format(rules.DateLayout), testToday.AddDate(0, 0, 91).Format(rules.DateLayout), "category A requires expires on or before " + testToday.AddDate(0, 0, 90).Format(rules.DateLayout) + " (90 days"},
 		{"A missing expiry", "A", "", "", "must be a YYYY-MM-DD date"},
-		{"B boundary", "B", "", "2026-10-21", ""},
-		{"B exceeded", "B", "", "2026-10-22", "category B requires expires on or before 2026-10-21 (3 days"},
-		{"C shorter", "C", "2026-10-18", "2026-10-20", ""},
-		{"D boundary", "D", "", "2027-02-15", ""},
-		{"D exceeded", "D", "", "2027-02-16", "category D requires expires on or before 2027-02-15 (120 days"},
-		{"entered fixed", "C", "2026-10-17", "2026-10-28", "category C requires expires on or before 2026-10-27 (10 days"},
-		{"bad entered", "B", "bad", "2026-10-21", "entered"},
-		{"bad expiry", "B", "2026-10-18", "bad", "must be a YYYY-MM-DD date"},
-		{"uncategorized boundary", "", "2026-10-17", "2027-01-15", ""},
-		{"uncategorized exceeded", "", "2026-10-17", "2027-01-16", "more than 90 days"},
-		{"entered before cutoff without category", "", "2026-10-28", "2027-01-26", ""},
-		{"entered cutoff without category", "", "2026-10-29", "2026-11-01", "category is required"},
-		{"entered cutoff with category B", "B", "2026-10-29", "2026-11-01", ""},
-		{"entered cutoff category B exceeded", "B", "2026-10-29", "2026-11-02", "category B requires expires on or before 2026-11-01 (3 days"},
-		{"no entered grace boundary", "", "", "2026-11-28", ""},
-		{"no entered past grace", "", "", "2026-11-29", "category is required"},
+		{"B boundary", "B", "", testToday.AddDate(0, 0, 3).Format(rules.DateLayout), ""},
+		{"B exceeded", "B", "", testToday.AddDate(0, 0, 4).Format(rules.DateLayout), "category B requires expires on or before " + testToday.AddDate(0, 0, 3).Format(rules.DateLayout) + " (3 days"},
+		{"C shorter", "C", testToday.AddDate(0, 0, 0).Format(rules.DateLayout), testToday.AddDate(0, 0, 2).Format(rules.DateLayout), ""},
+		{"D boundary", "D", "", testToday.AddDate(0, 0, 120).Format(rules.DateLayout), ""},
+		{"D exceeded", "D", "", testToday.AddDate(0, 0, 121).Format(rules.DateLayout), "category D requires expires on or before " + testToday.AddDate(0, 0, 120).Format(rules.DateLayout) + " (120 days"},
+		{"entered fixed", "C", testToday.AddDate(0, 0, -1).Format(rules.DateLayout), testToday.AddDate(0, 0, 10).Format(rules.DateLayout), "category C requires expires on or before " + testToday.AddDate(0, 0, 9).Format(rules.DateLayout) + " (10 days"},
+		{"bad entered", "B", "bad", testToday.AddDate(0, 0, 3).Format(rules.DateLayout), "entered"},
+		{"bad expiry", "B", testToday.AddDate(0, 0, 0).Format(rules.DateLayout), "bad", "must be a YYYY-MM-DD date"},
+		{"uncategorized boundary", "", testToday.AddDate(0, 0, -1).Format(rules.DateLayout), testToday.AddDate(0, 0, 89).Format(rules.DateLayout), ""},
+		{"uncategorized exceeded", "", testToday.AddDate(0, 0, -1).Format(rules.DateLayout), testToday.AddDate(0, 0, 90).Format(rules.DateLayout), "more than 90 days"},
+		{"entered before cutoff without category", "", testToday.AddDate(0, 0, 10).Format(rules.DateLayout), testToday.AddDate(0, 0, 100).Format(rules.DateLayout), ""},
+		{"entered cutoff without category", "", testToday.AddDate(0, 0, 11).Format(rules.DateLayout), testToday.AddDate(0, 0, 14).Format(rules.DateLayout), "category is required"},
+		{"entered cutoff with category B", "B", testToday.AddDate(0, 0, 11).Format(rules.DateLayout), testToday.AddDate(0, 0, 14).Format(rules.DateLayout), ""},
+		{"entered cutoff category B exceeded", "B", testToday.AddDate(0, 0, 11).Format(rules.DateLayout), testToday.AddDate(0, 0, 15).Format(rules.DateLayout), "category B requires expires on or before " + testToday.AddDate(0, 0, 14).Format(rules.DateLayout) + " (3 days"},
+		{"no entered grace boundary", "", "", testToday.AddDate(0, 0, 41).Format(rules.DateLayout), ""},
+		{"no entered past grace", "", "", testToday.AddDate(0, 0, 42).Format(rules.DateLayout), "category is required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

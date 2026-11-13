@@ -82,7 +82,7 @@ linters:
     - gocyclo
   exclusions:
     rules:
-      # category B, entered 2026-10-07, expires 2026-10-10, #133
+      # category B, entered `+testToday.AddDate(0, 0, -5).Format(config.ExceptionDateLayout)+`, expires `+testToday.AddDate(0, 0, -2).Format(config.ExceptionDateLayout)+`, #133
       - path: internal/util/
         linters:
           - gocyclo
@@ -97,7 +97,7 @@ linters:
 		t.Fatal("expected expired exclusion to fail")
 	}
 	msg := err.Error()
-	for _, want := range []string{".golangci.yml", "gocyclo", "internal/util/", "expired 2026-10-10"} {
+	for _, want := range []string{".golangci.yml", "gocyclo", "internal/util/", "expired " + testToday.AddDate(0, 0, -2).Format(config.ExceptionDateLayout)} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q missing expected part %q", msg, want)
 		}
@@ -112,14 +112,14 @@ func TestAuditDeclaredLinters_Exclusion_Boundary_ExpiryDay(t *testing.T) {
 		expires string
 		wantErr bool
 	}{
-		{name: "yesterday_expired", expires: "2026-10-11", wantErr: true},
-		{name: "today_holding", expires: "2026-10-12", wantErr: false},
+		{name: "yesterday_expired", expires: testToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout), wantErr: true},
+		{name: "today_holding", expires: testToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout), wantErr: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeGolangciWorkflow(t, root)
-			content := fmt.Sprintf("version: \"2\"\nlinters:\n  enable:\n    - gocyclo\n  exclusions:\n    rules:\n      # category C, entered 2026-10-02, expires %s, #1030\n      - path: internal/util/\n        linters:\n          - gocyclo\n", tc.expires)
+			content := fmt.Sprintf("version: \"2\"\nlinters:\n  enable:\n    - gocyclo\n  exclusions:\n    rules:\n      # category C, entered "+testToday.AddDate(0, 0, -10).Format(config.ExceptionDateLayout)+", expires %s, #1030\n      - path: internal/util/\n        linters:\n          - gocyclo\n", tc.expires)
 			writeLinterFixtureFile(t, root, ".golangci.yml", content)
 
 			_, err := AuditDeclaredLinters(t.Context(), DeclaredLintersOptions{
@@ -162,7 +162,7 @@ linters:
     - gocyclo
   exclusions:
     rules:
-      # category C, entered 2026-10-01, expires 2026-10-20, #133
+      # category C, entered `+testToday.AddDate(0, 0, -11).Format(config.ExceptionDateLayout)+`, expires `+testToday.AddDate(0, 0, 8).Format(config.ExceptionDateLayout)+`, #133
       - path: internal/util/
         linters:
           - gocyclo
@@ -177,7 +177,7 @@ linters:
 		t.Fatal("expected category C interval violation to fail")
 	}
 	msg := err.Error()
-	for _, want := range []string{".golangci.yml", "gocyclo", "internal/util/", "category C requires expires on or before 2026-10-11 (10 days after entered 2026-10-01)"} {
+	for _, want := range []string{".golangci.yml", "gocyclo", "internal/util/", "category C requires expires on or before " + testToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout) + " (10 days after entered " + testToday.AddDate(0, 0, -11).Format(config.ExceptionDateLayout) + ")"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q missing expected part %q", msg, want)
 		}
@@ -196,7 +196,7 @@ linters:
   exclusions:
     warn-unused: true
     rules:
-      # category C, entered 2026-10-08, expires 2026-10-18, #133
+      # category C, entered `+testToday.AddDate(0, 0, -4).Format(config.ExceptionDateLayout)+`, expires `+testToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout)+`, #133
       - path: internal/x/
         linters:
           - gocyclo
@@ -235,7 +235,7 @@ linters:
   exclusions:
     warn-unused: true
     rules:
-      # category C, entered 2026-10-08, expires 2026-10-18, #133
+      # category C, entered `+testToday.AddDate(0, 0, -4).Format(config.ExceptionDateLayout)+`, expires `+testToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout)+`, #133
       - path: internal/x/
         linters:
           - gocyclo
@@ -280,7 +280,7 @@ linters:
   exclusions:
     warn-unused: true
     rules:
-      # category C, entered 2026-10-08, expires 2026-10-18, #133
+      # category C, entered `+testToday.AddDate(0, 0, -4).Format(config.ExceptionDateLayout)+`, expires `+testToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout)+`, #133
       - text: "cyclomatic complexity"
         path: internal/x/
         linters:
@@ -321,7 +321,7 @@ linters:
   exclusions:
     warn-unused: true
     rules:
-      # category C, entered 2026-10-08, expires 2026-10-18, #133
+      # category C, entered `+testToday.AddDate(0, 0, -4).Format(config.ExceptionDateLayout)+`, expires `+testToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout)+`, #133
       - path: internal/util/
         linters:
           - gocyclo
@@ -355,7 +355,7 @@ linters:
   exclusions:
     warn-unused: false
     rules:
-      # category C, entered 2026-10-08, expires 2026-10-18, #133
+      # category C, entered `+testToday.AddDate(0, 0, -4).Format(config.ExceptionDateLayout)+`, expires `+testToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout)+`, #133
       - path: internal/util/
         linters:
           - gocyclo
@@ -423,7 +423,7 @@ linters:
     - gocyclo
   exclusions:
     rules:
-      # category A, entered 2026-10-12, expires 2027-01-05, #133
+      # category A, entered `+testToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)+`, expires `+testToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout)+`, #133
       - path: internal/util/
         linters:
           - gocyclo
@@ -494,7 +494,7 @@ linters:
         text: func `+"`TestBeta`"+`
       `+GeneratedExceptionsEnd+`
 `)
-	futureToday := parseTestDate(t, "2030-05-01")
+	futureToday := testToday.AddDate(4, 0, 0)
 	out, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
 		RootDir: root,
 		Policy:  singleLinterPolicy("framework", "gocyclo"),
@@ -525,7 +525,7 @@ linters:
         linters:
           - gocyclo
         text: func `+"`TestAlpha`"+`
-      # category C, entered 2026-10-01, expires 2026-10-10, #1030
+      # category C, entered `+testToday.AddDate(0, 0, -11).Format(config.ExceptionDateLayout)+`, expires `+testToday.AddDate(0, 0, -2).Format(config.ExceptionDateLayout)+`, #1030
       - path: ^internal/b_test\.go$
         linters:
           - forbidigo
@@ -539,8 +539,8 @@ linters:
 	if err == nil {
 		t.Fatal("expected expired dated rule in generated block to fail")
 	}
-	if !strings.Contains(err.Error(), "expired 2026-10-10") {
-		t.Errorf("expected expired 2026-10-10 error, got: %v", err)
+	if !strings.Contains(err.Error(), "expired "+testToday.AddDate(0, 0, -2).Format(config.ExceptionDateLayout)) {
+		t.Errorf("expected expired "+testToday.AddDate(0, 0, -2).Format(config.ExceptionDateLayout)+" error, got: %v", err)
 	}
 }
 

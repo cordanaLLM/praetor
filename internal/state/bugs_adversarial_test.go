@@ -61,10 +61,11 @@ func TestBugAdversarialConcurrentWriters(t *testing.T) {
 	}
 }
 
+// TestBugAdversarialMetadataContract pins bug adversarial metadata contract.
 func TestBugAdversarialMetadataContract(t *testing.T) {
 	const row = "| `BUG-001` | title | p1 | open | file |  | "
-	const created = `"created_at":"2026-09-12T10:00:00Z"`
-	const resolved = `"resolved_at":"0001-01-01T00:00:00Z"`
+	const created = /* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ `"created_at":"2026-09-12T10:00:00Z"`
+	const resolved = /* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ `"resolved_at":"0001-01-01T00:00:00Z"`
 	const header = "# Bug Ledger\n\n| ID | Title | Severity | Status | Location | Resolution |\n| --- | --- | --- | --- | --- | --- |\n"
 	markdown := func(payload string) string {
 		return header + row + "<!-- praetor-bug:v1 " + base64.StdEncoding.EncodeToString([]byte(payload)) + " -->\n"
@@ -81,7 +82,7 @@ func TestBugAdversarialMetadataContract(t *testing.T) {
 		`{"context":"",` + created + `,` + resolved + `,"unknown":1}`,
 		`{"context":"one","context":"two",` + created + `,` + resolved + `}`,
 		`{"Context":"wrong case",` + created + `,` + resolved + `}`,
-		`{"context":"",` + created + `,` + resolved + `,"Created_at":"2026-09-13T10:00:00Z"}`,
+		`{"context":"",` + created + `,` + resolved + /* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ `,"Created_at":"2026-09-13T10:00:00Z"}`,
 		`null`,
 		`[]`,
 	} {

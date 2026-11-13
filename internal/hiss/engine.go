@@ -247,8 +247,10 @@ func (goLanguage) handles(ext string) bool { return ext == ".go" }
 
 func (goLanguage) name() string { return "go" }
 
+// scan checks Go source files for HISS invariants and fixture dates.
 func (goLanguage) scan(src sourceFile, rep *ScanReport, opts ScanOptions) bool {
 	scanGoSource(src.data, src.rel, rep, opts)
+	scanGoFixtureDates(src, rep)
 	return true
 }
 
@@ -276,8 +278,10 @@ func (pythonLanguage) handles(ext string) bool { return ext == ".py" }
 
 func (pythonLanguage) name() string { return "python" }
 
+// scan checks Python source files for HISS invariants and fixture dates.
 func (pythonLanguage) scan(src sourceFile, rep *ScanReport, opts ScanOptions) bool {
 	scanPythonLines(src.lines(), src.rel, rep, opts)
+	scanPythonFixtureDates(src, rep)
 	return true
 }
 
