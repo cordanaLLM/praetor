@@ -17,25 +17,17 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/reviewbundle"
-	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
-// modelBundleRepo plants a real conflicting merge under isolated fixture Git settings.
+// modelBundleRepo uses topic to avoid aliasing HEAD on case-insensitive filesystems.
 func modelBundleRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	env := util.FilterEnvironment(os.Environ(), func(name string) bool { return strings.HasPrefix(strings.ToUpper(name), "GIT_") })
-	env = append(env, "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
-	ctx, err := util.WithCommandEnvironment(t.Context(), env)
-	if err != nil {
-		t.Fatal(err)
-	}
 	git := func(args ...string) {
 		t.Helper()
-		argv := append([]string{"-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.DevNull, "-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)
-		if out, err := util.RunGitProbe(ctx, dir, 1<<20, argv...); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out.Stderr)
-		}
+		argv := append([]string{"-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.autocrlf=false"}, args...)
+		testsupport.RunFixtureGit(t, dir, argv)
 	}
 	git("init", "-q", "-b", "target")
 	if err := contextopt.WriteSnapshot(t.Context(), filepath.Join(dir, "file.txt"), []byte("base\n"), 0o600); err != nil {
@@ -43,11 +35,11 @@ func modelBundleRepo(t *testing.T) string {
 	}
 	git("add", ".")
 	git("commit", "-qm", "base")
-	git("checkout", "-qb", "head")
+	git("checkout", "-qb", "topic")
 	if err := contextopt.WriteSnapshot(t.Context(), filepath.Join(dir, "file.txt"), []byte("head\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	git("commit", "-qam", "head")
+	git("commit", "-qam", "topic")
 	git("checkout", "-q", "target")
 	if err := contextopt.WriteSnapshot(t.Context(), filepath.Join(dir, "file.txt"), []byte("target\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -202,7 +194,7 @@ func TestModelsBundleOutputWriterBoundary(t *testing.T) {
 // TestModelsBundleConflictAndJSON checks successful conflict findings and visible truncation.
 func TestModelsBundleConflictAndJSON(t *testing.T) {
 	dir := modelBundleRepo(t)
-	args := []string{"bundle", "--repo=" + dir, "--target=target", "--head=head", "--max-file-bytes=4"}
+	args := []string{"bundle", "--repo=" + dir, "--target=target", "--head=topic", "--max-file-bytes=4"}
 	out, err := captureStdout(t, func() error { return runModels(args) })
 	if err != nil {
 		t.Fatalf("conflict must exit zero: %v", err)
@@ -233,18 +225,18 @@ func TestModelsBundleUsage(t *testing.T) {
 	cases := [][]string{{"--head=missing-ref"}, {"--max-files=-1"}, {"--unknown"}, {"extra"}}
 	for i := 0; i < len(cases); i++ {
 		extra := cases[i]
-		args := append([]string{"bundle", "--repo=" + dir, "--target=target", "--head=head"}, extra...)
+		args := append([]string{"bundle", "--repo=" + dir, "--target=target", "--head=topic"}, extra...)
 		var diagnostic bytes.Buffer
 		_, stderr, err := runOutcomeCLI(t, args)
 		if err == nil || commandExitCode(&diagnostic, err) != 2 || stderr == "" {
 			t.Fatalf("usage %v: %v, %s, %s", extra, err, stderr, diagnostic.String())
 		}
 	}
-	out, err := captureStdout(t, func() error { return runModels([]string{"bundle", "--repo=" + dir, "--target=head", "--head=head"}) })
+	out, err := captureStdout(t, func() error { return runModels([]string{"bundle", "--repo=" + dir, "--target=topic", "--head=topic"}) })
 	if err != nil || strings.Contains(out, "CONFLICT") {
 		t.Fatalf("empty bundle: %s, %v", out, err)
 	}
-	out, err = captureStdout(t, func() error { return runModels([]string{"bundle", "--repo=" + dir, "--target=target", "--head=head"}) })
+	out, err = captureStdout(t, func() error { return runModels([]string{"bundle", "--repo=" + dir, "--target=target", "--head=topic"}) })
 	if err != nil || !strings.Contains(out, "TRUNCATED: no") {
 		t.Fatalf("uncut bundle: %s, %v", out, err)
 	}
