@@ -28,6 +28,7 @@ func TestOpenLedgerSizeSync(t *testing.T) {
 	}
 }
 
+// testOpenLedgerSizeSync writes an OPEN.md of size bytes, syncs state and checks the warning or the typed error.
 func testOpenLedgerSizeSync(t *testing.T, size int) {
 	t.Helper()
 	root := t.TempDir()
@@ -54,6 +55,7 @@ func testOpenLedgerSizeSync(t *testing.T, size int) {
 	assertOpenSizeWarning(t, warnings.String(), size)
 }
 
+// assertOpenSizeWarning requires no warning at or below 800 KiB and a warning naming size and archive command above it.
 func assertOpenSizeWarning(t *testing.T, warning string, size int) {
 	t.Helper()
 	if size <= 800*1024 {
@@ -69,6 +71,7 @@ func assertOpenSizeWarning(t *testing.T, warning string, size int) {
 	}
 }
 
+// TestOpenLedgerSizeWarningUnusableContext requires an error, never a silent pass, for a nil or canceled context.
 func TestOpenLedgerSizeWarningUnusableContext(t *testing.T) {
 	root := t.TempDir()
 	stateFixtureGit(t, root, "init")
