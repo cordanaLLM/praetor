@@ -80,6 +80,9 @@ func validateModelBundleArgs(positional []string, repo, target, head string) err
 
 // writeModelBundle names every conflict, file truncation state and omitted path.
 func writeModelBundle(w io.Writer, b reviewbundle.Bundle) error {
+	if err := reviewbundle.Validate(b); err != nil {
+		return fmt.Errorf("bundle text: %w", err)
+	}
 	if _, err := fmt.Fprintf(w, "Target: %s\nHead: %s\nMerge base: %s\nPredicted tree: %s\n", b.Target, b.Head, b.MergeBase, b.Tree); err != nil {
 		return fmt.Errorf("bundle header: %w", err)
 	}
@@ -95,7 +98,7 @@ func writeModelBundle(w io.Writer, b reviewbundle.Bundle) error {
 		if f.Truncated {
 			mark = "yes"
 		}
-		if _, err := fmt.Fprintf(w, "%q TRUNCATED: %s (omitted bytes: %d; deleted: %t; binary: %t)\n", f.Path, mark, f.TruncatedBytes, f.Deleted, f.Binary); err != nil {
+		if _, err := fmt.Fprintf(w, "%q TRUNCATED: %s (omitted bytes: %d; deleted: %t; binary: %t)\n%s\n", f.Path, mark, f.TruncatedBytes, f.Deleted, f.Binary, f.Content); err != nil {
 			return fmt.Errorf("bundle file: %w", err)
 		}
 	}

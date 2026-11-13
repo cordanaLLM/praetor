@@ -12,6 +12,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// MaxMetadataEntries bounds each path/conflict inventory and the merge message count.
+const MaxMetadataEntries = 4096
+
 // Options bounds retained file content and file count; zero selects the documented defaults.
 // MaxBundleBytes counts content bytes, excluding path names and JSON metadata.
 type Options struct {
@@ -21,6 +24,7 @@ type Options struct {
 }
 
 // Bundle records resolved commit IDs, the predicted tree, and every omitted or shortened path.
+// OmittedPaths independently accounts for changed paths excluded by the file-count limit.
 // ConflictedPaths preserves merge-tree evidence independently of the classified Conflicts.
 type Bundle struct {
 	Target          string     `json:"target"`
@@ -32,6 +36,7 @@ type Bundle struct {
 	Cut             []string   `json:"cut"`
 	Limits          Options    `json:"limits"`
 	ConflictedPaths []string   `json:"conflicted_paths"`
+	OmittedPaths    []string   `json:"omitted_paths"`
 }
 
 // File is predicted content for a merge-affected path; binary and deleted files carry no content.
@@ -58,6 +63,9 @@ func normalizeOptions(opts Options) (Options, error) {
 	if opts.MaxFiles == 0 {
 		opts.MaxFiles = 200
 	}
+	if opts.MaxFiles > MaxMetadataEntries {
+		return Options{}, fmt.Errorf("bundle file metadata exceeds %d entries", MaxMetadataEntries)
+	}
 	if opts.MaxBundleBytes == 0 {
 		opts.MaxBundleBytes = 2 << 20
 	}
@@ -77,7 +85,7 @@ func Build(ctx context.Context, repo, target, head string, opts Options) (Bundle
 	if err != nil {
 		return Bundle{}, err
 	}
-	b := Bundle{Limits: limits, Files: []File{}, Conflicts: []Conflict{}, Cut: []string{}, ConflictedPaths: []string{}}
+	b := Bundle{Limits: limits, Files: []File{}, Conflicts: []Conflict{}, Cut: []string{}, ConflictedPaths: []string{}, OmittedPaths: []string{}}
 	if b.Target, err = resolveCommit(ctx, repo, target); err != nil {
 		return Bundle{}, err
 	}
