@@ -119,41 +119,34 @@ func reviewInjectionField(line string) (string, bool) {
 type reviewTextScanner struct {
 	fence   util.MarkdownFence
 	off     bool
-	comment bool
+	comment string
 }
 
-// active reports whether a line can carry a declaration outside quotes, comments, disabled regions and fences.
-func (s *reviewTextScanner) active(line string) bool {
+// active returns code outside quotes, comments, disabled regions and fences.
+func (s *reviewTextScanner) active(line string) string {
 	line = strings.TrimSpace(line)
 	if s.off {
 		s.off = line != caveman.OnMarker
-		return false
+		return ""
 	}
-	if s.comment {
-		s.comment = !strings.Contains(line, "-->")
-		return false
+	if s.comment == "" {
+		if line == "" || strings.HasPrefix(line, ">") || s.fence.Inside(line) {
+			return ""
+		}
+		if line == caveman.OffMarker {
+			s.off = true
+			return ""
+		}
 	}
-	if line == "" || strings.HasPrefix(line, ">") || s.fence.Inside(line) {
-		return false
-	}
-	if line == caveman.OffMarker {
-		s.off = true
-		return false
-	}
-	if strings.HasPrefix(line, "<!--") {
-		s.comment = !strings.Contains(line, "-->")
-		return false
-	}
-	return true
+	line, s.comment = util.StripComments(line, util.CommentSyntax{Block: [][2]string{{"<!--", "-->"}}}, s.comment)
+	return line
 }
 
 // activeReviewText masks inactive lines and inline code using the shared Markdown span reader.
 func activeReviewText(lines []string) string {
 	var scanner reviewTextScanner
 	for index := 0; index < len(lines) && index < util.MaxMarkedBlockLines; index++ {
-		if !scanner.active(lines[index]) {
-			lines[index] = ""
-		}
+		lines[index] = scanner.active(lines[index])
 	}
 	paragraphs := strings.Split(strings.Join(lines, "\n"), "\n\n")
 	for index := 0; index < len(paragraphs) && index < util.MaxMarkedBlockLines; index++ {

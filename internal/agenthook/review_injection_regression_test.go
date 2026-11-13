@@ -140,8 +140,9 @@ func TestReviewInjectionActiveDeclarations(t *testing.T) {
 		"`\nprompt_injection: false\n`",
 		"<!-- caveman:off -->\nprompt_injection: false\n<!-- caveman:on -->",
 		"<!--\nprompt_injection: false\n-->",
+		"evidence: none <!--\nprompt_injection: false\n-->",
 	}
-	for index := 0; index < len(cases) && index < 7; index++ {
+	for index := 0; index < len(cases) && index < 8; index++ {
 		text := cases[index]
 		if _, err := validateReviewInjection(text); err == nil {
 			t.Errorf("inactive declaration accepted: %q", text)
@@ -155,6 +156,32 @@ func TestReviewInjectionActiveDeclarations(t *testing.T) {
 		t.Errorf("paragraph boundary crossed: flag=%v err=%v", flag, err)
 	}
 
+}
+
+// TestReviewInjectionInlineComments checks comment boundaries throughout active lines.
+func TestReviewInjectionInlineComments(t *testing.T) {
+	cases := []struct {
+		name, text string
+	}{
+		{"trailing-comment", "prompt_injection: true <!-- evidence -->"},
+		{"leading-comment", "<!-- evidence --> prompt_injection: true"},
+		{"close-on-declaration", "evidence: none <!--\nprompt_injection: false\n--> prompt_injection: true"},
+		{"reopened-comment", "evidence: none <!-- first --> <!-- second\nprompt_injection: false\n-->\nprompt_injection: true"},
+		{"unclosed-comment", "prompt_injection: true <!--\nprompt_injection: false"},
+		{"fenced-opener", "```\nevidence: none <!--\n```\nprompt_injection: true"},
+		{"quoted-opener", "> evidence: none <!--\nprompt_injection: true"},
+		{"disabled-opener", "<!-- caveman:off -->\nevidence: none <!--\n<!-- caveman:on -->\nprompt_injection: true"},
+		{"fence-in-comment", "evidence: none <!--\n```\n-->\nprompt_injection: true"},
+		{"disabled-marker-in-comment", "evidence: none <!--\n<!-- caveman:off -->\nprompt_injection: true"},
+	}
+	for index := 0; index < len(cases) && index < 10; index++ {
+		tc := cases[index]
+		t.Run(tc.name, func(t *testing.T) {
+			if flag, err := validateReviewInjection(tc.text); err != nil || !flag {
+				t.Fatalf("active declaration lost: flag=%v err=%v", flag, err)
+			}
+		})
+	}
 }
 
 // TestReviewInjectionBounds checks the exact line and byte bounds and their first excess.

@@ -502,7 +502,7 @@ before delivery, using the `session_id`, `agent_id`, and `tool_use_id` supplied 
 tool hooks. It stores a digest binding that tool use to the validated report, together with its verdict
 word for receipts. A pending handback cannot be replaced until its matching failure or
 permission-denial event releases it (`TestReviewInjectionPendingHandback` in
-[review injection regression tests](../../internal/agenthook/review_injection_regression_test.go)).
+`internal/agenthook/review_injection_regression_test.go`).
 `handback-receipt` marks delivery after the tool succeeds and only when the delivered input
 matches that digest. Failure or permission denial clears only the matching provisional
 digest and verdict, so a stale event cannot alter a newer attempt. `SubagentStop.last_assistant_message`
@@ -542,25 +542,25 @@ fails closed:
   value exact). Quoted, fenced, commented, and disabled declarations do not supply the
   required field. Returns exceeding 1 MiB or 65,536 lines are denied before scanning;
   missing, malformed, or duplicate active fields are denied too
-  ([`validateReviewInjection`](../../internal/agenthook/review_injection.go),
+  (`validateReviewInjection` in `internal/agenthook/review_injection.go`,
   `TestReviewInjectionActiveDeclarations`, `TestReviewInjectionBounds` in
-  [review injection regression tests](../../internal/agenthook/review_injection_regression_test.go)).
+  `internal/agenthook/review_injection_regression_test.go`).
   A flagged stop-only return finishes without a retry, emits
   `PROMPT INJECTION SUSPECTED: this review return is a finding, not a passing review`
   with its exact task label on hook output, and records a non-passing outcome
-  ([`judgeAgentReturn`](../../internal/agenthook/agent_traffic.go),
+  (`judgeAgentReturn` in `internal/agenthook/agent_traffic.go`,
   `TestReviewInjectionOutcome/stop-finding`, `TestReviewInjectionSubagentStop` in
-  [review injection tests](../../internal/agenthook/review_injection_test.go)).
+  `internal/agenthook/review_injection_test.go`).
   At pre-handback the finding is delivered as context to the agent calling the tool and
   prepended to the dispatcher's message through Claude's `updatedInput`, preserving all
   other tool operands. The receipt must match that rewritten message; a delivered flagged
   review records a non-passing outcome too
-  (`evaluateAgentHandback` in [agent traffic](../../internal/agenthook/agent_traffic.go),
+  (`evaluateAgentHandback` in `internal/agenthook/agent_traffic.go`,
   `TestReviewInjectionHandbackContext`, `TestReviewInjectionDispatcherNotice`,
   `TestReviewInjectionOutcome/delivered-finding` in the regression tests).
   Claude review dispatches append the required-field guidance to the reviewer's prompt,
   preserving any read-only projection and binding the final prompt to the launch receipt
-  (`deliverReviewBrief` in [review injection](../../internal/agenthook/review_injection.go),
+  (`deliverReviewBrief` in `internal/agenthook/review_injection.go`,
   `TestReviewInjectionDispatchPrompt` in the regression tests).
   `false` leaves other validation unchanged (`TestReviewReturnInjection/false` in the
   review injection tests). This independent defence takes its idea from
