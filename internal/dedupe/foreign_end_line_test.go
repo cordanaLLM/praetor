@@ -3,10 +3,12 @@ package dedupe
 import (
 	"encoding/json"
 	"go/token"
-	"os"
+	"maps"
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 type endLineLocation struct {
@@ -162,21 +164,20 @@ func TestScanGoFileEndLine(t *testing.T) {
 		{"compact", "package fixture\nfunc clone() int { n := 1; n++; return n }\n", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, locations := range scanGoEndLineCandidates(t, tc.source) {
-				want := []endLineLocation{{Path: "clone.go", Line: 2, EndLine: tc.end}}
-				if got := endLineLocations(t, locations); !slices.Equal(got, want) {
-					t.Errorf("locations = %+v, want %+v", got, want)
-				}
+			locations := scanGoEndLineCandidates(t, tc.source)
+			want := []endLineLocation{{Path: "clone.go", Line: 2, EndLine: tc.end}}
+			if got := endLineLocations(t, locations); !slices.Equal(got, want) {
+				t.Errorf("locations = %+v, want %+v", got, want)
 			}
 		})
 	}
 }
 
 // scanGoEndLineCandidates scans one fixture and requires a single clone candidate.
-func scanGoEndLineCandidates(t *testing.T, source string) map[string][]FileLocation {
+func scanGoEndLineCandidates(t *testing.T, source string) []FileLocation {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "clone.go")
-	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+	if err := contextopt.WriteSnapshot(t.Context(), path, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	groups, lines := make(map[string][]FileLocation), make(map[string]int)
@@ -187,5 +188,5 @@ func scanGoEndLineCandidates(t *testing.T, source string) map[string][]FileLocat
 	if len(groups) != 1 {
 		t.Fatalf("clone groups = %d, want 1", len(groups))
 	}
-	return groups
+	return slices.Collect(maps.Values(groups))[0]
 }
