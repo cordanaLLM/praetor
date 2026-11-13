@@ -598,3 +598,77 @@ func TestValidateOutcome_NonFiniteCostsRefused(t *testing.T) {
 		t.Fatalf("finite costs refused: %v", err)
 	}
 }
+
+func ptrInt(v int) *int    { return &v }
+func ptrBool(v bool) *bool { return &v }
+
+// TestOutcomeReplayRowAppendsAndReadsBack pins writing and reading replay fields through the outcome log.
+func TestOutcomeReplayRowAppendsAndReadsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "outcomes.jsonl")
+	cutoff := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	row := sampleOutcome("review", OutcomeOK)
+	row.Arm = "sonnet-combiner"
+	row.Suite = "fairies-pr-replay"
+	row.Cutoff = &cutoff
+	row.SampleCount = 3
+	row.RetainedDefects = ptrInt(2)
+	row.VerdictMatch = ptrBool(true)
+	row.OrderSensitive = ptrBool(false)
+	if err := AppendOutcome(t.Context(), path, row); err != nil {
+		t.Fatalf("append replay outcome: %v", err)
+	}
+	got, err := ReadOutcomes(t.Context(), path)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("read replay outcome: %+v %v", got, err)
+	}
+	assertReplayOutcomeFields(t, got[0], cutoff)
+}
+
+func assertReplayOutcomeFields(t *testing.T, got Outcome, wantCutoff time.Time) {
+	t.Helper()
+	if got.Arm != "sonnet-combiner" || got.Suite != "fairies-pr-replay" || got.SampleCount != 3 {
+		t.Fatalf("replay row metadata mismatch: %+v", got)
+	}
+	if got.Cutoff == nil || !got.Cutoff.Equal(wantCutoff) {
+		t.Fatalf("replay cutoff mismatch: %v != %v", got.Cutoff, wantCutoff)
+	}
+	assertReplayOutcomeScores(t, got)
+}
+
+func assertReplayOutcomeScores(t *testing.T, got Outcome) {
+	t.Helper()
+	if got.RetainedDefects == nil || *got.RetainedDefects != 2 {
+		t.Fatalf("replay retained defects mismatch: %+v", got)
+	}
+	if got.VerdictMatch == nil || !*got.VerdictMatch || got.OrderSensitive == nil || *got.OrderSensitive {
+		t.Fatalf("replay verdict/order flags mismatch: %+v", got)
+	}
+}
+
+// TestOutcomeReplayRefusals pins validation of optional replay fields on write and readback.
+func TestOutcomeReplayRefusals(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "outcomes.jsonl")
+	zeroTime := time.Time{}
+	cases := map[string]func(*Outcome){
+		"invalid arm":             func(o *Outcome) { o.Arm = "bad arm" },
+		"invalid suite":           func(o *Outcome) { o.Suite = "bad\nsuite" },
+		"zero cutoff":             func(o *Outcome) { o.Cutoff = &zeroTime },
+		"negative sample count":   func(o *Outcome) { o.SampleCount = -1 },
+		"negative retained count": func(o *Outcome) { o.RetainedDefects = ptrInt(-1) },
+		"replay without identity": func(o *Outcome) { o.Arm, o.Identity, o.ResolvedModel = "arm-a", RunIdentity{}, "" },
+	}
+	for name, mutate := range cases {
+		o := sampleOutcome("review", OutcomeOK)
+		mutate(&o)
+		if err := AppendOutcome(t.Context(), path, o); err == nil {
+			t.Errorf("%s accepted on write", name)
+		}
+	}
+	unidentifiedReplay := `{"time":"2026-10-08T09:00:00Z","task":"review","target":"arm-a","result":"ok","arm":"arm-a","sample_count":1}` + "\n"
+	if err := os.WriteFile(path, []byte(unidentifiedReplay), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadOutcomes(t.Context(), path); err == nil {
+		t.Fatal("replay record missing run identity was accepted as legacy on read")
+	}
+}
