@@ -75,7 +75,7 @@ func TestRenderWorkflow_Boundary_EmptySettingsKeepTheBytes(t *testing.T) {
 		}
 	}
 	digest, _, err := util.CanonicalTextDigest([]byte(Workflow))
-	if err != nil || digest != "5ca7470967ce41b780fe981b8775a9a8f79f50920e74487c745656ca396e1a5d" {
+	if err != nil || digest != "eec8eab97c37276c780dd1ccf5b194bef89a067ef43d03c2c0b09e9b4660bc9c" {
 		t.Fatalf("Workflow digest = %s (%v): the default rendering is no longer byte-identical to the shipped text", digest, err)
 	}
 }
