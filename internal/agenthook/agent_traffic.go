@@ -69,13 +69,15 @@ func evaluateAgentHandback(ctx context.Context, row Registration, canonical Cano
 	if verdict.Outcome != Allow {
 		return verdict
 	}
+	if injection {
+		canonical.Return, err = deliverReviewHandback(canonical, entry.Task, &verdict)
+		if err != nil {
+			return trafficDenied(err)
+		}
+	}
 	if err := store.markHandbackValidated(ctx, row.Client, canonical.ConversationID, canonical.AgentID,
 		canonical.ToolUseID, canonical.Return); err != nil {
 		return trafficDenied(err)
-	}
-	if injection {
-		verdict.Notice = reviewInjectionNotice(entry.Task)
-		verdict.AddedContext = verdict.Notice
 	}
 	return verdict
 }

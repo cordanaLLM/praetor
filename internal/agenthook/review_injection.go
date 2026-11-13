@@ -23,6 +23,27 @@ func reviewOutcomeVerdict(text string, injection bool) string {
 	return claudeVerdictWord(text)
 }
 
+// deliverReviewHandback prepends the finding to the dispatcher's message and preserves every other tool operand.
+func deliverReviewHandback(canonical Canonical, task string, verdict *Verdict) (string, error) {
+	input, err := decodeObject(canonical.DispatchInput)
+	if err != nil {
+		return "", fmt.Errorf("read review handback input: %w", err)
+	}
+	notice := reviewInjectionNotice(task)
+	message := notice + "\n\n" + canonical.Return
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		return "", fmt.Errorf("encode review handback message: %w", err)
+	}
+	input["message"] = encoded
+	updated, err := json.Marshal(input)
+	if err != nil {
+		return "", fmt.Errorf("encode review handback input: %w", err)
+	}
+	verdict.Notice, verdict.AddedContext, verdict.UpdatedInput = notice, notice, updated
+	return message, nil
+}
+
 // deliverReviewBrief adds review guidance and preserves the prompt used to verify dispatch receipts.
 func deliverReviewBrief(client string, canonical Canonical, prompt string, verdict *Verdict) (string, error) {
 	guidance, err := reviewBriefGuidance(canonical.Briefs)

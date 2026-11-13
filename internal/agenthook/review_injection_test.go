@@ -26,7 +26,9 @@ func TestReviewReturnInjection(t *testing.T) {
 			root, state := repository(t, true), t.TempDir()
 			seedReviewCorrelation(t, root, state, tc.task)
 			text := "verdict: pass\nchanged: none\nran: none\nevidence: none\nopen: none\n" + tc.field
-			got := evaluateAgentHandback(t.Context(), Registration{Client: "claude"}, Canonical{ConversationID: "s", AgentID: "agent", ToolUseID: "handback", Return: text}, root, Invocation{CorrelationDir: state})
+			canonical := Canonical{ConversationID: "s", AgentID: "agent", ToolUseID: "handback", Return: text,
+				DispatchInput: commandPayload(t, map[string]any{"message": text})}
+			got := evaluateAgentHandback(t.Context(), Registration{Client: "claude"}, canonical, root, Invocation{CorrelationDir: state})
 			if got.Outcome != tc.outcome || !strings.Contains(got.Reason, tc.reason) {
 				t.Fatalf("got %+v, want outcome %v reason %q", got, tc.outcome, tc.reason)
 			}
