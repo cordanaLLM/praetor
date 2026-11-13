@@ -88,8 +88,9 @@ jobs:
   api-compatibility:
     name: Go API Compatibility
     runs-on: ubuntu-26.04
-    # Twice the slowest adopter's p95 (golusoris/golusoris, 12.3 minutes over 15 green runs,
-    # 2026-11-06), inside every adopter's job-timeout window (TestAPICompatibilityJobTimeoutFitsEveryAdopter).
+    # Twice the slowest adopter's p95 (golusoris/golusoris, 12.3 minutes
+    # over 15 green runs, 2026-11-06), inside every adopter's job-timeout
+    # window (TestAPICompatibilityJobTimeoutFitsEveryAdopter).
     timeout-minutes: 25
     steps:
 ` + ghworkflow.HostedGateDraftStep + `      - name: Checkout source` + ghworkflow.HostedGateStepIf + `
