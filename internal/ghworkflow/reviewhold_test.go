@@ -311,6 +311,7 @@ case "$endpoint" in
   */actions/runs/42) cat "$FIXTURE_DIR/current-run.json" ;;
   */pulls/[12])
     cat "$FIXTURE_DIR/current-pr.json"
+    if [[ -f "$FIXTURE_DIR/prs-after-head.json" ]]; then cp "$FIXTURE_DIR/prs-after-head.json" "$FIXTURE_DIR/prs.json"; fi
     if [[ -f "$FIXTURE_DIR/threads-after-head.json" ]]; then cp "$FIXTURE_DIR/threads-after-head.json" "$FIXTURE_DIR/threads.json"; fi ;;
   *) echo "unexpected stub call: $*" >&2; exit 2 ;;
 esac
@@ -332,7 +333,7 @@ func reviewFixtures(t *testing.T) string {
 		"jobs.json":        `{"jobs":[{"conclusion":"failure","check_run_url":"https://api.github.com/repos/fixture/repo/check-runs/7"}]}`,
 		"annotations.json": `[{"title":"Gate held: review open","annotation_level":"failure"}]`,
 		"current-run.json": `{"status":"completed","run_attempt":1}`,
-		"current-pr.json":  `{"state":"open","head":{"sha":"head"}}`,
+		"current-pr.json":  `{"state":"open","head":{"sha":"head","repo":{"full_name":"fixture/fork"}}}`,
 	}
 	writeReviewStub(t, dir)
 	for name, data := range files {
@@ -537,7 +538,6 @@ func TestReviewHoldRelease(t *testing.T) {
 		phase            int
 	}{
 		{"held now clear", "", "", true, 5},
-		{"unassociated same head wrong PR", "runs.json", reviewForkRun("fixture/fork", "head"), false, 0},
 		{"fork repository differs", "runs.json", reviewForkRun("other/fork", "head"), false, 0},
 		{"fork sha differs", "runs.json", reviewForkRun("fixture/fork", "other-head"), false, 0},
 		{"fork repository missing", "runs.json", reviewForkRun("", "head"), false, 0},
@@ -578,6 +578,99 @@ func reviewForkRun(repository, sha string) string {
 	return `{"workflow_runs":[{"id":42,"run_number":8,"run_attempt":1,"head_sha":"` + sha +
 		`","head_repository":{"full_name":"` + repository +
 		`"},"event":"pull_request","status":"completed","conclusion":"failure","pull_requests":[]}]}`
+}
+
+// TestReviewHoldReleaseForkAssociation permits only unique repository/SHA fallback matches.
+func TestReviewHoldReleaseForkAssociation(t *testing.T) {
+	cases := []struct {
+		name, peerRepo, peerSHA, reruns string
+		late                            bool
+	}{
+		{"unique", "", "", "42\n", false},
+		{"other repository", "other/fork", "head", "42\n", false},
+		{"other SHA", "fixture/fork", "other-head", "42\n", false},
+		{"shared SHA", "fixture/fork", "head", "", false},
+		{"new ambiguous PR before rerun", "fixture/fork", "head", "", true},
+	}
+	for _, event := range []string{"schedule", "pull_request_review", "pull_request_review_comment"} {
+		for _, tc := range cases {
+			t.Run(event+"/"+tc.name, func(t *testing.T) {
+				dir := reviewFixtures(t)
+				writeReviewFixture(t, dir, "runs.json", reviewForkRun("fixture/fork", "head"))
+				writeReviewFixture(t, dir, "current-pr.json", `{"number":1,"state":"open","head":{"sha":"head","repo":{"full_name":"fixture/fork"}}}`)
+				if tc.peerRepo != "" {
+					file := "prs.json"
+					if tc.late {
+						file = "prs-after-head.json"
+					}
+					writeReviewFixture(t, dir, file, reviewSharedForkPRs(tc.peerRepo, tc.peerSHA))
+				}
+				prefix := "GITHUB_EVENT_NAME=" + event + "\n"
+				if event != "schedule" {
+					prefix += "REVIEW_PR_NUMBER=1\n"
+				}
+				assertReviewForkRelease(t, dir, prefix, tc.reruns)
+			})
+		}
+	}
+}
+
+// reviewSharedForkPRs adds a second open head to the target PR's API collection.
+func reviewSharedForkPRs(repository, sha string) string {
+	return `[{"number":1,"head":{"sha":"head","repo":{"full_name":"fixture/fork"}}},` +
+		`{"number":2,"head":{"sha":"` + sha + `","repo":{"full_name":"` + repository + `"}}}]`
+}
+
+// assertReviewForkRelease verifies reruns and actionable ambiguity summaries.
+func assertReviewForkRelease(t *testing.T, dir, prefix, want string) {
+	t.Helper()
+	out, err := runReviewScript(t, dir, prefix+reviewHoldReleaseScript)
+	if err != nil {
+		t.Fatalf("out=%s err=%v", out, err)
+	}
+	reruns, err := readReviewFixture(t, dir, "reruns")
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if string(reruns) != want {
+		t.Errorf("reruns=%q; want %q", reruns, want)
+	}
+	summary, err := readReviewFixture(t, dir, "summary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want == "" && !strings.Contains(string(summary), "PR 1: ambiguous fork run for fixture/fork at head; also open PR(s): 2; manual rerun required") {
+		t.Errorf("missing named ambiguity and manual rerun instruction: %s", summary)
+	}
+}
+
+// TestReviewHoldReleaseForkReadFailure refuses release without a complete uniqueness read.
+func TestReviewHoldReleaseForkReadFailure(t *testing.T) {
+	dir := reviewFixtures(t)
+	writeReviewFixture(t, dir, "runs.json", reviewForkRun("fixture/fork", "head"))
+	writeReviewFixture(t, dir, "current-pr.json", `{"number":1,"state":"open","head":{"sha":"head","repo":{"full_name":"fixture/fork"}}}`)
+	writeReviewFixture(t, dir, "fail-endpoint-1", "repos/fixture/repo/pulls?state=open&sort=created&direction=asc")
+	out, err := runReviewScript(t, dir, "REVIEW_PR_NUMBER=1\n"+reviewHoldReleaseScript)
+	if err == nil || !strings.Contains(out, "fork association read failed") {
+		t.Fatalf("out=%s err=%v; want failed uniqueness read", out, err)
+	}
+	if reruns, err := readReviewFixture(t, dir, "reruns"); !os.IsNotExist(err) {
+		t.Fatalf("reruns=%s read=%v; want no rerun", reruns, err)
+	}
+}
+
+// TestReviewHoldReleaseForkHeadRevalidation refuses a changed head repository before mutation.
+func TestReviewHoldReleaseForkHeadRevalidation(t *testing.T) {
+	for _, current := range []string{
+		`{"state":"open","head":{"sha":"head","repo":{"full_name":"other/fork"}}}`,
+		`{"state":"open","head":{"sha":"new-head","repo":{"full_name":"fixture/fork"}}}`,
+		`{"state":"closed","head":{"sha":"head","repo":{"full_name":"fixture/fork"}}}`,
+	} {
+		dir := reviewFixtures(t)
+		writeReviewFixture(t, dir, "runs.json", reviewForkRun("fixture/fork", "head"))
+		writeReviewFixture(t, dir, "current-pr.json", current)
+		assertReviewReleasePass(t, dir, "schedule", "")
+	}
 }
 
 // TestReviewHoldReleaseReviewEventTarget refuses to scan or release an unrelated PR.
@@ -671,8 +764,7 @@ func TestReviewHoldReleaseConcurrency(t *testing.T) {
 	}
 }
 
-// TestReviewHoldReleaseConcurrentPaths requires one non-cancelling mutation lock.
-// A scan and either review event must contend for this same literal job group.
+// TestReviewHoldReleaseConcurrentPaths requires non-cancelling per-PR and scan job groups.
 func TestReviewHoldReleaseConcurrentPaths(t *testing.T) {
 	var document yaml.Node
 	if err := yaml.Unmarshal([]byte(RenderReviewHoldReleaseWorkflow()), &document); err != nil {
@@ -681,19 +773,67 @@ func TestReviewHoldReleaseConcurrentPaths(t *testing.T) {
 	jobs := util.YAMLMappingValue(document.Content[0], "jobs")
 	release := util.YAMLMappingValue(jobs, "release")
 	lock := util.YAMLMappingValue(release, "concurrency")
-	for key, want := range map[string]string{"group": "review-hold-release-mutation", "cancel-in-progress": "false"} {
+	const group = "${{ (" + reviewHoldReleaseReviewEvent + ") && format('review-hold-release-mutation-pr-{0}', github.event.pull_request.number) || 'review-hold-release-mutation-scan' }}"
+	for key, want := range map[string]string{"group": group, "cancel-in-progress": "false"} {
 		node := util.YAMLMappingValue(lock, key)
 		if node == nil || node.Value != want {
-			t.Errorf("shared release %s=%v; want %s", key, node, want)
+			t.Errorf("release %s=%v; want %s", key, node, want)
 		}
 	}
-	// The shared job group admits these overlapping arrivals serially, in either order.
+	// A later scan observes an already-rerun attempt in either arrival order.
 	for _, events := range [][]string{{"schedule", "pull_request_review"}, {"pull_request_review", "schedule"}} {
 		assertSerializedReviewReleases(t, events)
 	}
 }
 
-// assertSerializedReviewReleases runs arrivals admitted by the shared job lock.
+// TestReviewHoldReleaseThreeArrivals models GitHub's one-running/one-pending slots.
+// Different PRs must survive at both concurrency levels; same-PR arrivals may coalesce.
+func TestReviewHoldReleaseThreeArrivals(t *testing.T) {
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(RenderReviewHoldReleaseWorkflow()), &document); err != nil {
+		t.Fatal(err)
+	}
+	root := document.Content[0]
+	job := util.YAMLMappingValue(util.YAMLMappingValue(root, "jobs"), "release")
+	for _, level := range []*yaml.Node{root, job} {
+		group := util.YAMLMappingValue(util.YAMLMappingValue(level, "concurrency"), "group")
+		for _, arrivals := range [][]int{{1, 2, 3}, {1, 1, 2}, {0, 1, 2}, {1, 0, 2}} {
+			running, pending := map[string]int{}, map[string]int{}
+			for i, pr := range arrivals {
+				key := reviewArrivalGroup(t, group.Value, pr)
+				if _, busy := running[key]; !busy {
+					running[key] = pr
+					continue
+				}
+				if previous, queued := pending[key]; queued && previous != pr {
+					t.Errorf("arrival %d PR %d dropped pending PR %d; group=%s", i+1, pr, previous, key)
+				}
+				pending[key] = pr
+			}
+		}
+	}
+}
+
+// reviewArrivalGroup resolves only the renderer's supported format expression or a literal.
+// PR zero represents a scan; review and comment events share the same expression branch.
+func reviewArrivalGroup(t *testing.T, group string, pr int) string {
+	t.Helper()
+	if !strings.HasPrefix(group, "${{") {
+		return group
+	}
+	pattern := `^\$\{\{ \(` + regexp.QuoteMeta(reviewHoldReleaseReviewEvent) +
+		`\) && format\('([^']+)', github\.event\.pull_request\.number\) \|\| '([^']+)' \}\}$`
+	parts := regexp.MustCompile(pattern).FindStringSubmatch(group)
+	if len(parts) != 3 {
+		t.Fatalf("unsupported concurrency expression: %s", group)
+	}
+	if pr == 0 {
+		return parts[2]
+	}
+	return strings.ReplaceAll(parts[1], "{0}", strconv.Itoa(pr))
+}
+
+// assertSerializedReviewReleases checks sequential scan/review attempt revalidation.
 func assertSerializedReviewReleases(t *testing.T, events []string) {
 	t.Helper()
 	dir := reviewFixtures(t)
@@ -739,7 +879,7 @@ func TestReviewHoldReleaseReviewRun(t *testing.T) {
 
 // TestReviewHoldReleaseDescription keeps event scope and serialization explicit.
 func TestReviewHoldReleaseDescription(t *testing.T) {
-	for _, text := range []string{"Review events process only their PR", "Scan events process all open PRs", "All release jobs share a non-cancelling concurrency group", "scan continues after a per-PR read failure"} {
+	for _, text := range []string{"Review events process only their PR", "Scan events process all open PRs", "Release jobs use non-cancelling per-PR groups and a separate scan group", "scan continues after a per-PR read failure"} {
 		if !strings.Contains(RenderReviewHoldReleaseWorkflow(), text) {
 			t.Errorf("release description missing %q", text)
 		}
