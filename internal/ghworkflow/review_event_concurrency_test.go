@@ -16,7 +16,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// reviewEventConcurrencyFault refuses review groups without the nested PR number (HISS-18).
+// reviewEventConcurrencyFault requires a supported expression coalescing reviews by PR.
 func reviewEventConcurrencyFault(path string, data []byte) error {
 	spec, err := Parse(data)
 	if err != nil {
@@ -35,10 +35,43 @@ func reviewEventConcurrencyFault(path string, data []byte) error {
 	if group.Kind == yaml.MappingNode {
 		group = util.YAMLMappingValue(group, "group")
 	}
-	if group == nil || group.Kind != yaml.ScalarNode || !strings.Contains(group.Value, "github.event.pull_request.number") {
-		return fmt.Errorf("%s: review-triggered concurrency group must use github.event.pull_request.number", path)
+	comments := slices.Contains(events, "pull_request_review_comment")
+	if group == nil || group.Kind != yaml.ScalarNode || !reviewGroupUsesPR(group.Value, comments) {
+		return fmt.Errorf("%s: review-triggered concurrency group must be decided by github.event.pull_request.number", path)
 	}
 	return nil
+}
+
+// reviewGroupUsesPR allows only expressions whose review branch is known to be stable.
+// Unknown syntax fails closed; literal mentions and extra per-run expressions cannot pass.
+func reviewGroupUsesPR(group string, comments bool) bool {
+	usesPR := false
+	for i := 0; i < 16; i++ {
+		_, expression, found := strings.Cut(group, "${{")
+		if !found {
+			return usesPR
+		}
+		expression, rest, closed := strings.Cut(expression, "}}")
+		if !closed {
+			return false
+		}
+		switch strings.Join(strings.Fields(expression), " ") {
+		case "github.workflow":
+		case "github.event_name == 'pull_request_review' && format('review-{0}', github.event.pull_request.number) || (github.event.number || github.run_id)":
+			if comments {
+				return false
+			}
+			usesPR = true
+		case "github.event.pull_request.number",
+			"github.event.pull_request.number || github.event.number || github.run_id",
+			"(" + reviewHoldReleaseReviewEvent + ") && format('review-hold-release-pr-{0}', github.event.pull_request.number) || 'review-hold-release-scan'":
+			usesPR = true
+		default:
+			return false
+		}
+		group = rest
+	}
+	return false
 }
 
 // TestReviewEventConcurrencyFixtures plants the old group and covers each trigger shape.
@@ -54,6 +87,18 @@ func TestReviewEventConcurrencyFixtures(t *testing.T) {
 		{"scalar-review.yml", "pull_request_review", "review-hold-release", true},
 		{"fixed-comment.yml", "pull_request_review_comment", "review-hold-release-pr-${{ github.event.pull_request.number }}", false},
 		{"missing-group.yml", "pull_request_review", "", true},
+		{"run-first.yml", "pull_request_review", "${{ github.run_id || github.event.pull_request.number }}", true},
+		{"run-suffix.yml", "pull_request_review", "${{ github.event.pull_request.number }}-${{ github.run_id }}", true},
+		{"attempt-suffix.yml", "pull_request_review", "${{ github.event.pull_request.number }}-${{ github.run_attempt }}", true},
+		{"literal.yml", "pull_request_review", "github.event.pull_request.number", true},
+		{"quoted-lookup.yml", "pull_request_review", "${{ 'github.event.pull_request.number' }}", true},
+		{"unused-lookup.yml", "pull_request_review", "${{ true || github.event.pull_request.number }}", true},
+		{"unused-branch.yml", "pull_request_review", "${{ false && github.event.pull_request.number || github.run_id }}", true},
+		{"literal-suffix.yml", "pull_request_review", "${{ github.run_id }}-github.event.pull_request.number", true},
+		{"review-namespace.yml", "pull_request_review", "${{ github.workflow }}-${{ github.event_name == 'pull_request_review' && format('review-{0}', github.event.pull_request.number) || (github.event.number || github.run_id) }}", false},
+		{"comment-wrong-branch.yml", "pull_request_review_comment", "${{ github.event_name == 'pull_request_review' && format('review-{0}', github.event.pull_request.number) || (github.event.number || github.run_id) }}", true},
+		{"unclosed.yml", "pull_request_review", "${{ github.event.pull_request.number", true},
+		{"too-many.yml", "pull_request_review", strings.Repeat("${{ github.workflow }}-", 16) + "${{ github.event.pull_request.number }}", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,7 +130,7 @@ func TestRepositoryReviewEventConcurrency(t *testing.T) {
 			continue
 		}
 		t.Run(entry.Name(), func(t *testing.T) {
-			data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+			data, err := readReviewWorkflow(dir, entry.Name())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -93,5 +138,55 @@ func TestRepositoryReviewEventConcurrency(t *testing.T) {
 				t.Error(err)
 			}
 		})
+	}
+}
+
+// readReviewWorkflow is the repository guard's workflow reader.
+func readReviewWorkflow(dir, name string) ([]byte, error) {
+	return util.ReadConfinedLimited(dir, name, 64<<10)
+}
+
+// TestReviewEventWorkflowConfinement plants readable sibling and symlink escapes.
+func TestReviewEventWorkflowConfinement(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "workflows")
+	sibling := filepath.Join(base, "workflows-other")
+	for _, path := range []string{dir, sibling} {
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "fixture.yml"), []byte("on: pull_request\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := readReviewWorkflow(dir, "fixture.yml"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"../workflows-other/fixture.yml", filepath.Join(sibling, "fixture.yml")} {
+		if _, err := readReviewWorkflow(dir, name); err == nil {
+			t.Errorf("escape accepted: %s", name)
+		}
+	}
+	if err := os.Symlink(filepath.Join(sibling, "fixture.yml"), filepath.Join(dir, "escape.yml")); err != nil {
+		t.Skipf("symlink fixture unavailable: %v", err)
+	}
+	if _, err := readReviewWorkflow(dir, "escape.yml"); err == nil {
+		t.Fatal("symlink escape accepted")
+	}
+}
+
+// TestReviewEventPortabilityNoCancelOfPRRun keeps reviews outside the matrix's group.
+func TestReviewEventPortabilityNoCancelOfPRRun(t *testing.T) {
+	spec := loadPortabilityWorkflow(t)
+	want := map[string]string{
+		"group":              "${{ github.workflow }}-${{ github.event_name == 'pull_request_review' && format('review-{0}', github.event.pull_request.number) || (github.event.number || github.run_id) }}",
+		"cancel-in-progress": "${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_review' }}",
+	}
+	for key, value := range want {
+		node := util.YAMLMappingValue(&spec.Concurrency, key)
+		if node == nil || node.Value != value {
+			t.Errorf("portability %s=%v; want %s", key, node, value)
+		}
 	}
 }

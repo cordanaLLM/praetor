@@ -11,7 +11,7 @@ import (
 const (
 	// reviewHoldReleaseReviewEvent selects cancellable, per-PR review runs.
 	reviewHoldReleaseReviewEvent = "github.event_name == 'pull_request_review' || github.event_name == 'pull_request_review_comment'"
-	// reviewHoldReleaseScript locates only the newest PR run on the current head.
+	// reviewHoldReleaseScript locates the newest PR or review run on the current head.
 	// Current-attempt jobs supply their check-run annotation IDs; older attempts
 	// must not cause an unrelated failure to be rerun indefinitely.
 	reviewHoldReleaseScript = reviewHoldLibrary + `RELEASE_TITLE='Review hold release read failed'
@@ -25,14 +25,13 @@ review_release_pr() (
   HOLD_CAUSE="pull request metadata read failed: index $pr_index"
   PR_NUMBER=$(jq --binary -er --argjson i "$pr_index" '.[$i].number' "$prs")
   HEAD_SHA=$(jq --binary -er --argjson i "$pr_index" '.[$i].head.sha' "$prs")
-  HEAD_REPO=$(jq --binary -r --argjson i "$pr_index" '.[$i].head.repo.full_name // ""' "$prs")
   HOLD_CAUSE="workflow run read failed: pull request $PR_NUMBER"
-  runs=$(review_pages "repos/$GITHUB_REPOSITORY/actions/workflows/portability.yml/runs?event=pull_request&head_sha=$HEAD_SHA" workflow_runs)
+  runs=$(review_pages "repos/$GITHUB_REPOSITORY/actions/workflows/portability.yml/runs?head_sha=$HEAD_SHA" workflow_runs)
   run="$REVIEW_TMP/run.json"
-  jq --binary -c --arg head "$HEAD_SHA" --arg repo "$HEAD_REPO" --argjson number "$PR_NUMBER" '
-    [.[] | select(.head_sha == $head and .event == "pull_request") |
-      select(any(.pull_requests[]; .number == $number) or
-        (.pull_requests == [] and $repo != "" and .head_repository.full_name == $repo))] |
+  # A shared fork SHA cannot identify a PR; require an explicit run association.
+  jq --binary -c --arg head "$HEAD_SHA" --argjson number "$PR_NUMBER" '
+    [.[] | select(.head_sha == $head and (.event == "pull_request" or .event == "pull_request_review")) |
+      select(any(.pull_requests[]; .number == $number))] |
     max_by(.run_number) // {}' "$runs" > "$run"
   # Busy runs keep their hold annotations. Every scheduled pass rescans open PRs,
   # so defer them until completion without cancelling another active leg.
@@ -69,6 +68,9 @@ review_release_pr() (
   current_pr="$REVIEW_TMP/current-pr.json"
   gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$current_pr"
   if [[ $(jq --binary -r '.head.sha' "$current_pr") != "$HEAD_SHA" || $(jq --binary -r '.state' "$current_pr") != open ]]; then exit 0; fi
+  # Recount after the run/head reads: a new thread or bot hold must defer release.
+  review_count
+  if ((REVIEW_THREADS > 0 || REVIEW_PENDING > 0)); then exit 0; fi
   HOLD_CAUSE="rerun failed: $run_id"
   gh run rerun "$run_id" --repo "$GITHUB_REPOSITORY"
   printf 'Released PR %s: run %s attempt %s\n' "$PR_NUMBER" "$run_id" "$attempt" >> "$GITHUB_STEP_SUMMARY"
@@ -121,12 +123,15 @@ func ReviewHoldReleaseCondition() string {
 		"(github.event_name != 'status' || (github.event.state != 'pending' && (" + strings.Join(statusParts, " || ") + ")))"
 }
 
-// reviewHoldReleaseHeader cancels superseded reviews per PR and serializes full scans.
+// reviewHoldReleaseHeader coalesces reviews per PR and serializes all release jobs.
 // The token stays in the trusted inline script; no checkout or PR-controlled code runs.
 var reviewHoldReleaseHeader = `# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
 #
 # SPDX-License-Identifier: EUPL-1.2
 # Rendered by internal/ghworkflow.RenderReviewHoldReleaseWorkflow.
+# Review events process only their PR; newer reviews supersede that PR's reviews.
+# Scan events process all open PRs; the scan continues after a per-PR read failure.
+# All release jobs share a non-cancelling concurrency group, including full scans.
 name: Review hold release
 on:
   pull_request_review:
@@ -150,6 +155,9 @@ concurrency:
 jobs:
   release:
     if: ` + ReviewHoldReleaseCondition() + `
+    concurrency:
+      group: review-hold-release-mutation
+      cancel-in-progress: false
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
