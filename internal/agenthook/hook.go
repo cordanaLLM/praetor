@@ -28,6 +28,8 @@ type Invocation struct {
 	WorkDir  string
 	Policy   *Policy
 	Settings config.HookSettings
+	// Forge carries the CLI-selected forge settings; nil retains environment-only selection.
+	Forge *config.ForgeSettings
 	// SettingsError refuses guarded calls through the selected client dialect.
 	// Order: engine-hook-digest-mismatch-fail-closed-20261028.
 	SettingsError error

@@ -110,7 +110,7 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
 		dirPolicy, ok := dirPolicies[calls[i].dir]
 		if !ok {
-			dirPolicy = resolveGHDirPolicy(ctx, calls[i].dir, in.Getenv)
+			dirPolicy = resolveGHDirPolicy(ctx, calls[i].dir, in)
 			dirPolicies[calls[i].dir] = dirPolicy
 		}
 		verdict := judgeResolvedGHWriteCall(ctx, calls[i], dirPolicy)
@@ -132,12 +132,12 @@ func appendUniqueNotice(notices []string, notice string) []string {
 
 // resolveGHDirPolicy resolves the repository root and trusted organisations for dir once.
 // Commands outside any git repository keep an empty root so no arbitrary directory manifest is loaded.
-func resolveGHDirPolicy(ctx context.Context, dir string, getenv func(string) string) ghDirPolicy {
+func resolveGHDirPolicy(ctx context.Context, dir string, in Invocation) ghDirPolicy {
 	root, err := repositoryRoot(ctx, dir)
 	if err != nil {
 		return ghDirPolicy{err: err}
 	}
-	own, noOrgList, notice, err := resolveHookOwnOrganizations(ctx, root, getenv)
+	own, noOrgList, notice, err := resolveHookOwnOrganizations(ctx, root, in)
 	if errors.Is(err, errHookOperatorForgeSettings) {
 		return ghDirPolicy{err: err}
 	}
@@ -198,8 +198,8 @@ func forgeTextDeny(detail string, noOrgList bool) Verdict {
 // resolveHookOwnOrganizations resolves the trusted forge organisations from operator
 // settings, the command manifest and repository identity. Invalid manifests contribute only a
 // finding; their organisations are never trusted.
-func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(string) string) ([]string, bool, string, error) {
-	opForge, err := loadOperatorForgeSettings(ctx, getenv)
+func resolveHookOwnOrganizations(ctx context.Context, root string, in Invocation) ([]string, bool, string, error) {
+	opForge, err := loadOperatorForgeSettings(ctx, in)
 	if err != nil {
 		return nil, false, "", fmt.Errorf("%w: %w", errHookOperatorForgeSettings, err)
 	}
@@ -207,7 +207,7 @@ func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(s
 	if root != "" {
 		manifestPath = filepath.Join(root, manifestName)
 	}
-	resolved, err := forge.ResolveOwnOrganizationSources(ctx, root, manifestPath, opForge.OwnOrganizations, getenv)
+	resolved, err := forge.ResolveOwnOrganizationSources(ctx, root, manifestPath, opForge.OwnOrganizations, in.Getenv)
 	notice := ""
 	if resolved.ManifestProblem != nil {
 		sources := strings.Join(resolved.Sources, ", ")
@@ -220,9 +220,16 @@ func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(s
 	return resolved.Organizations, noOrgList, notice, err
 }
 
-// loadOperatorForgeSettings loads operator-level forge settings when fleet or workstation
-// config environment variables are set, refusing invalid operator policy files.
-func loadOperatorForgeSettings(ctx context.Context, getenv func(string) string) (config.ForgeSettings, error) {
+// loadOperatorForgeSettings uses CLI-selected settings, refusing selection errors; callers
+// without selected settings retain environment-only loading and validation.
+func loadOperatorForgeSettings(ctx context.Context, in Invocation) (config.ForgeSettings, error) {
+	if in.SettingsError != nil {
+		return config.ForgeSettings{}, in.SettingsError
+	}
+	if in.Forge != nil {
+		return *in.Forge, nil
+	}
+	getenv := in.Getenv
 	if getenv == nil {
 		return config.ForgeSettings{}, nil
 	}

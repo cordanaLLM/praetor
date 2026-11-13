@@ -36,7 +36,7 @@ func evaluatePRTitleLimits(ctx context.Context, canonical Canonical, in Invocati
 	if len(candidates) == 0 {
 		return Verdict{Outcome: Allow}
 	}
-	settings, err := loadOperatorForgeSettings(ctx, in.Getenv)
+	settings, err := loadOperatorForgeSettings(ctx, in)
 	if err != nil {
 		return prTitleLimitDeny("operator forge settings unavailable: " + err.Error())
 	}
