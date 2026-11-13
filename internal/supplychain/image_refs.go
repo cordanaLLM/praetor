@@ -79,6 +79,12 @@ func ImageRefFingerprint(file, reference string) string {
 
 // CollectImagePins extracts every tagged-digest reference from one file's content.
 func CollectImagePins(file, content string) []ImagePin {
+	// Every match contains this literal. Most source files have no pins; avoid
+	// running the regexp state machine over their entire contents, especially
+	// under the race detector. Keep the empty result non-nil as before.
+	if !strings.Contains(content, "@sha256:") {
+		return []ImagePin{}
+	}
 	matches := taggedDigest.FindAllStringSubmatch(content, -1)
 	pins := make([]ImagePin, 0, len(matches))
 	for i := 0; i < len(matches) && i < maxFileLines; i++ {
