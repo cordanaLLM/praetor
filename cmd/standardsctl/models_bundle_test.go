@@ -5,12 +5,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/reviewbundle"
@@ -51,6 +54,149 @@ func modelBundleRepo(t *testing.T) string {
 	}
 	git("commit", "-qam", "target")
 	return dir
+}
+
+// TestModelsBundleOutputTimeout refuses a stalled pipe within its own two-second deadline.
+func TestModelsBundleOutputTimeout(t *testing.T) {
+	cases := []struct {
+		name   string
+		asJSON bool
+	}{{"text", false}, {"JSON", true}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { checkModelBundleOutputTimeout(t, tc.name, tc.asJSON) })
+	}
+}
+
+// checkModelBundleOutputTimeout writes into a pipe nobody reads and expects the named deadline error.
+func checkModelBundleOutputTimeout(t *testing.T, name string, asJSON bool) {
+	t.Helper()
+	reader, writer := io.Pipe()
+	t.Cleanup(func() {
+		if err := errors.Join(reader.Close(), writer.Close()); err != nil {
+			t.Error(err)
+		}
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- writeModelBundleOutput(ctx, writer, reviewbundle.Bundle{}, asJSON) }()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "bundle "+name) {
+			t.Fatalf("want named output timeout, got %v", err)
+		}
+	case <-timer.C:
+		t.Fatal("bundle output blocked past two-second test deadline")
+	}
+}
+
+// TestModelsBundleOutputCanceled refuses output after the shared build budget expires.
+func TestModelsBundleOutputCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, asJSON := range []bool{false, true} {
+		var out bytes.Buffer
+		err := writeModelBundleOutput(ctx, &out, reviewbundle.Bundle{}, asJSON)
+		if !errors.Is(err, context.Canceled) || out.Len() != 0 {
+			t.Fatalf("JSON=%t: canceled output wrote %d bytes: %v", asJSON, out.Len(), err)
+		}
+	}
+}
+
+type modelBundleRefusingWriter struct{ err error }
+
+// Write plants an output failure without touching a real descriptor.
+func (w modelBundleRefusingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// TestModelsBundleOutputFailure preserves writer errors through the context wrapper.
+func TestModelsBundleOutputFailure(t *testing.T) {
+	want := errors.New("output refused")
+	for _, asJSON := range []bool{false, true} {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		err := writeModelBundleOutput(ctx, modelBundleRefusingWriter{want}, reviewbundle.Bundle{}, asJSON)
+		cancel()
+		if !errors.Is(err, want) {
+			t.Fatalf("JSON=%t: lost writer error: %v", asJSON, err)
+		}
+	}
+}
+
+// TestModelsBundleOutputPositive preserves every output byte in both formats.
+func TestModelsBundleOutputPositive(t *testing.T) {
+	b := reviewbundle.Bundle{Files: []reviewbundle.File{{Path: "full", Content: "first\nlast"}}}
+	wantText := "Target: \nHead: \nMerge base: \nPredicted tree: \n\"full\" TRUNCATED: no (omitted bytes: 0; deleted: false; binary: false)\nfirst\nlast\n"
+	var wantJSON bytes.Buffer
+	if err := json.NewEncoder(&wantJSON).Encode(b); err != nil {
+		t.Fatal(err)
+	}
+	for _, asJSON := range []bool{false, true} {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		var out bytes.Buffer
+		err := writeModelBundleOutput(ctx, &out, b, asJSON)
+		cancel()
+		want := wantText
+		if asJSON {
+			want = wantJSON.String()
+		}
+		if err != nil || out.String() != want {
+			t.Fatalf("JSON=%t: output %q, error %v", asJSON, out.String(), err)
+		}
+	}
+}
+
+// TestModelsBundleOutputContentBoundary retains exactly the default two-MiB content cap.
+func TestModelsBundleOutputContentBoundary(t *testing.T) {
+	content := strings.Repeat("x", 2<<20)
+	b := reviewbundle.Bundle{
+		Files:  []reviewbundle.File{{Path: "cap", Content: content}},
+		Limits: reviewbundle.Options{MaxFileBytes: len(content)},
+	}
+	for _, asJSON := range []bool{false, true} {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		var out bytes.Buffer
+		err := writeModelBundleOutput(ctx, &out, b, asJSON)
+		cancel()
+		if err != nil || strings.Count(out.String(), content) != 1 {
+			t.Fatalf("JSON=%t: content at two-MiB cap lost: %v", asJSON, err)
+		}
+	}
+}
+
+type modelBundleCappedWriter struct{ remaining int }
+
+// Write accepts exactly the configured byte budget and refuses any excess.
+func (w *modelBundleCappedWriter) Write(p []byte) (int, error) {
+	if len(p) > w.remaining {
+		return 0, io.ErrShortWrite
+	}
+	w.remaining -= len(p)
+	return len(p), nil
+}
+
+// TestModelsBundleOutputWriterBoundary completes when a writer accepts exactly two MiB.
+func TestModelsBundleOutputWriterBoundary(t *testing.T) {
+	const capBytes = 2 << 20
+	for _, asJSON := range []bool{false, true} {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		b := reviewbundle.Bundle{
+			Files:  []reviewbundle.File{{Path: "cap"}},
+			Limits: reviewbundle.Options{MaxFileBytes: capBytes},
+		}
+		var metadata bytes.Buffer
+		if err := writeModelBundleOutput(ctx, &metadata, b, asJSON); err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		b.Files[0].Content = strings.Repeat("x", capBytes-metadata.Len())
+		out := modelBundleCappedWriter{remaining: capBytes}
+		err := writeModelBundleOutput(ctx, &out, b, asJSON)
+		cancel()
+		if err != nil || out.remaining != 0 {
+			t.Fatalf("JSON=%t: exact-cap writer has %d bytes left: %v", asJSON, out.remaining, err)
+		}
+	}
 }
 
 // TestModelsBundleConflictAndJSON checks successful conflict findings and visible truncation.
