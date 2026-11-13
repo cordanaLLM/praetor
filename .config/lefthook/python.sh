@@ -72,14 +72,17 @@ bounded_probe() ( #
   trap 'exit 1' HUP INT TERM                                                                                               #
   status=0                                                                                                                 #
   wait "$probe_pid" 2>/dev/null || status=$?                                                                               #
-  kill "$watchdog_pid" 2>/dev/null || :                                                                                    #
-  wait "$watchdog_pid" 2>/dev/null || :                                                                                    #
-  trap 'command -p rm -rf "$probe_dir"' 0                                                                                  #
-  if [ -f "$probe_dir/timeout" ]; then exit 124; fi                                                                        #
-  if [ -f "$probe_dir/unavailable" ]; then exit 125; fi                                                                    #
-  if [ "$status" -ne 0 ]; then exit 1; fi                                                                                  #
-  command -p cat "$probe_dir/output" || exit 125                                                                           #
-)                                                                                                                          #
+  watchdog_status=0                                                                                                        #
+  kill "$watchdog_pid" 2>/dev/null || watchdog_status=$?                                                                   #
+  wait "$watchdog_pid" 2>/dev/null || watchdog_status=$?                                                                   #
+  # 0: it fired and left a flag; 1: cancelled through its TERM trap; 143: cancelled before the trap was set. #
+  case "$watchdog_status" in 0 | 1 | 143) ;; *) exit 125 ;; esac #
+  trap 'command -p rm -rf "$probe_dir"' 0                        #
+  if [ -f "$probe_dir/timeout" ]; then exit 124; fi              #
+  if [ -f "$probe_dir/unavailable" ]; then exit 125; fi          #
+  if [ "$status" -ne 0 ]; then exit 1; fi                        #
+  command -p cat "$probe_dir/output" || exit 125                 #
+)                                                                #
 #
 # proven CANDIDATE [ARGUMENT]: it ran the probe and stated Python 3.floor or newer.
 # The probe reads nothing: the hook's own standard input stays untouched.

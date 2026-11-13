@@ -82,7 +82,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"dfe0975c01017ee575fdd57ecd28cb8963e253e4ccc698f83e63f3b1b3375a07": "snapshots of killed hooks swept after three hours",
 	},
 	checkpointLauncher: {
-		"f4f7454279a2dbdb54944269a009533814fac69a5049e7cc68984585fc207f73": "bounded version queries and worktree index isolation",
+		"2fa92aee5f928afb77e0bb04476f508479216e1922cca32fc7bd2f80da23311d": "bounded version queries and worktree index isolation",
 		"9557cc1a4b4441bd551e273f4c9e16378fb88e750b8ed4156ffeacbe43c1f38a": "prefer untracked worktree virtualenvs",
 		"3d5840f0699e48b9c584037b6dc9c316203d00a2d8f81d2f50bdecf6b008d6a4": "adopter checkout virtualenv (ffmpeg patches #264)",
 		"8b6266ea16912a362c2e26d9a936887ca955ecf68f69744c935f2259d1a2c8dc": "proven interpreter candidates (#339)",
