@@ -17,6 +17,7 @@ import (
 
 const holdTestReason = "engine-test-order: quota hold until reviewed"
 
+// holdFixture returns a policy and temporary hold path for guarded program tests.
 func holdFixture(t *testing.T) (*Policy, string) {
 	t.Helper()
 	file := filepath.Join(t.TempDir(), "hold")
@@ -29,6 +30,7 @@ func holdFixture(t *testing.T) (*Policy, string) {
 	return policy, file
 }
 
+// writeHoldFixture writes hold content to a fixture file, failing the test on error.
 func writeHoldFixture(t *testing.T, file, content string) {
 	t.Helper()
 	if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
@@ -36,6 +38,7 @@ func writeHoldFixture(t *testing.T, file, content string) {
 	}
 }
 
+// TestHolds_PresentRefusesProgramWords checks refusals for direct, wrapped and compound commands.
 func TestHolds_PresentRefusesProgramWords(t *testing.T) {
 	policy, file := holdFixture(t)
 	writeHoldFixture(t, file, holdTestReason+"\nsecond line is not the reason\n")
@@ -67,6 +70,7 @@ func TestHolds_PresentRefusesProgramWords(t *testing.T) {
 	}
 }
 
+// TestHolds_LauncherAndNonCommandsAllowed checks that launchers and non-command mentions remain allowed.
 func TestHolds_LauncherAndNonCommandsAllowed(t *testing.T) {
 	policy, file := holdFixture(t)
 	writeHoldFixture(t, file, holdTestReason)
@@ -83,6 +87,7 @@ func TestHolds_LauncherAndNonCommandsAllowed(t *testing.T) {
 	}
 }
 
+// TestHolds_AbsentAndUnset checks absent holds, live file changes and policies without holds.
 func TestHolds_AbsentAndUnset(t *testing.T) {
 	policy, file := holdFixture(t)
 	for _, command := range []string{"agy models", "praetor-agy-wrapper models", "env X=1 agy models", "timeout 60 agy models"} {
@@ -107,6 +112,7 @@ func TestHolds_AbsentAndUnset(t *testing.T) {
 	}
 }
 
+// TestHolds_UnreadableAndBoundaries checks refusals for unreadable files, size limits and canceled reads.
 func TestHolds_UnreadableAndBoundaries(t *testing.T) {
 	policy, file := holdFixture(t)
 	// A directory is deterministically unreadable as a hold, even as root.
@@ -133,6 +139,7 @@ func TestHolds_UnreadableAndBoundaries(t *testing.T) {
 	}
 }
 
+// TestHolds_PathExpansionAndRelativeBase checks environment, home and working-directory path resolution.
 func TestHolds_PathExpansionAndRelativeBase(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PRAETOR_HOLD_TEST_ROOT", dir)

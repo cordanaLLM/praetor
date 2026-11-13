@@ -25,6 +25,7 @@ type holdCheck struct {
 	entries []config.HoldSettings
 }
 
+// newHoldCheck validates and copies holds with expanded paths, returning nil when none are configured.
 func newHoldCheck(entries []config.HoldSettings) (*holdCheck, error) {
 	if err := config.ValidateHookHolds(entries); err != nil {
 		return nil, err
@@ -43,6 +44,7 @@ func newHoldCheck(entries []config.HoldSettings) (*holdCheck, error) {
 	return check, nil
 }
 
+// expandHoldFile resolves environment and home references, rejecting unresolved hold paths.
 func expandHoldFile(file string) (string, error) {
 	missing := false
 	expanded := os.Expand(file, func(key string) string {
@@ -57,6 +59,7 @@ func expandHoldFile(file string) (string, error) {
 	return filepath.Clean(expanded), nil
 }
 
+// judge checks command segments against configured holds and returns the first refusal.
 func (c *holdCheck) judge(ctx context.Context, command, workDir string) Verdict {
 	lines, ok := hiss.ShellCode(command, admissionMaxLines)
 	if !ok {
@@ -76,6 +79,7 @@ func (c *holdCheck) judge(ctx context.Context, command, workDir string) Verdict 
 	return Verdict{Outcome: Allow}
 }
 
+// guardedHoldCommand returns the first guarded program or parsing limit refusal in the segments.
 func guardedHoldCommand(segments []string, entry config.HoldSettings) string {
 	for _, segment := range segments {
 		if name := holdProgram(strings.Fields(segment), entry); name != "" {
@@ -85,6 +89,7 @@ func guardedHoldCommand(segments []string, entry config.HoldSettings) string {
 	return ""
 }
 
+// holdProgram unwraps command words to find a guarded program, permitted launcher or parsing limit.
 func holdProgram(words []string, entry config.HoldSettings) string {
 	if len(words) > admissionMaxWords {
 		return "command exceeds hold word bound"
@@ -110,8 +115,7 @@ func holdProgram(words []string, entry config.HoldSettings) string {
 	return ""
 }
 
-// Admission refuses sudo before unwrapping it. Holds inspect its target first so
-// a held command's refusal can name the hold; other privilege checks still run.
+// holdWrapper returns wrapper options, including sudo options so holds can inspect its target.
 func holdWrapper(name string) (wrapperSpec, bool) {
 	if name == "sudo" {
 		return wrapperSpec{values: []string{"-C", "--close-from", "-D", "--chdir", "-g", "--group", "-h", "--host",
@@ -121,6 +125,7 @@ func holdWrapper(name string) (wrapperSpec, bool) {
 	return spec, ok
 }
 
+// judgeHeldProgram allows a missing hold file and refuses an existing or unreadable one.
 func judgeHeldProgram(ctx context.Context, workDir, name string, entry config.HoldSettings) Verdict {
 	file := entry.File
 	if !filepath.IsAbs(file) && workDir != "" {
@@ -138,6 +143,7 @@ func judgeHeldProgram(ctx context.Context, workDir, name string, entry config.Ho
 	return holdRefusal(fmt.Sprintf("%s refused: hold %s: %s; %s", name, file, strings.TrimSpace(line), launcher))
 }
 
+// holdRefusal returns a denial with a bounded HISS reason.
 func holdRefusal(reason string) Verdict {
 	return Verdict{Outcome: Deny, Reason: boundReason(refusal("HISS", reason))}
 }

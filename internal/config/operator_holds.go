@@ -20,6 +20,7 @@ const (
 	MaxHoldPrograms = 32
 )
 
+// holdsSequence decodes a YAML hold list within the configured entry limit.
 func holdsSequence(node *yaml.Node, path string) ([]HoldSettings, error) {
 	if node.Kind != yaml.SequenceNode || len(node.Content) > MaxHookHolds {
 		return nil, fmt.Errorf("%s must be a list of at most %d holds", path, MaxHookHolds)
@@ -35,6 +36,7 @@ func holdsSequence(node *yaml.Node, path string) ([]HoldSettings, error) {
 	return holds, nil
 }
 
+// decodeHold decodes one hold mapping, rejecting duplicate and unknown fields.
 func decodeHold(node *yaml.Node, path string) (HoldSettings, error) {
 	var hold HoldSettings
 	if node.Kind != yaml.MappingNode || len(node.Content) > 6 {
@@ -54,6 +56,7 @@ func decodeHold(node *yaml.Node, path string) (HoldSettings, error) {
 	return hold, nil
 }
 
+// decodeHoldField decodes a recognized hold field into its destination.
 func decodeHoldField(hold *HoldSettings, key string, node *yaml.Node, path string) error {
 	var err error
 	switch key {
@@ -69,6 +72,7 @@ func decodeHoldField(hold *HoldSettings, key string, node *yaml.Node, path strin
 	return err
 }
 
+// holdList validates the holds carried by an operator setting.
 func holdList(_ string, setting OperatorSetting) error {
 	return ValidateHookHolds(setting.Holds)
 }
@@ -86,6 +90,7 @@ func ValidateHookHolds(holds []HoldSettings) error {
 	return nil
 }
 
+// validateHold checks the hold path, program names and launcher separation.
 func validateHold(hold HoldSettings) error {
 	if hold.File == "" || len(hold.File) > maxSettingValueBytes || !utf8.ValidString(hold.File) || strings.ContainsFunc(hold.File, unicode.IsControl) {
 		return fmt.Errorf("hooks.holds.file must be nonempty UTF-8 without controls, at most %d bytes", maxSettingValueBytes)
@@ -99,6 +104,7 @@ func validateHold(hold HoldSettings) error {
 	return validateHoldLaunchers(hold)
 }
 
+// validateHoldLaunchers rejects launchers that also appear among guarded commands.
 func validateHoldLaunchers(hold HoldSettings) error {
 	for _, name := range hold.Via {
 		if slices.Contains(hold.Commands, name) {
@@ -108,6 +114,7 @@ func validateHoldLaunchers(hold HoldSettings) error {
 	return nil
 }
 
+// holdNames checks that a nonempty, bounded list contains only program basenames.
 func holdNames(names []string, field string) error {
 	if len(names) == 0 || len(names) > MaxHoldPrograms {
 		return fmt.Errorf("hooks.holds.%s requires 1..%d basenames", field, MaxHoldPrograms)
@@ -120,10 +127,12 @@ func holdNames(names []string, field string) error {
 	return nil
 }
 
+// sameHold reports whether two holds have identical paths and ordered name lists.
 func sameHold(a, b HoldSettings) bool {
 	return a.File == b.File && slices.Equal(a.Commands, b.Commands) && slices.Equal(a.Via, b.Via)
 }
 
+// cloneHolds returns a copy of the holds with independent command and launcher slices.
 func cloneHolds(holds []HoldSettings) []HoldSettings {
 	cloned := slices.Clone(holds)
 	for i := range cloned {
@@ -133,6 +142,7 @@ func cloneHolds(holds []HoldSettings) []HoldSettings {
 	return cloned
 }
 
+// appendHolds merges unique holds within the entry limit and records the contributing layer.
 func (m *operatorMerge) appendHolds(layer string, spec settingSpec, setting OperatorSetting) error {
 	if len(setting.Holds) == 0 {
 		return nil

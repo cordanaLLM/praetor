@@ -11,6 +11,7 @@ import (
 	"testing"
 )
 
+// TestOperatorHolds_LayersAppendAndDeduplicate checks merged holds, contributors and digest integrity.
 func TestOperatorHolds_LayersAppendAndDeduplicate(t *testing.T) {
 	first := "{file: '~/lanes/hold/agy', commands: [agy, praetor-agy-wrapper], via: [agy-run.sh]}"
 	second := "{file: '${LANE_ROOT}/hold/other', commands: [other], via: [other-run.sh]}"
@@ -35,6 +36,7 @@ func TestOperatorHolds_LayersAppendAndDeduplicate(t *testing.T) {
 	}
 }
 
+// TestOperatorHolds_InvalidEntries checks rejection of malformed hold lists and entries.
 func TestOperatorHolds_InvalidEntries(t *testing.T) {
 	for _, entry := range []string{
 		"{file: hold, commands: [agy]}", "{commands: [agy], via: [run.sh]}",
@@ -56,6 +58,7 @@ func TestOperatorHolds_InvalidEntries(t *testing.T) {
 	}
 }
 
+// holdDocument returns a YAML policy containing the requested numbered hold entries.
 func holdDocument(from, count int) string {
 	var body strings.Builder
 	body.WriteString("hooks:\n  holds:\n")
@@ -65,6 +68,7 @@ func holdDocument(from, count int) string {
 	return body.String()
 }
 
+// TestOperatorHolds_BoundsAndDefault checks hold list limits and empty defaults.
 func TestOperatorHolds_BoundsAndDefault(t *testing.T) {
 	if _, err := loadAdmissionLayers(t, holdDocument(0, 16), holdDocument(16, 16)); err != nil {
 		t.Fatalf("merged limit refused: %v", err)
@@ -84,6 +88,7 @@ func TestOperatorHolds_BoundsAndDefault(t *testing.T) {
 	}
 }
 
+// TestValidateHookHolds_ProgramAndPathBounds checks program count limits and invalid hold paths.
 func TestValidateHookHolds_ProgramAndPathBounds(t *testing.T) {
 	valid := HoldSettings{File: "hold", Commands: []string{"lane"}, Via: []string{"run.sh"}}
 	for _, field := range []string{"commands", "via"} {

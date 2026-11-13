@@ -228,6 +228,7 @@ func DefaultOperatorSettings() OperatorSettings {
 	}
 }
 
+// defaultClientSelection returns a required global client selection with plugin support and no grants.
 func defaultClientSelection() ClientSelection {
 	return ClientSelection{Required: true, Scopes: []string{ScopeGlobal}, Plugin: true,
 		Permissions: ClientPermissions{Allow: []string{}}}

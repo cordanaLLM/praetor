@@ -460,6 +460,7 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 	return verdict
 }
 
+// commandRules returns the first matching rule's refusal, accounting for read-only exemptions.
 func (p *Policy) commandRules(command string) Verdict {
 	judged := withoutReadOnlyWords(command)
 	for _, rule := range p.rules {
