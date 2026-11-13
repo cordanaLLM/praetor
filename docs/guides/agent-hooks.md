@@ -1488,6 +1488,14 @@ audit violation such as an unresolved P0 row, blocks on its own, independent of 
 checkpoint is due; the reason names the repair (`praetorctl state sync .`,
 `TestRunStopBlocksOnAnUnresolvedP0Row`).
 
+**`stop` OPEN.md size.** After the ledger verifies, `stop` reads `OPEN.md` through the same
+bounded snapshot reader as state sync (`state.OpenLedgerSizeWarning` in
+`internal/state/open_size.go`). Above 800 KiB the pass is a stated skip whose reason names the
+size, the warning threshold, the 1 MiB read limit and `praetorctl state task archive`; the
+stop is not blocked. Past the read limit the read fails with the same command named, and the
+stop is denied (`stopLedgerSizeVerdict` in `internal/agenthook/evaluate.go`,
+`TestStopLedgerOpenSize`). State sync logs the same warning once per sync.
+
 **`stop_hook_active`.** The `claude`, `codex` and `gemini` stop decoders read the client's
 `stop_hook_active` flag into `Canonical.StopActive` (`fillMainStop` in
 `internal/agenthook/dialect_agent.go`); a malformed flag reads as false. A repeated pass
