@@ -12,7 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
-// runModels dispatches the models subcommands: sync, list, route, outcome and merge-check.
+// runModels dispatches the models subcommands (sync, list, route, outcome, merge-check and replay) under their bounded invocation budgets.
 func runModels(args []string) error {
 	fs := flag.NewFlagSet("models", flag.ContinueOnError)
 	configPath := fs.String("config", router.DefaultConfigPath, "Path to model routing config")
@@ -23,13 +23,17 @@ func runModels(args []string) error {
 	route := addModelRouteFlags(fs)
 	outcome := addModelOutcomeFlags(fs)
 	merge := addModelMergeFlags(fs)
+	replayFlags := addModelReplayFlags(fs, merge)
 
 	action, err := parseModelAction(fs, args)
 	if err != nil {
-		return err
+		return modelsParseError(args, err)
+	}
+	if err := validateModelReplayFlags(fs, action); err != nil {
+		return modelActionUsage(action, err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), modelsTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), modelsInvocationTimeout(action, replayFlags))
 	defer cancel()
 
 	switch action {
@@ -45,8 +49,10 @@ func runModels(args []string) error {
 		return handleModelsMerge(merge)
 	case "outcome":
 		return handleModelsOutcome(ctx, *configPath, *route.task, outcome)
+	case "replay":
+		return handleModelsReplay(ctx, replayFlags)
 	default:
-		return fmt.Errorf("unknown action: %s (supported: sync, list, route, outcome, merge-check)", action)
+		return fmt.Errorf("unknown action: %s (supported: sync, list, route, outcome, merge-check, replay)", action)
 	}
 }
 
