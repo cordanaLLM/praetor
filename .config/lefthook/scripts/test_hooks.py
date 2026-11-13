@@ -4886,6 +4886,7 @@ class LauncherWorktree(unittest.TestCase):
     """Exercise virtualenv selection in real linked Git worktrees."""
 
     def setUp(self):
+        """Create a main checkout, one linked worktree and a PATH holding only git."""
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-launcher-worktree-")
         self.addCleanup(self.temp.cleanup)
         base = Path(self.temp.name)
@@ -4902,21 +4903,25 @@ class LauncherWorktree(unittest.TestCase):
         (self.bin / "git").symlink_to(shutil.which("git"))
 
     def launch(self):
+        """Run the hook launcher from the linked worktree with the stub PATH."""
         env = dict(os.environ, PATH=str(self.bin))
         return subprocess.run([shutil.which("sh") or "sh", str(ROOT / LAUNCHER), "hook.py"],
                               cwd=self.worktree, env=env, capture_output=True, timeout=60,
                               check=False)
 
     def venv(self, root):
+        """Plant a Python 3.13 stand-in at root/.venv/bin/python3 and return its path."""
         return interpreter_stand_in(root / ".venv/bin", "python3", "3.13\\n")
 
     def test_launcher_uses_main_worktree_venv(self):
+        """A linked worktree without its own virtualenv starts the main worktree's."""
         candidate = self.venv(self.main)
         result = self.launch()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
 
     def test_launcher_refuses_tracked_main_worktree_venv(self):
+        """A tracked interpreter in the main worktree is skipped for the PATH interpreter."""
         self.venv(self.main)
         command(self.main, "git", "add", "-f", ".venv/bin/python3")
         command(self.main, "git", "commit", "-q", "-m", "track interpreter")
@@ -4926,6 +4931,7 @@ class LauncherWorktree(unittest.TestCase):
         self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
 
     def test_launcher_reports_missing_venv_candidates(self):
+        """With no interpreter anywhere, the refusal names every candidate it tried."""
         result = self.launch()
         self.assertEqual(result.returncode, 127, result.stderr)
         for candidate in (self.worktree / ".venv/bin/python3", self.main / ".venv/bin/python3"):
@@ -4933,6 +4939,7 @@ class LauncherWorktree(unittest.TestCase):
         self.assertIn(b"python3, python, py -3", result.stderr)
 
     def test_launcher_prefers_checkout_venv(self):
+        """The worktree's own virtualenv wins over the main worktree's."""
         self.venv(self.main)
         candidate = self.venv(self.worktree)
         result = self.launch()
