@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -89,7 +90,9 @@ func AuditPinnedFixturesEOL(ctx context.Context, opts PinnedFixtureEOLOptions) (
 		return "", fmt.Errorf("[FAIL] %s: cannot find pinned fixtures: %w", pinnedFixturesGate, err)
 	}
 	if len(pinned) == 0 {
-		return "[PASS] " + pinnedFixturesGate, nil
+		// No pinned fixture still evaluates the exceptions: an entry for an empty or unpinned fixture
+		// excuses nothing and fails (PR #1929 review).
+		return evaluateFindings(nil, opts.Exceptions, opts.Today)
 	}
 	afterFixtureScan()
 
@@ -160,9 +163,19 @@ func findPinnedFixtures(root string, tracked []string, testFiles []string, testC
 	return pinned, nil
 }
 
+// matchFixture excludes empty files, which have no line endings a checkout can convert. Emptiness
+// comes from the file size, so a zero-byte file that cannot be read is excluded too; any other read
+// error (a fixture over the read limit, a permission error) keeps path matching and fails closed.
 func matchFixture(root, f string, testFiles []string, testContents map[string]string, pinnedHashes map[string]string) (pinnedFixture, bool) {
-	data, err := util.ReadFileLimited(filepath.Join(root, f), maxFixtureFileReadBytes)
+	full := filepath.Join(root, f)
+	if info, statErr := os.Stat(full); statErr == nil && info.Mode().IsRegular() && info.Size() == 0 {
+		return pinnedFixture{}, false
+	}
+	data, err := util.ReadFileLimited(full, maxFixtureFileReadBytes)
 	if err == nil {
+		if len(data) == 0 {
+			return pinnedFixture{}, false
+		}
 		sum := sha256.Sum256(data)
 		h := hex.EncodeToString(sum[:])
 		if test, ok := pinnedHashes[h]; ok {
@@ -268,6 +281,8 @@ func parseCheckAttrOutput(out []byte) (map[string]map[string]string, error) {
 	return result, nil
 }
 
+// evaluateFindings applies live exceptions to the fixtures without an eol rule, fails on expired
+// entries, and fails on entries that excuse nothing (also when no fixture is pinned at all).
 func evaluateFindings(unpassed []pinnedFixture, exceptions []config.Exception, today time.Time) (string, error) {
 	entries := config.ExceptionsFor(exceptions, config.ExceptionRulePlatformNeutrality)
 	used := make([]bool, len(entries))
@@ -287,7 +302,7 @@ func evaluateFindings(unpassed []pinnedFixture, exceptions []config.Exception, t
 	}
 	for i := 0; i < len(entries) && i < config.MaxExceptions; i++ {
 		if !used[i] {
-			findings = append(findings, fmt.Sprintf("[FAIL] %s: the exceptions entry for %s excuses nothing, because the fixture has an eol rule; remove it", pinnedFixturesGate, entries[i].Target()))
+			findings = append(findings, fmt.Sprintf("[FAIL] %s: the exceptions entry for %s excuses nothing, because the fixture is empty, not pinned by a test, or has an eol rule; remove it", pinnedFixturesGate, entries[i].Target()))
 		}
 	}
 	if len(findings) > 0 {

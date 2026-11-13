@@ -48,6 +48,50 @@ func auditPinned(t *testing.T, root string, entries ...config.Exception) (string
 	})
 }
 
+// TestAuditPinnedFixturesEOL_EmptyHashIsNotPinned: a test naming the sha256 of zero bytes pins no
+// fixture, since every checkout writes an empty file the same way; the audit passes.
+func TestAuditPinnedFixturesEOL_EmptyHashIsNotPinned(t *testing.T) {
+	root := initPinnedRepo(t, map[string]string{
+		"empty.txt":    "",
+		"hash_test.go": "package main\nconst emptySHA = \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"\n",
+	})
+	out, err := auditPinned(t, root)
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("empty hash fixture = %q, %v; want pass", out, err)
+	}
+}
+
+// TestAuditPinnedFixturesEOL_EmptyNamedPathIsNotPinned: a test naming the path of an empty fixture
+// pins nothing line endings could change; the audit passes without an eol rule.
+func TestAuditPinnedFixturesEOL_EmptyNamedPathIsNotPinned(t *testing.T) {
+	root := initPinnedRepo(t, map[string]string{
+		"testdata/empty.txt": "",
+		"path_test.go":       "package main\nconst fixture = \"testdata/empty.txt\"\n",
+	})
+	out, err := auditPinned(t, root)
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("empty named fixture = %q, %v; want pass", out, err)
+	}
+}
+
+// TestAuditPinnedFixturesEOL_NonEmptyHashRemainsPinned: one byte or more stays pinned by its sha256;
+// without an eol rule the audit names the fixture and the test (boundary at one byte).
+func TestAuditPinnedFixturesEOL_NonEmptyHashRemainsPinned(t *testing.T) {
+	for _, content := range []string{"x", "non-empty fixture\n"} {
+		t.Run(fmt.Sprintf("bytes_%d", len(content)), func(t *testing.T) {
+			sum := sha256.Sum256([]byte(content))
+			root := initPinnedRepo(t, map[string]string{
+				"sample.txt":   content,
+				"hash_test.go": fmt.Sprintf("package main\nconst expected = %q\n", hex.EncodeToString(sum[:])),
+			})
+			_, err := auditPinned(t, root)
+			if err == nil || !strings.Contains(err.Error(), "sample.txt") || !strings.Contains(err.Error(), "hash_test.go") {
+				t.Fatalf("non-empty hash fixture: got %v; want finding naming fixture and test", err)
+			}
+		})
+	}
+}
+
 // Negative planted red: testdata/sub.srt, a Go test pinning its sha256, no attribute ->
 // one finding naming the file and the test.
 func TestAuditPinnedFixturesEOL_Negative_PlantedRed(t *testing.T) {
@@ -254,5 +298,74 @@ func TestAuditPinnedFixturesEOL_Negative_StaleExceptionFails(t *testing.T) {
 	_, err := auditPinned(t, root, ex)
 	if err == nil || !strings.Contains(err.Error(), "excuses nothing") {
 		t.Fatalf("AuditPinnedFixturesEOL err = %v, want failure naming stale exception", err)
+	}
+}
+
+// TestAuditPinnedFixturesEOL_EmptyFixtureExceptionReported: with the only named fixture empty, nothing
+// is pinned, and an exceptions entry for it excuses nothing; the audit fails instead of passing early
+// (PR #1929 review).
+func TestAuditPinnedFixturesEOL_EmptyFixtureExceptionReported(t *testing.T) {
+	root := initPinnedRepo(t, map[string]string{
+		"testdata/empty.txt": "",
+		"path_test.go":       "package main\nconst fixture = \"testdata/empty.txt\"\n",
+	})
+	ex := config.Exception{
+		Rule:    config.ExceptionRulePlatformNeutrality,
+		Path:    "testdata/empty.txt",
+		Reason:  "empty fixture",
+		Expires: "2026-12-30",
+	}
+	_, err := auditPinned(t, root, ex)
+	if err == nil || !strings.Contains(err.Error(), "excuses nothing") || !strings.Contains(err.Error(), "testdata/empty.txt") {
+		t.Fatalf("empty fixture with an exception: got %v; want the entry reported as excusing nothing", err)
+	}
+}
+
+// TestAuditPinnedFixturesEOL_NoFixtureNoExceptionPasses: no pinned fixture and no exceptions entry
+// still passes (boundary of the evaluation above).
+func TestAuditPinnedFixturesEOL_NoFixtureNoExceptionPasses(t *testing.T) {
+	root := initPinnedRepo(t, map[string]string{"main.go": "package main\n"})
+	out, err := auditPinned(t, root)
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("no fixture, no exception = %q, %v; want pass", out, err)
+	}
+}
+
+// TestAuditPinnedFixturesEOL_UnreadableZeroByteIsNotPinned: a zero-byte fixture that cannot be read is
+// still empty by its size, so a test naming its path pins nothing (PR #1929 review).
+func TestAuditPinnedFixturesEOL_UnreadableZeroByteIsNotPinned(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode 0 file; the unreadable case needs an unprivileged user")
+	}
+	root := initPinnedRepo(t, map[string]string{
+		"testdata/empty.txt": "",
+		"path_test.go":       "package main\nconst fixture = \"testdata/empty.txt\"\n",
+	})
+	full := filepath.Join(root, "testdata", "empty.txt")
+	if err := os.Chmod(full, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(full, 0o600); err != nil {
+			t.Errorf("restore fixture mode: %v", err)
+		}
+	})
+	out, err := auditPinned(t, root)
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("unreadable zero-byte fixture = %q, %v; want pass", out, err)
+	}
+}
+
+// TestAuditPinnedFixturesEOL_OversizedNamedFixtureStaysPinned: a fixture over the read limit cannot be
+// hashed, yet a test naming its path still pins it; a read error never hides a fixture (boundary).
+func TestAuditPinnedFixturesEOL_OversizedNamedFixtureStaysPinned(t *testing.T) {
+	big := strings.Repeat("line\n", maxFixtureFileReadBytes/5+2)
+	root := initPinnedRepo(t, map[string]string{
+		"testdata/big.txt": big,
+		"path_test.go":     "package main\nconst fixture = \"testdata/big.txt\"\n",
+	})
+	_, err := auditPinned(t, root)
+	if err == nil || !strings.Contains(err.Error(), "testdata/big.txt") {
+		t.Fatalf("oversized named fixture: got %v; want a finding naming it", err)
 	}
 }
