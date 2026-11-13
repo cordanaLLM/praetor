@@ -18,6 +18,7 @@ const (
 	maxLedgerEntries    = 10000
 	maxLedgerFieldBytes = 16384
 	maxLedgerBytes      = 1 << 20
+	openLedgerWarnBytes = 800 << 10
 	maxLedgerIDNumber   = 999999999
 )
 
