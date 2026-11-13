@@ -121,7 +121,7 @@ func TestModelsMergeAggregateBudget(t *testing.T) {
 	}
 }
 
-// TestModelsMergeAggregateCLI enforces the actual shared 16 MiB budget at its CLI boundary.
+// TestModelsMergeAggregateCLI enforces the shared byte budget at its CLI boundary.
 func TestModelsMergeAggregateCLI(t *testing.T) {
 	draftBody := `{"model":"m","kind":"code","findings":[]}`
 	finalBody := `{"combiner":"c","verdict":"approve"}`
@@ -139,29 +139,64 @@ func TestModelsMergeAggregateCLI(t *testing.T) {
 				want = 2
 			}
 			if exitCode(err) != want {
-				t.Fatalf("%d MiB inputs: %v", 4*(count+1), err)
+				t.Fatalf("%d input bytes: %v", mergeFileLimit*(count+1), err)
 			}
 		})
 	}
 }
 
-// TestModelsMergeReadBounds checks descriptor type, per-file bytes and canceled reads.
+// TestModelsMergeReadBounds checks snapshot type, per-file bytes and canceled reads.
 func TestModelsMergeReadBounds(t *testing.T) {
-	path := mergeReviewFile(t, "draft.json", `{}`)
+	body := `{}` + strings.Repeat(" ", mergeFileLimit-2)
+	path := mergeReviewFile(t, "draft.json", body)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, err := readMergeFile(ctx, path, 2); err != nil {
+	var target map[string]any
+	remaining := mergeInputLimit
+	if err := readMergeJSON(ctx, path, &target, &remaining); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readMergeFile(ctx, path, 1); !errors.Is(err, util.ErrFileTooLarge) {
-		t.Fatalf("byte limit: %v", err)
+	if target == nil || remaining != mergeInputLimit-len(body) {
+		t.Fatalf("boundary decode %v, remaining %d", target, remaining)
 	}
-	if _, err := readMergeFile(ctx, filepath.Dir(path), 2); !errors.Is(err, util.ErrNotRegularFile) {
+	if err := readMergeJSON(ctx, filepath.Dir(path), &target, &remaining); err == nil || !strings.Contains(err.Error(), "source must be regular") {
 		t.Fatalf("directory: %v", err)
 	}
 	cancel()
-	if _, err := readMergeFile(ctx, path, 2); !errors.Is(err, context.Canceled) {
+	if err := readMergeJSON(ctx, path, &target, &remaining); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation: %v", err)
+	}
+}
+
+// TestModelsMergeOversize preserves the snapshot reader's named size error before decoding.
+func TestModelsMergeOversize(t *testing.T) {
+	path := mergeReviewFile(t, "draft.json", `{}`+strings.Repeat(" ", mergeFileLimit-1))
+	var target map[string]any
+	remaining := mergeInputLimit
+	err := readMergeJSON(t.Context(), path, &target, &remaining)
+	if !errors.Is(err, util.ErrFileTooLarge) || !strings.Contains(err.Error(), fmt.Sprintf("source exceeds %d bytes", mergeFileLimit)) {
+		t.Fatalf("snapshot byte limit: %v", err)
+	}
+	if target != nil || remaining != mergeInputLimit {
+		t.Fatalf("oversized input retained: %v, remaining %d", target, remaining)
+	}
+}
+
+// TestModelsMergeLeafLink refuses a linked review without decoding or charging its target.
+func TestModelsMergeLeafLink(t *testing.T) {
+	path := mergeReviewFile(t, "draft.json", `{}`)
+	link := filepath.Join(filepath.Dir(path), "link.json")
+	if err := os.Symlink(path, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	var target map[string]any
+	remaining := mergeInputLimit
+	err := readMergeJSON(t.Context(), link, &target, &remaining)
+	if err == nil || !strings.Contains(err.Error(), "source must be regular") {
+		t.Fatalf("leaf link: %v", err)
+	}
+	if target != nil || remaining != mergeInputLimit {
+		t.Fatalf("linked input retained: %v, remaining %d", target, remaining)
 	}
 }
 
@@ -188,26 +223,5 @@ func TestModelsMergeDecodeLimit(t *testing.T) {
 	_, _, err := runOutcomeCLI(t, []string{"merge-check", "--draft", draft, "--final", final})
 	if exitCode(err) != 2 {
 		t.Fatalf("oversized decoded draft must be input error: %v", err)
-	}
-}
-
-// cancelReviewReader stands in for a descriptor whose read races invocation cancellation.
-type cancelReviewReader struct {
-	cancel context.CancelFunc
-}
-
-// Read cancels the invocation while returning one otherwise successful byte.
-func (r cancelReviewReader) Read(data []byte) (int, error) {
-	r.cancel()
-	return copy(data, "x"), nil
-}
-
-// TestModelsMergeReadCancellation preserves cancellation occurring during a descriptor read.
-func TestModelsMergeReadCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	reader := mergeContextReader{ctx: ctx, reader: cancelReviewReader{cancel: cancel}}
-	if _, err := reader.Read(make([]byte, 1)); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancellation during read: %v", err)
 	}
 }

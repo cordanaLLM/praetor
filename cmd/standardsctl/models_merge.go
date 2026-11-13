@@ -8,11 +8,12 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/reviewmerge"
 )
 
 // mergeFileLimit bounds the size of each review input.
-const mergeFileLimit = 4 << 20
+const mergeFileLimit = contextopt.MaxSourceBytes
 
 // mergeInputLimit caps retained input across all draft and final documents.
 const mergeInputLimit = 4 * mergeFileLimit

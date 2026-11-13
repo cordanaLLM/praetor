@@ -4,34 +4,33 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
-
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// TestModelsMergeReplacementFIFO proves the open itself cannot block before descriptor checks.
+// TestModelsMergeReplacementFIFO refuses a replaced FIFO through the merge reader without blocking.
 func TestModelsMergeReplacementFIFO(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "review.json")
+	path := mergeReviewFile(t, "review.json", `{}`)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
 	if err := syscall.Mkfifo(path, 0600); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
 	go func() {
-		file, err := openMergeInput(path)
-		if err == nil {
-			err = file.Close()
-		}
-		done <- err
+		var target map[string]any
+		remaining := mergeInputLimit
+		done <- readMergeJSON(t.Context(), path, &target, &remaining)
 	}()
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
+		if err == nil || !strings.Contains(err.Error(), "source must be regular") {
+			t.Fatalf("replacement FIFO: %v", err)
 		}
 	case <-time.After(time.Second):
 		// Release a regressed blocking open and join the goroutine before failing.
@@ -39,8 +38,8 @@ func TestModelsMergeReplacementFIFO(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := <-done; err != nil {
-			t.Error(err)
+		if err := <-done; err == nil || !strings.Contains(err.Error(), "source must be regular") {
+			t.Errorf("replacement FIFO: %v", err)
 		}
 		if err := writer.Close(); err != nil {
 			t.Error(err)
@@ -49,7 +48,7 @@ func TestModelsMergeReplacementFIFO(t *testing.T) {
 	}
 }
 
-// TestModelsMergeFIFODescriptor rejects the opened FIFO before attempting a content read.
+// TestModelsMergeFIFODescriptor rejects a FIFO before decoding or charging the shared budget.
 func TestModelsMergeFIFODescriptor(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "review.json")
 	if err := syscall.Mkfifo(path, 0600); err != nil {
@@ -57,7 +56,12 @@ func TestModelsMergeFIFODescriptor(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, err := readMergeFile(ctx, path, mergeFileLimit); !errors.Is(err, util.ErrNotRegularFile) {
+	var target map[string]any
+	remaining := mergeInputLimit
+	if err := readMergeJSON(ctx, path, &target, &remaining); err == nil || !strings.Contains(err.Error(), "source must be regular") {
 		t.Fatalf("FIFO descriptor: %v", err)
+	}
+	if target != nil || remaining != mergeInputLimit {
+		t.Fatalf("FIFO input retained: %v, remaining %d", target, remaining)
 	}
 }
