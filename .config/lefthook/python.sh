@@ -28,8 +28,13 @@ set -eu #
 floor=10                                                                         #
 probe='import sys; print(sys.version_info[0], sys.version_info[1], sep=chr(46))' #
 # Python on Windows ends the line it prints with a carriage return.
-cr=$(printf '\r') #
-tried=''          #
+cr=$(printf '\r')                  #
+tried=''                           #
+resolve=false                      #
+if [ "${1-}" = "--resolve" ]; then #
+  resolve=true                     #
+  shift                            #
+fi                                 #
 #
 # Drop Git repository selection so nested git invocations (e.g. in test jobs)
 # cannot target the pushing repository. Pre-commit hooks pass --keep-index to
@@ -44,95 +49,143 @@ if [ "$keep_index" != true ]; then                                              
   unset GIT_INDEX_FILE                                                                           #
 fi                                                                                               #
 #
-# Bound only the version query. command -p finds POSIX sleep even on a stub PATH.
-# The watchdog owns its sleep child and reaps it when a fast probe cancels it.
-# Capture in a private directory: a sleeping descendant cannot hold stdout open.
-# Missing temporary-file or POSIX utility support refuses the candidate by name.
+# Bash monitor mode gives each background job its own process group, without an
+# optional setsid/timeout utility. Disable
+# startup-file and imported-function processing with -p. Only the query is timed.
 bounded_probe() ( #
-  probe_dir=$(command -p mktemp -d 2>/dev/null) || exit 125      #
-  trap 'command -p rm -rf "$probe_dir"' 0                        #
-  "$@" -c "$probe" >"$probe_dir/output" 2>/dev/null </dev/null & #
-  probe_pid=$!                                                   #
-  ( #
-    delay_pid=''                                                                                                           #
-    trap 'kill "$delay_pid" 2>/dev/null || :; wait "$delay_pid" 2>/dev/null || :' 0                                        #
-    trap 'exit 1' HUP INT TERM                                                                                             #
-    command -p sleep 5 &                                                                                                   #
-    delay_pid=$!                                                                                                           #
-    if ! wait "$delay_pid"; then                                                                                           #
-      : >"$probe_dir/unavailable"                                                                                          #
-    else                                                                                                                   #
-      : >"$probe_dir/timeout"                                                                                              #
-    fi                                                                                                                     #
-    trap - 0                                                                                                               #
-    kill -KILL "$probe_pid" 2>/dev/null                                                                                    #
-  ) >/dev/null 2>&1 &                                                                                                      #
-  watchdog_pid=$!                                                                                                          #
-  trap 'kill -KILL "$probe_pid" 2>/dev/null || :; kill "$watchdog_pid" 2>/dev/null || :; command -p rm -rf "$probe_dir"' 0 #
-  trap 'exit 1' HUP INT TERM                                                                                               #
-  status=0                                                                                                                 #
-  wait "$probe_pid" 2>/dev/null || status=$?                                                                               #
-  watchdog_status=0                                                                                                        #
-  kill "$watchdog_pid" 2>/dev/null || watchdog_status=$?                                                                   #
-  wait "$watchdog_pid" 2>/dev/null || watchdog_status=$?                                                                   #
-  # 0: it fired and left a flag; 1: cancelled through its TERM trap; 143: cancelled before the trap was set. #
-  case "$watchdog_status" in 0 | 1 | 143) ;; *) exit 125 ;; esac #
-  trap 'command -p rm -rf "$probe_dir"' 0                        #
-  if [ -f "$probe_dir/timeout" ]; then exit 124; fi              #
-  if [ -f "$probe_dir/unavailable" ]; then exit 125; fi          #
-  if [ "$status" -ne 0 ]; then exit 1; fi                        #
-  command -p cat "$probe_dir/output" || exit 125                 #
-)                                                                #
+  status=0 #
+  # The literal program expands in child Bash, after enabling its job control. #
+  # shellcheck disable=SC2016 #
+  probe_script=' #
+    set -m #
+    probe=$1; shift #
+    probe_dir=$(command -p mktemp -d 2>/dev/null) || exit 125 #
+    probe_pid=""; watchdog_pid="" #
+    cleanup() { #
+      if [ -n "$watchdog_pid" ]; then #
+        kill -TERM -- "-$watchdog_pid" 2>/dev/null || : #
+        wait "$watchdog_pid" 2>/dev/null || : #
+      fi #
+      if [ -n "$probe_pid" ]; then #
+        kill -KILL -- "-$probe_pid" 2>/dev/null || : #
+        wait "$probe_pid" 2>/dev/null || : #
+      fi #
+      command -p rm -rf "$probe_dir" #
+    } #
+    trap cleanup EXIT #
+    trap "exit 1" HUP INT TERM #
+    "$@" -c "$probe" >"$probe_dir/output" 2>/dev/null </dev/null & #
+    probe_pid=$! #
+    ( #
+      set +m #
+      delay_pid="" #
+      stop_delay() { #
+        if [ -n "$delay_pid" ]; then #
+          kill "$delay_pid" 2>/dev/null || : #
+          wait "$delay_pid" 2>/dev/null || : #
+        fi #
+      } #
+      trap stop_delay EXIT #
+      trap "exit 1" HUP INT TERM #
+      command -p sleep 5 & #
+      delay_pid=$! #
+      if wait "$delay_pid"; then #
+        : >"$probe_dir/timeout" #
+      else #
+        : >"$probe_dir/unavailable" #
+      fi #
+      kill -KILL -- "-$probe_pid" 2>/dev/null || : #
+    ) >/dev/null 2>&1 & #
+    watchdog_pid=$! #
+    status=0 #
+    wait "$probe_pid" 2>/dev/null || status=$? #
+    kill -TERM -- "-$watchdog_pid" 2>/dev/null || : #
+    watchdog_status=0 #
+    wait "$watchdog_pid" 2>/dev/null || watchdog_status=$? #
+    watchdog_pid="" #
+    case "$watchdog_status" in 0 | 1 | 143) ;; *) exit 125 ;; esac #
+    if [ -f "$probe_dir/timeout" ]; then exit 124; fi #
+    if [ -f "$probe_dir/unavailable" ]; then exit 125; fi #
+    if [ "$status" -ne 0 ]; then exit 1; fi #
+    command -p cat "$probe_dir/output" || exit 125 #
+  '                                                                                  #
+  command -p bash -p -c "$probe_script" probe "$probe" "$@" 2>/dev/null || status=$? #
+  case "$status" in 126 | 127) exit 125 ;; *) exit "$status" ;; esac                 #
+)                                                                                    #
 #
 # proven CANDIDATE [ARGUMENT]: it ran the probe and stated Python 3.floor or newer.
 # The probe reads nothing: the hook's own standard input stays untouched.
-proven() {                                                                                   #
-  tried="${tried}${tried:+, }$*"                                                             #
-  if stated=$(bounded_probe "$@"); then :; else                                              #
-    status=$?                                                                                #
-    if [ "$status" -eq 124 ]; then                                                           #
-      tried="$tried (version probe timed out after 5s)"                                      #
-    fi                                                                                       #
-    if [ "$status" -eq 125 ]; then                                                           #
-      tried="$tried (version probe unavailable: temporary capture or POSIX watchdog failed)" #
-    fi                                                                                       #
-    return 1                                                                                 #
-  fi                                                                                         #
-  stated=${stated%"$cr"}                                                                     #
-  case "$stated" in                                                                          #
-    3.*) minor=${stated#3.} ;;                                                               #
-    *) return 1 ;;                                                                           #
-  esac                                                                                       #
-  case "$minor" in                                                                           #
-    '' | *[!0-9]*) return 1 ;;                                                               #
-  esac                                                                                       #
-  [ "$minor" -ge "$floor" ]                                                                  #
-}                                                                                            #
+proven() {                                                                                                #
+  tried="${tried}${tried:+, }$*"                                                                          #
+  if stated=$(bounded_probe "$@"); then :; else                                                           #
+    status=$?                                                                                             #
+    if [ "$status" -eq 124 ]; then                                                                        #
+      tried="$tried (version probe timed out after 5s)"                                                   #
+    fi                                                                                                    #
+    if [ "$status" -eq 125 ]; then                                                                        #
+      tried="$tried (version probe unavailable: temporary capture or Bash process-group watchdog failed)" #
+    fi                                                                                                    #
+    return 1                                                                                              #
+  fi                                                                                                      #
+  stated=${stated%"$cr"}                                                                                  #
+  case "$stated" in                                                                                       #
+    3.*) minor=${stated#3.} ;;                                                                            #
+    *) return 1 ;;                                                                                        #
+  esac                                                                                                    #
+  case "$minor" in                                                                                        #
+    '' | *[!0-9]*) return 1 ;;                                                                            #
+  esac                                                                                                    #
+  [ "$minor" -ge "$floor" ] || return 1                                                                   #
+  if [ "$resolve" = true ]; then                                                                          #
+    printf '%s\000' "$stated" "$@"                                                                        #
+    exit 0                                                                                                #
+  fi                                                                                                      #
+  return 0                                                                                                #
+}                                                                                                         #
 #
 # Check Git's index before trusting an interpreter inside a virtualenv.
-venv_candidate() {            #
-  venv="$1/.venv/bin/python3" #
-  directory=$1                #
-  shift                       #
+venv_candidate() { #
+  directory=$1     #
+  shift            #
   if tracked=$( #
-    unset GIT_INDEX_FILE                              #
+    # Only a foreign worktree must drop the hook index; the checkout uses it. #
+    if [ "$directory" != "$root" ]; then              #
+      unset GIT_INDEX_FILE                            #
+    fi                                                #
     git -C "$directory" ls-files -- .venv 2>/dev/null #
   ) && [ -z "$tracked" ]; then                        #
-    if proven "$venv"; then                           #
-      exec "$venv" "$@"                               #
-    fi                                                #
+    for suffix in bin/python3 Scripts/python.exe; do  #
+      venv="$directory/.venv/$suffix"                 #
+      if proven "$venv"; then                         #
+        exec "$venv" "$@"                             #
+      fi                                              #
+    done                                              #
   fi                                                  #
 }                                                     #
 #
-root=$(git rev-parse --show-toplevel 2>/dev/null) || root=''                               #
-if [ -n "$root" ]; then                                                                    #
-  venv_candidate "$root" "$@"                                                              #
-  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common='' #
-  main=${common%/.git}                                                                     #
-  if [ "$main" != "$common" ] && [ "$main" != "$root" ]; then                              #
-    venv_candidate "$main" "$@"                                                            #
-  fi                                                                                       #
-fi                                                                                         #
+main_worktree() {                                                                            #
+  worktrees=$(git -c core.quotePath=false worktree list --porcelain 2>/dev/null) || return 1 #
+  first=$(printf '%s\n' "$worktrees" | command -p head -n 1)                                 #
+  case "$first" in                                                                           #
+    "worktree "*) main=${first#worktree } ;;                                                 #
+    *) return 1 ;;                                                                           #
+  esac                                                                                       #
+  # Validate metadata instead of guessing from a directory suffix. Separate Git #
+  # directories can resolve through core.worktree; absent metadata fails by name. #
+  git -C "$main" rev-parse --show-toplevel 2>/dev/null #
+}                                                      #
+#
+root=$(git rev-parse --show-toplevel 2>/dev/null) || root=''                            #
+if [ -n "$root" ]; then                                                                 #
+  venv_candidate "$root" "$@"                                                           #
+  if ! main=$(main_worktree) || [ -z "$main" ]; then                                    #
+    echo "praetor hooks: cannot resolve main worktree from Git metadata for $root." >&2 #
+    exit 125                                                                            #
+  fi                                                                                    #
+  if [ "$main" != "$root" ]; then                                                       #
+    venv_candidate "$main" "$@"                                                         #
+  fi                                                                                    #
+fi                                                                                      #
 #
 if proven python3; then exec python3 "$@"; fi                                          #
 if proven python; then exec python "$@"; fi                                            #
