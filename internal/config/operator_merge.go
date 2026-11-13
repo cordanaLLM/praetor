@@ -67,18 +67,20 @@ func checkSetting(layer string, spec settingSpec, setting OperatorSetting) error
 	return spec.check(layer, setting)
 }
 
-// kindMembers lists which of Value, List and Argv each value kind may carry.
-var kindMembers = map[settingKind][3]bool{
+// kindMembers lists the value members each setting kind may carry.
+var kindMembers = map[settingKind][4]bool{
 	kindText: {true, false, false}, kindBool: {true, false, false}, kindInt: {true, false, false},
-	kindList: {false, true, false}, kindArgv: {false, false, true}, kindEntry: {false, false, false},
+	kindList: {false, true, false, false}, kindArgv: {false, false, true, false}, kindEntry: {false, false, false, false},
+	kindPRTitleLimits: {false, false, false, true},
 }
 
+// checkShape refuses value members outside the schema kind and checks sequence bounds.
 func checkShape(spec settingSpec, setting OperatorSetting) error {
 	allowed, ok := kindMembers[spec.kind]
 	if !ok {
 		return fmt.Errorf("%s is a section, not a value", setting.Path)
 	}
-	present := [3]bool{setting.Value != "", setting.List != nil, setting.Argv != nil}
+	present := [4]bool{setting.Value != "", setting.List != nil, setting.Argv != nil, setting.PRTitleLimits != nil}
 	for i := range present {
 		if present[i] && !allowed[i] {
 			return fmt.Errorf("%s has an invalid value", setting.Path)
@@ -92,14 +94,17 @@ func checkShape(spec settingSpec, setting OperatorSetting) error {
 			return fmt.Errorf("%s must be an integer", setting.Path)
 		}
 	}
-	if len(setting.List) > spec.maxItems {
+	if max(len(setting.List), len(setting.PRTitleLimits)) > spec.maxItems {
 		return fmt.Errorf("%s exceeds %d entries", setting.Path, spec.maxItems)
 	}
 	return nil
 }
 
+// merge applies the schema merge rule to one validated setting.
 func (m *operatorMerge) merge(layer string, spec settingSpec, setting OperatorSetting) error {
 	switch spec.rule {
+	case rulePRTitleLimits:
+		return m.mergePRTitleLimits(layer, setting)
 	case ruleAppend:
 		return m.appendList(layer, spec, setting)
 	case ruleTighten:
@@ -170,13 +175,16 @@ func (m *operatorMerge) contribute(path, layer string) {
 
 func (m *operatorMerge) named(path string) string { return strings.Join(m.contributors[path], ", ") }
 
+// sameSetting compares value shapes without source-line metadata.
 func sameSetting(a, b OperatorSetting) bool {
-	return a.Value == b.Value && slices.Equal(a.List, b.List) &&
+	return a.Value == b.Value && slices.Equal(a.List, b.List) && slices.Equal(a.PRTitleLimits, b.PRTitleLimits) &&
 		slices.EqualFunc(a.Argv, b.Argv, func(x, y []string) bool { return slices.Equal(x, y) })
 }
 
+// cloneSetting copies all mutable sequence members.
 func cloneSetting(setting OperatorSetting) OperatorSetting {
 	setting.List = slices.Clone(setting.List)
+	setting.PRTitleLimits = slices.Clone(setting.PRTitleLimits)
 	argv := make([][]string, len(setting.Argv))
 	for i, candidate := range setting.Argv {
 		argv[i] = slices.Clone(candidate)
@@ -285,10 +293,12 @@ func (f *FrameworkSettings) targets() map[string]any {
 	return map[string]any{"framework.migration_branch": &f.MigrationBranch}
 }
 
+// targets maps operator forge settings to their typed fields.
 func (f *ForgeSettings) targets() map[string]any {
 	return map[string]any{
 		"forge.default_owner": &f.DefaultOwner, "forge.reconcile_repos": &f.ReconcileRepos, "forge.review_bot": &f.ReviewBot,
 		"forge.claim_stale":       &f.ClaimStale,
+		"forge.pr_title_limits":   &f.PRTitleLimits,
 		"forge.own_organizations": &f.OwnOrganizations,
 	}
 }
@@ -314,6 +324,7 @@ func (t *FrameworkTarget) targets() map[string]any {
 	}
 }
 
+// assignTarget copies one validated setting into its typed destination.
 func assignTarget(targets map[string]any, key string, setting OperatorSetting) error {
 	target, ok := targets[key]
 	if !ok {
@@ -328,6 +339,8 @@ func assignTarget(targets map[string]any, key string, setting OperatorSetting) e
 		*field = setting.Value == "true"
 	case *int:
 		*field, err = strconv.Atoi(setting.Value)
+	case *[]PRTitleLimit:
+		*field = slices.Clone(setting.PRTitleLimits)
 	case *[]string:
 		*field = slices.Clone(setting.List)
 	case *[][]string:

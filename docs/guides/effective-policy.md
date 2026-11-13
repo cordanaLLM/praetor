@@ -419,6 +419,7 @@ without these sections keeps the digest it had before they existed
 | `forge.default_owner` | empty | a GitHub owner: 1 to 39 letters, digits and single hyphens | the last owner step of `config.ResolveRepositoryIdentity`, used by `needs epic --publish`, `issue`, `milestone`, `project`, `init` and `forge sync-wiki` |
 | `forge.reconcile_repos` | `[]` | at most 256 `<owner>/<name>` coordinates | the `issue reconcile` scope when `--repos` is not given; without either, the current repository |
 | `forge.review_bot` | empty | a GitHub owner, optionally followed by `[bot]` | validated and sealed; `forge.AssignReviewers` takes the bot list from its caller, and no command passes this key yet |
+| `forge.pr_title_limits` | `[]` | at most 64 `{repo: owner/name, max: integer}` records; `max` from 20 to 256 | the pre-tool hook refuses longer explicit `gh pr create` titles, counted in Unicode code points; repository keys are case-insensitive |
 | `forge.claim_stale` | empty, meaning 6 hours | a duration from `10m` to `720h` | the window after which an issue claim without an update may be taken over (`praetorctl issue claim`, [issue claims](issue-claims.md)) |
 | `topology.org_containers` | `[]` | at most 64 names of lowercase letters, digits, `.`, `_` and `-`, merged across layers | `praetorctl topology audit` and `topology clean`, which add the names to the built-in containers (`topology.OrgContainers`) |
 
@@ -483,6 +484,7 @@ fleet, organization, deployment, workstation.
 - `topology.org_containers` appends the same way, bounded after merging;
   `framework.targets.<lang>.builder_kits` and `forge.reconcile_repos` are replaced
   by a later layer.
+- `forge.pr_title_limits` merges by case-insensitive repository key; a later record replaces the earlier limit for that repository, preserving other repositories. Empty lists add no overrides. Duplicate repositories within one layer, malformed coordinates, invalid maxima and more than 64 merged entries fail.
 - Two layers giving one client different non-empty `registry` values fail.
 - Client binaries, config roots, the fork checkout, `bin_dir`, the framework checkout
   and absolute interpreter paths are host data. Any layer other than `workstation`
