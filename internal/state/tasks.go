@@ -62,7 +62,7 @@ func ListBacklogTasksContext(ctx context.Context, rootPath string) ([]TaskItem, 
 
 // listLedgerTasks reads one task ledger of the working directory; an absent ledger holds no row.
 func listLedgerTasks(ctx context.Context, rootPath, name string) ([]TaskItem, error) {
-	content, err := contextopt.ReadSnapshot(ctx, filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, name))
+	content, err := readTaskLedger(ctx, filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, name))
 	if errors.Is(err, os.ErrNotExist) {
 		return []TaskItem{}, nil
 	}
@@ -158,12 +158,13 @@ func CompleteTask(rootPath, selector string) error {
 	return contextopt.ReplaceSnapshot(ctx, openFile, []byte(strings.Join(lines, "\n")), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: util.SecureFilePerm})
 }
 
-// ArchiveCompletedTasks moves all completed tasks from OPEN.md to BACKLOG.md.
+// ArchiveCompletedTasks moves completed rows into BACKLOG.md, retaining one
+// record for each still-existing worktree named by a completed row.
 func ArchiveCompletedTasks(rootPath, commitSHA string) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	openFile := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, "OPEN.md")
-	content, err := contextopt.ReadSnapshot(ctx, openFile)
+	content, err := readTaskLedger(ctx, openFile)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
@@ -171,7 +172,7 @@ func ArchiveCompletedTasks(rootPath, commitSHA string) (int, error) {
 		return 0, fmt.Errorf("read OPEN.md: %w", err)
 	}
 
-	remainingLines, completedTasks, err := splitCompletedTasks(string(content))
+	remainingLines, completedTasks, err := splitCompletedTasks(ctx, rootPath, string(content))
 	if err != nil {
 		return 0, err
 	}
@@ -194,7 +195,7 @@ func ArchiveCompletedTasks(rootPath, commitSHA string) (int, error) {
 // splitCompletedTasks separates archivable rows from the rest of OPEN.md. It
 // resolves rows through the shared numbering authority, so a completed checkbox
 // inside a fenced code block stays where it is instead of being archived.
-func splitCompletedTasks(content string) (remaining, completed []string, err error) {
+func splitCompletedTasks(ctx context.Context, rootPath, content string) (remaining, completed []string, err error) {
 	lines := strings.Split(content, "\n")
 	parsed, err := parseTaskLines(lines)
 	if err != nil {
@@ -204,6 +205,12 @@ func splitCompletedTasks(content string) (remaining, completed []string, err err
 	for _, task := range parsed {
 		if task.completed {
 			archive[task.line] = true
+		}
+	}
+	rows := archiveTaskRows(lines, archive)
+	if len(archive) > 0 {
+		if err := retainWorktreeRows(ctx, rootPath, rows, archive); err != nil {
+			return nil, nil, err
 		}
 	}
 	for i, line := range lines {
