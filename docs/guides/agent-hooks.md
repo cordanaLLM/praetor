@@ -564,9 +564,10 @@ fails closed:
   `TestReviewInjectionDispatchPrompt` in the regression tests).
   `false` leaves other validation unchanged (`TestReviewReturnInjection/false` in the
   review injection tests). This independent defence takes its idea from
-  [Fairies](https://code.ffmpeg.org/michaelni/Fairies), without incorporating its code or text.
-  Captured Codex returns enforce the same field independently of task correlation, as
-  described below. Paths without a documented subagent report retain their stated skips;
+  [Fairies](https://code.ffmpeg.org/michaelni/Fairies) by Michael Niedermayer (GNU General
+  Public License version 2, per the headers of its sources such as `llm_prompt.py`), without
+  incorporating its code or text. A captured Codex return that declares the field is judged
+  the same way, as described below. Paths without a documented subagent report retain their stated skips;
   those skips do not satisfy the review-return contract.
 - Review and audit return claims are resolved against the repository root and the subagent
   transcript (`internal/agenthook/return_claims.go`). For subagents dispatched with a review
