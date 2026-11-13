@@ -97,6 +97,9 @@ func TestScanRepo_Positive_LinguistGeneratedPythonSkippedFromForeign(t *testing.
 	if report.SkippedGeneratedFiles < 2 {
 		t.Errorf("SkippedGeneratedFiles = %d, want >= 2", report.SkippedGeneratedFiles)
 	}
+	if report.ForeignScanned["python"] != 2 || report.Unscanned["python"] != 4 {
+		t.Errorf("foreign/inventory counts = %v/%v, want python=2/4", report.ForeignScanned, report.Unscanned)
+	}
 	for _, g := range report.ForeignDuplicates {
 		for _, loc := range g.Locations {
 			if strings.HasPrefix(loc.Path, "sync_") {
@@ -186,5 +189,45 @@ func TestScanRepo_Negative_LinguistProbeFailureFailsScan(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "linguist-generated") {
 		t.Fatalf("error = %q, want linguist-generated probe named", err)
+	}
+}
+
+// TestSourceLanguageCounts_AttributeFailure keeps inventory counts independent of attribute classification.
+func TestSourceLanguageCounts_AttributeFailure(t *testing.T) {
+	root := t.TempDir()
+	writeGitRepo(t, root, "*.py linguist-generated=true\n", map[string]string{"a.py": pyDupBlock, "a.go": "package sample\n"})
+	dedupe.SetLinguistGitProbeForTest(t, func(_ context.Context, _ string, _ int, _ ...string) (util.CommandBytes, error) {
+		return util.CommandBytes{}, fmt.Errorf("attribute lookup failed")
+	})
+	counts, err := dedupe.SourceLanguageCounts(t.Context(), root)
+	if err != nil || counts["python"] != 1 || counts["go"] != 1 || len(counts) != 2 {
+		t.Fatalf("counts/error = %v/%v, want go=1 python=1/nil", counts, err)
+	}
+}
+
+// TestForeignScanned_AcrossGeneratedAndAbsolutePaths counts the exact jscpd inventory across roots.
+func TestForeignScanned_AcrossGeneratedAndAbsolutePaths(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "testdata", "repo")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	extra := t.TempDir()
+	writeGitRepo(t, root, "gen.py linguist-generated=true\n", map[string]string{
+		"gen.py": pyDupBlock, "hand.py": pyDupBlock, ".github/workflows/build.yml": "name: build\n",
+	})
+	writeGitRepo(t, extra, "gen.py linguist-generated=true\n", map[string]string{
+		"gen.py": pyDupBlock, "hand.py": pyDupBlock, "script.sh": "echo fixture\n",
+	})
+	useFakeJscpdDupPair(t, root, nil)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{RepoPath: root, AcrossRoots: []string{extra}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ForeignScanned["python"] != 2 || report.ForeignScanned["yaml"] != 1 || report.ForeignScanned["shell"] != 1 {
+		t.Fatalf("scanned = %v, want python=2 yaml=1 shell=1", report.ForeignScanned)
+	}
+	if report.SkippedGeneratedFiles != 2 {
+		t.Fatalf("skipped = %d, want 2", report.SkippedGeneratedFiles)
 	}
 }

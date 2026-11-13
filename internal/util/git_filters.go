@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"slices"
@@ -11,6 +12,9 @@ import (
 // path: a driver's clean command and its long-running process. A smudge command only runs on
 // checkout.
 const statusFilterKeys = `^filter\..*\.(clean|process)$`
+
+// maxCheckAttrRecords permits three attributes for each of 200,000 scoped paths.
+const maxCheckAttrRecords = 600000
 
 // gitFilterProbe runs one of the read-only inspections RefuseGitStatusFilters makes. RunGitProbe
 // reads the repository's own configuration and attributes; effectiveGitProbe reads what a git
@@ -77,12 +81,18 @@ type CheckAttrRecord struct {
 // NUL-terminated -- into records in the order git printed them. The one reader of that format:
 // callers that need records grouped by path use ParseCheckAttrOutput.
 func ParseCheckAttrRecords(out []byte) ([]CheckAttrRecord, error) {
+	if len(out) > MaxCommandOutputBytes {
+		return nil, fmt.Errorf("git check-attr answer exceeds %d bytes", MaxCommandOutputBytes)
+	}
+	if bytes.Count(out, []byte{0}) > 3*maxCheckAttrRecords {
+		return nil, fmt.Errorf("git check-attr answer exceeds %d records", maxCheckAttrRecords)
+	}
 	fields := strings.Split(string(out), "\x00")
 	if len(fields)%3 != 1 || fields[len(fields)-1] != "" {
 		return nil, fmt.Errorf("git check-attr answer is not a sequence of NUL-terminated records")
 	}
 	records := make([]CheckAttrRecord, 0, len(fields)/3)
-	for i := 0; i+2 < len(fields); i += 3 {
+	for i := 0; i+2 < len(fields) && i < 3*maxCheckAttrRecords; i += 3 {
 		records = append(records, CheckAttrRecord{Path: fields[i], Attr: fields[i+1], Value: fields[i+2]})
 	}
 	return records, nil
@@ -95,7 +105,8 @@ func ParseCheckAttrOutput(out []byte) (map[string]map[string]string, error) {
 		return nil, err
 	}
 	result := make(map[string]map[string]string, len(records))
-	for _, rec := range records {
+	for i := 0; i < len(records) && i < maxCheckAttrRecords; i++ {
+		rec := records[i]
 		if _, ok := result[rec.Path]; !ok {
 			result[rec.Path] = make(map[string]string, 2)
 		}
@@ -120,7 +131,8 @@ func filterAttributeValues(out []byte) (map[string]string, error) {
 		return nil, err
 	}
 	values := make(map[string]string)
-	for _, rec := range records {
+	for i := 0; i < len(records) && i < maxCheckAttrRecords; i++ {
+		rec := records[i]
 		if rec.Attr != "filter" {
 			return nil, fmt.Errorf("git check-attr answered attribute %q, not filter", rec.Attr)
 		}

@@ -61,6 +61,11 @@ func sourceLanguageOf(path string) string {
 	if util.IsGoTestSurface(path) {
 		return ""
 	}
+	return foreignSourceLanguage(path)
+}
+
+// foreignSourceLanguage classifies eligible foreign paths, including absolute jscpd inputs.
+func foreignSourceLanguage(path string) string {
 	if isWorkflowYAML(path) {
 		return "yaml"
 	}
@@ -77,7 +82,7 @@ func sourceLanguageOf(path string) string {
 // languages no needs analyzer detects from it, so the epic and the dedupe scan's Not Scanned
 // line count the same files.
 func SourceLanguageCounts(ctx context.Context, repoPath string) (map[string]int, error) {
-	scope, err := sourceFiles(ctx, repoPath)
+	scope, err := sourceFilesWithAttributes(ctx, repoPath, false)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +131,11 @@ func (s *sourceScope) add(language, path string) {
 // repetitive: a rule needing a tested and an untested copy of the same function must contain
 // two near-identical files, so reporting them as clones reports the evidence as the defect.
 func sourceFiles(ctx context.Context, repoPath string) (sourceScope, error) {
+	return sourceFilesWithAttributes(ctx, repoPath, true)
+}
+
+// sourceFilesWithAttributes inventories sources, resolving generated attributes only for scans.
+func sourceFilesWithAttributes(ctx context.Context, repoPath string, classifyGenerated bool) (sourceScope, error) {
 	if ctx == nil {
 		return sourceScope{}, errors.New("dedupe scan requires a context")
 	}
@@ -136,10 +146,18 @@ func sourceFiles(ctx context.Context, repoPath string) (sourceScope, error) {
 	if err != nil {
 		return sourceScope{}, err
 	}
-	if gitRoot {
-		return gitSourceFiles(ctx, repoPath)
+	if !gitRoot {
+		return directorySourceFiles(ctx, repoPath)
 	}
-	return directorySourceFiles(ctx, repoPath)
+	scope, err := gitSourceFiles(ctx, repoPath)
+	if err != nil || !classifyGenerated {
+		return scope, err
+	}
+	allPaths := make([]string, 0, len(scope.goFiles)+len(scope.foreignFiles))
+	allPaths = append(allPaths, scope.goFiles...)
+	allPaths = append(allPaths, scope.foreignFiles...)
+	scope.linguistGenerated, err = linguistGeneratedPaths(ctx, repoPath, allPaths)
+	return scope, err
 }
 
 // gitSourceFiles enumerates the scanned repository's own sources through the hardened
@@ -176,14 +194,6 @@ func gitSourceFiles(ctx context.Context, repoPath string) (sourceScope, error) {
 			scope.add(language, path)
 		}
 	}
-	allPaths := make([]string, 0, len(scope.goFiles)+len(scope.foreignFiles))
-	allPaths = append(allPaths, scope.goFiles...)
-	allPaths = append(allPaths, scope.foreignFiles...)
-	generated, err := linguistGeneratedPaths(ctx, repoPath, allPaths)
-	if err != nil {
-		return sourceScope{}, err
-	}
-	scope.linguistGenerated = generated
 	finalizeScope(&scope)
 	return scope, nil
 }
