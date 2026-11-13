@@ -1,0 +1,2 @@
+type: changed
+title: The job-timeout audit gate fails from 2026-11-20 after its warn period, and an exception for a job above the static ceiling stays in use on the measured path

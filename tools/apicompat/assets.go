@@ -88,7 +88,10 @@ jobs:
   api-compatibility:
     name: Go API Compatibility
     runs-on: ubuntu-26.04
-    timeout-minutes: 60
+    # Twice the slowest adopter's p95 (golusoris/golusoris, 12.3 minutes
+    # over 15 green runs, 2026-11-06), inside every adopter's job-timeout
+    # window (TestAPICompatibilityJobTimeoutFitsEveryAdopter).
+    timeout-minutes: 25
     steps:
 ` + ghworkflow.HostedGateDraftStep + `      - name: Checkout source` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
@@ -173,6 +176,9 @@ var priorDigests = map[string]string{
 	// The gate before the compare step set GOTOOLCHAIN: auto to override setup-go's
 	// GOTOOLCHAIN=local (#1037).
 	"f7e57ed83e70886bb6a37906d040d4e6352c71d79e3da67215d0243f6ad02a4c": WorkflowFile,
+	// The gate whose job declared 60 minutes, above the job-timeout window of every adopter but
+	// the slowest (order praetor-job-timeouts-emitted-assets-20261106).
+	"b1b8cda8e5e0f06c5f8d58e4df59fa7c567b599382da19854228466696b157a6": WorkflowFile,
 	// The draft skip rendering of the gate before the compare step set GOTOOLCHAIN: auto.
 	"63c91ef6890b046db5a87ad1ec222e4db8a680f4350350b60e5db2934f74f35a": WorkflowFile,
 	// The gate whose checker build module required golang.org/x/tools v0.51.0 (#1197).
@@ -193,6 +199,8 @@ var priorDigests = map[string]string{
 	"9127c94ae1aa6b1aeee2f1b42ae0408e68e471adf927ab6aa43282a41f17283f": Directory + "/" + GateFile,
 	// Outgoing review-round text; fixture: api-gate-main-review-round6.go.txt.
 	"a57af7537bc9c1e3b6b6be6be839c991b26562c1daafbaedbad334d9f88d3507": Directory + "/" + GateFile,
+	// The draft-skip of the sixty-minute workflow; fixture: praetor-api.sixty-minute-job-draft-skip.yml.
+	"0b93b127b9d26320e4e8566881fed76f6eeaf66724d42cb4c215d3a21b5ee59f": WorkflowFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}

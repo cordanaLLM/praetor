@@ -221,7 +221,10 @@ func TestRepositoryChecksCancellationAndEngine(t *testing.T) {
 		})
 	}
 	engine := filepath.Join("..", "..")
-	manifest := &config.Manifest{}
+	manifest, err := config.LoadManifest(filepath.Join(engine, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, check := range []func() (string, error){
 		func() (string, error) { return AuditEditorSelection(t.Context(), manifest, engine) },
 		func() (string, error) { return AuditRenovateEngineBumps(t.Context(), engine) },
