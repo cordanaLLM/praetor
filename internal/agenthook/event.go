@@ -149,6 +149,9 @@ type Verdict struct {
 	UpdatedInput json.RawMessage
 	AddedContext string
 	Notice       string
+	// reviewInjectionInvalid keeps a captured Codex return's field violation actionable
+	// even though its task register cannot be recovered from the native payload.
+	reviewInjectionInvalid bool
 }
 
 // Response is what the process writes and the code it exits with.

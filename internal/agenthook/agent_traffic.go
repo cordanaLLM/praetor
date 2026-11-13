@@ -280,11 +280,23 @@ func judgeAgentReturn(ctx context.Context, client, root string, canonical Canoni
 	return verdict
 }
 
-// codexReturn reports the Codex return boundary: its spawn receipt carries no documented
-// key linking the dispatch to the later agent id, and last_assistant_message is nullable.
+// codexReturn judges a declared injection field on a captured body. The native receipt cannot
+// recover the task label, so a body without a declaration may be any subagent's return and keeps
+// the stated skips; a declaration that is present but malformed or repeated is refused, and a true
+// flag is delivered as a finding. Register and claimed-run enforcement remain unmeasured.
 func codexReturn(canonical Canonical) Verdict {
 	if strings.TrimFunc(canonical.Return, isPythonSpace) == "" {
 		return Verdict{Outcome: Skip, Reason: "codex return capture unavailable: last_assistant_message is absent"}
+	}
+	injection, err := validateReviewInjection(canonical.Return)
+	if err != nil && !errors.Is(err, errReviewInjectionMissing) {
+		verdict := trafficDenied(err)
+		verdict.reviewInjectionInvalid = true
+		return verdict
+	}
+	if injection {
+		notice := reviewInjectionNotice("unavailable (Codex dispatch correlation)")
+		return Verdict{Outcome: Skip, Reason: notice, AddedContext: notice}
 	}
 	claims, err := caveman.ExtractReturnRan(canonical.Return)
 	if err == nil && len(claims) > 0 {

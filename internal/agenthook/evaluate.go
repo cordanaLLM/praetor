@@ -92,8 +92,9 @@ func judge(ctx context.Context, row Registration, canonical Canonical, in Invoca
 
 // returnBoundary bounds a deny at SubagentStop. There a deny blocks nothing: Claude Code and
 // Codex keep the subagent running and hand it the reason as its next instruction. Codex
-// enforces no register at this boundary, so its failures are stated skips. Once a stop hook
-// has continued a subagent (stop_hook_active), a second deny could repeat without end, so it
+// enforces no register at this boundary, so failures other than a captured return's injection
+// declaration are stated skips. Once a stop hook has continued a subagent
+// (stop_hook_active), a second deny could repeat without end, so it
 // becomes a stated skip and the subagent stops; evaluateAgentReturn has already released
 // that agent's binding.
 func returnBoundary(row Registration, canonical Canonical, verdict Verdict) Verdict {
@@ -102,7 +103,7 @@ func returnBoundary(row Registration, canonical Canonical, verdict Verdict) Verd
 	}
 	reason := strings.TrimPrefix(verdict.Reason, "[BLOCKED BY HISS] ")
 	switch {
-	case row.Client == "codex":
+	case row.Client == "codex" && !verdict.reviewInjectionInvalid:
 		return Verdict{Outcome: Skip, Reason: "codex return not judged, its register is unenforceable: " + reason}
 	case canonical.StopActive:
 		return Verdict{Outcome: Skip, Reason: "not blocked again after a stop-hook continuation (stop_hook_active): " + reason}

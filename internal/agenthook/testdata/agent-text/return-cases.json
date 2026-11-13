@@ -3,13 +3,13 @@
     "name": "valid-return",
     "capture": true,
     "enforce": true,
-    "body": "verdict: pass\nchanged: internal/agenthook\nran: go test ./internal/agenthook\nevidence: exit 0\nopen: none\n"
+    "body": "verdict: pass\nchanged: internal/agenthook\nran: go test ./internal/agenthook\nevidence: exit 0\nopen: none\nprompt_injection: false\n"
   },
   {
     "name": "prose-return",
     "capture": true,
     "enforce": false,
-    "body": "verdict: I think this is complete\nchanged: the hook\nran: the tests\nevidence: the output\nopen: none\n"
+    "body": "verdict: I think this is complete\nchanged: the hook\nran: the tests\nevidence: the output\nopen: none\nprompt_injection: false\n"
   },
   {
     "name": "missing-body",

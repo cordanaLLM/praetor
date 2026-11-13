@@ -141,8 +141,15 @@ func TestReviewInjectionActiveDeclarations(t *testing.T) {
 		"<!-- caveman:off -->\nprompt_injection: false\n<!-- caveman:on -->",
 		"<!--\nprompt_injection: false\n-->",
 		"evidence: none <!--\nprompt_injection: false\n-->",
+		"`prompt_injection: false`",
 	}
-	for index := 0; index < len(cases) && index < 8; index++ {
+	const maxCases = 16
+	if len(cases) > maxCases {
+		t.Fatalf("inactive cases=%d exceed scalar bound %d", len(cases), maxCases)
+	}
+	checked := 0
+	for index := 0; index < len(cases) && index < maxCases; index++ {
+		checked++
 		text := cases[index]
 		if _, err := validateReviewInjection(text); err == nil {
 			t.Errorf("inactive declaration accepted: %q", text)
@@ -151,11 +158,160 @@ func TestReviewInjectionActiveDeclarations(t *testing.T) {
 			t.Errorf("active declaration lost: %q: flag=%v err=%v", text, flag, err)
 		}
 	}
+	if checked != len(cases) {
+		t.Errorf("checked %d inactive cases, want %d", checked, len(cases))
+	}
 	text := "literal `\n\n  \nprompt_injection: false\n\nliteral `"
 	if flag, err := validateReviewInjection(text); err != nil || flag {
 		t.Errorf("paragraph boundary crossed: flag=%v err=%v", flag, err)
 	}
 
+}
+
+// TestReviewInjectionCodeSpanComments checks code delimiters before HTML comment state.
+func TestReviewInjectionCodeSpanComments(t *testing.T) {
+	cases := []struct {
+		name, text string
+		flag       bool
+		invalid    bool
+	}{
+		{"inline-opener", "evidence: `<!--`\nprompt_injection: false", false, false},
+		{"inline-opener-finding", "evidence: `<!--`\nprompt_injection: true", true, false},
+		{"inline-closer", "evidence: `-->`\nprompt_injection: true", true, false},
+		{"paired-markers", "evidence: `<!--` and `-->`\nprompt_injection: true", true, false},
+		{"multiline-opener", "evidence: `literal\n<!--`\nprompt_injection: true", true, false},
+		{"multiline-hidden-field", "evidence: `<!--\nprompt_injection: false\n-->`", false, true},
+		{"code-only-field", "`prompt_injection: false`", false, true},
+		{"comment-before-code", "evidence: <!-- `-->`\nprompt_injection: true", true, false},
+		{"continued-comment-closer", "evidence: <!--\n`-->`\nprompt_injection: true", true, false},
+		{"real-comment-after-code", "evidence: `<!--` <!--\nprompt_injection: false\n-->\nprompt_injection: true", true, false},
+		{"unclosed-code-opener", "evidence: `<!--\nprompt_injection: false", false, true},
+		{"unequal-backticks", "evidence: ``<!--`\nprompt_injection: false", false, true},
+		{"paragraph-boundary", "evidence: `<!--\n\nprompt_injection: false\n`", false, true},
+		{"duplicate-after-code", "evidence: `<!--`\nprompt_injection: true\nprompt_injection: false", false, true},
+		{"span-start-in-comment", "evidence: <!-- ` -->\n<!-- `\nprompt_injection: false", false, true},
+		{"span-start-in-continued-comment", "evidence: <!--\n\n` -->\n<!-- `\nprompt_injection: false", false, true},
+		{"span-after-comment-backtick", "evidence: <!-- ` --> `<!--`\nprompt_injection: true", true, false},
+		{"multiline-closer", "evidence: `literal\n-->`\nprompt_injection: true", true, false},
+		{"longer-backticks", "evidence: ``literal ` <!--``\nprompt_injection: true", true, false},
+	}
+	const maxCases = 32
+	if len(cases) > maxCases {
+		t.Fatalf("code span cases=%d exceed scalar bound %d", len(cases), maxCases)
+	}
+	for index := 0; index < len(cases) && index < maxCases; index++ {
+		tc := cases[index]
+		t.Run(tc.name, func(t *testing.T) {
+			flag, err := validateReviewInjection(tc.text)
+			if (err != nil) != tc.invalid || flag != tc.flag {
+				t.Fatalf("flag=%v err=%v; want flag=%v invalid=%v", flag, err, tc.flag, tc.invalid)
+			}
+		})
+	}
+}
+
+// TestReviewInjectionCodexReturn checks captured returns without inventing task correlation.
+func TestReviewInjectionCodexReturn(t *testing.T) {
+	cases := []struct {
+		name, text string
+		active     bool
+		exit       int
+		finding    bool
+	}{
+		{"finding", reviewReturn("true"), false, 0, true},
+		{"false", reviewReturn("false"), false, 0, false},
+		// No active declaration: the payload cannot say whether a review dispatched this subagent,
+		// so the return keeps the stated skips instead of a refusal of every Codex subagent.
+		{"missing", validReturn, false, 0, false},
+		{"malformed", reviewReturn("maybe"), false, 2, false},
+		{"duplicate", reviewReturn("false") + "prompt_injection: true\n", false, 2, false},
+		{"inactive", validReturn + "`prompt_injection: false`", false, 0, false},
+		{"continued-invalid", validReturn, true, 0, false},
+		{"continued-finding", reviewReturn("true"), true, 0, true},
+		{"absent", "", false, 0, false},
+	}
+	const maxCases = 16
+	if len(cases) > maxCases {
+		t.Fatalf("Codex cases=%d exceed scalar bound %d", len(cases), maxCases)
+	}
+	for index := 0; index < len(cases) && index < maxCases; index++ {
+		tc := cases[index]
+		t.Run(tc.name, func(t *testing.T) {
+			payload := commandPayload(t, map[string]any{"hook_event_name": "SubagentStop", "session_id": "s",
+				"agent_id": "agent", "last_assistant_message": tc.text, "stop_hook_active": tc.active})
+			response := runAgentHook(t, repository(t, true), t.TempDir(), "codex", EventPostReturn, payload)
+			if response.ExitCode != tc.exit {
+				t.Fatalf("return: %s; want exit %d", response.String(), tc.exit)
+			}
+			checkReviewCodexResponse(t, tc.name, tc.text, tc.finding, response)
+		})
+	}
+}
+
+// checkReviewCodexResponse refuses passing findings and preserves the unflagged response bytes.
+func checkReviewCodexResponse(t *testing.T, name, text string, finding bool, response Response) {
+	t.Helper()
+	if finding {
+		specific := field[map[string]any](t, decodeStdout(t, response), "hookSpecificOutput")
+		verdict := codexReturn(Canonical{Return: text})
+		if field[string](t, specific, "hookEventName") != "SubagentStop" ||
+			field[string](t, specific, "additionalContext") != verdict.Reason || verdict.Outcome != Skip ||
+			!strings.Contains(string(response.Stderr), ReviewInjectionMarker) {
+			t.Fatalf("finding not delivered or classified: %s", response.String())
+		}
+		return
+	}
+	if len(response.Stdout) != 0 || strings.Contains(string(response.Stderr), ReviewInjectionMarker) {
+		t.Fatalf("unexpected finding or rewrite: %s", response.String())
+	}
+	if codexReturnKeepsSkip(name) && string(response.Stderr) != "praetor hook: codex return register unenforceable: spawn payload has no documented subagent correlation key, skipped\n" {
+		t.Fatalf("false return behavior changed: %s", response.String())
+	}
+}
+
+// codexReturnKeepsSkip names the Codex cases whose return keeps the register skip line byte for
+// byte: a false flag and a body with no active declaration.
+func codexReturnKeepsSkip(name string) bool {
+	return name == "false" || name == "missing" || name == "inactive"
+}
+
+// TestReviewInjectionCodexUnavailableBody preserves the capture skip for nullable native bodies.
+func TestReviewInjectionCodexUnavailableBody(t *testing.T) {
+	cases := []any{nil, " \n\t", ""}
+	for index := 0; index < len(cases) && index < 3; index++ {
+		fields := map[string]any{"hook_event_name": "SubagentStop", "session_id": "s", "agent_id": "agent"}
+		if index < 2 {
+			fields["last_assistant_message"] = cases[index]
+		}
+		response := runAgentHook(t, repository(t, true), t.TempDir(), "codex", EventPostReturn, commandPayload(t, fields))
+		if response.ExitCode != 0 || len(response.Stdout) != 0 ||
+			!strings.Contains(string(response.Stderr), "last_assistant_message is absent") {
+			t.Fatalf("unavailable body: %s", response.String())
+		}
+	}
+}
+
+// TestReviewInjectionUnavailableClientBodies pins the documented adapters without a subagent report.
+func TestReviewInjectionUnavailableClientBodies(t *testing.T) {
+	cases := []struct {
+		client  string
+		event   Event
+		payload map[string]any
+	}{
+		{"gemini", EventPostTool, map[string]any{"hook_event_name": "AfterTool", "session_id": "s", "tool_name": "invoke_agent"}},
+		{"agy", EventStop, map[string]any{"conversationId": "s", "executionNum": 1, "terminationReason": "done", "fullyIdle": true}},
+	}
+	for index := 0; index < len(cases) && index < 2; index++ {
+		tc := cases[index]
+		dialect, known := DialectFor(tc.client)
+		if !known {
+			t.Fatalf("missing dialect %s", tc.client)
+		}
+		canonical, err := dialect.Decode(tc.event, commandPayload(t, tc.payload))
+		if err != nil || canonical.Return != "" {
+			t.Fatalf("%s report invented: %+v err=%v", tc.client, canonical, err)
+		}
+	}
 }
 
 // TestReviewInjectionInlineComments checks comment boundaries throughout active lines.
