@@ -65,6 +65,7 @@ func retainWorktreeRows(ctx context.Context, root string, rows []string, archive
 	return nil
 }
 
+// existingArchiveWorktree returns the decoded path of a listed worktree that exists on disk, or "" for a bare or missing one.
 func existingArchiveWorktree(entry worktree.WorktreeInfo) (string, error) {
 	if entry.Bare || entry.Path == "" {
 		return "", nil
@@ -117,6 +118,7 @@ func namesWorktreePath(row, path string) bool {
 	return false
 }
 
+// containsWorktreePath reports whether row names path as a whole token, not as a prefix of a longer path.
 func containsWorktreePath(row, path string) bool {
 	for attempt := 0; attempt < maxTaskLineBytes; attempt++ {
 		before, after, found := strings.Cut(row, path)

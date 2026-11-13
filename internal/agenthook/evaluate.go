@@ -317,6 +317,7 @@ func joinStopDenies(denies []Verdict) Verdict {
 	return Verdict{Outcome: Deny, Reason: reason}
 }
 
+// evaluateStopLedger denies a stop while the ledger fails sync verification or audit, then applies the OPEN.md size check.
 func evaluateStopLedger(ctx context.Context, root string, canonical Canonical) Verdict {
 	verifyCtx, cancel := context.WithTimeout(ctx, stateVerifyBudget)
 	defer cancel()

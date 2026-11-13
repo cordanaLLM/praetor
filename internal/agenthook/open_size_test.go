@@ -15,6 +15,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
+// TestStopLedgerOpenSize checks the stop hook below, at and above the 800 KiB warning and past the 1 MiB limit.
 func TestStopLedgerOpenSize(t *testing.T) {
 	for _, size := range []int{800*1024 - 1, 800 * 1024, 800*1024 + 1, 900 * 1024, 1<<20 + 1} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
@@ -24,6 +25,7 @@ func TestStopLedgerOpenSize(t *testing.T) {
 	}
 }
 
+// stopLedgerSizeFixture writes an OPEN.md of exactly size bytes into a synced repository and returns the stop verdict.
 func stopLedgerSizeFixture(t *testing.T, size int) Verdict {
 	t.Helper()
 	root := syncedRepository(t)
@@ -39,6 +41,7 @@ func stopLedgerSizeFixture(t *testing.T, size int) Verdict {
 	return evaluateStopLedger(testsupport.DeadlineContext(t), root, Canonical{})
 }
 
+// assertStopLedgerSize requires a warning above 800 KiB and a denial naming the archive command past 1 MiB.
 func assertStopLedgerSize(t *testing.T, verdict Verdict, size int) {
 	t.Helper()
 	if size > 1<<20 {

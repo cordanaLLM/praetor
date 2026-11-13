@@ -12,6 +12,7 @@ import (
 	"testing"
 )
 
+// archiveWorktreeFixture creates a repository with one linked worktree whose path holds a space.
 func archiveWorktreeFixture(t *testing.T) (string, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -25,6 +26,7 @@ func archiveWorktreeFixture(t *testing.T) (string, string) {
 	return root, linked
 }
 
+// TestArchiveLiveWorktree keeps one row for a live worktree under each done marker and archives the rest.
 func TestArchiveLiveWorktree(t *testing.T) {
 	for _, marker := range []string{"- [x]", "| DONE", "- [DONE"} {
 		t.Run(marker, func(t *testing.T) {
@@ -51,6 +53,7 @@ func TestArchiveLiveWorktree(t *testing.T) {
 	}
 }
 
+// TestArchiveWorktreeExistingRow prefers an unarchived row that already names the live worktree.
 func TestArchiveWorktreeExistingRow(t *testing.T) {
 	root, linked := archiveWorktreeFixture(t)
 	kept := fmt.Sprintf("- [ ] id: live | path: %s | branch: fixture/linked | last: shipped | next: cleanup\n", linked)
@@ -63,6 +66,7 @@ func TestArchiveWorktreeExistingRow(t *testing.T) {
 	assertIntegrityFile(t, open, kept)
 }
 
+// TestArchiveRemovedWorktree archives a done row whose worktree was removed.
 func TestArchiveRemovedWorktree(t *testing.T) {
 	root, linked := archiveWorktreeFixture(t)
 	stateFixtureGit(t, root, "worktree", "remove", linked)
@@ -74,6 +78,7 @@ func TestArchiveRemovedWorktree(t *testing.T) {
 	assertIntegrityFile(t, open, "")
 }
 
+// TestArchiveNoDoneRowsUnchanged leaves an OPEN.md without done rows byte for byte.
 func TestArchiveNoDoneRowsUnchanged(t *testing.T) {
 	const content = "# Open\n- [ ] id: active | path: absent | branch: fixture | last: editing | next: test\n"
 	root := t.TempDir()
@@ -89,6 +94,7 @@ func TestArchiveNoDoneRowsUnchanged(t *testing.T) {
 	assertIntegrityFile(t, open, content)
 }
 
+// TestArchiveFencedWorktreeRows ignores rows inside code fences when counting done rows.
 func TestArchiveFencedWorktreeRows(t *testing.T) {
 	root, linked := archiveWorktreeFixture(t)
 	fenced := fmt.Sprintf("```\n- [ ] example %s\n| DONE example |\n- [DONE example]\n```\n", linked)
@@ -101,6 +107,7 @@ func TestArchiveFencedWorktreeRows(t *testing.T) {
 	assertIntegrityFile(t, open, fenced+retained)
 }
 
+// TestArchiveMissingRegisteredWorktree archives a row whose registered worktree no longer exists on disk.
 func TestArchiveMissingRegisteredWorktree(t *testing.T) {
 	root, linked := archiveWorktreeFixture(t)
 	if err := os.RemoveAll(linked); err != nil {
@@ -114,6 +121,7 @@ func TestArchiveMissingRegisteredWorktree(t *testing.T) {
 	assertIntegrityFile(t, open, "")
 }
 
+// TestArchiveGitFailurePreservesRows refuses to archive when the worktree list cannot be read.
 func TestArchiveGitFailurePreservesRows(t *testing.T) {
 	root, linked := archiveWorktreeFixture(t)
 	open := filepath.Join(root, WorkingDirName, "OPEN.md")
@@ -126,6 +134,7 @@ func TestArchiveGitFailurePreservesRows(t *testing.T) {
 	assertIntegrityFile(t, open, content)
 }
 
+// TestNamesWorktreePath matches whole path tokens and rejects siblings, children and prefixes.
 func TestNamesWorktreePath(t *testing.T) {
 	const path = "/repo/linked worktree"
 	for _, tc := range []struct {
