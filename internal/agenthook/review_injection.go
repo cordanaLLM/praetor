@@ -79,6 +79,10 @@ func deliverReviewGuidance(canonical Canonical, guidance string, verdict *Verdic
 }
 
 // validateReviewInjection reads one active, exact boolean declaration within the input and line bounds.
+// errReviewInjectionMissing marks a return with no active declaration, which a caller that cannot
+// tell a review return from another subagent's return (Codex) treats as not applicable.
+var errReviewInjectionMissing = errors.New("prompt_injection is required")
+
 func validateReviewInjection(text string) (bool, error) {
 	if len(text) > MaxInputBytes {
 		return false, errors.New("prompt_injection return exceeds byte bound")
@@ -104,7 +108,7 @@ func validateReviewInjection(text string) (bool, error) {
 		}
 	}
 	if value == "" {
-		return false, errors.New("prompt_injection is required")
+		return false, errReviewInjectionMissing
 	}
 	return value == "true", nil
 }
@@ -142,17 +146,70 @@ func (s *reviewTextScanner) active(line string) string {
 	return line
 }
 
-// activeReviewText masks inactive lines and inline code using the shared Markdown span reader.
+// activeReviewText protects code-span comment openers before scanning inactive regions.
 func activeReviewText(lines []string) string {
+	text := maskReviewParagraphs(strings.Join(lines, "\n"), true)
+	lines = strings.Split(text, "\n")
 	var scanner reviewTextScanner
 	for index := 0; index < len(lines) && index < util.MaxMarkedBlockLines; index++ {
 		lines[index] = scanner.active(lines[index])
 	}
-	paragraphs := strings.Split(strings.Join(lines, "\n"), "\n\n")
+	return maskReviewParagraphs(strings.Join(lines, "\n"), false)
+}
+
+// maskReviewParagraphs keeps code spans inside their paragraph across soft line breaks.
+func maskReviewParagraphs(text string, commentOpenersOnly bool) string {
+	paragraphs := strings.Split(text, "\n\n")
+	var scanner reviewTextScanner
 	for index := 0; index < len(paragraphs) && index < util.MaxMarkedBlockLines; index++ {
-		paragraphs[index] = maskReviewCodeSpans(paragraphs[index])
+		if commentOpenersOnly {
+			paragraphs[index] = protectReviewCodeComments(paragraphs[index], &scanner)
+		} else {
+			paragraphs[index] = maskReviewCodeSpans(paragraphs[index])
+		}
 	}
 	return strings.Join(paragraphs, "\n\n")
+}
+
+// protectReviewCodeComments ignores comment openers only when a code span opens outside a comment.
+// Closers stay visible to StripComments: backticks inside an actual HTML comment are literal.
+func protectReviewCodeComments(text string, scanner *reviewTextScanner) string {
+	var out strings.Builder
+	position := 0
+	for steps := 0; position < len(text) && steps < MaxInputBytes; steps++ {
+		spans := util.MarkdownCodeSpans(text[position:], 1)
+		if len(spans) == 0 {
+			out.WriteString(text[position:])
+			scanReviewRegions(text[position:], scanner)
+			break
+		}
+		start, end := position+spans[0].Start, position+spans[0].End
+		out.WriteString(text[position:start])
+		scanReviewRegions(text[position:start], scanner)
+		if scanner.comment != "" {
+			end = len(text)
+			if closer := strings.Index(text[start:], scanner.comment); closer >= 0 {
+				end = start + closer + len(scanner.comment)
+			}
+		}
+		part := text[start:end]
+		if scanner.comment == "" && !scanner.off && !scanner.fence.Open() {
+			part = strings.ReplaceAll(part, "<!--", "    ")
+		} else {
+			scanReviewRegions(part, scanner)
+		}
+		out.WriteString(part)
+		position = end
+	}
+	return out.String()
+}
+
+// scanReviewRegions advances the existing region scanner without retaining declaration text.
+func scanReviewRegions(text string, scanner *reviewTextScanner) {
+	lines := strings.Split(text, "\n")
+	for index := 0; index < len(lines) && index < util.MaxMarkedBlockLines; index++ {
+		scanner.active(lines[index])
+	}
 }
 
 // maskReviewCodeSpans masks inline code within one paragraph without consuming active declarations.
