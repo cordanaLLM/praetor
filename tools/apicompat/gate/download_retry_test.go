@@ -264,6 +264,108 @@ func TestCompareEach_DownloadFailureExcusesOrErrors(t *testing.T) {
 	})
 }
 
+// retryReportWriter fails only the first retry diagnostic, then accepts later writes.
+type retryReportWriter struct {
+	err    error
+	output strings.Builder
+}
+
+func (w *retryReportWriter) Write(data []byte) (int, error) {
+	if w.err != nil && strings.Contains(string(data), "(attempt 1 of 3)") {
+		err := w.err
+		w.err = nil
+		return 0, err
+	}
+	return w.output.Write(data)
+}
+
+// TestCompareEach_RetryReportWriteFailure keeps report failures fatal across both retry paths.
+func TestCompareEach_RetryReportWriteFailure(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []string{"download", "list"} {
+		for _, tc := range []struct {
+			name                 string
+			failReport, excepted bool
+		}{
+			{"transient-live-exception", true, true},
+			{"working-live-exception", false, true},
+			{"working-no-exception", false, false},
+		} {
+			t.Run(operation+"/"+tc.name, func(t *testing.T) {
+				checkRetryReportFailure(t, operation, tc.failReport, tc.excepted)
+			})
+		}
+	}
+}
+
+// checkRetryReportFailure checks report errors, live exceptions expiring today, and build errors.
+func checkRetryReportFailure(t *testing.T, operation string, failReport, excepted bool) {
+	t.Helper()
+	buildErr := errors.New("simulated build failure")
+	reportErr := errors.New("simulated report write failure")
+	repo := repository{
+		root:   retryFixtureRoot(t, "mod"),
+		today:  time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC),
+		wait:   func(context.Context, time.Duration) error { return nil },
+		runner: retryFailureRunner(operation, buildErr),
+	}
+	if excepted {
+		repo.exceptions = []exception{{Path: "mod/go.mod", Reason: "known broken build", Expires: "2026-11-13"}}
+	}
+	writer := &retryReportWriter{}
+	if failReport {
+		writer.err = reportErr
+	}
+	plan := modulePlan{compared: []module{{dir: "mod", path: "example.com/mod"}}}
+	results, err := compareEach(t.Context(), repo, plan, "unused", checkerSites{}, nil, &printer{w: io.Discard}, &printer{w: writer})
+	if failReport {
+		assertFatalRetryReport(t, writer, results, err, reportErr)
+		return
+	}
+	assertRetryBuildResult(t, writer, results, err, buildErr, excepted)
+}
+
+// assertFatalRetryReport verifies a transient write failure cannot excuse a module.
+func assertFatalRetryReport(t *testing.T, writer *retryReportWriter, results []result, err, reportErr error) {
+	t.Helper()
+	if !errors.Is(err, reportErr) || !strings.Contains(err.Error(), "write retry diagnostic") || len(results) != 0 {
+		t.Fatalf("report failure excused: results = %+v, err = %v; want fatal report write error", results, err)
+	}
+	if strings.Contains(writer.output.String(), "was not compared") {
+		t.Fatal("report failure reached the exception warning")
+	}
+	if _, err := writer.Write([]byte("later write succeeds\n")); err != nil {
+		t.Fatalf("writer failure must be transient: %v", err)
+	}
+}
+
+// assertRetryBuildResult verifies ordinary build errors retain their exception handling.
+func assertRetryBuildResult(t *testing.T, writer *retryReportWriter, results []result, err, buildErr error, excepted bool) {
+	t.Helper()
+	if excepted {
+		if err != nil || len(results) != 1 || results[0].notCompared == "" || !strings.Contains(writer.output.String(), "was not compared") {
+			t.Fatalf("live exception lost: results = %+v, err = %v", results, err)
+		}
+		return
+	}
+	if !errors.Is(err, buildErr) || len(results) != 0 {
+		t.Fatalf("ordinary build failure changed: results = %+v, err = %v", results, err)
+	}
+}
+
+// retryFailureRunner fails the selected retry operation without downloading dependencies.
+func retryFailureRunner(operation string, buildErr error) toolRunner {
+	return func(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
+		if isGoListModules(args) {
+			return runTool(ctx, dir, stdout, stderr, name, args...)
+		}
+		if (operation == "download" && isModDownload(args)) || (operation == "list" && isGoListExport(args)) {
+			return buildErr
+		}
+		return nil
+	}
+}
+
 // TestDownloadModule_CancelledContextAfterFailedRunReturnsDownloadErrorWithoutRetryMessage verifies that a cancelled context after a failed run reports the download error without a retry note.
 func TestDownloadModule_CancelledContextAfterFailedRunReturnsDownloadErrorWithoutRetryMessage(t *testing.T) {
 	t.Parallel()

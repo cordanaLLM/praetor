@@ -939,7 +939,7 @@ func buildFailureResult(ctx context.Context, repo repository, target module, bui
 	if ctx.Err() != nil || errors.Is(buildErr, context.Canceled) || errors.Is(buildErr, context.DeadlineExceeded) {
 		return result{}, fmt.Errorf("module %s (%s): %w", target.dir, target.path, buildErr)
 	}
-	if stdout.failed != nil || stderr.failed != nil {
+	if stdout.failed != nil || stderr.failed != nil || errors.Is(buildErr, errRetryDiagnosticWrite) {
 		return result{}, fmt.Errorf("module %s (%s): %w", target.dir, target.path, buildErr)
 	}
 	note, err := excuseBuildFailure(repo, target, buildErr, stderr)
@@ -1408,6 +1408,9 @@ func downloadAttemptTimeout(ctx context.Context, attempt int, attemptCap time.Du
 	return min(attemptCap, perAttempt), nil
 }
 
+// errRetryDiagnosticWrite keeps a failed retry report fatal even with a live build exception.
+var errRetryDiagnosticWrite = errors.New("write retry diagnostic")
+
 // retryModuleGo runs a Go command up to downloadAttempts times with backoff and deadline caps.
 func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []string, attemptCap time.Duration, stderr io.Writer, run toolRunner, wait waitFunc) (int, error) {
 	var lastErr error
@@ -1433,7 +1436,7 @@ func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []str
 		}
 		lastErr = errors.Join(err, attemptErr)
 		if _, printErr := fmt.Fprintf(stderr, "%s failed for %s (attempt %d of %d): %v\n", label, dir, attempt, downloadAttempts, err); printErr != nil {
-			return attempt, printErr
+			return attempt, fmt.Errorf("%w: %w", errRetryDiagnosticWrite, printErr)
 		}
 	}
 	return downloadAttempts, lastErr
