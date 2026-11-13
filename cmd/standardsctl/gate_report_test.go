@@ -1,12 +1,36 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 )
+
+// The report reaches the pre-push hook without capture. Every bounded reason line must
+// remain visible when the command refuses the push, including the last diagnostic line.
+func TestPrintGatingReport_DeclaredVerifyMultilineRefusal(t *testing.T) {
+	reason := "declared verification make verify-all exited 2; failing make target: lint; gate log: /fixture/.workingdir/gate/declared-verify-20261113T120000Z.log:\nprogress done\nline-100\nmake: *** [Makefile:3: lint] Error 2"
+	rep := &gating.PipelineReport{Status: gating.StatusRejected, Stages: []gating.StageResult{{
+		Name: "Declared Verification", Status: gating.StageFailed, Message: reason,
+	}}}
+	out, err := captureStdout(t, func() error { return emitGatingReport(rep, false) })
+	if err == nil || !strings.Contains(out, "Reason: "+reason+"\n") {
+		t.Fatalf("printed refusal cut multiline reason: %q; error: %v", out, err)
+	}
+	stderr, statusErr := captureStderr(t, func() error {
+		if rc := commandExitCode(os.Stderr, err); rc != 1 {
+			return fmt.Errorf("refusal exit code = %d, want 1", rc)
+		}
+		return nil
+	})
+	if statusErr != nil || !strings.Contains(stderr, "repository rejected by gating pipeline") {
+		t.Fatalf("refusal status missing: %q; error: %v", stderr, statusErr)
+	}
+}
 
 // The report prints each stage's verdict. A stage that did not run used to print [PASS].
 func TestPrintGatingReport_Positive_SkippedStagesNeverPrintPass(t *testing.T) {

@@ -113,7 +113,7 @@ func declaresVerifyTarget(repoDir string) bool {
 
 // declaredVerifyFailure names the command, its exit code or why it has none, and the end of
 // what it reported.
-func declaredVerifyFailure(ctx context.Context, bound time.Duration, origin string, err error) error {
+func declaredVerifyFailure(ctx context.Context, repoDir string, bound time.Duration, origin string, output util.CommandBytes, err error) error {
 	outcome := "failed to run"
 	var exit interface{ ExitCode() int }
 	switch {
@@ -122,13 +122,33 @@ func declaredVerifyFailure(ctx context.Context, bound time.Duration, origin stri
 	case errors.As(err, &exit):
 		outcome = fmt.Sprintf("exited %d", exit.ExitCode())
 	}
-	return fmt.Errorf("declared verification %s %s: %s", declaredVerifyCommand, outcome, tail(err.Error(), maxDeclaredVerifyDiagnostic))
+	target, diagnostic := declaredVerifyDiagnostic(output)
+	if diagnostic == "" {
+		diagnostic = err.Error()
+	}
+	logPath, logErr := writeDeclaredVerifyLog(ctx, repoDir, target, diagnostic)
+	logNote := "gate log: " + logPath
+	if logErr != nil {
+		logNote = "no gate log written: " + logErr.Error()
+	}
+	return &declaredVerifyError{cause: err, reason: fmt.Sprintf("declared verification %s %s; %s; %s:\n%s", declaredVerifyCommand, outcome, target, logNote, tail(diagnostic, maxDeclaredVerifyDiagnostic))}
 }
+
+type declaredVerifyError struct {
+	cause  error
+	reason string
+}
+
+func (e *declaredVerifyError) Error() string { return e.reason }
+func (e *declaredVerifyError) Unwrap() error { return e.cause }
 
 // tail keeps the last limit bytes of text, where a failing command's final report usually is.
 func tail(text string, limit int) string {
 	if len(text) <= limit {
 		return text
 	}
-	return "..." + text[len(text)-limit:]
+	if limit < 3 {
+		return text[len(text)-limit:]
+	}
+	return "..." + text[len(text)-(limit-3):]
 }
