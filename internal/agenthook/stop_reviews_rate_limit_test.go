@@ -266,7 +266,7 @@ func TestStopReviewDeferralCacheRejected(t *testing.T) {
 	cache := stopReviewCache{Repository: "example/widget", Head: "same-head", CheckedAt: now,
 		Verdict: Verdict{Outcome: Allow, Notice: "review inventory deferred: graphql 0 of 100, reset 00:00"}}
 	writeStopReviewCache(t, path, cache)
-	if _, hit := loadStopReviewCache(path, cache.Repository, cache.Head, now); hit {
+	if _, hit := loadStopReviewCache(t.Context(), path, cache.Repository, cache.Head, now); hit {
 		t.Fatal("deferral cache suppressed a fresh inventory read")
 	}
 }

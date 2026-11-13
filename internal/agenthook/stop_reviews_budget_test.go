@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
@@ -92,6 +93,9 @@ func TestStopReviewOverrunCache(t *testing.T) {
 			stopReviewReader = func(string) forge.ReviewReader { return fixture }
 			cache := stopReviewCache{Repository: "example/widget", Head: "other-head", CheckedAt: now.Add(-5 * time.Minute),
 				Verdict: Verdict{Outcome: outcome}}
+			if outcome == Allow {
+				cache.Head = "fixture-head"
+			}
 			if outcome == Deny {
 				cache.Verdict.Reason = "Own pull request example/widget#7: main.go:9 by review-bot"
 			}
@@ -146,7 +150,7 @@ func testStopReviewOverrunRejectsCache(t *testing.T, tc rejectedStopReviewCache)
 		writeStopReviewCache(t, path, cache)
 	}
 	if tc.name == "malformed" {
-		if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		if err := contextopt.WriteSnapshot(t.Context(), path, []byte("{"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -175,7 +179,7 @@ func TestStopReviewCacheNoticeOutput(t *testing.T) {
 				}
 				verdict := mergeStopChecks(Verdict{Outcome: outcome, Reason: "other stop check"}, Verdict{Outcome: Allow, Notice: notice})
 				response := dialect.Encode(Canonical{Event: EventStop, StopActive: active}, verdict)
-				if !strings.Contains(string(response.Stdout)+string(response.Stderr), notice) {
+				if !strings.Contains(string(response.Stderr), notice) {
 					t.Errorf("%s %v active=%t dropped notice: %+v", client, outcome, active, response)
 				}
 			}
@@ -186,7 +190,7 @@ func TestStopReviewCacheNoticeOutput(t *testing.T) {
 // assertStopReviewCacheUnchanged rejects replacement of a completed cache by an incomplete read (#1894).
 func assertStopReviewCacheUnchanged(t *testing.T, path string, want stopReviewCache) {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	data, err := contextopt.ReadSnapshot(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,16 +240,16 @@ func TestStopReviewNewestCompletedRead(t *testing.T) {
 func TestStopReviewLongFailureNotice(t *testing.T) {
 	root, _, now := installBudgetStopReviews(t, 1, 0)
 	path := filepath.Join(root, "praetor-stop-reviews.json")
-	writeStopReviewCache(t, path, stopReviewCache{Repository: "example/widget", Head: "other-head",
+	writeStopReviewCache(t, path, stopReviewCache{Repository: "example/widget", Head: "fixture-head",
 		CheckedAt: now.Add(-5 * time.Minute), Verdict: Verdict{Outcome: Allow}})
-	verdict := stopReviewFallback(path, "example/widget", now, Verdict{Outcome: Deny}, errors.New(strings.Repeat("planted ", 2000)))
+	verdict := stopReviewFallback(t.Context(), path, "example/widget", "fixture-head", now, Verdict{Outcome: Deny}, errors.New(strings.Repeat("planted ", 2000)))
 	for _, client := range []string{"claude", "codex", "gemini", "agy"} {
 		dialect, ok := DialectFor(client)
 		if !ok {
 			t.Fatal(client)
 		}
 		response := dialect.Encode(Canonical{Event: EventStop}, verdict)
-		output := string(response.Stdout) + string(response.Stderr)
+		output := string(response.Stderr)
 		if !strings.Contains(output, "newest completed read") || !strings.Contains(output, "5m") {
 			t.Errorf("%s bounded notice lost cache age", client)
 		}
@@ -264,5 +268,117 @@ func TestStopTotalBudgetLeavesCheckpointFloor(t *testing.T) {
 	}
 	if stopTotalBudget >= 60*time.Second {
 		t.Fatalf("stop deadline = %s, want below the launcher's 60s", stopTotalBudget)
+	}
+}
+
+// TestStopReviewPartialFallbackKeepsLiveDeny refuses a cached Allow over a confirmed thread.
+func TestStopReviewPartialFallbackKeepsLiveDeny(t *testing.T) {
+	for _, outcome := range []Outcome{Allow, Deny, Skip} {
+		root, reader, now := installBudgetStopReviews(t, 2, 0)
+		reader.deny, reader.fail = 1, 2
+		path := filepath.Join(root, "praetor-stop-reviews.json")
+		cache := stopReviewCache{Repository: "example/widget", Head: "fixture-head", CheckedAt: now.Add(-5 * time.Minute), Verdict: Verdict{Outcome: outcome, Reason: "cached finding"}}
+		writeStopReviewCache(t, path, cache)
+		verdict := evaluateStopReviewThreads(t.Context(), root)
+		if verdict.Outcome != Deny || !strings.Contains(verdict.Reason, "example/widget#1 has 1 unresolved") || !strings.Contains(verdict.Reason, "late.go:9") || (verdict.Notice != "") != (outcome != Skip) || strings.Count(verdict.Reason, "example/widget#1 has 1 unresolved") != 1 {
+			t.Fatalf("cached %v hid confirmed thread: %+v", outcome, verdict)
+		}
+		assertStopReviewCacheUnchanged(t, path, cache)
+	}
+}
+
+// TestStopReviewFallbackAllowRequiresHead refuses a completed Allow from another commit.
+func TestStopReviewFallbackAllowRequiresHead(t *testing.T) {
+	root, reader, now := installBudgetStopReviews(t, 1, 0)
+	reader.fail = 1
+	writeStopReviewCache(t, filepath.Join(root, "praetor-stop-reviews.json"), stopReviewCache{Repository: "example/widget", Head: "other-head", CheckedAt: now.Add(-5 * time.Minute), Verdict: Verdict{Outcome: Allow}})
+	if verdict := evaluateStopReviewThreads(t.Context(), root); verdict.Outcome != Deny || verdict.Notice != "" {
+		t.Fatalf("cross-HEAD Allow accepted: %+v", verdict)
+	}
+}
+
+// TestStopReviewInventoryFailureFallback admits ordinary discovery failures to the completed cache.
+func TestStopReviewInventoryFailureFallback(t *testing.T) {
+	root, _, now := installBudgetStopReviews(t, 1, 0)
+	fixture := &rateLimitedStopReviews{stopReviewFixture: reviewFixture(), ownErr: errors.New("planted inventory connection failure")}
+	stopReviewReader = func(string) forge.ReviewReader { return fixture }
+	writeStopReviewCache(t, filepath.Join(root, "praetor-stop-reviews.json"), stopReviewCache{Repository: "example/widget", Head: "fixture-head", CheckedAt: now.Add(-5 * time.Minute), Verdict: Verdict{Outcome: Allow}})
+	verdict := evaluateStopReviewThreads(t.Context(), root)
+	if verdict.Outcome != Allow || !strings.Contains(verdict.Notice, fixture.ownErr.Error()) {
+		t.Fatalf("ordinary inventory failure ignored cache: %+v", verdict)
+	}
+}
+
+// TestStopReviewOlderObservationCannotOverwrite orders overlapping reads by their start times.
+func TestStopReviewOlderObservationCannotOverwrite(t *testing.T) {
+	root, reader, now := installBudgetStopReviews(t, 1, 0)
+	stopReviewNow = func() time.Time { return now }
+	path := filepath.Join(root, "praetor-stop-reviews.json")
+	newer := stopReviewCache{Repository: "example/widget", Head: "fixture-head", CheckedAt: now.Add(time.Minute), Verdict: Verdict{Outcome: Deny}}
+	reader.onRead = func() {
+		reader.onRead = nil
+		now = now.Add(time.Minute)
+		reader.deny = 1
+		newer.Verdict = evaluateStopReviewThreads(t.Context(), root)
+		if newer.Verdict.Outcome != Deny {
+			t.Fatal(newer.Verdict)
+		}
+		reader.deny = 0
+		now = now.Add(time.Minute)
+	}
+	if verdict := evaluateStopReviewThreads(t.Context(), root); verdict.Outcome != Allow {
+		t.Fatal(verdict)
+	}
+	assertStopReviewCacheUnchanged(t, path, newer)
+}
+
+// TestStopReviewCanceledCacheRead refuses fallback after the enclosing stop deadline expires.
+func TestStopReviewCanceledCacheRead(t *testing.T) {
+	root, reader, now := installBudgetStopReviews(t, 1, 0)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	reader.onRead = cancel
+	writeStopReviewCache(t, filepath.Join(root, "praetor-stop-reviews.json"), stopReviewCache{Repository: "example/widget", Head: "fixture-head", CheckedAt: now.Add(-5 * time.Minute), Verdict: Verdict{Outcome: Allow}})
+	if verdict := evaluateStopReviewThreads(ctx, root); verdict.Outcome != Deny || verdict.Notice != "" {
+		t.Fatalf("expired stop read fallback: %+v", verdict)
+	}
+}
+
+// TestStopReviewLegacyIncompleteDeny rejects an unversioned unread-list denial.
+func TestStopReviewLegacyIncompleteDeny(t *testing.T) {
+	root, reader, now := installBudgetStopReviews(t, 1, 0)
+	reader.fail = 1
+	cache := stopReviewCache{Repository: "example/widget", Head: "fixture-head", CheckedAt: now.Add(-5 * time.Minute), Verdict: Verdict{Outcome: Deny, Reason: "Own pull request review state not read for #99 within the stop budget"}}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := contextopt.WriteSnapshot(t.Context(), filepath.Join(root, "praetor-stop-reviews.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	verdict := evaluateStopReviewThreads(t.Context(), root)
+	if verdict.Outcome != Deny || verdict.Notice != "" || strings.Contains(verdict.Reason, "#99") {
+		t.Fatalf("legacy incomplete denial reused: %+v", verdict)
+	}
+}
+
+// TestStopReviewGHRequestUsesBatchDeadline observes production request deadlines without starting gh.
+func TestStopReviewGHRequestUsesBatchDeadline(t *testing.T) {
+	for _, budget := range []time.Duration{stopReviewBudget, stopReviewBatchBudgetCap} {
+		ctx, cancel := context.WithTimeout(t.Context(), budget)
+		var allotted time.Duration
+		reader := forge.GHReviewReader{Run: func(callCtx context.Context, _ string, _ ...string) ([]byte, error) {
+			deadline, ok := callCtx.Deadline()
+			if !ok {
+				t.Fatal("request deadline missing")
+			}
+			allotted = time.Until(deadline)
+			return nil, errors.New("planted request failure")
+		}}
+		_, err := reader.ReadBatch(ctx, "example/widget", []int{7})
+		cancel()
+		if err == nil || allotted < budget-200*time.Millisecond || allotted > budget {
+			t.Errorf("request budget %s, allotted %s, failure %v", budget, allotted, err)
+		}
 	}
 }
