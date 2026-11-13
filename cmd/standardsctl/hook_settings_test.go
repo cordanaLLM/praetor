@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
+// hookSettingsManifest writes isolated installed settings in the requested fixture state.
 // Order: engine-hook-digest-mismatch-fail-closed-20261028.
 func hookSettingsManifest(t *testing.T, state string) (string, string) {
 	t.Helper()
@@ -24,6 +25,9 @@ func hookSettingsManifest(t *testing.T, state string) (string, string) {
 	body := "hooks: {}\n"
 	if state == "invalid" {
 		body = "hooks: [\n"
+	}
+	if state == "forge" {
+		body = "forge:\n  pr_title_limits: [{repo: example/repo, max: 64}]\n  own_organizations: [fleet-org]\n"
 	}
 	writeFixtureFile(t, dir, "fleet.yaml", body)
 	writeFixtureFile(t, dir, "workstation.yaml", "hooks: {}\n")
@@ -49,6 +53,50 @@ func hookSettingsManifest(t *testing.T, state string) (string, string) {
 		}
 	}
 	return "PRAETOR_HOOK_PROCESS_MANIFEST=" + path, fleet
+}
+
+// TestHookForgeSettingsSources enforces manifest-only and environment-only forge settings.
+func TestHookForgeSettingsSources(t *testing.T) {
+	root := hookRepository(t, true)
+	manifest, fleet := hookSettingsManifest(t, "forge")
+	for _, source := range []struct{ name, env string }{
+		{"manifest", manifest}, {"environment", "PRAETOR_HOOK_PROCESS_FLEET=" + fleet},
+	} {
+		for _, tc := range []struct {
+			name, command, reason string
+			exit                  int
+		}{
+			{"65 denied", `gh pr create --repo example/repo --title "` + strings.Repeat("x", 65) + `"`, "pr-title-limit", 2},
+			{"64 allowed", `gh pr create --repo example/repo --title "` + strings.Repeat("x", 64) + `"`, "", 0},
+			{"own organization", `gh issue comment 1 --body "fleet-org/service#11"`, "", 0},
+			{"foreign organization", `gh issue comment 1 --body "outside-org/service#11"`, "forge-text-foreign-reference", 2},
+		} {
+			t.Run(source.name+"/"+tc.name, func(t *testing.T) {
+				payload := []byte(`{"tool_input":{"command":` + quoteJSON(t, tc.command) + `}}`)
+				result, exit := hookProcess(t, root, "claude pre-tool", payload, source.env)
+				if exit != tc.exit || !strings.Contains(string(result.Stderr), tc.reason) {
+					t.Fatalf("exit %d want %d, stdout %q stderr %q", exit, tc.exit, result.Stdout, result.Stderr)
+				}
+			})
+		}
+	}
+}
+
+// TestHookForgeSettingsMissingManifestDocument refuses forge writes naming the missing settings.
+func TestHookForgeSettingsMissingManifestDocument(t *testing.T) {
+	root := hookRepository(t, false)
+	manifest, fleet := hookSettingsManifest(t, "unreadable")
+	for _, command := range []string{
+		`gh pr create --repo example/repo --title "` + strings.Repeat("x", 65) + `"`,
+		`gh issue comment 1 --body "fleet-org/service#11"`,
+	} {
+		payload := []byte(`{"tool_input":{"command":` + quoteJSON(t, command) + `}}`)
+		result, exit := hookProcess(t, root, "claude pre-tool", payload, manifest)
+		if exit != 2 || !strings.Contains(string(result.Stderr), "operator settings unavailable:") ||
+			!strings.Contains(string(result.Stderr), fleet) {
+			t.Fatalf("exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
+		}
+	}
 }
 
 func TestHookSettingsUnavailableBlocks(t *testing.T) {

@@ -7,14 +7,46 @@ package agenthook
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
+
+// TestForgeSettingsSelection preserves selected empty settings and refuses selection errors.
+func TestForgeSettingsSelection(t *testing.T) {
+	selected := config.ForgeSettings{
+		PRTitleLimits:    []config.PRTitleLimit{{Repo: "example/repo", Max: 64}},
+		OwnOrganizations: []string{"fleet-org"},
+	}
+	cause := errors.New("selected settings unavailable")
+	for _, tc := range []struct {
+		name string
+		in   Invocation
+		want config.ForgeSettings
+		err  error
+	}{
+		{"selected without environment", Invocation{Forge: &selected}, selected, nil},
+		{"selected overrides environment", Invocation{Forge: &selected, Getenv: titleLimitEnvironment(t, "")}, selected, nil},
+		{"selected empty overrides environment", Invocation{Forge: &config.ForgeSettings{}, Getenv: titleLimitEnvironment(t, "")}, config.ForgeSettings{}, nil},
+		{"selection error", Invocation{Forge: &selected, SettingsError: cause}, config.ForgeSettings{}, cause},
+		{"unselected error", Invocation{SettingsError: cause}, config.ForgeSettings{}, cause},
+		{"unselected without environment", Invocation{}, config.ForgeSettings{}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := loadOperatorForgeSettings(t.Context(), tc.in)
+			if !errors.Is(err, tc.err) || !slices.Equal(got.PRTitleLimits, tc.want.PRTitleLimits) ||
+				!slices.Equal(got.OwnOrganizations, tc.want.OwnOrganizations) {
+				t.Fatalf("forge settings %+v, error %v; want %+v, %v", got, err, tc.want, tc.err)
+			}
+		})
+	}
+}
 
 // titleLimitEnvironment supplies only a fixture operator file and optional GH_REPO.
 func titleLimitEnvironment(t *testing.T, ghRepo string) func(string) string {
