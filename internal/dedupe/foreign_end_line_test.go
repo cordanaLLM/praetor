@@ -64,7 +64,7 @@ func TestDuplicateEndLine(t *testing.T) {
 			{"a.py", 7, 11, "fixture"}, {"b.py", 21, 25, "fixture"},
 		}},
 		{"boundary_missing_end", []rawJscpdDuplicate{endLinePair("a.py", 7, 0, "b.py", 21, 0, 5)}, 5, []endLineLocation{
-			{"a.py", 7, 11, "fixture"}, {"b.py", 21, 25, "fixture"},
+			{"a.py", 7, 0, "fixture"}, {"b.py", 21, 0, "fixture"},
 		}},
 		{"boundary_adjacent_nonpartners", []rawJscpdDuplicate{
 			endLinePair("a.py", 1, 5, "b.py", 11, 15, 5), endLinePair("a.py", 6, 10, "c.py", 21, 25, 5),
@@ -81,6 +81,35 @@ func TestDuplicateEndLine(t *testing.T) {
 			group := buildDuplicateGroup(tc.pairs, []rootMapping{{raw: "fixture", abs: "fixture"}}, true)
 			if got := endLineLocations(t, group.Locations); !slices.Equal(got, tc.want) || group.LOC != tc.loc {
 				t.Errorf("locations = %+v, LOC = %d; want %+v, LOC = %d", got, group.LOC, tc.want, tc.loc)
+			}
+		})
+	}
+}
+
+// TestDuplicateEndLineMissingEnd never publishes pair lengths as per-copy ends.
+func TestDuplicateEndLineMissingEnd(t *testing.T) {
+	cases := []struct {
+		name  string
+		pairs []rawJscpdDuplicate
+		want  []endLineLocation
+	}{
+		{"missing_first", []rawJscpdDuplicate{endLinePair("a.py", 7, 0, "b.py", 21, 35, 5)},
+			[]endLineLocation{{"a.py", 7, 0, "fixture"}, {"b.py", 21, 35, "fixture"}}},
+		{"missing_second", []rawJscpdDuplicate{endLinePair("a.py", 7, 21, "b.py", 31, 0, 5)},
+			[]endLineLocation{{"a.py", 7, 21, "fixture"}, {"b.py", 31, 0, "fixture"}}},
+		{"merged_missing_first", []rawJscpdDuplicate{
+			endLinePair("a.py", 7, 0, "b.py", 21, 35, 5), endLinePair("a.py", 11, 25, "c.py", 41, 45, 5),
+		}, []endLineLocation{{"a.py", 7, 0, "fixture"}, {"b.py", 21, 35, "fixture"}, {"c.py", 41, 45, "fixture"}}},
+		{"merged_missing_last", []rawJscpdDuplicate{
+			endLinePair("a.py", 7, 11, "b.py", 21, 35, 5), endLinePair("a.py", 11, 0, "c.py", 41, 55, 5),
+		}, []endLineLocation{{"a.py", 7, 0, "fixture"}, {"b.py", 21, 35, "fixture"}, {"c.py", 41, 55, "fixture"}}},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			group := buildDuplicateGroup(tc.pairs, []rootMapping{{raw: "fixture", abs: "fixture"}}, true)
+			if got := endLineLocations(t, group.Locations); !slices.Equal(got, tc.want) {
+				t.Errorf("locations = %+v, want %+v", got, tc.want)
 			}
 		})
 	}

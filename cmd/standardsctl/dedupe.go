@@ -232,6 +232,7 @@ func printDuplicateBlocks(duplicates []dedupe.DuplicateGroup) {
 	}
 }
 
+// printExceptedBlocks prints clone locations and their active exception entries.
 func printExceptedBlocks(title string, excepted []dedupe.DuplicateGroup) {
 	if len(excepted) == 0 {
 		return
@@ -241,7 +242,7 @@ func printExceptedBlocks(title string, excepted []dedupe.DuplicateGroup) {
 		fmt.Printf("  [%d] %d lines (hash: %s):\n", i+1, d.LOC, d.Hash)
 		for _, loc := range d.Locations {
 			if loc.FuncName == "" {
-				fmt.Printf("      - %s:%d\n", loc.Path, loc.Line)
+				fmt.Printf("      - %s\n", formatDedupeLocation(loc))
 			} else {
 				fmt.Printf("      - %s:%d in %s()\n", loc.Path, loc.Line, loc.FuncName)
 			}

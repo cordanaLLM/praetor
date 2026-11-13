@@ -39,6 +39,34 @@ func TestPrintDedupeReport_ForeignExceptionMetadata(t *testing.T) {
 	}
 }
 
+// TestPrintDedupeReport_ExceptedForeignEndLine preserves known spans and unknown ends.
+func TestPrintDedupeReport_ExceptedForeignEndLine(t *testing.T) {
+	for i := 0; i < 2; i++ {
+		applicable := i == 0
+		t.Run(fmt.Sprintf("applicable_%v", applicable), func(t *testing.T) {
+			report := &dedupe.DedupeReport{
+				Applicable: applicable, Passed: applicable,
+				ForeignExcepted: []dedupe.DuplicateGroup{{
+					Language: "python", Hash: "fixture", LOC: 15,
+					Locations: []dedupe.FileLocation{
+						{Path: "a.py", Line: 7, EndLine: 11},
+						{Path: "b.py", Line: 21, EndLine: 35},
+						{Path: "c.py", Line: 41},
+						{Path: "d.py", Line: 61, EndLine: 61},
+					},
+				}},
+			}
+			out, err := captureStdout(t, func() error { return printDedupeReport("fixture", report) })
+			if err != nil {
+				t.Fatalf("excepted foreign report verdict: %v", err)
+			}
+			mustContain(t, out, "Excepted Foreign Duplicate Blocks (1):",
+				"      - a.py:7-11\n", "      - b.py:21-35\n",
+				"      - c.py:41\n", "      - d.py:61\n")
+		})
+	}
+}
+
 func TestPrintDedupeReport_ExpiredForeignException(t *testing.T) {
 	report := &dedupe.DedupeReport{
 		Applicable: true, Passed: true,
