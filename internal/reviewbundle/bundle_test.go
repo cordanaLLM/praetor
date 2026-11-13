@@ -5,9 +5,11 @@ package reviewbundle
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -190,9 +192,22 @@ func TestBundleValidateTruncation(t *testing.T) {
 
 // TestBundlePathNames keeps NUL-delimited special names literal, including rename deletions.
 func TestBundlePathNames(t *testing.T) {
+	bundlePathNames(t, []string{"-dash", "[glob].txt", "space name.txt", "é.txt"})
+}
+
+// TestBundleLiteralPathNames covers names unsupported by Windows filesystem APIs.
+func TestBundleLiteralPathNames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows filenames cannot contain colons, newlines or asterisks")
+	}
+	bundlePathNames(t, []string{"colon:name", "line\nbreak", "[glob]*.txt", ":(literal)file.txt"})
+}
+
+// bundlePathNames checks exact names and both sides of a head rename.
+func bundlePathNames(t *testing.T, paths []string) {
+	t.Helper()
 	dir := bundleRepo(t)
 	bundleGit(t, dir, "mv", "shared.txt", "renamed.txt")
-	paths := []string{"-dash", "colon:name", "line\nbreak", "[glob]*.txt"}
 	for i := 0; i < len(paths); i++ {
 		bundleWrite(t, dir, paths[i], paths[i]+"\n")
 	}
@@ -215,6 +230,124 @@ func TestBundlePathNames(t *testing.T) {
 		if f.Deleted || f.Content == "" {
 			t.Fatalf("literal path lost: %+v", f)
 		}
+	}
+}
+
+// TestBundleTargetRename retains head edits at the path selected by the predicted merge.
+func TestBundleTargetRename(t *testing.T) {
+	dir := bundleRepo(t)
+	content := "head-first\n" + strings.Repeat("middle\n", 12) + "last\n"
+	bundleWrite(t, dir, "shared.txt", content)
+	bundleCommit(t, dir)
+	bundleGit(t, dir, "checkout", "-q", "target")
+	bundleGit(t, dir, "mv", "shared.txt", "renamed.txt")
+	bundleWrite(t, dir, "target-only.txt", "independent target addition\n")
+	bundleCommit(t, dir)
+	b, err := Build(t.Context(), dir, "target", "head", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Files) != 1 || b.Files[0].Path != "renamed.txt" || b.Files[0].Deleted || b.Files[0].Content != content {
+		t.Fatalf("lost merged rename content: %+v", b.Files)
+	}
+}
+
+// TestBundleUTF8Truncation preserves source prefixes and byte budgets through JSON.
+func TestBundleUTF8Truncation(t *testing.T) {
+	cases := []struct {
+		source  string
+		limit   int
+		content string
+		omitted int
+	}{
+		{"aaaé", 4, "aaa", 2},
+		{"aaaé", 5, "aaaé", 0},
+		{"aaaé", 3, "aaa", 2},
+		{"é", 1, "", 2},
+		{"a€z", 3, "a", 4},
+		{"a😀z", 4, "a", 5},
+		{"a�z", 4, "a�", 1},
+		{strings.Repeat("a", 7999) + "é", 8000, strings.Repeat("a", 7999), 2},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		dir := bundleRepo(t)
+		bundleWrite(t, dir, "utf8.txt", tc.source)
+		bundleCommit(t, dir)
+		b, err := Build(t.Context(), dir, "target", "head", Options{MaxFileBytes: tc.limit})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded Bundle
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if len(decoded.Files) != 1 {
+			t.Fatalf("lost UTF-8 file: %+v", decoded.Files)
+		}
+		f := decoded.Files[0]
+		if f.Content != tc.content || f.TruncatedBytes != tc.omitted || f.Truncated != (tc.omitted > 0) || len(f.Content) > tc.limit {
+			t.Errorf("limit %d: %+v", tc.limit, f)
+		}
+	}
+}
+
+// TestBundleUTF8WholeBlobKeepsBytes keeps a blob within the budget byte for byte, an invalid UTF-8 tail
+// included, and never marks it cut: only a blob over the budget loses its incomplete final rune.
+func TestBundleUTF8WholeBlobKeepsBytes(t *testing.T) {
+	cases := []struct {
+		source string
+		limit  int
+	}{
+		{"ab\xe9", 3},
+		{"ab\xe9", 8},
+		{"ab\xc3", 3},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		dir := bundleRepo(t)
+		bundleWrite(t, dir, "latin1.txt", tc.source)
+		bundleCommit(t, dir)
+		b, err := Build(t.Context(), dir, "target", "head", Options{MaxFileBytes: tc.limit})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(b.Files) != 1 {
+			t.Fatalf("lost whole blob: %+v", b.Files)
+		}
+		f := b.Files[0]
+		if f.Content != tc.source || f.Truncated || f.TruncatedBytes != 0 || len(b.Cut) != 0 {
+			t.Errorf("limit %d: %+v cut %v, want whole %q", tc.limit, f, b.Cut, tc.source)
+		}
+	}
+}
+
+// TestBundleValidateCutConsistency rejects mismatched retained cuts and permits omitted paths.
+func TestBundleValidateCutConsistency(t *testing.T) {
+	cases := []struct {
+		name  string
+		file  File
+		cut   []string
+		valid bool
+	}{
+		{"unmarked retained cut", File{Path: "a"}, []string{"a"}, false},
+		{"unlisted truncated file", File{Path: "a", Truncated: true, TruncatedBytes: 2}, nil, false},
+		{"consistent retained cut", File{Path: "a", Truncated: true, TruncatedBytes: 2}, []string{"a"}, true},
+		{"omitted path", File{Path: "a"}, []string{"omitted"}, true},
+		{"no cuts", File{Path: "a"}, nil, true},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate(Bundle{Files: []File{tc.file}, Cut: tc.cut})
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%t: %v", tc.valid, err)
+			}
+		})
 	}
 }
 

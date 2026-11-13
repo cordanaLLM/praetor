@@ -34,7 +34,7 @@ type Bundle struct {
 	ConflictedPaths []string   `json:"conflicted_paths"`
 }
 
-// File is predicted content for a head-changed path; binary and deleted files carry no content.
+// File is predicted content for a merge-affected path; binary and deleted files carry no content.
 type File struct {
 	Path           string `json:"path"`
 	Content        string `json:"content"`
@@ -70,7 +70,7 @@ func normalizeOptions(opts Options) (Options, error) {
 	return opts, nil
 }
 
-// Build pins both refs, predicts their merge, and reads only paths changed by head since its base.
+// Build pins both refs, predicts their merge, and reads paths changed from target to the merge tree.
 // Git exit 1 represents conflict findings, not a failed build; truncated metadata is an error.
 func Build(ctx context.Context, repo, target, head string, opts Options) (Bundle, error) {
 	limits, err := normalizeOptions(opts)
@@ -92,9 +92,9 @@ func Build(ctx context.Context, repo, target, head string, opts Options) (Bundle
 	if err := predictMerge(ctx, repo, &b); err != nil {
 		return Bundle{}, err
 	}
-	paths, err := util.RunGitProbe(ctx, repo, util.MaxCommandOutputBytes, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", b.MergeBase, b.Head, "--")
+	paths, err := util.RunGitProbe(ctx, repo, util.MaxCommandOutputBytes, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", b.Target, b.Tree, "--")
 	if err != nil {
-		return Bundle{}, fmt.Errorf("head changed paths: %w", err)
+		return Bundle{}, fmt.Errorf("merge changed paths: %w", err)
 	}
 	if err := appendFiles(ctx, repo, paths.Stdout, &b); err != nil {
 		return Bundle{}, err
