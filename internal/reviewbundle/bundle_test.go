@@ -4,16 +4,21 @@
 package reviewbundle
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -27,25 +32,38 @@ func bundleGit(t *testing.T, dir string, args ...string) string {
 		t.Fatal(err)
 	}
 	argv := append([]string{"-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.DevNull, "-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)
-	out, err := util.RunGitBytes(ctx, dir, 1<<20, argv...)
+	out, err := util.RunGitProbe(ctx, dir, 1<<20, argv...)
 	if err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, out.Stderr)
 	}
 	return strings.TrimSpace(string(out.Stdout))
 }
 
-// bundleWrite plants a byte-exact regular file in a fixture repository.
+// bundleWrite stages byte-exact fixture content; snapshots handle supported text paths.
+// Git stdin stages binary data and control-character paths that text snapshots reject.
 func bundleWrite(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+	if utf8.ValidString(content) && utf8.ValidString(name) && !strings.ContainsRune(content, 0) && !strings.ContainsAny(name, "\n\r") {
+		if err := contextopt.WriteSnapshot(t.Context(), filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		bundleGit(t, dir, "--literal-pathspecs", "add", "--", name)
+		return
+	}
+	ctx, err := util.WithCommandStdin(t.Context(), []byte(content))
+	if err != nil {
 		t.Fatal(err)
 	}
+	out, err := util.RunGitProbe(ctx, dir, 1024, "hash-object", "-w", "--stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleGit(t, dir, "update-index", "--add", "--cacheinfo", "100644", strings.TrimSpace(string(out.Stdout)), name)
 }
 
 // bundleCommit commits all fixture changes without accessing signing credentials.
 func bundleCommit(t *testing.T, dir string) {
 	t.Helper()
-	bundleGit(t, dir, "add", "-A")
 	bundleGit(t, dir, "commit", "-qm", "fixture")
 }
 
@@ -102,7 +120,7 @@ func TestBundleConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(b.Conflicts) != 1 || b.Conflicts[0].Path != "shared.txt" || b.Conflicts[0].Kind == "" {
+	if len(b.Conflicts) != 1 || b.Conflicts[0].Path != "shared.txt" || b.Conflicts[0].Kind != "CONFLICT (contents)" {
 		t.Fatalf("missing conflict: %+v", b)
 	}
 	if err := Validate(b); err != nil {
@@ -114,37 +132,33 @@ func TestBundleConflict(t *testing.T) {
 	}
 }
 
-// TestBundleBounds covers exact and excessive per-file content budgets.
+// TestBundleBounds shares one repository fixture across per-file, file-count and total budgets.
 func TestBundleBounds(t *testing.T) {
 	dir := bundleRepo(t)
 	bundleWrite(t, dir, "a.txt", "12345")
 	bundleWrite(t, dir, "b.txt", "1234")
 	bundleCommit(t, dir)
-	b, err := Build(t.Context(), dir, "target", "head", Options{MaxFileBytes: 4})
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name         string
+		limits       Options
+		files        []File
+		cut, omitted []string
+	}{
+		{"file", Options{MaxFileBytes: 4}, []File{{Path: "a.txt", Content: "1234", Truncated: true, TruncatedBytes: 1}, {Path: "b.txt", Content: "1234"}}, []string{"a.txt"}, []string{}},
+		{"count", Options{MaxFiles: 1}, []File{{Path: "a.txt", Content: "12345"}}, []string{"b.txt"}, []string{"b.txt"}},
+		{"total", Options{MaxBundleBytes: 6}, []File{{Path: "a.txt", Content: "12345"}, {Path: "b.txt", Content: "1", Truncated: true, TruncatedBytes: 3}}, []string{"b.txt"}, []string{}},
 	}
-	if len(b.Files) != 2 || !b.Files[0].Truncated || b.Files[0].TruncatedBytes != 1 || b.Files[0].Content != "1234" || b.Files[1].Truncated {
-		t.Fatalf("file boundary: %+v", b)
-	}
-	if !slices.Contains(b.Cut, "a.txt") {
-		t.Fatal("truncated path absent from Cut")
-	}
-}
-
-// TestBundleCountAndTotalBounds lists omitted files and marks content cut by the total budget.
-func TestBundleCountAndTotalBounds(t *testing.T) {
-	dir := bundleRepo(t)
-	bundleWrite(t, dir, "a.txt", "12345")
-	bundleWrite(t, dir, "b.txt", "1234")
-	bundleCommit(t, dir)
-	b, err := Build(t.Context(), dir, "target", "head", Options{MaxFiles: 1})
-	if err != nil || len(b.Files) != 1 || !slices.Contains(b.Cut, "b.txt") {
-		t.Fatalf("count bound: %+v, %v", b, err)
-	}
-	b, err = Build(t.Context(), dir, "target", "head", Options{MaxBundleBytes: 6})
-	if err != nil || len(b.Files) != 2 || b.Files[1].Content != "1" || b.Files[1].TruncatedBytes != 3 {
-		t.Fatalf("total bound: %+v, %v", b, err)
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := Build(t.Context(), dir, "target", "head", tc.limits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(b.Files, tc.files) || !slices.Equal(b.Cut, tc.cut) || !slices.Equal(b.OmittedPaths, tc.omitted) {
+				t.Fatalf("bounds: %+v", b)
+			}
+		})
 	}
 }
 
@@ -207,29 +221,36 @@ func TestBundleLiteralPathNames(t *testing.T) {
 func bundlePathNames(t *testing.T, paths []string) {
 	t.Helper()
 	dir := bundleRepo(t)
+	original, err := contextopt.ReadSnapshot(t.Context(), filepath.Join(dir, "shared.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	bundleGit(t, dir, "mv", "shared.txt", "renamed.txt")
-	for i := 0; i < len(paths); i++ {
-		bundleWrite(t, dir, paths[i], paths[i]+"\n")
+	expected := map[string]File{"renamed.txt": {Path: "renamed.txt", Content: string(original)}, "shared.txt": {Path: "shared.txt", Deleted: true}}
+	if len(paths) > 16 {
+		t.Fatal("special-path fixture exceeds 16 paths")
+	}
+	for i := 0; i < 16 && i < len(paths); i++ {
+		expected[paths[i]] = File{Path: paths[i], Content: paths[i] + "\n"}
+		bundleWrite(t, dir, paths[i], expected[paths[i]].Content)
 	}
 	bundleCommit(t, dir)
 	b, err := Build(t.Context(), dir, "target", "head", Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(b.Files) != len(paths)+2 {
+	if len(b.Files) != len(expected) {
 		t.Fatalf("lost paths: %+v", b.Files)
 	}
 	for i := 0; i < len(b.Files); i++ {
 		f := b.Files[i]
-		if f.Path == "shared.txt" {
-			if !f.Deleted {
-				t.Fatal("rename source not deleted")
-			}
-			continue
+		if f != expected[f.Path] {
+			t.Fatalf("literal path/content corrupted: %+v", f)
 		}
-		if f.Deleted || f.Content == "" {
-			t.Fatalf("literal path lost: %+v", f)
-		}
+		delete(expected, f.Path)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("missing paths: %v", expected)
 	}
 }
 
@@ -319,6 +340,13 @@ func TestBundleUTF8WholeBlobKeepsBytes(t *testing.T) {
 		if len(b.Files) != 1 {
 			t.Fatalf("lost whole blob: %+v", b.Files)
 		}
+		encoded, err := json.Marshal(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(encoded, &b); err != nil {
+			t.Fatal(err)
+		}
 		f := b.Files[0]
 		if f.Content != tc.source || f.Truncated || f.TruncatedBytes != 0 || len(b.Cut) != 0 {
 			t.Errorf("limit %d: %+v cut %v, want whole %q", tc.limit, f, b.Cut, tc.source)
@@ -337,7 +365,7 @@ func TestBundleValidateCutConsistency(t *testing.T) {
 		{"unmarked retained cut", File{Path: "a"}, []string{"a"}, false},
 		{"unlisted truncated file", File{Path: "a", Truncated: true, TruncatedBytes: 2}, nil, false},
 		{"consistent retained cut", File{Path: "a", Truncated: true, TruncatedBytes: 2}, []string{"a"}, true},
-		{"omitted path", File{Path: "a"}, []string{"omitted"}, true},
+		{"unaccounted path", File{Path: "a"}, []string{"omitted"}, false},
 		{"no cuts", File{Path: "a"}, nil, true},
 	}
 	for i := 0; i < len(cases); i++ {
@@ -372,9 +400,7 @@ func TestBundleMergeParser(t *testing.T) {
 // TestBundleDeletedAndBinary excludes deleted and binary contents, including binary data beyond a cut.
 func TestBundleDeletedAndBinary(t *testing.T) {
 	dir := bundleRepo(t)
-	if err := os.Remove(filepath.Join(dir, "shared.txt")); err != nil {
-		t.Fatal(err)
-	}
+	bundleGit(t, dir, "rm", "--", "shared.txt")
 	bundleWrite(t, dir, "binary", "abc\x00def")
 	bundleCommit(t, dir)
 	b, err := Build(t.Context(), dir, "target", "head", Options{MaxFileBytes: 2})
@@ -407,5 +433,149 @@ func TestBundleErrors(t *testing.T) {
 	b, err := Build(t.Context(), dir, "target", "head", Options{})
 	if err != nil || len(b.Files) != 0 {
 		t.Fatalf("empty diff: %+v, %v", b, err)
+	}
+}
+
+// TestBundleReviewCutAccounting requires unique, complete cut evidence for retained and omitted paths.
+func TestBundleReviewCutAccounting(t *testing.T) {
+	cases := []struct {
+		name  string
+		b     Bundle
+		valid bool
+	}{
+		{"omitted missing cut", Bundle{OmittedPaths: []string{"gone"}}, false},
+		{"unaccounted cut", Bundle{Cut: []string{"ghost"}}, false},
+		{"duplicate cut", Bundle{Cut: []string{"gone", "gone"}, OmittedPaths: []string{"gone"}}, false},
+		{"empty cut", Bundle{Cut: []string{""}}, false},
+		{"duplicate omitted", Bundle{Cut: []string{"gone"}, OmittedPaths: []string{"gone", "gone"}}, false},
+		{"retained omitted", Bundle{Files: []File{{Path: "gone"}}, Cut: []string{"gone"}, OmittedPaths: []string{"gone"}}, false},
+		{"duplicate retained", Bundle{Files: []File{{Path: "a"}, {Path: "a"}}}, false},
+		{"complete omitted", Bundle{Cut: []string{"gone"}, OmittedPaths: []string{"gone"}}, true},
+		{"retained cut", Bundle{Files: []File{{Path: "a", Truncated: true, TruncatedBytes: 1}}, Cut: []string{"a"}}, true},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			if err := Validate(tc.b); (err == nil) != tc.valid {
+				t.Fatalf("valid=%t: %v", tc.valid, err)
+			}
+		})
+	}
+}
+
+// TestBundleReviewMetadataBounds rejects oversized inventories before map allocation or iteration.
+func TestBundleReviewMetadataBounds(t *testing.T) {
+	cases := []Bundle{
+		{Conflicts: make([]Conflict, 4097)}, {ConflictedPaths: make([]string, 4097)},
+		{Cut: make([]string, 4097)}, {OmittedPaths: make([]string, 4097)},
+		{Files: make([]File, 4097), Limits: Options{MaxFiles: 4097}},
+	}
+	for i := 0; i < 4097; i++ {
+		cases[0].Conflicts[i] = Conflict{Path: "a", Kind: "CONFLICT (contents)"}
+		cases[1].ConflictedPaths[i] = "a"
+	}
+	cases[1].Conflicts = []Conflict{{Path: "a", Kind: "CONFLICT (contents)"}}
+	for i := 0; i < len(cases); i++ {
+		if err := Validate(cases[i]); err == nil || !strings.Contains(err.Error(), "metadata") {
+			t.Errorf("inventory %d: %v", i, err)
+		}
+	}
+	b := Bundle{Conflicts: make([]Conflict, 4096), ConflictedPaths: make([]string, 4096)}
+	for i := 0; i < 4096; i++ {
+		b.Conflicts[i] = Conflict{Path: strconv.Itoa(i), Kind: "CONFLICT (contents)"}
+		b.ConflictedPaths[i] = strconv.Itoa(i)
+	}
+	if err := Validate(b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBundleReviewPathLimit bounds path metadata before splitting or retaining omitted entries.
+func TestBundleReviewPathLimit(t *testing.T) {
+	cases := []struct {
+		count int
+		valid bool
+	}{{4095, true}, {4096, true}, {4097, false}}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		b := Bundle{Limits: Options{MaxFiles: 1}, Files: []File{{Path: "retained"}}}
+		err := appendFiles(t.Context(), "", []byte(strings.Repeat("x\x00", tc.count)), &b)
+		if (err == nil) != tc.valid {
+			t.Errorf("paths=%d: %v", tc.count, err)
+		}
+		if !tc.valid && (len(b.Cut) != 0 || len(b.OmittedPaths) != 0) {
+			t.Fatal("oversized listing partially retained")
+		}
+	}
+}
+
+// TestBundleReviewMergeLimit bounds records, fields, paths and cumulative conflict classifications.
+func TestBundleReviewMergeLimit(t *testing.T) {
+	tree := strings.Repeat("a", 40) + "\x00\x00"
+	record := "1\x00path\x00Auto-merging\x00message\x00"
+	for n := 4095; n <= 4097; n++ {
+		err := parseMerge([]byte(tree+strings.Repeat(record, n)), &Bundle{})
+		if (err == nil) != (n <= 4096) {
+			t.Errorf("records=%d: %v", n, err)
+		}
+	}
+	bad := []string{
+		strings.Repeat("a", 40) + "\x00" + strings.Repeat("x\x00", 4097) + "\x00",
+		tree + "4097\x00" + strings.Repeat("x\x00", 4097) + "CONFLICT (contents)\x00message\x00",
+		tree + "4097\x00" + strings.Repeat("x\x00", 4097) + "Auto-merging\x00message\x00",
+		tree + strings.Repeat("2\x00x\x00y\x00CONFLICT (contents)\x00message\x00", 2049),
+	}
+	for i := 0; i < len(bad); i++ {
+		b := Bundle{}
+		err := parseMerge([]byte(bad[i]), &b)
+		if err == nil {
+			t.Errorf("oversized merge %d accepted", i)
+		}
+		if len(b.ConflictedPaths) > 4096 || len(b.Conflicts) > 4096 {
+			t.Errorf("oversized conflict inventory retained: paths=%d conflicts=%d", len(b.ConflictedPaths), len(b.Conflicts))
+		}
+		if i == 0 && len(b.ConflictedPaths) != 0 {
+			t.Fatal("oversized path inventory appended before rejection")
+		}
+	}
+}
+
+// TestBundleReviewMergeFieldLimit rejects excessive fields before changing the bundle or splitting.
+func TestBundleReviewMergeFieldLimit(t *testing.T) {
+	data := strings.Repeat("a", 40) + "\x00\x00" + strings.Repeat("\x00", 6*4096+4)
+	b := Bundle{}
+	err := parseMerge([]byte(data), &b)
+	if err == nil {
+		t.Fatal("oversized fields accepted")
+	}
+	if b.Tree != "" || !strings.Contains(err.Error(), "field limit") {
+		t.Fatalf("fields expanded before rejection: %v", err)
+	}
+}
+
+// TestBundleReviewJSONBytes round-trips invalid bytes in every path inventory and retained content.
+func TestBundleReviewJSONBytes(t *testing.T) {
+	values := []string{"valid é", "bad\xff", "partial\xc3", "replacement �"}
+	for i := 0; i < len(values); i++ {
+		value := values[i]
+		b := Bundle{Files: []File{{Path: value, Content: value, Truncated: true, TruncatedBytes: 1}}, Cut: []string{value, "omitted" + value}, OmittedPaths: []string{"omitted" + value}, Conflicts: []Conflict{{Path: value, Kind: "CONFLICT (contents)"}}, ConflictedPaths: []string{value}}
+		encoded, err := json.Marshal(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded Bundle
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(b, decoded) {
+			t.Errorf("bytes changed: want %+v, got %+v", b, decoded)
+		}
+		var wire map[string]json.RawMessage
+		if err := json.Unmarshal(encoded, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if !utf8.ValidString(value) && !bytes.Contains(encoded, []byte(`"base64"`)) {
+			t.Fatal("missing explicit byte encoding")
+		}
 	}
 }

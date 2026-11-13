@@ -22,14 +22,19 @@ func appendFiles(ctx context.Context, repo string, data []byte, b *Bundle) error
 	if data[len(data)-1] != 0 {
 		return fmt.Errorf("unterminated changed-path listing")
 	}
+	if len(data) > util.MaxCommandOutputBytes || bytes.Count(data, []byte{0}) > MaxMetadataEntries {
+		return fmt.Errorf("changed-path metadata exceeds inspection limit of %d paths", MaxMetadataEntries)
+	}
 	paths := strings.Split(string(data[:len(data)-1]), "\x00")
 	remaining := b.Limits.MaxBundleBytes
+	// The delimiter count above bounds this loop before allocating paths.
 	for i := 0; i < len(paths); i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("bundle paths: %w", err)
 		}
 		if len(b.Files) >= b.Limits.MaxFiles {
 			b.Cut = append(b.Cut, paths[i])
+			b.OmittedPaths = append(b.OmittedPaths, paths[i])
 			continue
 		}
 		limit := min(b.Limits.MaxFileBytes, remaining)
@@ -57,7 +62,7 @@ func readFile(ctx context.Context, repo, tree, path string, limit int) (File, er
 	if err != nil {
 		return f, fmt.Errorf("tree listing: %w", err)
 	}
-	for i := 0; i < len(entries); i++ {
+	for i := 0; i < util.MaxCommandOutputBytes/util.MinGitTreeRecordBytes && i < len(entries); i++ {
 		if entries[i].Path != path {
 			continue
 		}
