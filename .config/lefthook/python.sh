@@ -54,6 +54,9 @@ fi                                                                              
 # startup-file and imported-function processing with -p. Only the query is timed.
 bounded_probe() ( #
   status=0 #
+  # Trust caller PATH for Bash (e.g. Nix); -p lookup misses nonstandard installs. #
+  # Unlike a default-path lookup, this permits a caller-supplied Bash executable. #
+  probe_bash=$(command -v bash) || exit 125 #
   # The literal program expands in child Bash, after enabling its job control. #
   # shellcheck disable=SC2016 #
   probe_script=' #
@@ -108,10 +111,10 @@ bounded_probe() ( #
     if [ -f "$probe_dir/unavailable" ]; then exit 125; fi #
     if [ "$status" -ne 0 ]; then exit 1; fi #
     command -p cat "$probe_dir/output" || exit 125 #
-  '                                                                                  #
-  command -p bash -p -c "$probe_script" probe "$probe" "$@" 2>/dev/null || status=$? #
-  case "$status" in 126 | 127) exit 125 ;; *) exit "$status" ;; esac                 #
-)                                                                                    #
+  '                                                                                #
+  "$probe_bash" -p -c "$probe_script" probe "$probe" "$@" 2>/dev/null || status=$? #
+  case "$status" in 126 | 127) exit 125 ;; *) exit "$status" ;; esac               #
+)                                                                                  #
 #
 # proven CANDIDATE [ARGUMENT]: it ran the probe and stated Python 3.floor or newer.
 # The probe reads nothing: the hook's own standard input stays untouched.
@@ -170,19 +173,25 @@ main_worktree() {                                                               
     "worktree "*) main=${first#worktree } ;;                                                 #
     *) return 1 ;;                                                                           #
   esac                                                                                       #
+  # Only the first record describes the main repository; bare has no virtualenv. #
+  if printf '%s\n' "$worktrees" | command -p sed '/^$/q' | command -p grep -qx bare; then #
+    return 0                                                                              #
+  fi                                                                                      #
   # Validate metadata instead of guessing from a directory suffix. Separate Git #
   # directories can resolve through core.worktree; absent metadata fails by name. #
-  git -C "$main" rev-parse --show-toplevel 2>/dev/null #
-}                                                      #
+  main=$(git -C "$main" rev-parse --show-toplevel 2>/dev/null) || return 1 #
+  [ -n "$main" ] || return 1                                               #
+  printf '%s\n' "$main"                                                    #
+}                                                                          #
 #
 root=$(git rev-parse --show-toplevel 2>/dev/null) || root=''                            #
 if [ -n "$root" ]; then                                                                 #
   venv_candidate "$root" "$@"                                                           #
-  if ! main=$(main_worktree) || [ -z "$main" ]; then                                    #
+  if ! main=$(main_worktree); then                                                      #
     echo "praetor hooks: cannot resolve main worktree from Git metadata for $root." >&2 #
     exit 125                                                                            #
   fi                                                                                    #
-  if [ "$main" != "$root" ]; then                                                       #
+  if [ -n "$main" ] && [ "$main" != "$root" ]; then                                     #
     venv_candidate "$main" "$@"                                                         #
   fi                                                                                    #
 fi                                                                                      #

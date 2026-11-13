@@ -82,6 +82,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"dfe0975c01017ee575fdd57ecd28cb8963e253e4ccc698f83e63f3b1b3375a07": "snapshots of killed hooks swept after three hours",
 	},
 	checkpointLauncher: {
+		"83d787820a839e57c395bf2dcafd0498aae674481924dc4c3644e3108e9e9427": "caller PATH Bash lookup and bare main repository skip",
 		"422c9178eee7bebe4a55b537b11d1f4fc78e208ea6c01b62bf03a761b68ce282": "main worktree from git metadata, Windows venv, process-group probe watchdog",
 		"2fa92aee5f928afb77e0bb04476f508479216e1922cca32fc7bd2f80da23311d": "bounded version queries and worktree index isolation",
 		"9557cc1a4b4441bd551e273f4c9e16378fb88e750b8ed4156ffeacbe43c1f38a": "prefer untracked worktree virtualenvs",

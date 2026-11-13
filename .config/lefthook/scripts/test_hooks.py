@@ -4909,6 +4909,7 @@ class PythonLauncherWorktree(unittest.TestCase):
         self.bin.mkdir()
         (self.bin / "git").symlink_to(shutil.which("git"))
         (self.bin / "sh").symlink_to(shutil.which("sh"))
+        (self.bin / "bash").symlink_to(shutil.which("bash"))
 
     def launch(self, *args):
         """Run the hook launcher from the linked worktree with the stub PATH."""
@@ -4924,6 +4925,33 @@ class PythonLauncherWorktree(unittest.TestCase):
     def test_launcher_uses_main_worktree_venv(self):
         """A linked worktree without its own virtualenv starts the main worktree's."""
         candidate = self.venv(self.main)
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+    def test_python_bash_outside_default_path(self):
+        """A host without Bash on its default utility path uses the caller's Bash."""
+        candidate = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        # Emulate a default utility path lacking Bash without changing the host.
+        script = ('command() { if [ "$1" = -p ] && [ "$2" = bash ]; then '
+                  'return 127; fi; builtin command "$@"; }; '
+                  'launcher=$1; shift; . "$launcher"')
+        result = subprocess.run([shutil.which("bash"), "-p", "-c", script, "fixture",
+                                 str(ROOT / LAUNCHER), "hook.py"], cwd=self.worktree,
+                                env=dict(self.env, PATH=str(self.bin)), capture_output=True,
+                                timeout=60, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+    def test_python_bare_main_worktree_uses_path_candidate(self):
+        """A bare first porcelain record has no main virtualenv to validate."""
+        bare = self.main.parent / "bare.git"
+        command(self.main, "git", "clone", "--bare", "-q", str(self.main), str(bare),
+                env=self.env)
+        self.worktree = self.main.parent / "bare-linked"
+        command(bare, "git", "worktree", "add", "-q", "-b", "bare-linked",
+                str(self.worktree), env=self.env)
+        candidate = interpreter_stand_in(self.bin, "python3", "3.13\\n")
         result = self.launch()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
@@ -5208,6 +5236,10 @@ class PythonHookInterpreter(unittest.TestCase):
         env = dict(os.environ, **variables)
         if path is not None:
             env["PATH"] = path
+            # Keep Bash available without exposing any host Python candidate.
+            bash = Path(path) / "bash"
+            if not bash.exists():
+                bash.symlink_to(shutil.which("bash"))
         # The path is relative and the directory is the repository root, as for every hook.
         return subprocess.run([shutil.which("sh") or "sh", LAUNCHER, *args], cwd=ROOT, env=env,
                               input=data, capture_output=True, timeout=60, check=False)
