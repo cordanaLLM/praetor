@@ -20,8 +20,8 @@ permissions:
   checks: read
   statuses: read
 concurrency:
-  group: review-hold-release
-  cancel-in-progress: false
+  group: ${{ (github.event_name == 'pull_request_review' || github.event_name == 'pull_request_review_comment') && format('review-hold-release-pr-{0}', github.event.pull_request.number) || 'review-hold-release-scan' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_review' || github.event_name == 'pull_request_review_comment' }}
 jobs:
   release:
     if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') && (github.event_name != 'check_run' || (contains(github.event.check_run.name, 'coderabbit') || contains(github.event.check_run.app.slug, 'coderabbit') || contains(github.event.check_run.name, 'codacy') || contains(github.event.check_run.app.slug, 'codacy') || contains(github.event.check_run.name, 'sourcery') || contains(github.event.check_run.app.slug, 'sourcery'))) && (github.event_name != 'status' || (github.event.state != 'pending' && (contains(github.event.context, 'coderabbit') || contains(github.event.sender.login, 'coderabbit') || contains(github.event.context, 'codacy') || contains(github.event.sender.login, 'codacy') || contains(github.event.context, 'sourcery') || contains(github.event.sender.login, 'sourcery'))))
@@ -32,6 +32,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          REVIEW_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
         run: |
           set -Eeuo pipefail
           REVIEW_BOTS='coderabbit|codacy|sourcery'
@@ -198,7 +199,17 @@ jobs:
             printf 'Released PR %s: run %s attempt %s\n' "$PR_NUMBER" "$run_id" "$attempt" >> "$GITHUB_STEP_SUMMARY"
           )
           HOLD_CAUSE='open pull request read failed'
-          prs=$(review_pages "repos/$GITHUB_REPOSITORY/pulls?state=open&sort=created&direction=asc" '')
+          if [[ -n "${REVIEW_PR_NUMBER:-}" ]]; then
+            HOLD_CAUSE='event pull request number invalid'
+            [[ "$REVIEW_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+            HOLD_CAUSE="event pull request read failed: $REVIEW_PR_NUMBER"
+            event_pr="$REVIEW_TMP/event-pr.json"
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$REVIEW_PR_NUMBER" > "$event_pr"
+            prs="$REVIEW_TMP/prs.json"
+            jq --binary -ce '[select(.state == "open")]' "$event_pr" > "$prs"
+          else
+            prs=$(review_pages "repos/$GITHUB_REPOSITORY/pulls?state=open&sort=created&direction=asc" '')
+          fi
           pr_count=$(jq --binary 'length' "$prs")
           read_failed=0
           for ((pr_index=0; pr_index<pr_count && pr_index<2000; pr_index++)); do

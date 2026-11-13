@@ -42,7 +42,7 @@ concurrency:
   # gets its own group and is never cancelled, so every main commit gets its verdict (#1566:
   # a run per merge cancelled the 60 to 100 minute Windows job of the commit before).
   # pull_request_review events cancel a held run so the fresh review state is evaluated.
-  group: ${{ github.workflow }}-${{ github.event.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_review' }}
 
 permissions:

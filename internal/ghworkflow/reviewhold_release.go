@@ -9,6 +9,8 @@ import (
 )
 
 const (
+	// reviewHoldReleaseReviewEvent selects cancellable, per-PR review runs.
+	reviewHoldReleaseReviewEvent = "github.event_name == 'pull_request_review' || github.event_name == 'pull_request_review_comment'"
 	// reviewHoldReleaseScript locates only the newest PR run on the current head.
 	// Current-attempt jobs supply their check-run annotation IDs; older attempts
 	// must not cause an unrelated failure to be rerun indefinitely.
@@ -72,7 +74,17 @@ review_release_pr() (
   printf 'Released PR %s: run %s attempt %s\n' "$PR_NUMBER" "$run_id" "$attempt" >> "$GITHUB_STEP_SUMMARY"
 )
 HOLD_CAUSE='open pull request read failed'
-prs=$(review_pages "repos/$GITHUB_REPOSITORY/pulls?state=open&sort=created&direction=asc" '')
+if [[ -n "${REVIEW_PR_NUMBER:-}" ]]; then
+  HOLD_CAUSE='event pull request number invalid'
+  [[ "$REVIEW_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+  HOLD_CAUSE="event pull request read failed: $REVIEW_PR_NUMBER"
+  event_pr="$REVIEW_TMP/event-pr.json"
+  gh api "repos/$GITHUB_REPOSITORY/pulls/$REVIEW_PR_NUMBER" > "$event_pr"
+  prs="$REVIEW_TMP/prs.json"
+  jq --binary -ce '[select(.state == "open")]' "$event_pr" > "$prs"
+else
+  prs=$(review_pages "repos/$GITHUB_REPOSITORY/pulls?state=open&sort=created&direction=asc" '')
+fi
 pr_count=$(jq --binary 'length' "$prs")
 read_failed=0
 for ((pr_index=0; pr_index<pr_count && pr_index<2000; pr_index++)); do
@@ -109,8 +121,8 @@ func ReviewHoldReleaseCondition() string {
 		"(github.event_name != 'status' || (github.event.state != 'pending' && (" + strings.Join(statusParts, " || ") + ")))"
 }
 
-// reviewHoldReleaseHeader serializes all release events, retaining the token
-// only in the inline trusted script. No checkout or PR-controlled code runs.
+// reviewHoldReleaseHeader cancels superseded reviews per PR and serializes full scans.
+// The token stays in the trusted inline script; no checkout or PR-controlled code runs.
 var reviewHoldReleaseHeader = `# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
 #
 # SPDX-License-Identifier: EUPL-1.2
@@ -133,8 +145,8 @@ permissions:
   checks: read
   statuses: read
 concurrency:
-  group: review-hold-release
-  cancel-in-progress: false
+  group: ${{ (` + reviewHoldReleaseReviewEvent + `) && format('review-hold-release-pr-{0}', github.event.pull_request.number) || 'review-hold-release-scan' }}
+  cancel-in-progress: ${{ ` + reviewHoldReleaseReviewEvent + ` }}
 jobs:
   release:
     if: ` + ReviewHoldReleaseCondition() + `
@@ -145,6 +157,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          REVIEW_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
         run: |
 `
 

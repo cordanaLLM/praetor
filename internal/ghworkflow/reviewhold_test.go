@@ -456,7 +456,7 @@ func runReviewScript(t *testing.T, dir, script string) (string, error) {
 	writeReviewFixture(t, dir, "review-script.sh", "export PATH=\"$PWD:$PATH\"\n"+script)
 	environment := append(os.Environ(),
 		"FIXTURE_DIR=.", "GITHUB_REPOSITORY=fixture/repo", "PR_NUMBER=1", "HEAD_SHA=head",
-		"RUNNER_TEMP=.", "GITHUB_STEP_SUMMARY=summary", "GITHUB_OUTPUT=outputs")
+		"RUNNER_TEMP=.", "GITHUB_STEP_SUMMARY=summary", "GITHUB_OUTPUT=outputs", "REVIEW_PR_NUMBER=")
 	ctx, err = util.WithCommandEnvironment(ctx, environment)
 	if err != nil {
 		t.Fatal(err)
@@ -571,6 +571,97 @@ func reviewForkRun(repository, sha string) string {
 	return `{"workflow_runs":[{"id":42,"run_number":8,"run_attempt":1,"head_sha":"` + sha +
 		`","head_repository":{"full_name":"` + repository +
 		`"},"event":"pull_request","status":"completed","conclusion":"failure","pull_requests":[]}]}`
+}
+
+// TestReviewHoldReleaseReviewEventTarget refuses to scan or release an unrelated PR.
+func TestReviewHoldReleaseReviewEventTarget(t *testing.T) {
+	for _, event := range []string{"pull_request_review", "pull_request_review_comment"} {
+		t.Run(event, func(t *testing.T) {
+			dir := reviewFixtures(t)
+			writeReviewFixture(t, dir, "current-pr.json", `{"number":2,"state":"open","head":{"sha":"head","repo":{"full_name":"fixture/fork"}}}`)
+			runs, err := readReviewFixture(t, dir, "runs.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeReviewFixture(t, dir, "runs.json", strings.Replace(string(runs), `"number":1`, `"number":2`, 1))
+			script := "GITHUB_EVENT_NAME=" + event + "\nREVIEW_PR_NUMBER=2\n" + reviewHoldReleaseScript
+			out, err := runReviewScript(t, dir, script)
+			if err != nil {
+				t.Fatalf("out=%s err=%v", out, err)
+			}
+			want := append([][]string{{"api", "repos/fixture/repo/pulls/2"}}, reviewReleaseCalls("2", 5)...)
+			assertReviewCalls(t, dir, want)
+			reruns, err := readReviewFixture(t, dir, "reruns")
+			if err != nil || string(reruns) != "42\n" {
+				t.Fatalf("reruns=%s err=%v", reruns, err)
+			}
+		})
+	}
+}
+
+// TestReviewHoldReleaseScanEvents preserves the full scan for events without a PR.
+func TestReviewHoldReleaseScanEvents(t *testing.T) {
+	for _, event := range []string{"schedule", "workflow_dispatch", "check_run", "status"} {
+		t.Run(event, func(t *testing.T) {
+			dir := reviewFixtures(t)
+			writeReviewFixture(t, dir, "prs.json", `[{"number":1,"head":{"sha":"head"}},{"number":2,"head":{"sha":"head"}}]`)
+			assertReviewReleasePass(t, dir, event, "42\n")
+			want := append([][]string{reviewRESTCall("pulls?state=open&sort=created&direction=asc", 1)}, reviewReleaseCalls("1", 5)...)
+			want = append(want, reviewReleaseCalls("2", 0)...)
+			assertReviewCalls(t, dir, want)
+		})
+	}
+}
+
+// TestReviewHoldReleaseReviewEventBoundary keeps closed PRs and failed reads untouched.
+func TestReviewHoldReleaseReviewEventBoundary(t *testing.T) {
+	cases := []struct {
+		name, number, data, cause string
+	}{
+		{"closed", "2", `{"state":"closed"}`, ""},
+		{"read failure", "3", "", "event pull request read failed: 3"},
+		{"invalid number", "bad", "", "event pull request number invalid"},
+		{"malformed response", "2", "{", "event pull request read failed: 2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := reviewFixtures(t)
+			writeReviewFixture(t, dir, "current-pr.json", tc.data)
+			out, err := runReviewScript(t, dir, "REVIEW_PR_NUMBER="+tc.number+"\n"+reviewHoldReleaseScript)
+			if (err != nil) != (tc.cause != "") || !strings.Contains(out, tc.cause) {
+				t.Fatalf("out=%s err=%v; want cause %q", out, err, tc.cause)
+			}
+			if tc.number != "bad" {
+				assertReviewCalls(t, dir, [][]string{{"api", "repos/fixture/repo/pulls/" + tc.number}})
+			}
+			if reruns, err := readReviewFixture(t, dir, "reruns"); !os.IsNotExist(err) {
+				t.Fatalf("reruns=%s read=%v; want no rerun", reruns, err)
+			}
+		})
+	}
+}
+
+// TestReviewHoldReleaseConcurrency renders separate review and scan groups and policies.
+func TestReviewHoldReleaseConcurrency(t *testing.T) {
+	spec, err := Parse([]byte(RenderReviewHoldReleaseWorkflow()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const reviewEvent = "github.event_name == 'pull_request_review' || github.event_name == 'pull_request_review_comment'"
+	want := map[string]string{
+		"group":              "${{ (" + reviewEvent + ") && format('review-hold-release-pr-{0}', github.event.pull_request.number) || 'review-hold-release-scan' }}",
+		"cancel-in-progress": "${{ " + reviewEvent + " }}",
+	}
+	for key, value := range want {
+		node := util.YAMLMappingValue(&spec.Concurrency, key)
+		if node == nil || node.Value != value {
+			t.Errorf("concurrency %s=%v; want %s", key, node, value)
+		}
+	}
+	env := util.YAMLMappingValue(&spec.Jobs["release"].Steps[0].Env, "REVIEW_PR_NUMBER")
+	if env == nil || env.Value != "${{ github.event.pull_request.number || '' }}" {
+		t.Fatalf("release target=%v; want event PR number or empty scan target", env)
+	}
 }
 
 // writeLargeReviewFixtures plants API pages exceeding a single argument's byte limit.
@@ -689,7 +780,7 @@ func updateReviewHoldPortability(t *testing.T, data []byte) []byte {
 	if matches := pattern.FindAll(data, -1); len(matches) != 1 {
 		t.Fatalf("rendered barrier steps=%d; want 1 (review-gate only)", len(matches))
 	}
-	updated := pattern.ReplaceAllString(string(data), RenderReviewHoldStep(false))
+	updated := pattern.ReplaceAllStringFunc(string(data), func(string) string { return RenderReviewHoldStep(false) })
 	if err := os.WriteFile("../../.github/workflows/portability.yml", []byte(updated), 0o600); err != nil {
 		t.Fatal(err)
 	}
