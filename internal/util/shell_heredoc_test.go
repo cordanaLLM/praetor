@@ -26,6 +26,12 @@ func TestShellHereDocDelimiter_Positive(t *testing.T) {
 		{"'EOF'", "EOF", true, 5},
 		{`"EOF" | tee`, "EOF", true, 5},
 		{`\EOF`, "EOF", true, 4},
+		{`E"O"F`, "EOF", true, 5},
+		{`'EOF'x`, "EOFx", true, 6},
+		{`EO\F`, "EOF", true, 4},
+		{`E''OF`, "EOF", true, 5},
+		{`"E\"OF"`, `E"OF`, true, 7},
+		{`"E\OF"`, `E\OF`, true, 6},
 	} {
 		got, quoted, width, err := util.ShellHereDocDelimiter(tc.text)
 		if err != nil || got != tc.want || quoted != tc.quoted || width != tc.width {
@@ -34,10 +40,10 @@ func TestShellHereDocDelimiter_Positive(t *testing.T) {
 	}
 }
 
-// Negative: a missing, partly quoted, unterminated or expanding word is refused rather than
+// Negative: a missing, unterminated or expanding word is refused rather than
 // guessed, since a wrong delimiter reads the rest of the file as the body.
 func TestShellHereDocDelimiter_Negative(t *testing.T) {
-	for _, text := range []string{"", " EOF", ";", `E"O"F`, `'EOF`, `'EOF'x`, "$END", "EO`x`", `EO\F`, `''`} {
+	for _, text := range []string{"", " EOF", ";", `'EOF`, "$END", "EO`x`", `''`, `EOF\`, `E"OF`, `"$END"`} {
 		if got, _, _, err := util.ShellHereDocDelimiter(text); err == nil {
 			t.Errorf("%q: want a refusal, got %q", text, got)
 		}

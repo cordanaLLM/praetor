@@ -17,10 +17,49 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const holdTestReason = "engine-test-order: quota hold until reviewed"
+
+// TestHolds_SplitHeredocDelimiter keeps post-delimiter programs visible and quoted bodies inert.
+func TestHolds_SplitHeredocDelimiter(t *testing.T) {
+	policy, file := holdFixture(t, "go")
+	for _, declaration := range []string{"<<EOF", "<<-EOF"} {
+		command := "cat " + declaration + "\nE\\\nOF\ngo test ./internal/hiss/\nEOF"
+		if declaration == "<<-EOF" {
+			command = strings.Replace(command, "\nE", "\n\tE", 1)
+		}
+		// An expanding heredoc is already refused by the hold word reader; check the shared
+		// source too, so that refusal alone cannot hide a missing post-delimiter program.
+		lines, ok := hiss.ShellSource(joinLineContinuations(command), admissionMaxLines)
+		if !ok || !strings.Contains(strings.Join(lines, "\n"), "go test") {
+			t.Errorf("post-delimiter command hidden: %q, %v", lines, ok)
+		}
+		t.Run(declaration, func(t *testing.T) {
+			guard, hold := holdFixture(t, "go")
+			if verdict := guard.Command(command); verdict.Outcome != Allow {
+				t.Fatalf("absent hold: %+v", verdict)
+			}
+			writeHoldFixture(t, hold, holdTestReason)
+			requireDeniedContaining(t, command, guard.Command(command), hold)
+		})
+	}
+	writeHoldFixture(t, file, holdTestReason)
+	for _, word := range []string{`'EOF'`, `"EOF"`, `\EOF`, `E"O"F`} {
+		command := "cat <<" + word + "\nE\\\nOF\ngo test ./internal/hiss/\nEOF"
+		if verdict := policy.Command(command); verdict.Outcome != Allow {
+			t.Errorf("quoted delimiter %s: %+v", word, verdict)
+		}
+	}
+	for _, command := range []string{
+		"cat <<EOF\nE\\\nO\ngo test ./internal/hiss/", "cat <<'EOF'\nE\\\nOF\ngo test ./internal/hiss/",
+		"cat <<E$X\nE\\\nOF\nEOF", "cat <<E\"OF\nE\\\nOF\nEOF",
+	} {
+		requireDeniedContaining(t, command, policy.Command(command), "unreadable")
+	}
+}
 
 // TestHolds_Coproc refuses simple and named compound coprocesses only during a hold.
 func TestHolds_Coproc(t *testing.T) {
@@ -186,11 +225,14 @@ func checkStalledHold(t *testing.T, policy *Policy) {
 }
 
 // holdFixture returns a policy and temporary hold path for guarded program tests.
-func holdFixture(t *testing.T) (*Policy, string) {
+func holdFixture(t *testing.T, commands ...string) (*Policy, string) {
 	t.Helper()
+	if len(commands) == 0 {
+		commands = []string{"agy", "praetor-agy-wrapper"}
+	}
 	file := filepath.Join(t.TempDir(), "hold")
 	policy, err := BuildPolicy(config.HookSettings{Holds: []config.HoldSettings{{
-		File: file, Commands: []string{"agy", "praetor-agy-wrapper"}, Via: []string{"agy-run.sh"},
+		File: file, Commands: commands, Via: []string{"agy-run.sh"},
 	}}})
 	if err != nil {
 		t.Fatal(err)

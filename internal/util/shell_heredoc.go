@@ -9,52 +9,70 @@ import (
 	"strings"
 )
 
-// shellWordEnd lists the bytes that end an unquoted shell word: blanks and the metacharacters
-// a POSIX shell splits on.
+// shellWordEnd lists blanks and shell metacharacters ending an unquoted word.
 const shellWordEnd = " \t;&|<>()"
 
-// ShellHereDocDelimiter reads the delimiter word of a here-document from text, which starts
-// at the word: the caller has already consumed the << operator, its optional '-' and the
-// blanks after them. It returns the delimiter as the body's closing line must spell it,
-// whether any part of the word was quoted (a quoted delimiter turns off expansion in the
-// body), and how many bytes of text the word took.
-//
-// The word ends at a blank or a shell metacharacter, so `<<EOF;` and `<<EOF >out` both name
-// EOF. A word quoted whole ('EOF', "EOF") or escaped (\EOF) is accepted. A word that is only
-// partly quoted, holds an expansion or is missing is refused, because its delimiter is not the
-// word as written and a reader that guessed would read the rest of the file as the body.
+// ShellHereDocDelimiter reads a delimiter after <<, its optional '-' and blanks.
+// It returns the quote-removed delimiter, whether any part was quoted or escaped,
+// and the width of the original word. Whole and partial quoting are supported.
+// Expansion-like, empty and unterminated words are refused rather than guessed.
 func ShellHereDocDelimiter(text string) (delimiter string, quoted bool, width int, err error) {
-	if text == "" || strings.IndexByte(shellWordEnd, text[0]) >= 0 {
-		return "", false, 0, errors.New("missing heredoc delimiter")
-	}
-	switch text[0] {
-	case '\'', '"':
-		end := strings.IndexByte(text[1:], text[0])
-		if end < 0 {
-			return "", false, 0, errors.New("unsupported heredoc delimiter")
+	var word strings.Builder
+	for width < len(text) && strings.IndexByte(shellWordEnd, text[width]) < 0 {
+		part, isQuoted, n, partErr := shellDelimiterPart(text[width:])
+		if partErr != nil {
+			return "", false, 0, partErr
 		}
-		width = end + 2
-		delimiter, quoted = text[1:end+1], true
-	case '\\':
-		width = 1 + unquotedWordWidth(text[1:])
-		delimiter, quoted = text[1:width], true
-	default:
-		width = unquotedWordWidth(text)
-		delimiter = text[:width]
+		word.WriteString(part)
+		quoted = quoted || isQuoted
+		width += n
 	}
-	if delimiter == "" || strings.ContainsAny(delimiter, "$`'\"\\") ||
-		(width < len(text) && strings.IndexByte(shellWordEnd, text[width]) < 0) {
-		return "", false, 0, errors.New("unsupported heredoc delimiter")
+	if word.Len() == 0 {
+		return "", false, 0, errors.New("empty heredoc delimiter")
 	}
-	return delimiter, quoted, width, nil
+	return word.String(), quoted, width, nil
 }
 
-// unquotedWordWidth returns the length of the unquoted shell word text starts with.
-func unquotedWordWidth(text string) int {
-	for i := 0; i < len(text); i++ {
-		if strings.IndexByte(shellWordEnd, text[i]) >= 0 || text[i] == '\'' || text[i] == '"' {
-			return i
+// shellDelimiterPart consumes one literal byte, escaped byte or complete quoted span.
+func shellDelimiterPart(text string) (string, bool, int, error) {
+	switch text[0] {
+	case '\'':
+		end := strings.IndexByte(text[1:], '\'')
+		if end < 0 {
+			return "", false, 0, errors.New("unterminated heredoc quote")
 		}
+		return text[1 : end+1], true, end + 2, nil
+	case '"':
+		return shellDelimiterDouble(text)
+	case '\\':
+		if len(text) < 2 || strings.ContainsAny(text[1:2], "\r\n") {
+			return "", false, 0, errors.New("unterminated heredoc escape")
+		}
+		return text[1:2], true, 2, nil
+	case '$', '`', '\r', '\n':
+		return "", false, 0, errors.New("unsupported heredoc delimiter")
 	}
-	return len(text)
+	return text[:1], false, 1, nil
+}
+
+// shellDelimiterDouble removes double quotes and their restricted backslash escapes.
+func shellDelimiterDouble(text string) (string, bool, int, error) {
+	var word strings.Builder
+	for i := 1; i < len(text); i++ {
+		switch text[i] {
+		case '"':
+			return word.String(), true, i + 1, nil
+		case '$', '`', '\r', '\n':
+			return "", false, 0, errors.New("unsupported heredoc delimiter")
+		case '\\':
+			if i+1 >= len(text) {
+				return "", false, 0, errors.New("unterminated heredoc escape")
+			}
+			if strings.ContainsRune("$`\"\\", rune(text[i+1])) {
+				i++
+			}
+		}
+		word.WriteByte(text[i])
+	}
+	return "", false, 0, errors.New("unterminated heredoc quote")
 }

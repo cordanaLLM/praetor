@@ -8,7 +8,8 @@ import "strings"
 
 // JoinShellContinuations shares the shell lexer with the hold and background guards.
 // Only active backslash-newline pairs join: physical comments, single quotes, escaped
-// backslashes and heredoc bodies retain their newlines. Both LF and CRLF are supported.
+// backslashes and heredoc bodies retain their output newlines. Unquoted heredoc delimiters
+// compare joined body lines so joining resumes after the actual end. LF and CRLF are supported.
 func JoinShellContinuations(script string) string {
 	var lexer shellLexer
 	var code, joined strings.Builder
@@ -18,7 +19,8 @@ func JoinShellContinuations(script string) string {
 	return joined.String()
 }
 
-// joinLine retains heredoc bodies and finishes lexer state only at an unjoined newline.
+// joinLine retains physical heredoc text while tracking its logical end, and finishes code
+// state only at an unjoined newline.
 func (l *shellLexer) joinLine(line string, code, joined *strings.Builder) {
 	text := strings.TrimSuffix(line, "\n")
 	newline := len(text) < len(line)

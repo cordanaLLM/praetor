@@ -24,6 +24,33 @@ import (
 
 const testGiB = 1 << 30
 
+// TestAdmission_SplitHeredocDelimiter refuses a command after a logical end delimiter,
+// without a hold configured; quoted end delimiters keep the same command in the body.
+func TestAdmission_SplitHeredocDelimiter(t *testing.T) {
+	policy := admissionPolicy(t)
+	for _, declaration := range []string{"<<EOF", "<<-EOF"} {
+		command := "cat " + declaration + "\nE\\\nOF\ngo test ./internal/hiss/\nEOF"
+		if declaration == "<<-EOF" {
+			command = strings.Replace(command, "\nE", "\n\tE", 1)
+		}
+		requireDeniedContaining(t, declaration, policy.Command(command), "praetorctl admit --label go-test")
+	}
+	for _, word := range []string{`'EOF'`, `"EOF"`, `\EOF`, `E"O"F`} {
+		command := "cat <<" + word + "\nE\\\nOF\ngo test ./internal/hiss/\nEOF"
+		if v := policy.Command(command); v.Outcome != Allow {
+			t.Errorf("quoted delimiter %s: %+v", word, v)
+		}
+	}
+	for _, command := range []string{
+		"cat <<EOF\nE\\\nO\ngo test ./internal/hiss/",
+		"cat <<'EOF'\nE\\\nOF\ngo test ./internal/hiss/",
+		"cat <<E$X\nE\\\nOF\nEOF",
+		"cat <<E\"OF\nE\\\nOF\nEOF",
+	} {
+		requireDeniedContaining(t, command, policy.Command(command), "unreadable")
+	}
+}
+
 func stubHost(availGiB, swapGiB uint64) func() (sentinel.HostStats, error) {
 	return func() (sentinel.HostStats, error) {
 		return sentinel.HostStats{

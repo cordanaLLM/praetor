@@ -55,6 +55,7 @@ type shellFrame struct {
 type shellHeredoc struct {
 	delimiter string
 	stripTabs bool
+	quoted    bool
 }
 
 // shellLexer carries the cross-line state of one script.
@@ -65,6 +66,8 @@ type shellLexer struct {
 	pending []shellHeredoc
 	// bodies holds the here-documents whose bodies are being read.
 	bodies []shellHeredoc
+	// bodyPrefix holds physical lines joined before an unquoted delimiter comparison.
+	bodyPrefix strings.Builder
 	// misread records a construct the lexer could not follow: a delimiter it cannot read, or a
 	// bound exceeded. The file is then declined.
 	misread bool
@@ -91,9 +94,19 @@ func (l *shellLexer) finishLine() {
 	l.pending = l.pending[:0]
 }
 
-// bodyLine reads one line of a here-document body, closing it at its delimiter line.
+// bodyLine compares logical body lines for unquoted delimiters and physical lines for
+// quoted delimiters. Tab stripping follows continuation removal, as in Bash's <<- reader.
 func (l *shellLexer) bodyLine(text string) {
 	h := l.bodies[0]
+	if !h.quoted && (len(text)-len(strings.TrimRight(text, "\\")))%2 == 1 {
+		l.bodyPrefix.WriteString(text[:len(text)-1])
+		return
+	}
+	if l.bodyPrefix.Len() > 0 {
+		l.bodyPrefix.WriteString(text)
+		text = l.bodyPrefix.String()
+		l.bodyPrefix.Reset()
+	}
 	if h.stripTabs {
 		text = strings.TrimLeft(text, "\t")
 	}
@@ -267,12 +280,13 @@ func (l *shellLexer) heredoc(text string, i int) int {
 	for i < len(text) && (text[i] == ' ' || text[i] == '\t') {
 		i++
 	}
-	delimiter, _, width, err := util.ShellHereDocDelimiter(text[i:])
+	delimiter, quoted, width, err := util.ShellHereDocDelimiter(text[i:])
 	if err != nil || len(l.pending) >= maxShellHeredocs {
 		l.misread = true
 		return len(text)
 	}
 	h.delimiter = delimiter
+	h.quoted = quoted
 	l.pending = append(l.pending, h)
 	return i + width
 }
