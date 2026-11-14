@@ -378,7 +378,7 @@ func executeDeclaredVerify(tCtx context.Context, cfg *stageConfig, dir string, b
 		}
 	}()
 
-	runCtx, envErr := util.WithCommandEnvironment(tCtx, util.InheritedEnvironment([]string{DeclaredVerifyGuardEnv + "=1"}))
+	runCtx, envErr := util.WithCommandEnvironment(tCtx, declaredVerifyEnvironment())
 	if envErr != nil {
 		return fmt.Errorf("%s: %w", declaredVerifyCommand, envErr)
 	}

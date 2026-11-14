@@ -15,8 +15,78 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// localeSensitiveMake prints translated failures without needing installed locale catalogs.
+const localeSensitiveMake = `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+// main models make's message locale and records the child environment relevant to the contract.
+func main() {
+	word := "Fehler"
+	if os.Getenv("LC_ALL") == "C" || (os.Getenv("LC_ALL") == "" && os.Getenv("LC_MESSAGES") == "C") {
+		word = "Error"
+	}
+	_, language := os.LookupEnv("LANGUAGE")
+	all, allSet := os.LookupEnv("LC_ALL")
+	fmt.Fprintf(os.Stderr, "LANG=%s LC_NUMERIC=%s LC_ALL=%s/%t LC_MESSAGES=%s LANGUAGE=%t guard=%s\n",
+		os.Getenv("LANG"), os.Getenv("LC_NUMERIC"), all, allSet, os.Getenv("LC_MESSAGES"), language,
+		os.Getenv("PRAETOR_GATE_DECLARED_VERIFY"))
+	fmt.Fprintf(os.Stderr, "make: *** [Makefile:9: lint] %s 2\n", word)
+	os.Exit(2)
+}
+`
+
+// TestDeclaredVerifyLogGermanParent proves the child emits parseable failures with and without LC_ALL.
+func TestDeclaredVerifyLogGermanParent(t *testing.T) {
+	bin := t.TempDir()
+	testsupport.BuildExecutable(t, bin, "make", localeSensitiveMake)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, all := range []string{"unset", "", "de_DE.UTF-8"} {
+		t.Run("LC_ALL="+all, func(t *testing.T) {
+			assertDeclaredVerifyGermanParent(t, all)
+		})
+	}
+}
+
+// assertDeclaredVerifyGermanParent checks target extraction, child locale boundaries and unchanged parent state.
+func assertDeclaredVerifyGermanParent(t *testing.T, all string) {
+	t.Helper()
+	t.Setenv("LANG", "de_DE.UTF-8")
+	t.Setenv("LC_MESSAGES", "de_DE.UTF-8")
+	t.Setenv("LANGUAGE", "de")
+	t.Setenv("LC_NUMERIC", "de_DE.UTF-8")
+	t.Setenv("LC_ALL", all)
+	wantAll := "C/true"
+	if all == "unset" {
+		if err := os.Unsetenv("LC_ALL"); err != nil {
+			t.Fatal(err)
+		}
+		wantAll = "/false"
+	}
+	repo, stageDir := declaredLogRepo(t, true, true), t.TempDir()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	err := executeDeclaredVerify(ctx, &stageConfig{repoDir: repo}, stageDir, time.Minute, "default")
+	if err == nil {
+		t.Fatal("planted make failure passed")
+	}
+	for _, want := range []string{"make verify-all exited 2", "failing make target: lint",
+		"LANG=de_DE.UTF-8 LC_NUMERIC=de_DE.UTF-8 LC_ALL=" + wantAll + " LC_MESSAGES=C LANGUAGE=false guard=1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("stage reason missing %q: %s", want, err)
+		}
+	}
+	if os.Getenv("LC_MESSAGES") != "de_DE.UTF-8" || os.Getenv("LANGUAGE") != "de" || os.Getenv("LC_ALL") != strings.TrimPrefix(all, "unset") {
+		t.Fatal("child locale normalization changed the parent environment")
+	}
+}
 
 // declaredLogRepo needs no commits, identity or signing configuration. Preserve every
 // inherited non-Git variable; strip every GIT_* before the two allowed config barriers.

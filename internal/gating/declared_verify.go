@@ -41,6 +41,22 @@ var makefileNames = []string{"GNUmakefile", "makefile", "Makefile"}
 // declaredVerifyCommand is the command line the stage runs and every reason names.
 var declaredVerifyCommand = "make " + declaredVerifyTarget
 
+// declaredVerifyEnvironment keeps make's diagnostics parseable: LC_MESSAGES=C, LANGUAGE
+// absent, and LC_ALL=C only when LC_ALL was set by the caller. Without LC_ALL, other locale
+// categories retain the caller's settings. GNU gettext's manual, sections 2.3.2 and 2.3.3
+// (info gettext "Locale Environment Variables" and "The LANGUAGE variable"), documents
+// LC_ALL's category override and LANGUAGE's message priority. InheritedEnvironment retains
+// the existing Git repository-variable scrub and the declared-verification recursion guard.
+func declaredVerifyEnvironment() []string {
+	overrides := []string{DeclaredVerifyGuardEnv + "=1", "LC_MESSAGES=C"}
+	if _, set := os.LookupEnv("LC_ALL"); set {
+		overrides = append(overrides, "LC_ALL=C")
+	}
+	return util.FilterEnvironment(util.InheritedEnvironment(overrides), func(name string) bool {
+		return name == "LANGUAGE"
+	})
+}
+
 // runDeclaredVerifyStage runs `make verify-all` when the root holds no toolchain marker and its
 // makefile declares the target. Like the test suites it runs in an isolated worktree of HEAD
 // under the race stage's bound (inStageWorktree), so it checks what is pushed and leaves the
