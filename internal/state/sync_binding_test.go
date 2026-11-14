@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -34,10 +35,11 @@ func syncFixtureAt(t *testing.T, root string) string {
 	return root
 }
 
+// TestVerifyStateSyncReadOnlyAndPrivateEvidenceExcluded plants oversized private evidence and requires verification to ignore it while leaving the synced ledger unchanged.
 func TestVerifyStateSyncReadOnlyAndPrivateEvidenceExcluded(t *testing.T) {
 	root := syncFixture(t)
 	path := filepath.Join(root, WorkingDirName, "STATE.md")
-	before, err := os.ReadFile(path)
+	before, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +53,7 @@ func TestVerifyStateSyncReadOnlyAndPrivateEvidenceExcluded(t *testing.T) {
 	}
 }
 
+// TestVerifyStateSyncRejectsChangedInputs refuses a stale binding after every changed input.
 func TestVerifyStateSyncRejectsChangedInputs(t *testing.T) {
 	for _, kind := range []string{"tracked", "staged", "untracked", "untracked-same-size", "ledger", "history", "branch", "head"} {
 		t.Run(kind, func(t *testing.T) {
@@ -65,10 +68,18 @@ func TestVerifyStateSyncRejectsChangedInputs(t *testing.T) {
 			if err := VerifyStateSync(t.Context(), root); err == nil {
 				t.Fatalf("changed %s input accepted", kind)
 			}
-			if _, err := SyncState(t.Context(), root, "explicit reconciliation"); err != nil {
-				t.Fatal(err)
-			}
+			reconcileChangedSyncInput(t, root, kind)
 		})
+	}
+}
+
+// reconcileChangedSyncInput accepts an explicit sync after every changed input. Ledger growth
+// under the hard caps reconciles too: the ratchet binds only a file with legacy excess, which
+// TestStateFileCapPlantedShrinkThenGrow covers.
+func reconcileChangedSyncInput(t *testing.T, root, kind string) {
+	t.Helper()
+	if _, err := SyncState(t.Context(), root, "explicit reconciliation of "+kind); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -131,6 +142,7 @@ func changeSyncInput(t *testing.T, root, kind string) {
 	}
 }
 
+// TestStateSyncMissingLedgerDoesNotRepairExistingDirectory removes a ledger file and requires sync to fail without silently recreating it.
 func TestStateSyncMissingLedgerDoesNotRepairExistingDirectory(t *testing.T) {
 	root := syncFixture(t)
 	path := filepath.Join(root, WorkingDirName, "BACKLOG.md")
@@ -140,7 +152,7 @@ func TestStateSyncMissingLedgerDoesNotRepairExistingDirectory(t *testing.T) {
 	if _, err := SyncState(t.Context(), root, "must not repair"); err == nil {
 		t.Fatal("sync silently repaired an incomplete existing ledger")
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), path); !os.IsNotExist(err) {
 		t.Fatalf("missing ledger was recreated: %v", err)
 	}
 }
@@ -185,6 +197,7 @@ func TestStateSyncUntrackedByteBound(t *testing.T) {
 	}
 }
 
+// TestStateSyncRejectsConfiguredFilterBeforeExecution plants a selected Git filter with a marker and requires sync to reject it before execution.
 func TestStateSyncRejectsConfiguredFilterBeforeExecution(t *testing.T) {
 	root := syncFixture(t)
 	marker := filepath.Join(root, "filter-executed")
@@ -193,7 +206,7 @@ func TestStateSyncRejectsConfiguredFilterBeforeExecution(t *testing.T) {
 	if _, err := SyncState(t.Context(), root, "must not run filter"); err == nil {
 		t.Fatal("configured filter accepted")
 	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), marker); !os.IsNotExist(err) {
 		t.Fatalf("Git filter executed: %v", err)
 	}
 }

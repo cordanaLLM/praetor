@@ -15,9 +15,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/builder"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
@@ -384,6 +386,7 @@ func TestDispatchCommand_EditorsAndFlavors(t *testing.T) {
 	mustContain(t, out, "Release Flavor Reconciler", "flavors sync")
 }
 
+// TestEditorsGenerateReportsCreatedMergedAndPresent plants an existing editor setting and requires generation to report creation, merging, and already-present files while preserving that setting.
 func TestEditorsGenerateReportsCreatedMergedAndPresent(t *testing.T) {
 	root := t.TempDir()
 	out, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) })
@@ -401,7 +404,7 @@ func TestEditorsGenerateReportsCreatedMergedAndPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustContain(t, out, "1 merged", "[MERGED] [vscode] .vscode/settings.json")
-	settings, err := os.ReadFile(settingsPath)
+	settings, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), settingsPath)
 	if err != nil || !strings.Contains(string(settings), `"editor.fontSize": 42`) {
 		t.Fatalf("merge report lost the existing setting: %s %v", settings, err)
 	}
@@ -445,6 +448,7 @@ func TestEditorsVerifyReportsPreservedNonJSONAsUnverified(t *testing.T) {
 	mustContain(t, out, "[PRESERVED] [universal] .editorconfig", "[UNVERIFIED] 1 existing human-owned file(s)")
 }
 
+// TestEditorsRejectDuplicateJSONKeysWithoutWriting plants duplicate editor settings and requires verification and generation to reject them without changing the file.
 func TestEditorsRejectDuplicateJSONKeysWithoutWriting(t *testing.T) {
 	root := t.TempDir()
 	if _, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) }); err != nil {
@@ -461,7 +465,7 @@ func TestEditorsRejectDuplicateJSONKeysWithoutWriting(t *testing.T) {
 	if _, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) }); err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("generate accepted duplicate JSON keys: %v", err)
 	}
-	if after, err := os.ReadFile(settingsPath); err != nil || string(after) != duplicate {
+	if after, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), settingsPath); err != nil || string(after) != duplicate {
 		t.Fatalf("rejected generation changed the file: %s %v", after, err)
 	}
 }
@@ -499,6 +503,7 @@ func TestDispatchCommand_AdoptPlanSyncInitHelp(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_PaperclipAndAdopt plants identified and unidentified repositories and requires Paperclip and adoption commands to honor identity, argument forms, and invalid flags.
 func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 	tmpDir := newAuditFixture(t).dir
 	paperclipDir := t.TempDir()
@@ -515,7 +520,7 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 	if !errors.Is(err, util.ErrRepoIdentityUnresolved) {
 		t.Fatalf("paperclip harness without an identity = %v, want ErrRepoIdentityUnresolved", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(unidentified, ".paperclip")); !errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := contextopt.StatContext(testsupport.DeadlineContext(t), filepath.Join(unidentified, ".paperclip")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("paperclip harness without an identity wrote .paperclip: %v", statErr)
 	}
 
@@ -617,6 +622,7 @@ func TestDispatchCommand_IssueReconcile(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_NeedsFleet plants a fixture fleet and framework and requires needs requests and epic generation to use them successfully.
 func TestDispatchCommand_NeedsFleet(t *testing.T) {
 	// Needs requests and epic against fixture repositories and an explicit framework.
 	fleet := t.TempDir()
@@ -638,7 +644,7 @@ func TestDispatchCommand_NeedsFleet(t *testing.T) {
 	if err := dispatchCommand("needs", []string{"epic", "--path=" + repo, "--framework=" + framework, "--output=" + epicOut}); err != nil {
 		t.Fatalf("needs epic failed: %v", err)
 	}
-	if _, err := os.Stat(epicOut); err != nil {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), epicOut); err != nil {
 		t.Fatalf("expected the epic to be written: %v", err)
 	}
 }
@@ -668,6 +674,7 @@ targets:
 	}
 }
 
+// TestDispatchCommand_StateSubcommands initializes a temporary ledger and requires the state commands to manage its entries, record a sync log, and reject an invalid subcommand.
 func TestDispatchCommand_StateSubcommands(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -702,7 +709,7 @@ func TestDispatchCommand_StateSubcommands(t *testing.T) {
 	if err := dispatchCommand("state", []string{"sync", "--log=test execution", tmpDir}); err != nil {
 		t.Fatalf("state sync failed: %v", err)
 	}
-	if got := readFixtureFile(t, tmpDir, ".workingdir/STATE.md"); !strings.Contains(got, "test execution") {
+	if got := readStateFixtureDeadline(t, tmpDir, ".workingdir/STATE.md"); !strings.Contains(got, "test execution") {
 		t.Fatalf("expected the --log message in STATE.md, got:\n%s", got)
 	}
 	if err := dispatchCommand("state", []string{"audit", tmpDir}); err != nil {
@@ -847,6 +854,7 @@ func TestDispatchCommand_MilestoneDirectoryFlags(t *testing.T) {
 	mustContain(t, out, "Closed:      1")
 }
 
+// TestDispatchCommand_ProjectCachedStatusDoesNotResolveAuth plants a local project cache and a marker executable and requires status to leave the cache unchanged without invoking authentication.
 func TestDispatchCommand_ProjectCachedStatusDoesNotResolveAuth(t *testing.T) {
 	dir, bin := t.TempDir(), t.TempDir()
 	t.Setenv("PATH", bin)
@@ -862,7 +870,7 @@ func TestDispatchCommand_ProjectCachedStatusDoesNotResolveAuth(t *testing.T) {
 	if strings.Contains(out, "[PASS]") {
 		t.Fatalf("local cache write claimed remote success: %s", out)
 	}
-	before := readFixtureFile(t, dir, ".workingdir/project.json")
+	before := readStateFixtureDeadline(t, dir, ".workingdir/project.json")
 	marker := filepath.Join(bin, "called")
 	t.Setenv("PRAETOR_TEST_GH_MARKER", marker)
 	script := "#!/bin/sh\nprintf called > \"$PRAETOR_TEST_GH_MARKER\"\nexit 1\n"
@@ -872,10 +880,10 @@ func TestDispatchCommand_ProjectCachedStatusDoesNotResolveAuth(t *testing.T) {
 	if err := dispatchCommand("project", []string{"status", "--dir", dir}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), marker); !os.IsNotExist(err) {
 		t.Fatalf("cached status resolved credentials: %v", err)
 	}
-	if after := readFixtureFile(t, dir, ".workingdir/project.json"); before != after {
+	if after := readStateFixtureDeadline(t, dir, ".workingdir/project.json"); before != after {
 		t.Fatal("cached status rewrote the cache")
 	}
 }
@@ -920,6 +928,7 @@ func TestDispatchCommand_CISubcommands(t *testing.T) {
 // state: sync logs, status is read-only, --dir is a flag everywhere
 // =========================================================================
 
+// TestDispatchCommand_StateSyncRecordsLogAfterPositional initializes a temporary ledger and requires a log flag following the directory to be recorded in state.
 func TestDispatchCommand_StateSyncRecordsLogAfterPositional(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := dispatchCommand("state", []string{"init", tmpDir}); err != nil {
@@ -932,7 +941,7 @@ func TestDispatchCommand_StateSyncRecordsLogAfterPositional(t *testing.T) {
 	}
 
 	stateMD := filepath.Join(tmpDir, ".workingdir", "STATE.md")
-	content, err := os.ReadFile(stateMD)
+	content, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), stateMD)
 	if err != nil {
 		t.Fatalf("failed reading STATE.md: %v", err)
 	}
@@ -941,13 +950,14 @@ func TestDispatchCommand_StateSyncRecordsLogAfterPositional(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_StateStatusDoesNotMutateLedger initializes a temporary ledger and requires status to report its contents without changing it.
 func TestDispatchCommand_StateStatusDoesNotMutateLedger(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := dispatchCommand("state", []string{"init", tmpDir}); err != nil {
 		t.Fatalf("state init failed: %v", err)
 	}
 	stateMD := filepath.Join(tmpDir, ".workingdir", "STATE.md")
-	before, err := os.ReadFile(stateMD)
+	before, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), stateMD)
 	if err != nil {
 		t.Fatalf("failed reading STATE.md: %v", err)
 	}
@@ -962,7 +972,7 @@ func TestDispatchCommand_StateStatusDoesNotMutateLedger(t *testing.T) {
 		t.Errorf("unexpected state status output:\n%s", out)
 	}
 
-	after, err := os.ReadFile(stateMD)
+	after, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), stateMD)
 	if err != nil {
 		t.Fatalf("failed re-reading STATE.md: %v", err)
 	}
@@ -971,16 +981,18 @@ func TestDispatchCommand_StateStatusDoesNotMutateLedger(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_StateStatusRequiresWorkingDir uses a directory without a ledger and requires status to fail without creating one.
 func TestDispatchCommand_StateStatusRequiresWorkingDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := dispatchCommand("state", []string{"status", tmpDir}); err == nil {
 		t.Fatal("expected state status to fail when .workingdir is absent")
 	}
-	if _, err := os.Stat(filepath.Join(tmpDir, ".workingdir")); !os.IsNotExist(err) {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), filepath.Join(tmpDir, ".workingdir")); !os.IsNotExist(err) {
 		t.Errorf("state status scaffolded .workingdir instead of reporting the error")
 	}
 }
 
+// TestDispatchCommand_StateTaskLifecycle applies a completed task to its monthly archive.
 func TestDispatchCommand_StateTaskLifecycle(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := dispatchCommand("state", []string{"init", "--dir=" + tmpDir}); err != nil {
@@ -1008,16 +1020,19 @@ func TestDispatchCommand_StateTaskLifecycle(t *testing.T) {
 	if err := dispatchCommand("state", []string{"task", "complete", "wire the gate", "--dir=" + tmpDir}); err != nil {
 		t.Fatalf("state task complete failed: %v", err)
 	}
-	if err := dispatchCommand("state", []string{"task", "archive", "--dir=" + tmpDir}); err != nil {
+	archiveMonth := time.Now().UTC().Format("2006-01")
+	if err := dispatchCommand("state", []string{"task", "archive", "--apply", "--dir=" + tmpDir}); err != nil {
 		t.Fatalf("state task archive failed: %v", err)
 	}
 
-	backlog, err := os.ReadFile(filepath.Join(tmpDir, ".workingdir", "BACKLOG.md"))
+	// The confined read refuses an archive name that leaves the archive directory.
+	archiveDir := filepath.Join(tmpDir, ".workingdir", "archive")
+	backlog, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), filepath.Join(archiveDir, "OPEN-"+archiveMonth+".md"))
 	if err != nil {
-		t.Fatalf("failed reading BACKLOG.md: %v", err)
+		t.Fatalf("failed reading task archive: %v", err)
 	}
 	if !strings.Contains(string(backlog), "wire the gate") {
-		t.Errorf("expected the completed task in BACKLOG.md, got:\n%s", backlog)
+		t.Errorf("expected the completed task in the monthly archive, got:\n%s", backlog)
 	}
 
 	// Negative: task add without a description
@@ -1030,6 +1045,7 @@ func TestDispatchCommand_StateTaskLifecycle(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_StateDirFlagIsNotADirectoryName plants a ledger bug and requires a trailing directory flag to target its resolution without creating a stray directory.
 func TestDispatchCommand_StateDirFlagIsNotADirectoryName(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := dispatchCommand("state", []string{"init", tmpDir}); err != nil {
@@ -1044,7 +1060,7 @@ func TestDispatchCommand_StateDirFlagIsNotADirectoryName(t *testing.T) {
 		t.Fatalf("state bug resolve failed: %v", err)
 	}
 
-	bugs, err := os.ReadFile(filepath.Join(tmpDir, ".workingdir", "BUGS.md"))
+	bugs, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), filepath.Join(tmpDir, ".workingdir", "BUGS.md"))
 	if err != nil {
 		t.Fatalf("failed reading BUGS.md: %v", err)
 	}
@@ -1052,7 +1068,7 @@ func TestDispatchCommand_StateDirFlagIsNotADirectoryName(t *testing.T) {
 		t.Errorf("expected the resolution in the target ledger, got:\n%s", bugs)
 	}
 	// The literal flag must never become a directory name in the working directory.
-	if _, statErr := os.Stat("--dir=" + tmpDir); statErr == nil {
+	if _, statErr := contextopt.StatContext(testsupport.DeadlineContext(t), "--dir="+tmpDir); statErr == nil {
 		t.Errorf("a stray '--dir=...' directory was created")
 	}
 
@@ -1066,6 +1082,7 @@ func TestDispatchCommand_StateDirFlagIsNotADirectoryName(t *testing.T) {
 // topology: no hard-coded dev root, flags honoured after a positional
 // =========================================================================
 
+// TestDispatchCommand_TopologyAuditReportsStrayFiles plants a stray governance file and requires audit to report it and cleaning to remove it when the trailing flag enables changes.
 func TestDispatchCommand_TopologyAuditReportsStrayFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	stray := filepath.Join(tmpDir, "CLAUDE.md")
@@ -1081,7 +1098,7 @@ func TestDispatchCommand_TopologyAuditReportsStrayFiles(t *testing.T) {
 	if err := dispatchCommand("topology", []string{"clean", tmpDir, "--dry-run=false"}); err != nil {
 		t.Fatalf("topology clean failed: %v", err)
 	}
-	if _, statErr := os.Stat(stray); !os.IsNotExist(statErr) {
+	if _, statErr := contextopt.StatContext(testsupport.DeadlineContext(t), stray); !os.IsNotExist(statErr) {
 		t.Errorf("--dry-run=false after the positional dev root was ignored; %s still exists", stray)
 	}
 
@@ -1320,6 +1337,7 @@ func TestResolveHomeSubdir_3D(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_AdoptAllMissingNeverFallsBackToCwd removes the home directory from the fixture environment and requires adoption to fail unless an explicit scan root is provided.
 func TestDispatchCommand_AdoptAllMissingNeverFallsBackToCwd(t *testing.T) {
 	// Negative: an unset HOME must fail loudly instead of scanning ./dev.
 	isolateDevRootEnv(t)
@@ -1339,7 +1357,7 @@ func TestDispatchCommand_AdoptAllMissingNeverFallsBackToCwd(t *testing.T) {
 	if !strings.Contains(out, "Batch Repository Adoption") {
 		t.Errorf("unexpected batch adoption output:\n%s", out)
 	}
-	entries, readErr := os.ReadDir(devDir)
+	entries, readErr := contextopt.ReadDirContext(testsupport.DeadlineContext(t), devDir, 10000)
 	if readErr != nil {
 		t.Fatalf("failed reading the scan root: %v", readErr)
 	}
@@ -1414,30 +1432,23 @@ func writeOpenTasks(t *testing.T, dir, tasks string) string {
 	return writeFixtureFile(t, dir, filepath.Join(".workingdir", "OPEN.md"), tasks)
 }
 
-// TestDispatchCommand_StateTaskArchive_Positive pins BUG-577: an archive run in a committed
-// repository stamps the archived tasks with that commit, not "local".
+// TestDispatchCommand_StateTaskArchive_Positive applies a dated row to its monthly archive.
 func TestDispatchCommand_StateTaskArchive_Positive(t *testing.T) {
 	dir := t.TempDir()
-	env := initGitFixture(t, dir)
-	head, err := runFixtureGit(t, dir, env, "rev-parse", "HEAD")
-	if err != nil {
-		t.Fatalf("rev-parse: %v (%s)", err, head)
-	}
-	writeOpenTasks(t, dir, "- [x] done task 1\n")
-
+	initGitFixture(t, dir)
+	writeOpenTasks(t, dir, "- [x] done task 1 (completed: 2026-09-12)\n")
 	out, err := captureStdout(t, func() error {
-		return dispatchCommand("state", []string{"task", "archive", "--dir=" + dir})
+		return dispatchCommand("state", []string{"task", "archive", "--apply", "--dir=" + dir})
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustContain(t, out, "[PASS] Archived 1 completed tasks from OPEN.md to BACKLOG.md")
-	backlog := readFixtureFile(t, dir, ".workingdir/BACKLOG.md")
-	mustContain(t, backlog, fmt.Sprintf("commit `%s`", strings.TrimSpace(head)), "done task 1")
+	mustContain(t, out, "archive apply OPEN.md: 1 entries", "bytes")
+	archive := readStateFixtureDeadline(t, dir, ".workingdir/archive/OPEN-2026-09.md")
+	mustContain(t, archive, "done task 1")
 }
 
-// TestDispatchCommand_StateTaskArchive_Negative pins BUG-321's failure paths: a selector no
-// task matches, a missing directory, an unknown flag, and Git metadata that does not answer.
+// TestDispatchCommand_StateTaskArchive_Negative refuses bad selectors, flags and archive paths.
 func TestDispatchCommand_StateTaskArchive_Negative(t *testing.T) {
 	dir := t.TempDir()
 	writeOpenTasks(t, dir, "- [ ] some task\n")
@@ -1453,28 +1464,26 @@ func TestDispatchCommand_StateTaskArchive_Negative(t *testing.T) {
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("missing dir = %v; want fs.ErrNotExist", err)
 	}
-
 	_, err = captureStdout(t, func() error {
 		return dispatchCommand("state", []string{"task", "archive", "--unknown=foo"})
 	})
 	mustErrContain(t, err, "flag provided but not defined")
 
-	// A Git read that fails is an error, never a silent "local" stamp; OPEN.md is kept.
 	broken := t.TempDir()
-	writeFixtureFile(t, broken, ".git", "gitdir: nonexistent\n")
 	open := writeOpenTasks(t, broken, "- [x] kept task\n")
+	writeFixtureFile(t, broken, ".workingdir/archive", "not a directory\n")
 	_, err = captureStdout(t, func() error {
-		return dispatchCommand("state", []string{"task", "archive", "--dir=" + broken})
+		return dispatchCommand("state", []string{"task", "archive", "--apply", "--dir=" + broken})
 	})
 	mustErrContain(t, err, "state task archive")
-	mustContain(t, readFixtureFile(t, broken, ".workingdir/OPEN.md"), "- [x] kept task")
-	if _, statErr := os.Stat(filepath.Join(filepath.Dir(open), "BACKLOG.md")); !os.IsNotExist(statErr) {
+	mustContain(t, readStateFixtureDeadline(t, broken, ".workingdir/OPEN.md"), "- [x] kept task")
+	if _, statErr := contextopt.StatContext(testsupport.DeadlineContext(t), filepath.Join(filepath.Dir(open), "BACKLOG.md")); !os.IsNotExist(statErr) {
 		t.Fatalf("failed archive still wrote BACKLOG.md: %v", statErr)
 	}
 }
 
-// TestDispatchCommand_StateTaskArchive_Boundary: nothing to archive, and a directory with no
-// commit to name (outside Git, or an unborn branch) keeps the "local" stamp.
+// TestDispatchCommand_StateTaskArchive_Boundary previews empty ledgers and uses the run month
+// when no completion date exists, whether or not the repository has a commit.
 func TestDispatchCommand_StateTaskArchive_Boundary(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, ".workingdir"), 0o700); err != nil {
@@ -1486,23 +1495,30 @@ func TestDispatchCommand_StateTaskArchive_Boundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustContain(t, out, "[PASS] Archived 0 completed tasks")
+	mustContain(t, out, "archive dry-run OPEN.md: 0 entries")
 
 	unborn := t.TempDir()
 	testsupport.InitGitRepoWithOrigin(t, unborn, "")
 	for name, root := range map[string]string{"non-git": dir, "unborn": unborn} {
 		writeOpenTasks(t, root, "- [x] done task 2\n")
 		out, err = captureStdout(t, func() error {
-			return dispatchCommand("state", []string{"task", "archive", "--dir=" + root})
+			return dispatchCommand("state", []string{"task", "archive", "--apply", "--dir=" + root})
 		})
 		if err != nil {
 			t.Fatalf("%s archive: %v", name, err)
 		}
-		mustContain(t, out, "[PASS] Archived 1 completed tasks")
-		backlog := readFixtureFile(t, root, ".workingdir/BACKLOG.md")
-		mustContain(t, backlog, "commit `local`", "done task 2")
-		if strings.Contains(backlog, "(unborn)") {
-			t.Fatalf("%s archive leaked the unborn marker:\n%s", name, backlog)
-		}
+		mustContain(t, out, "archive apply OPEN.md: 1 entries")
+		path := ".workingdir/archive/OPEN-" + time.Now().UTC().Format("2006-01") + ".md"
+		mustContain(t, readStateFixtureDeadline(t, root, path), "done task 2")
 	}
+}
+
+// readStateFixtureDeadline reads state fixtures within the test deadline.
+func readStateFixtureDeadline(t *testing.T, dir, rel string) string {
+	t.Helper()
+	data, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), filepath.Join(dir, rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

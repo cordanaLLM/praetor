@@ -457,7 +457,6 @@ class NativeLefthook(unittest.TestCase):
         (location / "bin").mkdir()
         os.link(self.binary, location / PRAETORCTL)
         self.state("init", location)
-        self.state("sync", location)
         return location
 
     def git(self, *args):
