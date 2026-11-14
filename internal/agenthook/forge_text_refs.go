@@ -77,6 +77,7 @@ type ghWriteCall struct {
 	dir      string
 	prCreate bool
 	args     []string
+	repoEnv  *string
 }
 
 // ghDirPolicy holds the resolved trusted organisations, missing-list flag, diagnostic
@@ -594,7 +595,8 @@ func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghW
 		raw = fullCommand
 	}
 	prCreate := subcmd == "pr" && unquoteShellWord(args[len(args)-len(rest)-1]) == "create"
-	return ghWriteCall{raw: raw, files: files, fileErr: fileErr, dir: cmdDir, prCreate: prCreate, args: args}, workDir, true
+	repoEnv := ghCommandRepository(words[:len(words)-len(args)-1])
+	return ghWriteCall{raw: raw, files: files, fileErr: fileErr, dir: cmdDir, prCreate: prCreate, args: args, repoEnv: repoEnv}, workDir, true
 }
 
 // classifyGHCall identifies the gh subcommand and remaining arguments for a scoped write
@@ -615,11 +617,11 @@ func classifyGHCall(args []string) (string, []string, bool) {
 }
 
 // nextGHPositional returns the next non-flag positional token in args starting at start,
-// skipping -R/--repo values and flag tokens and refusing when no positional token remains.
+// skipping value-taking global options and flag tokens, refusing absent positional tokens.
 func nextGHPositional(args []string, start int) (string, int, bool) {
 	for i := start; i < len(args) && i < maxForgeTextWords; i++ {
 		tok := unquoteTarget(args[i])
-		if tok == "-R" || tok == "--repo" {
+		if tok == "-R" || tok == "--repo" || tok == "--hostname" {
 			i++
 			continue
 		}
@@ -784,7 +786,7 @@ func extractFlagFile(subcmd string, args []string, i int) (string, int, bool, bo
 // flagValue parses separate, inline (=) or attached short flag values at args[i] for
 // names, refusing a matched flag whose value is missing or empty.
 func flagValue(args []string, i int, short string, names ...string) (string, int, bool, bool) {
-	tok := unquoteTarget(args[i])
+	tok := unquoteShellWord(args[i])
 	for j := 0; j < len(names) && j < 4; j++ {
 		if tok == names[j] {
 			if i+1 >= len(args) {
@@ -796,7 +798,7 @@ func flagValue(args []string, i int, short string, names ...string) (string, int
 			return val, i, true, val != ""
 		}
 	}
-	if short != "" && strings.HasPrefix(tok, short) && len(tok) > len(short) {
+	if short != "" && !strings.HasPrefix(tok, "--") && strings.HasPrefix(tok, short) && len(tok) > len(short) {
 		return tok[len(short):], i, true, true
 	}
 	return "", i, false, false

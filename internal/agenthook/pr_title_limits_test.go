@@ -96,45 +96,159 @@ func assertPRTitle65Denied(t *testing.T, response Response, title string) {
 	}
 }
 
-// TestPRTitleLimitsResolutionAndForms covers target precedence, flag forms and Unicode.
+// TestPRTitleLimitsResolutionAndForms makes every repository flag override a conflicting origin and environment.
 func TestPRTitleLimitsResolutionAndForms(t *testing.T) {
-	root := repository(t, true)
-	testsupport.RunFixtureGit(t, root, []string{"remote", "add", "origin", "https://github.com/example/widget.git"})
-	long, boundary := strings.Repeat("é", 65), strings.Repeat("é", 64)
-	cases := []struct {
-		name, command, ghRepo string
-		deny                  bool
-	}{
-		{"origin", `gh pr create --title "` + long + `"`, "", true},
-		{"GH_REPO", `gh pr create --title "` + long + `"`, "example/widget", true},
-		{"GH_REPO beats origin", `gh pr create --title "` + long + `"`, "example/other", false},
-		{"repo beats env", `gh pr create --repo example/widget -t "` + long + `"`, "example/other", true},
-		{"short repo", `gh pr create -R EXAMPLE/WIDGET -t "` + long + `"`, "", true},
-		{"global repo", `gh -R example/widget pr create --title="` + long + `"`, "", true},
-		{"inline repo", `gh pr create --repo=example/widget --title="` + long + `"`, "", true},
-		{"short equals", `gh pr create -R=example/widget -t="` + long + `"`, "", true},
-		{"attached short", `gh pr create -Rexample/widget -t"` + long + `"`, "", true},
-		{"host prefix", `gh pr create -R github.com/example/widget -t "` + long + `"`, "", true},
-		{"unicode boundary", `gh pr create -t "` + boundary + `"`, "", false},
-		{"unconfigured", `gh pr create --repo example/other -t "` + long + `"`, "", false},
-		{"fill", `gh pr create --fill`, "", false},
-		{"interactive", `gh pr create`, "", false},
-		{"edit", `gh pr edit 1 --title "` + long + `"`, "", false},
-		{"issue", `gh issue create --title "` + long + `"`, "", false},
-		{"body value", `gh pr create --body '--title' --title "` + long + `"`, "", true},
-		{"literal quotes", `gh pr create -t '` + strings.Repeat(`'"'"'`, 65) + `'`, "", true},
-		{"second call", `gh pr create -t ok; gh pr create -t "` + long + `"`, "", true},
-		{"invalid repo", `gh pr create -R invalid -t ok`, "", true},
+	root := repository(t, false)
+	testsupport.RunFixtureGit(t, root, []string{"remote", "add", "origin", "https://github.com/example/other.git"})
+	long := strings.Repeat("é", 65)
+	for _, form := range []string{
+		"gh pr create --repo example/widget", "gh pr create -R EXAMPLE/WIDGET",
+		"gh -R example/widget pr create", "gh --repo=example/widget pr create",
+		"gh -Rexample/widget pr create", "gh -R=example/widget pr create",
+		"gh pr -R example/widget create", "gh pr create --repo=example/widget",
+		"gh pr create -R=example/widget", "gh pr create -Rexample/widget",
+		"gh pr create -R github.com/example/widget", "gh pr create -R https://github.com/example/widget",
+		"gh pr create -R http://github.com/example/widget",
+		"GH_REPO=example/other gh -Rexample/widget pr create",
+		"gh --hostname github.com -R example/widget pr create",
+		"gh --hostname=github.com pr create -R example/widget",
+		"gh -Rexample/widget --hostname github.com pr create",
+		"gh pr --hostname github.com create -R example/widget",
+	} {
+		t.Run(form, func(t *testing.T) {
+			got := assertTitleLimitVerdict(t, root, form+` --title="`+long+`"`, "example/other", true)
+			if !strings.Contains(got.Reason, "title length 65 exceeds limit 64") {
+				t.Fatalf("wrong title measurement: %+v", got)
+			}
+		})
 	}
-	for _, tc := range cases {
+}
+
+// assertTitleLimitVerdict checks the rule directly so another hook cannot mask a missed title.
+func assertTitleLimitVerdict(t *testing.T, root, command, inherited string, deny bool) Verdict {
+	t.Helper()
+	got := evaluatePRTitleLimits(t.Context(), Canonical{Command: command}, Invocation{
+		WorkDir: root, Getenv: titleLimitEnvironment(t, inherited),
+	})
+	if (got.Outcome == Deny) != deny || (deny && !strings.Contains(got.Reason, "pr-title-limit")) {
+		t.Fatalf("deny=%v: %+v", deny, got)
+	}
+	return got
+}
+
+// TestPRTitleLimitsRepositorySources plants each precedence source above a conflicting origin.
+func TestPRTitleLimitsRepositorySources(t *testing.T) {
+	long := ` -t "` + strings.Repeat("x", 65) + `"`
+	for _, tc := range []struct{ name, origin, resolved, inherited, command string }{
+		{"origin", "widget", "", "", "gh pr create"},
+		{"inherited", "other", "", "example/widget", "gh pr create"},
+		{"inherited URL", "other", "", "https://github.com/example/widget", "gh pr create"},
+		{"assignment", "other", "", "example/other", "GH_REPO=example/widget gh pr create"},
+		{"env", "other", "", "example/other", "env GH_REPO=example/widget gh pr create"},
+		{"quoted assignment", "other", "", "example/other", "GH_REPO='example/widget' gh pr create"},
+		{"env URL", "other", "", "example/other", "env GH_REPO=http://github.com/example/widget gh pr create"},
+		{"empty local", "widget", "", "example/other", "GH_REPO= gh pr create"},
+		{"default base", "other", "base", "", "gh pr create"},
+		{"default name", "other", "example/widget", "", "gh pr create"},
+		{"inherited above default", "other", "example/other", "example/widget", "gh pr create"},
+		{"local above default", "other", "example/other", "example/other", "GH_REPO=example/widget gh pr create"},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			response := runPreToolCommand(t, root, tc.command, titleLimitEnvironment(t, tc.ghRepo))
-			if (response.ExitCode != 0) != tc.deny {
-				t.Fatalf("deny=%v, got exit %d: %s", tc.deny, response.ExitCode, response.Stderr)
+			root := repository(t, false)
+			testsupport.RunFixtureGit(t, root, []string{"remote", "add", "origin", "https://github.com/example/" + tc.origin + ".git"})
+			if tc.resolved != "" {
+				testsupport.RunFixtureGit(t, root,
+					[]string{"remote", "add", "upstream", "https://github.com/example/widget.git"},
+					[]string{"config", "remote.upstream.gh-resolved", tc.resolved})
 			}
-			if tc.deny && !strings.Contains(string(response.Stderr), "pr-title-limit") {
-				t.Fatalf("wrong refusal: %s", response.Stderr)
+			got := assertTitleLimitVerdict(t, root, tc.command+long, tc.inherited, true)
+			if !strings.Contains(got.Reason, "title length 65 exceeds limit 64") {
+				t.Fatalf("wrong source: %+v", got)
 			}
+		})
+	}
+}
+
+// TestPRTitleLimitsTitleData distinguishes literal values, omitted titles and shell expansion.
+func TestPRTitleLimitsTitleData(t *testing.T) {
+	root := repository(t, false)
+	long, boundary := strings.Repeat("x", 65), strings.Repeat("x", 64)
+	for _, tc := range []struct {
+		name, args string
+		deny       bool
+	}{
+		{"separate", `-t "` + long + `"`, true},
+		{"inline", `--title="` + long + `"`, true},
+		{"short equals", `-t="` + long + `"`, true},
+		{"attached", `-t"` + long + `"`, true},
+		{"boundary", `-t "` + boundary + `"`, false},
+		{"unicode", `-t "` + strings.Repeat("é", 65) + `"`, true},
+		{"decode inline once", `'--title=` + boundary + `"'`, true},
+		{"decode attached once", `'-t` + boundary + `"'`, true},
+		{"decode separate once", `-t '` + boundary + `"'`, true},
+		{"body value", `--body '--title' -t "` + long + `"`, true},
+		{"template", `--template ` + long, false},
+		{"template title value", `--template --title`, false},
+		{"inline template", `--template=` + long, false},
+		{"body file title value", `--body-file --title`, false},
+		{"fill", `--fill`, false},
+		{"interactive", ``, false},
+		{"parameter", `-t "$TITLE"`, true},
+		{"braced parameter", `--title="${TITLE}"`, true},
+		{"substitution", `-t "$(printf title)"`, true},
+		{"backtick", "-t \"`printf title`\"", true},
+		{"glob", `-t *`, true},
+		{"literal parameter", `-t '$TITLE'`, false},
+		{"escaped parameter", `-t "\$TITLE"`, false},
+		{"quoted glob", `-t '*'`, false},
+		{"last title wins", `-t "` + long + `" -t ok`, false},
+		{"last expanded title", `-t ok -t "$TITLE"`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := assertTitleLimitVerdict(t, root, "gh pr create "+tc.args, "example/widget", tc.deny)
+			if strings.HasPrefix(tc.name, "decode") && !strings.Contains(got.Reason, "title length 65 exceeds limit 64") {
+				t.Fatalf("literal quote lost: %+v", got)
+			}
+		})
+	}
+}
+
+// TestPRTitleLimitsNoLimitsSkipsShellReader plants unrelated commands above each title-reader bound.
+func TestPRTitleLimitsNoLimitsSkipsShellReader(t *testing.T) {
+	root := repository(t, false)
+	got := evaluatePRTitleLimits(t.Context(), Canonical{Command: "echo " + strings.Repeat("x ", maxForgeTextWords+1)},
+		Invocation{WorkDir: root, Forge: &config.ForgeSettings{}})
+	if got.Outcome != Allow {
+		t.Fatalf("no limits must skip parsing: %+v", got)
+	}
+	response := runPreToolCommand(t, root, strings.Repeat("echo ok;", maxForgeTextSegments+1), noEnvironment)
+	if response.ExitCode != 0 {
+		t.Fatalf("ungoverned command affected: %+v", response)
+	}
+}
+
+// TestPRTitleLimitsURLAndCommandBoundaries pins valid URL targets and non-create commands.
+func TestPRTitleLimitsURLAndCommandBoundaries(t *testing.T) {
+	root := repository(t, false)
+	long := strings.Repeat("x", 65)
+	for _, tc := range []struct {
+		command, inherited string
+		deny               bool
+	}{
+		{`gh pr create -R https://github.com/example/widget -t ok`, "example/other", false},
+		{`gh pr create -R http://github.com/example/widget -t ok`, "example/other", false},
+		{`gh pr create -t ok`, "https://github.com/example/widget", false},
+		{`GH_REPO=http://github.com/example/widget gh pr create -t ok`, "example/other", false},
+		{`gh pr create -R example/other -t "$TITLE"`, "example/widget", false},
+		{`gh pr create -t ok; gh pr create -t "` + long + `"`, "example/widget", true},
+		{`gh pr edit 1 --title "` + long + `"`, "example/widget", false},
+		{`gh issue create --title "` + long + `"`, "example/widget", false},
+		{`gh pr create -R invalid -t ok`, "example/widget", true},
+		{`gh pr create --title ok -- --title "` + long + `"`, "example/widget", false},
+		{`gh pr create -t "` + long + `" GH_REPO=example/other`, "example/widget", true},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			assertTitleLimitVerdict(t, root, tc.command, tc.inherited, tc.deny)
 		})
 	}
 }
