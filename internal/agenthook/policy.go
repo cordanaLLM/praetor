@@ -317,7 +317,8 @@ var (
 	shellBoundaryVetoPattern = regexp.MustCompile(`--%|%[;&|]`)
 	shellHerePattern         = regexp.MustCompile(`^<<(-?)[ \t]*("[^"]*"|'[^']*'|[-A-Za-z0-9_]+)`)
 	shellRedirectPattern     = regexp.MustCompile(`^&?[<>](?:[<>|]|&[0-9-]*)?`)
-	shellUnsupportedPattern  = regexp.MustCompile(`[^\t\x20-\x7e]|[{}^!#]`)
+	shellUnsupportedPattern  = regexp.MustCompile(`[^\t\x20-\x7e]|[{}^!]`)
+	shellDataOptionPattern   = regexp.MustCompile(`^(--(?:message|file|author|date)(=|$)|-[mFCc])`)
 	// Reuse the short-flag rule's Git option prefilter without requiring its flag tail.
 	shellCommitPattern = regexp.MustCompile(strings.ReplaceAll(
 		shortSkipFlagRule[:strings.Index(shortSkipFlagRule, `(commit\b`)]+`(commit\b|am\b)`, `\s`, pythonSpace))
@@ -328,39 +329,123 @@ type shellDocument struct {
 	delimiter    string
 	tabs         bool
 	owner, depth int
+	expandable   bool
+}
+
+// shellSpan retains the raw exemption veto after message data has been masked.
+type shellSpan struct {
+	text string
+	veto bool
+}
+
+// shellInput distinguishes executable text from expandable here-document data.
+type shellInput struct {
+	text     string
+	document bool
 }
 
 // shellSpans walks raw command bytes once, using a bounded stack rather than recursion.
 type shellSpans struct {
-	command                    string
-	parts                      []string
-	stack                      []byte
-	documents                  []shellDocument
-	position, start, hereLines int
-	whole                      bool
-	uncertain                  bool
-	err                        error
+	command                        string
+	parts                          []shellSpan
+	stack                          []byte
+	documents                      []shellDocument
+	position, start, hereLines     int
+	whole                          bool
+	uncertain                      bool
+	err                            error
+	judged                         []byte
+	wordStart                      int
+	nextData, redirectData         bool
+	wordExpansion                  bool
+	gitCommand                     string
+	executionStart, executionDepth int
+	wordExecutions                 []string
+	nested                         []shellInput
 }
 
 // commandSegments isolates short-flag scans; uncertain syntax retains the whole-command scan.
-func commandSegments(command string) ([]string, error) {
-	if !shellCommitPattern.MatchString(joinLineContinuations(command)) {
-		return []string{command}, nil
+func commandSegments(command string) ([]shellSpan, error) {
+	queue := []shellInput{{text: command}}
+	var parts []shellSpan
+	for i := 0; i < len(queue) && i <= len(command); i++ {
+		spans, nested, err := scanShellInput(queue[i])
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, spans...)
+		queue = append(queue, nested...)
+		if len(queue) > len(command)+1 {
+			return nil, fmt.Errorf("invalid shell command: executable span bound exceeded: %d", len(command)+1)
+		}
 	}
-	s := shellSpans{command: command, whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command)}
+	return parts, nil
+}
+
+// scanShellInput chooses command parsing or executable extraction from document data.
+func scanShellInput(input shellInput) ([]shellSpan, []shellInput, error) {
+	if !input.document {
+		return scanCommandSpans(input.text)
+	}
+	s := shellSpans{command: input.text, judged: []byte(input.text), wordStart: -1, executionStart: -1}
+	for s.position < len(s.command) {
+		if !s.documentStep() {
+			return nil, nil, s.err
+		}
+	}
+	if len(s.stack) > 0 {
+		return nil, nil, fmt.Errorf("invalid shell command: unbalanced shell stack")
+	}
+	if len(s.documents) > 0 {
+		return nil, nil, fmt.Errorf("invalid shell command: unterminated here-document")
+	}
+	for _, execution := range s.wordExecutions {
+		s.nested = append(s.nested, shellInput{text: execution})
+	}
+	return nil, s.nested, nil
+}
+
+// documentStep treats document text as data, parsing only executable substitutions.
+func (s *shellSpans) documentStep() bool {
+	if len(s.stack) > 0 {
+		return s.step()
+	}
+	switch {
+	case s.command[s.position] == '\\':
+		s.position += min(2, len(s.command)-s.position)
+	case strings.HasPrefix(s.command[s.position:], "$("):
+		return s.openExecution(')', 2)
+	case s.command[s.position] == '`':
+		return s.openExecution('`', 1)
+	default:
+		s.position++
+	}
+	return true
+}
+
+// scanCommandSpans masks data operands while collecting executable message substitutions.
+func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
+	if !shellCommitPattern.MatchString(joinLineContinuations(command)) {
+		return []shellSpan{{command, readOnlyVetoPattern.MatchString(command)}}, nil, nil
+	}
+	s := shellSpans{command: command, judged: []byte(command), wordStart: -1, executionStart: -1,
+		whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command)}
 	for s.position < len(command) {
 		if !s.step() {
-			return []string{command}, s.err
+			return nil, nil, s.err
 		}
 	}
 	s.split(len(command), len(command))
-	if len(s.stack) > 0 || len(s.documents) > 0 || s.whole {
-		if len(s.stack) == 1 && s.stack[0] == '"' {
-			return nil, fmt.Errorf("invalid shell command: unbalanced quote")
-		}
-		return []string{command}, nil
+	if len(s.stack) > 0 {
+		return nil, nil, fmt.Errorf("invalid shell command: unbalanced shell stack")
 	}
-	return s.parts, nil
+	if len(s.documents) > 0 {
+		return nil, nil, fmt.Errorf("invalid shell command: unterminated here-document")
+	}
+	if s.whole {
+		return []shellSpan{{string(s.judged), true}}, s.nested, nil
+	}
+	return s.parts, s.nested, nil
 }
 
 // top returns the innermost quote or substitution terminator, or zero outside constructs.
@@ -374,6 +459,7 @@ func (s *shellSpans) top() byte {
 // push admits at most shellNestingLimit simultaneously open lexical frames.
 func (s *shellSpans) push(closer byte) bool {
 	if len(s.stack) == shellNestingLimit {
+		s.err = fmt.Errorf("invalid shell command: nesting bound exceeded: %d", shellNestingLimit)
 		return false
 	}
 	s.stack = append(s.stack, closer)
@@ -393,19 +479,19 @@ func (s *shellSpans) quotedStep() (bool, bool) {
 		}
 		return true, true
 	case '"', '`':
-		s.uncertain = s.uncertain || ch == '`'
 		if s.top() == ch {
-			s.stack = s.stack[:len(s.stack)-1]
+			s.closeFrame()
+		} else if ch == '`' {
+			return true, s.openExecution('`', 1)
 		} else if !s.push(ch) {
 			return true, false
 		}
 		s.position++
 		return true, true
 	case '$':
-		s.uncertain = s.uncertain || s.top() != '"'
+		s.wordExpansion = true
 		if strings.HasPrefix(s.command[s.position:], "$(") {
-			s.position += 2
-			return true, s.push(')')
+			return true, s.openExecution(')', 2)
 		}
 	}
 	return false, true
@@ -413,6 +499,9 @@ func (s *shellSpans) quotedStep() (bool, bool) {
 
 // step advances a byte or one lexical construct; failure selects the conservative scan.
 func (s *shellSpans) step() bool {
+	if s.wordStep() {
+		return true
+	}
 	if handled, ok := s.quotedStep(); handled {
 		return ok
 	}
@@ -430,18 +519,18 @@ func (s *shellSpans) structuralStep() bool {
 	switch ch {
 	case '\'':
 		return s.singleQuote()
-	case '(':
-		if s.top() != ')' {
-			s.whole = true
-		}
-		s.position++
-		return s.push(')')
-	case ')':
-		if s.top() == ')' {
-			s.stack = s.stack[:len(s.stack)-1]
-		} else {
-			s.whole = true
-		}
+	case '(', ')':
+		return s.parenthesis(ch)
+	case '#':
+		return s.comment()
+	default:
+		return s.boundaryStep(ch)
+	}
+}
+
+// boundaryStep handles separators, redirections and ordinary unquoted characters.
+func (s *shellSpans) boundaryStep(ch byte) bool {
+	switch ch {
 	case '<', '>':
 		return s.redirection()
 	case '\n':
@@ -449,12 +538,154 @@ func (s *shellSpans) structuralStep() bool {
 	case ';', '&', '|':
 		return s.separator()
 	default:
-		if len(s.stack) == 0 {
-			s.whole = s.whole || shellUnsupportedPattern.MatchString(s.command[s.position:s.position+1])
-		}
+		s.controlCharacter(ch)
 	}
 	s.position++
 	return true
+}
+
+// wordStep starts outer words and completes them at ordinary blanks.
+func (s *shellSpans) wordStep() bool {
+	if len(s.stack) != 0 {
+		return false
+	}
+	if strings.ContainsRune(" \t", rune(s.command[s.position])) {
+		s.finishWord(s.position)
+		s.position++
+		return true
+	}
+	if s.wordStart < 0 {
+		s.wordStart = s.position
+	}
+	return false
+}
+
+// finishWord excludes only a data operand; every other expansion retains the full scan.
+func (s *shellSpans) finishWord(end int) {
+	if s.wordStart < 0 {
+		return
+	}
+	word := s.command[s.wordStart:end]
+	s.enterGitCommand(word, end)
+	data := s.nextData || s.redirectData
+	offset := s.dataOffset(word)
+	if offset >= 0 {
+		s.mask(s.wordStart+offset, end)
+		for _, execution := range s.wordExecutions {
+			s.nested = append(s.nested, shellInput{text: execution})
+		}
+	} else {
+		s.uncertain = s.uncertain || s.wordExpansion
+	}
+	if data {
+		s.nextData = s.nextData && s.redirectData
+	}
+	s.wordStart, s.executionStart = -1, -1
+	s.wordExpansion, s.redirectData = false, false
+	s.wordExecutions = nil
+}
+
+// enterGitCommand identifies the first Git subcommand before interpreting its operands.
+func (s *shellSpans) enterGitCommand(word string, end int) {
+	if s.gitCommand != "" || word != "commit" && word != "am" {
+		return
+	}
+	if shellCommitPattern.MatchString(joinLineContinuations(s.command[s.start:end])) {
+		s.gitCommand = word
+	}
+}
+
+// dataOffset identifies an entire data operand or the value attached to its option.
+func (s *shellSpans) dataOffset(word string) int {
+	if s.nextData || s.redirectData {
+		return 0
+	}
+	if s.gitCommand != "commit" {
+		return -1
+	}
+	option := shellDataOptionPattern.FindString(word)
+	if option == "" {
+		return -1
+	}
+	s.nextData = len(option) == len(word) && !strings.HasSuffix(option, "=")
+	return len(option)
+}
+
+// mask removes data from short-option matching without changing lexical offsets.
+func (s *shellSpans) mask(start, end int) {
+	for i := start; i < end; i++ {
+		s.judged[i] = ' '
+	}
+}
+
+// openExecution records the outermost executable body within the current word.
+func (s *shellSpans) openExecution(closer byte, width int) bool {
+	s.wordExpansion = true
+	if s.executionStart < 0 {
+		s.executionStart, s.executionDepth = s.position+width, len(s.stack)+1
+	}
+	s.position += width
+	return s.push(closer)
+}
+
+// closeFrame retains executable bodies for independent, iterative command scanning.
+func (s *shellSpans) closeFrame() {
+	if len(s.stack) == s.executionDepth {
+		s.wordExecutions = append(s.wordExecutions, s.command[s.executionStart:s.position])
+		s.executionStart, s.executionDepth = -1, 0
+	}
+	s.stack = s.stack[:len(s.stack)-1]
+}
+
+// parenthesis handles grouping independently from quotes and other structural characters.
+func (s *shellSpans) parenthesis(ch byte) bool {
+	if ch == '(' {
+		s.whole = s.whole || s.top() != ')'
+		s.position++
+		return s.push(')')
+	}
+	if s.top() == ')' {
+		s.closeFrame()
+	} else {
+		s.whole = true
+	}
+	s.position++
+	return true
+}
+
+// controlCharacter retains conservative handling of unsupported syntax and positional globs.
+func (s *shellSpans) controlCharacter(ch byte) {
+	if len(s.stack) != 0 {
+		return
+	}
+	s.wordExpansion = s.wordExpansion || strings.ContainsRune("*?[", rune(ch))
+	s.whole = s.whole || shellUnsupportedPattern.MatchString(s.command[s.position:s.position+1])
+}
+
+// comment ignores word-starting shell comments, including quotes and trailing backslashes.
+func (s *shellSpans) comment() bool {
+	if s.position > 0 && !strings.ContainsRune(" \t\n;|&(", rune(s.command[s.position-1])) {
+		s.position++
+		return true
+	}
+	end := len(s.command)
+	if newline := strings.IndexByte(s.command[s.position:], '\n'); newline >= 0 {
+		end = s.position + newline
+	}
+	s.mask(s.position, end)
+	s.uncertain = s.uncertain || len(s.stack) > 0
+	s.position = end
+	return true
+}
+
+// documentData excludes body text while keeping executable expansions available to policy.
+func (s *shellSpans) documentData(document shellDocument, start int) {
+	body := s.command[start:s.position]
+	s.mask(start, s.position)
+	if document.expandable && strings.ContainsAny(body, "$`") {
+		s.wordExpansion = true
+		s.nested = append(s.nested, shellInput{text: body, document: true})
+	}
 }
 
 // separator distinguishes Bash's combined-output redirection from command boundaries.
@@ -483,27 +714,40 @@ func (s *shellSpans) singleQuote() bool {
 
 // split records an outer boundary while pending documents retain their owning part index.
 func (s *shellSpans) split(end, next int) {
-	part := s.command[s.start:end]
+	s.finishWord(end)
+	part := string(s.judged[s.start:end])
 	s.whole = s.whole || s.uncertain && shellCommitPattern.MatchString(joinLineContinuations(part))
-	s.parts = append(s.parts, part)
+	s.parts = append(s.parts, shellSpan{part, readOnlyVetoPattern.MatchString(s.command[s.start:end])})
 	s.start = next
 	s.uncertain = false
+	s.nextData, s.redirectData = false, false
+	s.gitCommand = ""
 }
 
 // redirection retains descriptor duplication and document openers in their owning span.
 func (s *shellSpans) redirection() bool {
+	if len(s.stack) == 0 {
+		s.finishWord(s.position)
+	}
 	rest := s.command[s.position:]
 	if strings.HasPrefix(rest, "<<") {
 		match := shellHerePattern.FindStringSubmatch(rest)
-		if match == nil || len(s.documents) == shellNestingLimit {
+		if match == nil {
+			s.err = fmt.Errorf("invalid shell command: unsupported here-document delimiter")
+			return false
+		}
+		if len(s.documents) == shellNestingLimit {
+			s.err = fmt.Errorf("invalid shell command: pending here-document bound exceeded: %d", shellNestingLimit)
 			return false
 		}
 		delimiter := strings.Trim(match[2], "\"'")
-		s.documents = append(s.documents, shellDocument{delimiter, match[1] == "-", len(s.parts), len(s.stack)})
+		s.documents = append(s.documents, shellDocument{delimiter, match[1] == "-", len(s.parts), len(s.stack), delimiter == match[2]})
 		s.position += len(match[0])
 		return true
 	}
-	s.position += len(shellRedirectPattern.FindString(rest))
+	redirect := shellRedirectPattern.FindString(rest)
+	s.position += len(redirect)
+	s.redirectData = len(s.stack) == 0 && !strings.ContainsAny(redirect, "0123456789-")
 	return true
 }
 
@@ -514,7 +758,7 @@ func (s *shellSpans) newline() bool {
 	for _, document := range s.documents {
 		hasDocument = hasDocument || document.depth == depth
 	}
-	s.uncertain = s.uncertain || !hasDocument
+	s.uncertain = s.uncertain || depth > 0 && !hasDocument
 	s.position++
 	if depth == 0 {
 		s.split(s.position-1, s.position)
@@ -529,9 +773,7 @@ func (s *shellSpans) newline() bool {
 		if !s.documentBody(document) {
 			return false
 		}
-		if depth == 0 {
-			s.parts[document.owner] += "\n" + s.command[bodyStart:s.position]
-		}
+		s.documentData(document, bodyStart)
 	}
 	s.documents = remaining
 	if depth == 0 {
@@ -557,16 +799,24 @@ func (s *shellSpans) documentBody(document shellDocument) bool {
 			return true
 		}
 	}
+	s.err = fmt.Errorf("invalid shell command: unterminated here-document")
+	if s.hereLines == shellHereLineLimit {
+		s.err = fmt.Errorf("invalid shell command: here-document body-line bound exceeded: %d", shellHereLineLimit)
+	}
 	return false
 }
 
 // matchesCommand applies segmentation only to the built-in short commit/am flag rule.
-func (r denyRule) matchesCommand(text string, segments []string) bool {
+func (r denyRule) matchesCommand(text string, segments []shellSpan) bool {
 	if r.source != shortSkipFlagRule || !r.readOnlyExempt {
 		return r.matches(text)
 	}
 	for _, segment := range segments {
-		if strings.Contains(segment, "-") && r.matches(strings.ReplaceAll(joinLineContinuations(segment), "\n", " ")) {
+		text := segment.text
+		if !segment.veto {
+			text = withoutReadOnlyWords(text)
+		}
+		if strings.Contains(text, "-") && r.matches(strings.ReplaceAll(joinLineContinuations(text), "\n", " ")) {
 			return true
 		}
 	}
