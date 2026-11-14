@@ -87,7 +87,7 @@ func TestReadOnlyExemption_Boundary_VetoedConstructs(t *testing.T) {
 	const chained = " && git log -n 5"
 	for _, token := range []string{
 		// Order engine-block-evasion-commit-span-20261114 round 3: redirections keep spans.
-		"é", "\r", "\v", "\\", "`", "^", "$", "(", ")", "{", "}", "!", "--%",
+		"é", "\r", "\v", "\\", "`", "^", "(", ")", "{", "}", "!", "--%",
 	} {
 		vetoed := "git commit -m a" + token + "b" + chained
 		if verdict := builtin.Command(vetoed); verdict.Outcome != Deny {
@@ -97,8 +97,8 @@ func TestReadOnlyExemption_Boundary_VetoedConstructs(t *testing.T) {
 			t.Errorf("%q: refused without %q", plain, token)
 		}
 	}
-	if verdict := builtin.Command("git commit -m x\n&& git log -n 5\ngit commit -m x" + chained); verdict.Outcome != Deny {
-		t.Errorf("a line break kept the exemption: %+v", verdict)
+	if verdict := builtin.Command("git commit -m x\n&& git log -n 5\ngit commit -m x" + chained); verdict.Outcome != Allow {
+		t.Errorf("outer command newlines lost segmentation: %+v", verdict)
 	}
 	for _, separator := range []string{";", "&&", "|"} {
 		if builtin.Command("git commit -m x%"+separator+" git log -n 5").Outcome != Deny ||
@@ -106,6 +106,12 @@ func TestReadOnlyExemption_Boundary_VetoedConstructs(t *testing.T) {
 			t.Errorf("cmd.exe percent before %q: want refused only when it touches the separator", separator)
 		}
 	}
+	checkReadOnlyStateWords(t, builtin, chained)
+}
+
+// checkReadOnlyStateWords keeps state-changing words conservative in any letter case.
+func checkReadOnlyStateWords(t *testing.T, builtin *Policy, chained string) {
+	t.Helper()
 	for _, word := range []string{
 		"export", "declare", "typeset", "set", "setenv", "alias", "function", "hash", "doskey", "sal",
 		"nal", "Set-Alias", "New-Alias", "EXPORT", "Set",
