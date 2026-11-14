@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
@@ -35,6 +36,7 @@ func CompileReadOnlyContext(ctx context.Context, source, targetDir string) error
 
 // VerifyReadOnlyContext checks that ReadOnlyFile below targetDir exists and matches the
 // compiled read-only projection of source, and that the projection passes the caveman gate.
+// Target verification and lint run independently; joined failures name target drift first.
 func VerifyReadOnlyContext(ctx context.Context, source, targetDir string) error {
 	contentBytes, err := contextopt.ReadSnapshot(ctx, source)
 	if err != nil {
@@ -44,16 +46,14 @@ func VerifyReadOnlyContext(ctx context.Context, source, targetDir string) error 
 	if err != nil {
 		return fmt.Errorf("compile read-only projection: %w", err)
 	}
-	if _, err := LintContextText(ReadOnlyFile, want.Content); err != nil {
-		return err
-	}
+	_, lintErr := LintContextText(ReadOnlyFile, want.Content)
+	var targetErr error
 	existing, err := readConfinedText(ctx, targetDir, ReadOnlyFile)
 	if err != nil {
-		return fmt.Errorf("target %s missing or unreadable: %w", ReadOnlyFile, err)
-	}
-	if equal, strict := projectionMatches(existing, []byte(want.Content)); !equal {
-		return fmt.Errorf("target %s is out of sync with %s%s; run 'praetorctl compile-context' to reconcile",
+		targetErr = fmt.Errorf("target %s missing or unreadable: %w", ReadOnlyFile, err)
+	} else if equal, strict := projectionMatches(existing, []byte(want.Content)); !equal {
+		targetErr = fmt.Errorf("target %s is out of sync with %s%s; run 'praetorctl compile-context' to reconcile",
 			ReadOnlyFile, source, util.ByteExactNote(strict))
 	}
-	return nil
+	return errors.Join(targetErr, lintErr)
 }

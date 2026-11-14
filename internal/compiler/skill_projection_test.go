@@ -3,6 +3,7 @@ package compiler
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -67,6 +68,53 @@ func TestVerifyPluginSkills_Negative_RejectsADriftedCopy(t *testing.T) {
 	}
 	if _, err := VerifyPluginSkills(context.Background(), root); err == nil {
 		t.Fatal("a drifted plugin skill verified")
+	}
+}
+
+// TestVerifyPluginSkills_IndependentFailures checks entry, licence, later skill and orphan
+// checks even when the first entry is missing.
+func TestVerifyPluginSkills_IndependentFailures(t *testing.T) {
+	root := skillFixture(t)
+	if err := compileFixture(t, root); err != nil {
+		t.Fatal(err)
+	}
+	missing := SkillEntryRel(PluginSkillsRel, "hiss-audit")
+	license := SkillLicenseRel(PluginSkillsRel, "hiss-audit")
+	drift := SkillEntryRel(PluginSkillsRel, "repo-adopt")
+	orphan := SkillEntryRel(PluginSkillsRel, "not-declared")
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(missing))); err != nil {
+		t.Fatal(err)
+	}
+	writeRegisterFixture(t, root, license, "stale licence\n")
+	writeRegisterFixture(t, root, drift, "drifted\n")
+	writeRegisterFixture(t, root, orphan, "orphan\n")
+	verified, err := VerifyPluginSkills(t.Context(), root)
+	assertProjectionFailures(t, err, missing, license, drift, filepath.ToSlash(filepath.Dir(orphan)))
+	if !errors.Is(err, os.ErrNotExist) || verified != 0 {
+		t.Errorf("verified=%d err=%v; want 0 and missing target", verified, err)
+	}
+}
+
+// TestVerifyClientSkills_IndependentFailures checks later drift and stale licences after a
+// missing entry, while counting the copies that still verify.
+func TestVerifyClientSkills_IndependentFailures(t *testing.T) {
+	root := writeClientSkillFixture(t, "")
+	files, err := CompileAgentSurfaces(t.Context(), io.Discard, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := SkillEntryRel(".claude/skills", "social-text")
+	drift := SkillEntryRel(".claude/skills", "caveman")
+	license := SkillLicenseRel(".claude/skills", "caveman")
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(missing))); err != nil {
+		t.Fatal(err)
+	}
+	writeRegisterFixture(t, root, drift, "drifted\n")
+	writeRegisterFixture(t, root, license, "stale licence\n")
+	verified, err := VerifyClientSkills(t.Context(), root)
+	assertProjectionFailures(t, err, missing, drift, license)
+	if !errors.Is(err, os.ErrNotExist) || verified != len(files)-2 {
+		t.Errorf("verified=%d err=%v; want %d and missing target", verified, err, len(files)-2)
 	}
 }
 

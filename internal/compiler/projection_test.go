@@ -15,6 +15,40 @@ import (
 // as far as the splice changes it.
 const fixtureSource = "# Policy\n"
 
+// TestVerifyCompiledContext_IndependentTargetFailures checks that unreadable vendor output
+// cannot mask another vendor's drift, or read-only drift combined with lint failure.
+func TestVerifyCompiledContext_IndependentTargetFailures(t *testing.T) {
+	root := t.TempDir()
+	content := "# Policy\n\n" + strings.Repeat(lintProseAgents, 8)
+	source := writeRegisterFixture(t, root, "AGENTS.md", content)
+	tr := NewTranspiler()
+	res, err := tr.CompileContext(t.Context(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Files) < 2 {
+		t.Fatal("fixture needs at least two vendor targets")
+	}
+	if err := tr.WriteOutputsContext(t.Context(), res, root); err != nil {
+		t.Fatal(err)
+	}
+	missing, drift := res.Files[0].RelativePath, res.Files[1].RelativePath
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(missing))); err != nil {
+		t.Fatal(err)
+	}
+	writeRegisterFixture(t, root, drift, "drifted\n")
+	writeRegisterFixture(t, root, ReadOnlyFile, "drifted\n")
+	err = VerifyCompiledContext(t.Context(), io.Discard, tr, source, root)
+	if !errors.Is(err, ErrContextProse) || err == nil {
+		t.Fatalf("want lint failure: %v", err)
+	}
+	for _, want := range []string{missing, "target " + drift + " is out of sync", "target " + ReadOnlyFile + " is out of sync"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing independent failure %s: %v", want, err)
+		}
+	}
+}
+
 // compileFixture runs CompileContextProjections over root, the write the CLI's compile-context
 // and the MCP standards_compile_context tool run, with root/AGENTS.md as the source. It writes
 // fixtureSource there first when root has none.

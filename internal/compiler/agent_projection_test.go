@@ -202,6 +202,49 @@ func TestVerifyAgentProjections_Negative_HandEditedTools(t *testing.T) {
 	}
 }
 
+// TestVerifyAgentProjections_IndependentFailures checks that a missing copy cannot mask later
+// drift or orphan checks, and that successful copies are still counted.
+func TestVerifyAgentProjections_IndependentFailures(t *testing.T) {
+	root := t.TempDir()
+	const name = "reviewer.md"
+	writeRegisterFixture(t, root, CanonicalAgentsRel+"/"+name,
+		"---\nname: reviewer\ndescription: Review.\nmodel: pro\n---\n# Reviewer\n")
+	if _, err := CompileAgentSurfaces(t.Context(), io.Discard, root); err != nil {
+		t.Fatal(err)
+	}
+	dirs, err := agentProjectionDirs(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirs) < 2 {
+		t.Fatal("fixture needs at least two projection directories")
+	}
+	missing, drift, orphan := dirs[0]+"/"+name, dirs[1]+"/"+name, dirs[1]+"/orphan.md"
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(missing))); err != nil {
+		t.Fatal(err)
+	}
+	writeRegisterFixture(t, root, drift, "drifted\n")
+	writeRegisterFixture(t, root, orphan, "orphan\n")
+	verified, err := VerifyAgentProjections(t.Context(), root)
+	assertProjectionFailures(t, err, missing, drift, orphan)
+	if !errors.Is(err, os.ErrNotExist) || verified != len(dirs)-2 {
+		t.Errorf("verified=%d err=%v; want %d and missing target", verified, err, len(dirs)-2)
+	}
+}
+
+// assertProjectionFailures checks joined drift chains and every independently failing path.
+func assertProjectionFailures(t *testing.T, err error, paths ...string) {
+	t.Helper()
+	if !errors.Is(err, ErrAgentProjectionDrift) {
+		t.Fatalf("want projection drift: %v", err)
+	}
+	for _, path := range paths {
+		if !strings.Contains(err.Error(), path) {
+			t.Errorf("missing failure %s: %v", path, err)
+		}
+	}
+}
+
 // Boundary: CRLF persona keeps CRLF and only the model line changes.
 func TestTransformPersonaForDir_Boundary_CRLFLineEndings(t *testing.T) {
 	const canonicalCRLF = "---\r\nname: helper\r\ndescription: Helper.\r\nmodel: flash\r\nmainAgent: true\r\n---\r\n\r\n# Helper\r\n\r\nLine 1.\r\nLine 2.\r\n"

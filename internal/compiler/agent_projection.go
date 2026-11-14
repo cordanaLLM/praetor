@@ -292,6 +292,7 @@ func readCanonicalAgent(ctx context.Context, rootDir, name string) ([]byte, erro
 // VerifyAgentProjections checks that every projection of every canonical persona exists
 // and matches its source up to leading and trailing whitespace. It returns the number of
 // verified copies. A persona directory agent_clients leaves out is neither required nor read.
+// Independent copy and orphan checks all run; their failures are joined.
 func VerifyAgentProjections(ctx context.Context, rootDir string) (int, error) {
 	names, err := listCanonicalAgents(ctx, rootDir)
 	if err != nil {
@@ -302,19 +303,23 @@ func VerifyAgentProjections(ctx context.Context, rootDir string) (int, error) {
 		return 0, err
 	}
 	verified := 0
+	var errs []error
 	for i := 0; i < len(names); i++ {
 		canonical, err := readCanonicalAgent(ctx, rootDir, names[i])
 		if err != nil {
-			return verified, err
+			errs = append(errs, err)
+			continue
 		}
 		canonicalRel := CanonicalAgentsRel + "/" + names[i]
 		for j := 0; j < len(dirs); j++ {
 			want, err := TransformPersonaForDir(dirs[j], canonicalRel, canonical)
 			if err != nil {
-				return verified, err
+				errs = append(errs, err)
+				continue
 			}
 			if err := verifyProjection(ctx, rootDir, dirs[j]+"/"+names[i], want); err != nil {
-				return verified, err
+				errs = append(errs, err)
+				continue
 			}
 			verified++
 		}
@@ -324,10 +329,7 @@ func VerifyAgentProjections(ctx context.Context, rootDir string) (int, error) {
 	// read, so it is never compared, so it can say anything and drift forever. Six such orphans
 	// accumulated here, and one had gone stale holding an absolute developer path in a plugin
 	// that ships to other machines.
-	if err := rejectOrphanProjections(ctx, rootDir, dirs, names); err != nil {
-		return verified, err
-	}
-	return verified, nil
+	return verified, errors.Join(append(errs, rejectOrphanProjections(ctx, rootDir, dirs, names))...)
 }
 
 // rejectOrphanProjections fails when a projection directory holds a persona the canonical set

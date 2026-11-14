@@ -11,6 +11,73 @@ import (
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 )
 
+// TestVerifyReadOnlyContext_IndependentFailures checks drift, lint and missing targets together
+// and separately, including drift-first ordering and the original error chains.
+func TestVerifyReadOnlyContext_IndependentFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		lint    bool
+		drift   bool
+		missing bool
+	}{
+		{name: "clean"},
+		{name: "drift only", drift: true},
+		{name: "lint only", lint: true},
+		{name: "drift and lint", drift: true, lint: true},
+		{name: "missing target", missing: true},
+		{name: "missing target and lint", missing: true, lint: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := verifyReadOnlyFixture(t, tt.lint, tt.drift, tt.missing)
+			assertReadOnlyFailures(t, err, tt.lint, tt.drift, tt.missing)
+			if tt.name == "clean" && err != nil {
+				t.Errorf("clean projection: %v", err)
+			}
+		})
+	}
+}
+
+// verifyReadOnlyFixture plants independent lint, drift and missing-target failures below a
+// temporary root, then invokes the production verifier.
+func verifyReadOnlyFixture(t *testing.T, lint, drift, missing bool) error {
+	t.Helper()
+	root := t.TempDir()
+	content := "# Policy\n\nRun checks.\n"
+	if lint {
+		content += strings.Repeat(lintProseAgents, 8)
+	}
+	source := writeRegisterFixture(t, root, "AGENTS.md", content)
+	if !missing {
+		if err := CompileReadOnlyContext(t.Context(), source, root); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if drift {
+		writeRegisterFixture(t, root, ReadOnlyFile, "drifted\n")
+	}
+	return VerifyReadOnlyContext(t.Context(), source, root)
+}
+
+// assertReadOnlyFailures checks independent error chains and drift-first diagnostics.
+func assertReadOnlyFailures(t *testing.T, err error, lint, drift, missing bool) {
+	t.Helper()
+	if errors.Is(err, ErrContextProse) != lint || errors.Is(err, os.ErrNotExist) != missing {
+		t.Errorf("error chains: %v; want lint=%v missing=%v", err, lint, missing)
+	}
+	text := ""
+	if err != nil {
+		text = err.Error()
+	}
+	const driftPrefix = "target " + ReadOnlyFile + " is out of sync"
+	if strings.Contains(text, driftPrefix) != drift {
+		t.Errorf("drift=%v: %v", drift, err)
+	}
+	if drift && !strings.HasPrefix(text, driftPrefix) {
+		t.Errorf("drift must precede lint: %v", err)
+	}
+}
+
 func TestCompileReadOnlyContext_Positive(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "AGENTS.md")
