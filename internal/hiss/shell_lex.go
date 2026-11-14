@@ -81,9 +81,14 @@ func (l *shellLexer) line(text string) (string, bool) {
 	for i := 0; i < len(text); {
 		i = l.step(text, i, &b)
 	}
+	l.finishLine()
+	return b.String(), false
+}
+
+// finishLine starts pending heredocs only after a complete logical command line.
+func (l *shellLexer) finishLine() {
 	l.bodies = append(l.bodies, l.pending...)
 	l.pending = l.pending[:0]
-	return b.String(), false
 }
 
 // bodyLine reads one line of a here-document body, closing it at its delimiter line.
@@ -177,7 +182,7 @@ func (l *shellLexer) code(text string, i int, b *strings.Builder) int {
 	case '(', ')':
 		return l.paren(text, i, b)
 	case '#':
-		if i == 0 || strings.IndexByte(" \t;&|()<>", text[i-1]) >= 0 {
+		if shellCommentBoundary(b.String()) {
 			return len(text)
 		}
 	}

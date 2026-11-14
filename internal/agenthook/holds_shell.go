@@ -223,31 +223,43 @@ func holdShellPayload(name string, args []holdWord) (*string, bool, string) {
 	return holdShellArguments(args)
 }
 
-// holdShellArguments locates a -c payload, refusing options whose interpretation is unclear.
+// holdShellArguments reads options and an optional -- before locating the -c script operand.
 func holdShellArguments(args []holdWord) (*string, bool, string) {
+	commandString := false
 	for i := 0; i < len(args) && i < admissionMaxWords; i++ {
 		word := args[i]
 		if !word.literal {
 			return nil, true, "cannot judge shell argument " + word.raw
 		}
 		if word.value == "--" {
-			return holdShellScript(args[i+1:])
+			return holdShellOperand(args[i+1:], commandString)
+		}
+		if strings.HasPrefix(word.value, "+") {
+			return nil, true, "cannot judge shell option " + word.raw
 		}
 		if !strings.HasPrefix(word.value, "-") {
-			if strings.HasPrefix(word.value, "+") {
-				return nil, true, "cannot judge shell option " + word.raw
-			}
-			return nil, false, ""
-		}
-		if !strings.HasPrefix(word.value, "--") && strings.Contains(word.value, "c") {
-			payload, reason := holdLiteralPayload(args[i+1 : min(i+2, len(args))])
-			return payload, true, reason
+			return holdShellOperand(args[i:], commandString)
 		}
 		if !holdShellFlags(word.value) {
 			return nil, true, "cannot judge shell option " + word.raw
 		}
+		commandString = commandString || holdShellCommandFlag(word.value)
 	}
 	return nil, true, "cannot judge shell input payload"
+}
+
+// holdShellCommandFlag distinguishes short -c clusters from long options such as --norc.
+func holdShellCommandFlag(word string) bool {
+	return !strings.HasPrefix(word, "--") && strings.ContainsRune(word, 'c')
+}
+
+// holdShellOperand requires a script, extracting only its first word when -c was present.
+func holdShellOperand(args []holdWord, commandString bool) (*string, bool, string) {
+	if !commandString {
+		return holdShellScript(args)
+	}
+	payload, reason := holdLiteralPayload(args[:min(1, len(args))])
+	return payload, true, reason
 }
 
 // holdShellScript requires a literal script operand after the shell option terminator.
@@ -266,7 +278,7 @@ func holdShellFlags(word string) bool {
 	if strings.HasPrefix(word, "--") {
 		return word == "--noprofile" || word == "--norc"
 	}
-	return strings.Trim(word[1:], "abefhkmnptuvxBCEHPTl") == ""
+	return strings.Trim(word[1:], "abcefhkmnptuvxBCEHPTl") == ""
 }
 
 // holdLiteralPayload extracts one literal word, refusing dynamic or concatenated payloads.

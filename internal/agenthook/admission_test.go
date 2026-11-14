@@ -134,7 +134,9 @@ func TestAdmission_Negative_HeavyStepsRefused(t *testing.T) {
 		"praetorctl admit -- make lint && go build ./...":                         "go-build",
 		"x=$(go test ./internal/...)":                                             "go-test",
 		"if pytest -q; then echo ok; fi":                                          "pytest",
-		"just build":                                                              "just-build",
+		"coproc go test ./internal/agenthook/":                                    "go-test",
+		"coproc WORKER { go test ./internal/agenthook/; }":                        "go-test",
+		"just build": "just-build",
 	} {
 		v := policy.Command(command)
 		if v.Outcome != Deny || !strings.Contains(v.Reason, "praetorctl admit --label "+label+" -- <command>") {

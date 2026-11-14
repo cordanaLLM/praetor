@@ -166,7 +166,7 @@ func holdShortOptions(name, word string, spec holdWrapperSpec) (bool, string) {
 	return false, ""
 }
 
-// holdTransformOption identifies options that reinterpret arguments instead of executing argv.
+// holdTransformOption refuses argument rewriting, including xargs replacement from stdin.
 func holdTransformOption(name, option string) bool {
 	key, _, _ := strings.Cut(option, "=")
 	if name == "env" {
@@ -176,7 +176,7 @@ func holdTransformOption(name, option string) bool {
 		return slices.Contains([]string{"-s", "--shell", "-i", "--login", "-e", "--edit"}, key)
 	}
 	if name == "xargs" {
-		return slices.Contains([]string{"-e", "-i", "-l"}, key)
+		return slices.Contains([]string{"-e", "-i", "-l", "-I", "--replace"}, key)
 	}
 	return name == "flock" && (key == "-c" || key == "--command")
 }

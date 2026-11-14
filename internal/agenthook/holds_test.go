@@ -22,6 +22,122 @@ import (
 
 const holdTestReason = "engine-test-order: quota hold until reviewed"
 
+// TestHolds_Coproc refuses simple and named compound coprocesses only during a hold.
+func TestHolds_Coproc(t *testing.T) {
+	checkHoldSpellings(t, []string{
+		`coproc agy models`, `bash -c 'coproc agy models'`,
+		`coproc { agy models; }`, `coproc WORKER { agy models; }`,
+		`bash -c 'coproc WORKER (agy models)'`,
+	})
+}
+
+// TestHolds_ShellOptionTerminator covers options, --, missing scripts and nested payloads.
+func TestHolds_ShellOptionTerminator(t *testing.T) {
+	checkHoldSpellings(t, []string{
+		`bash -c -- 'agy models'`, `bash -xc -- 'agy models'`,
+		`bash -c -x -- 'agy models'`, `bash --norc -c -- 'agy models'`,
+		`sh -c -- 'agy models'`, `bash -c -- "agy models" arg0`,
+		`bash -c --`, `bash -c -x --`, `bash -c -- "$SCRIPT"`,
+		`bash -c -- 'sh -c -- "agy models"'`,
+	})
+}
+
+// TestHolds_XargsCommandBoundary refuses stdin-supplied command words after wrapper chains.
+func TestHolds_XargsCommandBoundary(t *testing.T) {
+	checkHoldSpellings(t, []string{
+		`xargs`, `xargs nice`, `xargs env`, `xargs env nice`,
+		`xargs -r env --`, `xargs timeout 10 env`, `env xargs nice`,
+		`xargs nice agy models`, `xargs env agy models`,
+	})
+}
+
+// TestHolds_XargsReplacement refuses scripts or command words replaced from stdin.
+func TestHolds_XargsReplacement(t *testing.T) {
+	checkHoldSpellings(t, []string{
+		`xargs -I X sh -c X`, `xargs -IX sh -c X`, `xargs -0IX sh -c X`,
+		`xargs -iX sh -c X`, `xargs -i sh -c '{}'`,
+		`xargs --replace=X sh -c X`, `xargs --replace sh -c '{}'`,
+		`xargs -I X echo X`,
+	})
+}
+
+// TestHolds_CommentContinuation keeps commands following physical comment lines visible.
+func TestHolds_CommentContinuation(t *testing.T) {
+	checkHoldSpellings(t, []string{
+		"# note \\\nagy models", "echo ok # note \\\nagy models",
+		"echo ok # note \\\r\nagy models", "# note \\\n# note \\\nagy models",
+		"bash -c 'echo ok # note \\\nagy models'",
+		"echo \\# word # note \\\nagy models",
+		"echo '# quoted' # note \\\nagy models",
+		"echo \"# quoted\" # note \\\nagy models",
+		"cat <<'EOF'\n'\nEOF\n# note \\\nagy models",
+	})
+}
+
+// checkHoldSpellings checks planted bypasses with an absent, active and unconfigured hold.
+func checkHoldSpellings(t *testing.T, commands []string) {
+	t.Helper()
+	for _, command := range commands {
+		// Keep shell metacharacters in subtest names out of the expanded hold-file path.
+		policy, file := holdFixture(t)
+		t.Run(command, func(t *testing.T) {
+			if verdict := policy.Command(command); verdict.Outcome != Allow {
+				t.Fatalf("absent hold: %+v", verdict)
+			}
+			writeHoldFixture(t, file, holdTestReason)
+			if verdict := policy.Command(command); verdict.Outcome != Deny || !strings.Contains(verdict.Reason, file) {
+				t.Fatalf("active hold: %+v", verdict)
+			}
+			unset, err := BuildPolicy(config.HookSettings{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if verdict := unset.Command(command); verdict.Outcome != Allow {
+				t.Fatalf("unconfigured hold: %+v", verdict)
+			}
+		})
+	}
+}
+
+// TestHolds_ReviewRoundThreeAllowed preserves literal programs and wrappers outside xargs.
+func TestHolds_ReviewRoundThreeAllowed(t *testing.T) {
+	policy, file := holdFixture(t)
+	writeHoldFixture(t, file, holdTestReason)
+	for _, command := range []string{
+		`nice`, `env`, `env nice`, `xargs nice echo safe`, `xargs env echo safe`,
+		`bash -c -- 'echo safe'`, `bash -c -x -- 'echo safe'`,
+		`coproc echo safe`, `coproc WORKER { echo safe; }`,
+		"echo ok # agy models \\\n", "echo '# agy models'",
+	} {
+		t.Run(command, func(t *testing.T) {
+			if verdict := policy.Command(command); verdict.Outcome != Allow {
+				t.Fatalf("active hold: %+v", verdict)
+			}
+		})
+	}
+}
+
+// TestHolds_JoinLineContinuations checks shared joining across quotes, escapes and comments.
+func TestHolds_JoinLineContinuations(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"", ""}, {"\\", "\\"}, {"a\\\ngy", "agy"}, {"a\\\r\ngy", "agy"},
+		{"# note \\\nagy", "# note \\\nagy"},
+		{"echo \\#\\\nword", "echo \\#word"},
+		{"echo \\ #\\\nword", "echo \\ #word"},
+		{"echo '#\\\nword'", "echo '#\\\nword'"},
+		{"echo \"#\\\nword\"", "echo \"#word\""},
+		{"echo \\\\\nagy", "echo \\\\\nagy"},
+		{"echo \"$(echo ok # note \\\nagy)\"", "echo \"$(echo ok # note \\\nagy)\""},
+		{"cat <<'EOF'\n'\\\nEOF\na\\\ngy", "cat <<'EOF'\n'\\\nEOF\nagy"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			if got := joinLineContinuations(tc.input); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestHolds_StalledReadSlot bounds reader goroutines across many expired policy checks.
 func TestHolds_StalledReadSlot(t *testing.T) {
 	policy, _ := holdFixture(t)

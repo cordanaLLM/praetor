@@ -116,9 +116,10 @@ func holdScriptPrograms(script string, entry config.HoldSettings) (string, []str
 	return "", payloads
 }
 
-// holdProgram follows literal command words, launcher exemptions and supported wrappers.
+// holdProgram follows literal command words and wrappers, remembering xargs' stdin suffix.
 func holdProgram(words []holdWord, entry config.HoldSettings) (string, *string) {
 	i := holdPrelude(words)
+	throughXargs := false
 	for depth := 0; i < len(words) && depth < admissionMaxWrappers; depth++ {
 		word := words[i]
 		if !word.literal {
@@ -134,16 +135,25 @@ func holdProgram(words []holdWord, entry config.HoldSettings) (string, *string) 
 		if payload, handled, reason := holdShellPayload(name, words[i+1:]); handled {
 			return reason, payload
 		}
+		throughXargs = throughXargs || name == "xargs"
 		next, wrapper, reason := holdWrappedCommand(name, words, i)
 		if reason != "" || !wrapper {
 			return reason, nil
 		}
 		i = next
 	}
-	if i < len(words) {
-		return "command exceeds hold wrapper bound", nil
+	return holdProgramEnd(i, len(words), throughXargs), nil
+}
+
+// holdProgramEnd refuses exhausted wrapper bounds and command words supplied only by xargs.
+func holdProgramEnd(i, words int, throughXargs bool) string {
+	if i < words {
+		return "command exceeds hold wrapper bound"
 	}
-	return "", nil
+	if throughXargs {
+		return "cannot judge xargs stdin command word"
+	}
+	return ""
 }
 
 // holdExempt recognizes a configured launcher or a lookup that starts no guarded program.

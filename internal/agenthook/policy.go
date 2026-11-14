@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // denyRule is one compiled pattern with its source and the refusal a match prints ahead of
@@ -411,12 +412,10 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 	return &Policy{rules: rules}, nil
 }
 
-var lineContinuationReplacer = strings.NewReplacer("\\\r\n", "", "\\\n", "")
-
-// joinLineContinuations replaces backslash line continuations (a backslash followed by \r\n or
-// \n) with no intervening bytes before any rule runs.
+// joinLineContinuations shares comment-aware shell joining for the hold and background guards.
+// A backslash in a physical comment cannot swallow the following command's newline.
 func joinLineContinuations(command string) string {
-	return lineContinuationReplacer.Replace(command)
+	return hiss.JoinShellContinuations(command)
 }
 
 // Command judges one proposed command line using p's default working directory. The first
