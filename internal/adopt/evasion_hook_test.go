@@ -95,8 +95,8 @@ func evasionCommitSegmentCases() []struct {
 		{"state alias", `alias git=other; git commit -m x && tail -n 1`, 2},
 		{"state export", `export X=1; git commit -m x && tail -n 1`, 2},
 		{"state function", `function git() { other; }; git commit -m x && tail -n 1`, 2},
-		// Message substitutions at the nesting limit remain data.
-		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -n 1", 0},
+		// The nesting bound admits unquoted execution; its value still can split.
+		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -1", 0},
 		{"nesting past bound", "git commit -m " + strings.Repeat("$(", 17) + "cat msg.txt" + strings.Repeat(")", 17) + " && tail -n 1", 2},
 		{"heredoc lines at bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 255) + "EOF\ntail -n 1", 0},
 		{"heredoc lines past bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 256) + "EOF\ntail -n 1", 2},
@@ -187,11 +187,54 @@ func evasionRoundFourCases() []struct {
 	}
 }
 
+// evasionRoundFiveCases covers process bodies, splitting operands and escaped comment boundaries.
+func evasionRoundFiveCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"process input flag", `git commit <(printf %s -n)`, 2},
+		{"process output flag", `git commit >(printf %s -n)`, 2},
+		{"process am flag", `git am <(printf %s -n)`, 2},
+		{"process file flag", `git commit -F <(printf %s -n)`, 2},
+		{"process nested executable", `git commit -F <(git commit -n)`, 2},
+		{"process quoted literal", `git commit -m '<(printf %s -n)'`, 0},
+		{"process double quoted literal", `git commit -m ">(printf %s -n)"`, 0},
+		{"splitting message execution", `git commit -m $(printf '%s %s' msg -n)`, 2},
+		{"single word message execution", `git commit -m "$(printf '%s %s' msg -n)"`, 0},
+		{"splitting nested execution", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -n 1", 2},
+		{"splitting message parameter", `git commit -m $msg && git log -n 1`, 2},
+		{"splitting file parameter", `git commit -F $file && git log -n 1`, 2},
+		{"splitting reuse parameter", `git commit -C $msg && git log -n 1`, 2},
+		{"splitting reedit parameter", `git commit -c $msg && git log -n 1`, 2},
+		{"splitting author parameter", `git commit --author=$author && git log -n 1`, 2},
+		{"splitting date parameter", `git commit --date $date && git log -n 1`, 2},
+		{"splitting message glob", `git commit -m * && git log -n 1`, 2},
+		{"splitting joined message", `git commit --message=$(printf '%s %s' msg -n)`, 2},
+		{"splitting message backticks", "git commit -m `printf '%s %s' msg -n`", 2},
+		{"single word reuse long", `git commit --reuse-message="$msg" && git log -n 1`, 0},
+		{"single word reedit long", `git commit --reedit-message "$msg" && git log -n 1`, 0},
+		{"substitution suffix hash flag", `git commit -m $(printf %s fix)#note -n`, 2},
+		{"escaped space hash flag", `git commit -m fix\ #note -n`, 2},
+		{"escaped tab hash flag", "git commit -m fix\\\t#note -n", 2},
+		{"escaped operator hash flag", `git commit -m fix\;#note -n`, 2},
+		{"unescaped space comment", `git commit -m fix #note -n`, 0},
+		{"unescaped operator comment", `git commit -m fix;#note -n`, 0},
+		{"even escapes comment", `git commit -m fix\\ #note -n`, 0},
+		{"odd escapes hash flag", `git commit -m fix\\\ #note -n`, 2},
+		{"nested escaped space hash", `git commit -m "$(printf fix\ #note -n)" -n`, 2},
+	}
+}
+
 // TestEmittedEvasionCommitSegments keeps skip flags within their shell command.
 func TestEmittedEvasionCommitSegments(t *testing.T) {
 	python, script := emittedInterceptor(t)
 	cases := append(evasionCommitSegmentCases(), evasionRedirectCases()...)
-	for _, tc := range append(append(cases, evasionFallbackCases()...), evasionRoundFourCases()...) {
+	cases = append(append(cases, evasionFallbackCases()...), evasionRoundFourCases()...)
+	for _, tc := range append(cases, evasionRoundFiveCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
 			if got != tc.want {
@@ -276,6 +319,13 @@ func TestEmittedEvasionSegmentMutants(t *testing.T) {
 			`git commit -m x 2>&1 | tail -n 1`, 2},
 		{"positional expansion", "self.uncertain |= self.word_expansion", "self.uncertain |= False",
 			`git commit "$x" && git log -n 1`, 0},
+		{"process execution", "if self.command.startswith((\"<(\", \">(\"), self.position):", "if False:",
+			`git commit <(printf %s -n)`, 0},
+		{"one word operand", "if offset >= 0 and not self.word_splitting:", "if offset >= 0:",
+			`git commit -m $(printf '%s %s' msg -n)`, 0},
+		{"escaped boundary", "if not self.word_boundary():",
+			"if self.position > 0 and self.command[self.position - 1] not in \" \\t\\n;|&(\":",
+			`git commit -m fix\ #note -n`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rendered := buildBlockEvasionPY()

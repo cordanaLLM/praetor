@@ -318,7 +318,7 @@ var (
 	shellHerePattern         = regexp.MustCompile(`^<<(-?)[ \t]*("[^"]*"|'[^']*'|[-A-Za-z0-9_]+)`)
 	shellRedirectPattern     = regexp.MustCompile(`^&?[<>](?:[<>|]|&[0-9-]*)?`)
 	shellUnsupportedPattern  = regexp.MustCompile(`[^\t\x20-\x7e]|[{}^!]`)
-	shellDataOptionPattern   = regexp.MustCompile(`^(--(?:message|file|author|date)(=|$)|-[mFCc])`)
+	shellDataOptionPattern   = regexp.MustCompile(`^(--(?:message|file|reuse-message|reedit-message|author|date)(=|$)|-[mFCc])`)
 	// Reuse the short-flag rule's Git option prefilter without requiring its flag tail.
 	shellCommitPattern = regexp.MustCompile(strings.ReplaceAll(
 		shortSkipFlagRule[:strings.Index(shortSkipFlagRule, `(commit\b`)]+`(commit\b|am\b)`, `\s`, pythonSpace))
@@ -357,7 +357,7 @@ type shellSpans struct {
 	judged                         []byte
 	wordStart                      int
 	nextData, redirectData         bool
-	wordExpansion                  bool
+	wordExpansion, wordSplitting   bool
 	gitCommand                     string
 	executionStart, executionDepth int
 	wordExecutions                 []string
@@ -489,7 +489,7 @@ func (s *shellSpans) quotedStep() (bool, bool) {
 		s.position++
 		return true, true
 	case '$':
-		s.wordExpansion = true
+		s.markExpansion()
 		if strings.HasPrefix(s.command[s.position:], "$(") {
 			return true, s.openExecution(')', 2)
 		}
@@ -532,7 +532,7 @@ func (s *shellSpans) structuralStep() bool {
 func (s *shellSpans) boundaryStep(ch byte) bool {
 	switch ch {
 	case '<', '>':
-		return s.redirection()
+		return s.redirectOrExecution()
 	case '\n':
 		return s.newline()
 	case ';', '&', '|':
@@ -554,7 +554,7 @@ func (s *shellSpans) wordStep() bool {
 		s.position++
 		return true
 	}
-	if s.wordStart < 0 {
+	if s.wordStart < 0 && s.wordBoundary() {
 		s.wordStart = s.position
 	}
 	return false
@@ -569,19 +569,19 @@ func (s *shellSpans) finishWord(end int) {
 	s.enterGitCommand(word, end)
 	data := s.nextData || s.redirectData
 	offset := s.dataOffset(word)
-	if offset >= 0 {
+	if offset >= 0 && !s.wordSplitting {
 		s.mask(s.wordStart+offset, end)
-		for _, execution := range s.wordExecutions {
-			s.nested = append(s.nested, shellInput{text: execution})
-		}
 	} else {
 		s.uncertain = s.uncertain || s.wordExpansion
+	}
+	for _, execution := range s.wordExecutions {
+		s.nested = append(s.nested, shellInput{text: execution})
 	}
 	if data {
 		s.nextData = s.nextData && s.redirectData
 	}
 	s.wordStart, s.executionStart = -1, -1
-	s.wordExpansion, s.redirectData = false, false
+	s.wordExpansion, s.wordSplitting, s.redirectData = false, false, false
 	s.wordExecutions = nil
 }
 
@@ -618,9 +618,25 @@ func (s *shellSpans) mask(start, end int) {
 	}
 }
 
+// markExpansion distinguishes expansions that can split from those inside double quotes.
+func (s *shellSpans) markExpansion() {
+	s.wordExpansion = true
+	s.wordSplitting = s.wordSplitting || len(s.stack) == 0
+}
+
+// redirectOrExecution recognises process substitutions before ordinary redirections.
+func (s *shellSpans) redirectOrExecution() bool {
+	rest := s.command[s.position:]
+	if strings.HasPrefix(rest, "<(") || strings.HasPrefix(rest, ">(") {
+		s.wordSplitting = true
+		return s.openExecution(')', 2)
+	}
+	return s.redirection()
+}
+
 // openExecution records the outermost executable body within the current word.
 func (s *shellSpans) openExecution(closer byte, width int) bool {
-	s.wordExpansion = true
+	s.markExpansion()
 	if s.executionStart < 0 {
 		s.executionStart, s.executionDepth = s.position+width, len(s.stack)+1
 	}
@@ -658,13 +674,30 @@ func (s *shellSpans) controlCharacter(ch byte) {
 	if len(s.stack) != 0 {
 		return
 	}
-	s.wordExpansion = s.wordExpansion || strings.ContainsRune("*?[", rune(ch))
+	glob := strings.ContainsRune("*?[", rune(ch))
+	s.wordExpansion = s.wordExpansion || glob
+	s.wordSplitting = s.wordSplitting || glob
 	s.whole = s.whole || shellUnsupportedPattern.MatchString(s.command[s.position:s.position+1])
+}
+
+// wordBoundary rejects escaped blanks and operators as lexical word boundaries.
+func (s *shellSpans) wordBoundary() bool {
+	if s.position == 0 {
+		return true
+	}
+	if !strings.ContainsRune(" \t\n;|&(<>", rune(s.command[s.position-1])) {
+		return false
+	}
+	escapes := 0
+	for i := s.position - 2; i >= 0 && s.command[i] == '\\'; i-- {
+		escapes++
+	}
+	return escapes%2 == 0
 }
 
 // comment ignores word-starting shell comments, including quotes and trailing backslashes.
 func (s *shellSpans) comment() bool {
-	if s.position > 0 && !strings.ContainsRune(" \t\n;|&(", rune(s.command[s.position-1])) {
+	if !s.wordBoundary() {
 		s.position++
 		return true
 	}

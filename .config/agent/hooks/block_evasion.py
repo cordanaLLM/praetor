@@ -162,7 +162,9 @@ class CommandSpans:
     state_pattern = READ_ONLY_VETO[state_start:]
     here_pattern = r"^<<(-?)[ \t]*(\"[^\"]*\"|'[^']*'|[-A-Za-z0-9_]+)"
     redirect_pattern = r"^&?[<>](?:[<>|]|&[0-9-]*)?"
-    data_option_pattern = re.compile(r"^(--(?:message|file|author|date)(=|$)|-[mFCc])")
+    data_option_pattern = re.compile(
+        r"^(--(?:message|file|reuse-message|reedit-message|author|date)(=|$)|-[mFCc])"
+    )
     literal_pattern = re.compile(r'[^"\\$\x60\n]+')
 
     def __init__(self, command, short_pattern):
@@ -176,6 +178,7 @@ class CommandSpans:
         self.word_start = self.execution_start = -1
         self.execution_depth = 0
         self.next_data = self.redirect_data = self.word_expansion = False
+        self.word_splitting = False
         self.git_command = ""
         self.word_executions, self.nested = [], []
 
@@ -209,7 +212,7 @@ class CommandSpans:
             self.position += 1
             return True, True
         if ch == "$":
-            self.word_expansion = True
+            self.mark_expansion()
             if self.command.startswith("$(", self.position):
                 return True, self.open_execution(")", 2)
         return False, True
@@ -245,7 +248,7 @@ class CommandSpans:
     def boundary_step(self, ch):
         """Handle boundaries, redirections and ordinary unquoted characters."""
         if ch in "<>":
-            return self.redirection()
+            return self.redirect_or_execution()
         if ch == "\n":
             return self.newline()
         if ch in ";&|":
@@ -262,7 +265,7 @@ class CommandSpans:
             self.finish_word(self.position)
             self.position += 1
             return True
-        if self.word_start < 0:
+        if self.word_start < 0 and self.word_boundary():
             self.word_start = self.position
         return False
 
@@ -275,15 +278,15 @@ class CommandSpans:
         self.enter_git_command(word, end)
         data = self.next_data or self.redirect_data
         offset = self.data_offset(word)
-        if offset >= 0:
+        if offset >= 0 and not self.word_splitting:
             self.mask(self.word_start + offset, end)
-            self.nested.extend((execution, False) for execution in self.word_executions)
         else:
             self.uncertain |= self.word_expansion
+        self.nested.extend((execution, False) for execution in self.word_executions)
         if data:
             self.next_data = self.next_data and self.redirect_data
         self.word_start = self.execution_start = -1
-        self.word_expansion = self.redirect_data = False
+        self.word_expansion = self.word_splitting = self.redirect_data = False
         self.word_executions = []
 
     def enter_git_command(self, word, end):
@@ -310,9 +313,21 @@ class CommandSpans:
         """Remove data from short-option matching without changing offsets."""
         self.judged[start:end] = " " * (end - start)
 
+    def mark_expansion(self):
+        """Distinguish splitting expansions from those inside double quotes."""
+        self.word_expansion = True
+        self.word_splitting |= not self.stack
+
+    def redirect_or_execution(self):
+        """Recognise process substitutions before ordinary redirections."""
+        if self.command.startswith(("<(", ">("), self.position):
+            self.word_splitting = True
+            return self.open_execution(")", 2)
+        return self.redirection()
+
     def open_execution(self, closer, width):
         """Record the outermost executable body within the current word."""
-        self.word_expansion = True
+        self.mark_expansion()
         if self.execution_start < 0:
             self.execution_start = self.position + width
             self.execution_depth = len(self.stack) + 1
@@ -344,13 +359,28 @@ class CommandSpans:
         """Keep unsupported syntax and positional globs conservative."""
         if self.stack:
             return
-        self.word_expansion |= ch in "*?["
+        glob = ch in "*?["
+        self.word_expansion |= glob
+        self.word_splitting |= glob
         if ch in "{}^!" or ord(ch) > 126 or ord(ch) < 32 and ch != "\t":
             self.whole = True
 
+    def word_boundary(self):
+        """Reject escaped blanks and operators as lexical word boundaries."""
+        if self.position == 0:
+            return True
+        if self.command[self.position - 1] not in " \t\n;|&(<>":
+            return False
+        escapes = 0
+        for index in range(self.position - 2, -1, -1):
+            if self.command[index] != "\\":
+                break
+            escapes += 1
+        return escapes % 2 == 0
+
     def comment(self):
         """Ignore word-starting comments, including quotes and backslashes."""
-        if self.position > 0 and self.command[self.position - 1] not in " \t\n;|&(":
+        if not self.word_boundary():
             self.position += 1
             return True
         end = self.command.find("\n", self.position)
