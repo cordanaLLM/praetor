@@ -7,8 +7,10 @@ package supplychain
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,26 +21,158 @@ type pinScanMeasurement struct {
 	listing, reading, collecting  time.Duration
 }
 
-// TestScanRepositoryPinsContention reserves four fifths of the one-minute deadline
-// for host contention: the complete scan must use less than one fifth with only
-// two Go execution threads. Run with -race and CPU affinity restricted to two CPUs
-// to reproduce the loaded pre-push budget without weakening the scan deadline.
-func TestScanRepositoryPinsContention(t *testing.T) {
+// TestScanRepositoryPins checks independently read repository pins without timing limits.
+func TestScanRepositoryPins(t *testing.T) {
 	requireGit(t)
+	root := filepath.Join("..", "..")
+	want := repositoryPinExpectations(t, root)
+	pins, err := ScanRepositoryPins(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing := missingRepositoryPins(pins, want); len(missing) != 0 {
+		t.Fatalf("repository scan missed pins: %+v", missing)
+	}
+}
+
+// TestScanRepositoryPinsContention optionally enforces a one-fifth deadline budget
+// with two Go execution threads; the normal suite uses deterministic scan checks.
+func TestScanRepositoryPinsContention(t *testing.T) {
+	if os.Getenv("PRAETOR_PERF_TESTS") != "1" {
+		t.Skip("performance timing requires PRAETOR_PERF_TESTS=1; host contention affects elapsed time")
+	}
+	requireGit(t)
+	root := filepath.Join("..", "..")
+	want := repositoryPinExpectations(t, root)
 	previous := runtime.GOMAXPROCS(2)
 	defer runtime.GOMAXPROCS(previous)
 	start := time.Now()
-	pins, err := ScanRepositoryPins(t.Context(), filepath.Join("..", ".."))
+	pins, err := ScanRepositoryPins(t.Context(), root)
 	elapsed := time.Since(start)
 	t.Logf("repository pin scan: %s; budget: %s; GOMAXPROCS=2", elapsed, imageRefScanTimeout/5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pinCopies(pins)) < 2 {
-		t.Fatal("repository scan stopped finding pins")
+	if missing := missingRepositoryPins(pins, want); len(missing) != 0 {
+		t.Fatalf("repository scan missed pins: %+v", missing)
 	}
 	if elapsed >= imageRefScanTimeout/5 {
 		t.Fatalf("repository pin scan took %s, want less than %s (one fifth of imageRefScanTimeout)", elapsed, imageRefScanTimeout/5)
+	}
+}
+
+// repositoryPinExpectations reads tagged pins directly, independently of scan listing.
+func repositoryPinExpectations(tb testing.TB, root string) []ImagePin {
+	tb.Helper()
+	var want []ImagePin
+	for _, rel := range []string{"Dockerfile", "docker/dev/Dockerfile"} {
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			tb.Fatal(err)
+		}
+		pins := CollectImagePins(rel, string(content))
+		if len(pins) == 0 {
+			tb.Fatalf("expected tagged image pins in %s", rel)
+		}
+		want = append(want, pins...)
+	}
+	return want
+}
+
+// missingRepositoryPins compares complete file, image and digest triples.
+func missingRepositoryPins(pins, want []ImagePin) []ImagePin {
+	var missing []ImagePin
+	for _, pin := range want {
+		if !slices.Contains(pins, pin) {
+			missing = append(missing, pin)
+		}
+	}
+	return missing
+}
+
+// TestMissingRepositoryPins rejects fabricated pins and mismatched triple fields.
+func TestMissingRepositoryPins(t *testing.T) {
+	want := repositoryPinExpectations(t, filepath.Join("..", ".."))
+	wrongFile, wrongImage, wrongDigest := want[0], want[0], want[0]
+	wrongFile.File += ".wrong"
+	wrongImage.Image += "-wrong"
+	wrongDigest.Digest = "wrong"
+	for _, tc := range []struct {
+		name        string
+		pins        []ImagePin
+		wantMissing int
+	}{
+		{name: "real pins", pins: want},
+		{name: "empty", wantMissing: len(want)},
+		{name: "two fabricated references", pins: []ImagePin{
+			{File: "fake.go", Image: "fake:one", Digest: testPinnedDigest},
+			{File: "fake.yml", Image: "fake:two", Digest: testPinnedDigest},
+		}, wantMissing: len(want)},
+		{name: "wrong file", pins: []ImagePin{wrongFile}, wantMissing: len(want)},
+		{name: "wrong image", pins: []ImagePin{wrongImage}, wantMissing: len(want)},
+		{name: "wrong digest", pins: []ImagePin{wrongDigest}, wantMissing: len(want)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if missing := missingRepositoryPins(tc.pins, want); len(missing) != tc.wantMissing {
+				t.Fatalf("missing pins = %+v, want %d", missing, tc.wantMissing)
+			}
+		})
+	}
+}
+
+// expectedPinMatchCalls counts marked contents among independently read scan candidates.
+func expectedPinMatchCalls(t *testing.T, root string) map[string]int {
+	t.Helper()
+	files, err := RepositoryFiles(t.Context(), root, ScannedFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := make(map[string]int)
+	err = iterateScannedFiles(t.Context(), root, files, ScannedFile, func(_ string, content []byte, readErr error) error {
+		if readErr != nil {
+			return readErr
+		}
+		if text := string(content); strings.Contains(text, "@sha256:") {
+			want[text]++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(want) == 0 {
+		t.Fatal("repository has no marked files to exercise regexp calls")
+	}
+	return want
+}
+
+// TestScanRepositoryPinsSkipsMarkerFreeMatches counts one regexp call per marked
+// read file, including duplicate contents, and zero calls for marker-free files.
+func TestScanRepositoryPinsSkipsMarkerFreeMatches(t *testing.T) {
+	requireGit(t)
+	root := filepath.Join("..", "..")
+	remaining := expectedPinMatchCalls(t, root)
+	original := findTaggedDigests
+	t.Cleanup(func() { findTaggedDigests = original })
+	unexpected := 0
+	findTaggedDigests = func(content string, limit int) [][]string {
+		if remaining[content] == 0 {
+			unexpected++
+		} else {
+			remaining[content]--
+		}
+		return original(content, limit)
+	}
+	if _, err := ScanRepositoryPins(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	if unexpected != 0 {
+		t.Errorf("regexp called %d times for marker-free or excess file contents", unexpected)
+	}
+	for _, count := range remaining {
+		if count != 0 {
+			t.Errorf("regexp missed %d marked files with identical contents", count)
+		}
 	}
 }
 
@@ -121,6 +255,7 @@ func measurePinScan(ctx context.Context, root string) (pinScanMeasurement, error
 // BenchmarkScanRepositoryPins records the real scan plus the work and time of each stage.
 func BenchmarkScanRepositoryPins(b *testing.B) {
 	root := filepath.Join("..", "..")
+	want := repositoryPinExpectations(b, root)
 	m, err := measurePinScan(b.Context(), root)
 	if err != nil {
 		b.Fatal(err)
@@ -133,8 +268,8 @@ func BenchmarkScanRepositoryPins(b *testing.B) {
 		if scanErr != nil {
 			b.Fatal(scanErr)
 		}
-		if len(pinCopies(pins)) < 2 {
-			b.Fatal("repository scan stopped finding pins")
+		if missing := missingRepositoryPins(pins, want); len(missing) != 0 {
+			b.Fatalf("repository scan missed pins: %+v", missing)
 		}
 	}
 }
