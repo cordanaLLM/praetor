@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ type stopReviewCache struct {
 
 type stopReviewReadError struct {
 	err, diagnostic error
+	limited         *forge.ErrRateLimited
 }
 
 type stopReviewResult struct {
@@ -193,8 +195,11 @@ func readStopReviewsResult(ctx, inventoryCtx context.Context, reader forge.Revie
 	}
 	batchCtx, cancel := context.WithTimeout(ctx, stopReviewBatchBudget(len(numbers)))
 	defer cancel()
-	snapshots, batchErr := retryStopReviewRead(batchCtx, func(ctx context.Context) (map[int]forge.ReviewSnapshot, error) {
-		return reader.ReadBatch(ctx, repo, numbers)
+	snapshots := make(map[int]forge.ReviewSnapshot, len(numbers))
+	_, batchErr := retryStopReviewRead(batchCtx, func(ctx context.Context) (map[int]forge.ReviewSnapshot, error) {
+		latest, err := reader.ReadBatch(ctx, repo, numbers)
+		maps.Copy(snapshots, latest)
+		return snapshots, err
 	})
 	batchErr = errors.Join(batchErr, batchCtx.Err())
 	failure := stopReviewBatchFailure(batchErr)
@@ -209,43 +214,59 @@ func readStopReviewsResult(ctx, inventoryCtx context.Context, reader forge.Revie
 // stopReviewBatchFailure walks joined and wrapped failures with a bound, preserving each read's diagnostic.
 // Ordinary failures deny independently of rate-limit notices; an exhausted walk also denies.
 func stopReviewBatchFailure(err error) Verdict {
-	const prefix = "Own pull request review batch failed: "
-	failure := Verdict{Outcome: Allow}
-	overflow := Verdict{Outcome: Deny, Reason: prefix + fmt.Sprintf("review error walk exceeds %d nodes", maxStopReviewReadErrors)}
-	pending := []stopReviewReadError{{err, err}}
+	return stopReviewReadFailure(err, "Own pull request review batch failed: ")
+}
+
+// walkStopReviewReadErrors visits leaves with their diagnostic and rate metadata; false means unchecked nodes remain.
+func walkStopReviewReadErrors(err error, visit func(stopReviewReadError)) bool {
+	pending := []stopReviewReadError{{err: err, diagnostic: err}}
 	for checked := 0; checked < maxStopReviewReadErrors && len(pending) > 0; checked++ {
 		next := pending[0]
 		pending = pending[1:]
 		if next.err == nil {
 			continue
 		}
+		if limited, ok := next.err.(*forge.ErrRateLimited); ok { //nolint:errorlint // Inspect this node only; errors.As would traverse unchecked joins beyond the bound.
+			next.limited = limited
+		}
 		if joined, ok := next.err.(interface{ Unwrap() []error }); ok {
 			children := joined.Unwrap()
 			if len(children) > maxStopReviewReadErrors-len(pending) {
-				return mergeStopChecks(failure, overflow)
+				return false
 			}
 			for _, child := range children {
-				pending = append(pending, stopReviewReadError{child, child})
+				pending = append(pending, stopReviewReadError{err: child, diagnostic: child, limited: next.limited})
 			}
 			continue
 		}
 		if child := errors.Unwrap(next.err); child != nil {
-			pending = append(pending, stopReviewReadError{child, next.diagnostic})
+			next.err = child
+			pending = append(pending, next)
 			continue
 		}
-		failure = mergeStopChecks(failure, stopReviewReadFailure(next.diagnostic, prefix))
+		visit(next)
 	}
-	if len(pending) > 0 {
-		return mergeStopChecks(failure, overflow)
-	}
-	return failure
+	return len(pending) == 0
 }
 
 // stopReviewReadFailure denies local throttles and ordinary errors; GitHub limits retain deferral metadata.
 func stopReviewReadFailure(err error, prefix string) Verdict {
-	var limited *forge.ErrRateLimited
-	if stopReviewLocallyThrottled(err) || !errors.As(err, &limited) {
-		return Verdict{Outcome: Deny, Reason: prefix + err.Error()}
+	failure := Verdict{Outcome: Allow}
+	complete := walkStopReviewReadErrors(err, func(read stopReviewReadError) {
+		failure = mergeStopChecks(failure, stopReviewLeafFailure(read, prefix))
+	})
+	if !complete {
+		return mergeStopChecks(failure, Verdict{Outcome: Deny,
+			Reason: prefix + fmt.Sprintf("review error walk exceeds %d nodes", maxStopReviewReadErrors)})
+	}
+	return failure
+}
+
+// stopReviewLeafFailure classifies one bounded leaf using only its own path's GitHub metadata.
+func stopReviewLeafFailure(read stopReviewReadError, prefix string) Verdict {
+	limited := read.limited
+	if stopReviewLocalThrottle(read) || limited == nil {
+		return Verdict{Outcome: Deny, Reason: prefix + read.diagnostic.Error()}
 	}
 	notice := "review inventory deferred: GitHub rate limited: " + limited.Error()
 	if limited.Bucket != "" && limited.Remaining != "" && limited.Limit != "" {

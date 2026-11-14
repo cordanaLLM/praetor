@@ -2,12 +2,12 @@ package agenthook
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 )
 
 // stopReviewRetryLimit bounds local-throttle reads to one initial try and three retries.
+// The 1 s, 2 s, 4 s waits plus a 1 s reserve permit three tries in 4 s inventory and four in 12 s batches, if reads leave time.
 const stopReviewRetryLimit = 4
 
 // stopReviewRetryReserve leaves at least one second for the next read within its existing phase budget.
@@ -18,8 +18,17 @@ var stopReviewSleep = sleepStopReviewRetry
 
 // stopReviewLocallyThrottled recognizes gh_guard's command status through wrapped and joined errors.
 func stopReviewLocallyThrottled(err error) bool {
-	var exit interface{ ExitCode() int }
-	return errors.As(err, &exit) && exit.ExitCode() == 75
+	throttled := false
+	complete := walkStopReviewReadErrors(err, func(read stopReviewReadError) {
+		throttled = throttled || stopReviewLocalThrottle(read)
+	})
+	return throttled || !complete
+}
+
+// stopReviewLocalThrottle recognizes exit 75 without parsed GitHub budget metadata on that leaf's path.
+func stopReviewLocalThrottle(read stopReviewReadError) bool {
+	exit, ok := read.err.(interface{ ExitCode() int })
+	return ok && exit.ExitCode() == 75 && (read.limited == nil || read.limited.Bucket == "")
 }
 
 // retryStopReviewRead retries only local throttles within the original discovery or batch deadline.
@@ -32,7 +41,7 @@ func retryStopReviewRead[T any](ctx context.Context, read func(context.Context) 
 		if !stopReviewLocallyThrottled(err) {
 			return value, err
 		}
-		if tries == stopReviewRetryLimit || !waitStopReviewRetry(ctx, time.Second<<tries) {
+		if tries == stopReviewRetryLimit || !waitStopReviewRetry(ctx, time.Second<<(tries-1)) {
 			break
 		}
 	}
