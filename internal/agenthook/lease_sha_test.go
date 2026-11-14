@@ -207,3 +207,96 @@ func main() { time.Sleep(30 * time.Second) }
 		t.Fatalf("missing Git accepted or reason lost: %+v", verdict)
 	}
 }
+
+// TestLiteralCommitSHAParseAllows preserves shell errors without a SHA-bearing form and hex run.
+func TestLiteralCommitSHAParseAllows(t *testing.T) {
+	bad := strings.Repeat("a", 40)
+	for _, command := range []string{
+		`echo "high`,
+		`echo "length ` + bad,
+		`gh issue create --title "unclosed`,
+		`git status "` + bad,
+		`git push --force-with-lease=main:aaaaaa "`,
+		`gh run list --commit "$runtime`,
+		`echo --commitment ` + bad + ` "`,
+		`echo not--force-with-lease ` + bad + ` "`,
+		`echo squash_merge.sh.bak ` + bad + ` "`,
+		`legit show ` + bad + ` "`,
+		`git logger ` + bad + ` "`,
+		`git-show ` + bad + ` "`,
+		`git show-more ` + bad + ` "`,
+		`high api repos/o/r/commits/` + bad + ` "`,
+		`gh api repos/o/r/notcommits/` + bad + ` "`,
+	} {
+		t.Run(command, func(t *testing.T) {
+			if verdict := judgeLiteralCommitSHAs(t.Context(), command, t.TempDir()); verdict.Outcome != Allow {
+				t.Fatalf("unrelated parse error refused: %+v", verdict)
+			}
+		})
+	}
+}
+
+// TestLiteralCommitSHAParseRefuses retains fail-closed parsing for every SHA-bearing form.
+func TestLiteralCommitSHAParseRefuses(t *testing.T) {
+	bad := strings.Repeat("a", 40)
+	for _, command := range []string{
+		"git push --force-with-lease=main:" + bad,
+		"scripts/squash_merge.sh 12 " + bad,
+		"gh pr merge 12 --match-head-commit=" + bad,
+		"gh run list --commit=" + bad,
+		"gh api repos/o/r/commits/" + bad,
+		"gh api commits/" + bad,
+		"gh --hostname example.test api repos/o/r/commits/" + bad,
+		"git log " + bad,
+		"git show " + bad,
+		"git -C missing show " + bad,
+		"gh run list --commit=" + bad[:7],
+	} {
+		t.Run(command, func(t *testing.T) {
+			verdict := judgeLiteralCommitSHAs(t.Context(), command+` "`, t.TempDir())
+			if verdict.Outcome != Deny || !strings.Contains(verdict.Reason, "literal commit SHA check: command parse:") {
+				t.Fatalf("SHA-bearing parse error accepted or reason lost: %+v", verdict)
+			}
+		})
+	}
+}
+
+// TestPolicyLeaseSHAForgeRefusal preserves forge-text refusals even alongside fabricated SHAs.
+func TestPolicyLeaseSHAForgeRefusal(t *testing.T) {
+	dir, _ := leaseRepository(t)
+	bad := strings.Repeat("a", 40)
+	for _, command := range []string{
+		`gh issue create --title "unclosed --commit ` + bad,
+		`gh issue create --title 'outside-org/project#42'; gh run list --commit=` + bad,
+	} {
+		assertForgeTextDenied(t, runPreToolCommand(t, dir, command, nil), "")
+	}
+}
+
+// TestPolicyLeaseSHAExistingRefusals preserves each existing policy rule's complete refusal.
+func TestPolicyLeaseSHAExistingRefusals(t *testing.T) {
+	command := "git push --force-with-lease=main:" + strings.Repeat("a", 40) + ` "`
+	for _, tc := range []struct {
+		name    string
+		policy  *Policy
+		command string
+		want    string
+	}{
+		{"builtin", policy(t), command + " --no-verify", "verification evasion"},
+		{"operator", policy(t, "--force-with-lease"), command, "operator"},
+		{"admission", &Policy{admission: &admissionCheck{}}, command, "heavy-step check:"},
+		{"worktree", &Policy{worktrees: &worktreeCheck{}}, command, "git worktree add check:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			want := tc.policy.commandRulesIn(t.Context(), tc.command, dir)
+			if want.Outcome != Deny || !strings.Contains(want.Reason, tc.want) {
+				t.Fatalf("fixture did not trigger existing rule: %+v", want)
+			}
+			got := tc.policy.CommandIn(t.Context(), tc.command, dir)
+			if got.Outcome != want.Outcome || got.Reason != want.Reason || got.Notice != want.Notice {
+				t.Fatalf("existing verdict changed: got %+v, want %+v", got, want)
+			}
+		})
+	}
+}

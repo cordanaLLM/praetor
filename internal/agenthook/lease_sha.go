@@ -19,21 +19,31 @@ import (
 // literalCommitSHA accepts only a complete literal commit abbreviation or SHA-1 name.
 var literalCommitSHA = regexp.MustCompile(`\A[0-9a-fA-F]{7,40}\z`)
 
+// rawSHAHexRun detects a potentially literal commit even when shell parsing fails.
+var rawSHAHexRun = regexp.MustCompile(`[0-9a-fA-F]{7,}`)
+
+// rawSHAForm matches whole SHA-bearing names; flags and script names cannot match prefixes.
+var rawSHAForm = regexp.MustCompile(`(?:\A|[^-\w])(?:--force-with-lease|--match-head-commit|--commit)(?:\z|[^-\w])|` +
+	`(?:\A|[^-\w.])squash_merge\.sh(?:\z|[^-\w.])|` +
+	`(?:\A|[^-\w])git[^-\w](?:[\s\S]*[^-\w])?(?:log|show)(?:\z|[^-\w])|` +
+	`(?:\A|[^-\w])gh[^-\w](?:[\s\S]*[^-\w])?api[^-\w](?:[\s\S]*[/\s'"])?commits/`)
+
 // commitSHAOperand retains the source of a literal for an actionable refusal.
 type commitSHAOperand struct {
 	value string
 	flag  string
 }
 
-// judgeLiteralCommitSHAs resolves literal operands before admission or command execution.
+// judgeLiteralCommitSHAs resolves literal operands before command execution.
 // One shared three-second budget bounds every Git read across the entire shell command.
+// Parse errors refuse only raw SHA-bearing forms accompanied by seven or more hex digits.
 func judgeLiteralCommitSHAs(ctx context.Context, command, workDir string) Verdict {
-	if !containsRequiredLiteral(command, []string{"--force-with-lease", "squash_merge.sh", "--match-head-commit", "gh", "git"}) {
-		return Verdict{Outcome: Allow}
-	}
 	fields, err := forge.ShellFields(command)
 	if err != nil {
-		return shaRefusal("command parse: " + err.Error())
+		if rawSHAForm.MatchString(command) && rawSHAHexRun.MatchString(command) {
+			return shaRefusal("command parse: " + err.Error())
+		}
+		return Verdict{Outcome: Allow}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -61,6 +71,16 @@ func judgeLiteralCommitSHAs(ctx context.Context, command, workDir string) Verdic
 		start = i + 1
 	}
 	return Verdict{Outcome: Allow}
+}
+
+// judgeLiteralCommitSHAsAfter preserves prior refusals and notices before inspecting SHAs.
+func judgeLiteralCommitSHAsAfter(ctx context.Context, command, workDir string, previous Verdict) Verdict {
+	if previous.Outcome != Allow {
+		return previous
+	}
+	verdict := judgeLiteralCommitSHAs(ctx, joinLineContinuations(command), workDir)
+	verdict.Notice = appendLaneNotice(previous.Notice, verdict.Notice)
+	return verdict
 }
 
 // shaRefusal returns the bounded native pre-tool refusal for commit resolution failures.

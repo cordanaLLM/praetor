@@ -191,20 +191,20 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 	}
 }
 
-// evaluateCommand runs the built-in command policy, resolved against the command's working
-// directory, and the forge-text foreign-reference guard on canonical.Command, refusing commands
-// that violate either check.
+// evaluateCommand runs the existing command policy and forge-text guard before checking SHAs.
+// Every existing refusal retains its original reason and notices.
 func evaluateCommand(ctx context.Context, canonical Canonical, root string, in Invocation) Verdict {
 	if canonical.Command == "" {
 		return Verdict{Outcome: Allow}
 	}
-	verdict := in.Policy.CommandIn(ctx, canonical.Command, commandBase(canonical, in.WorkDir))
+	base := commandBase(canonical, in.WorkDir)
+	verdict := in.Policy.commandRulesIn(ctx, canonical.Command, base)
 	if verdict.Outcome != Allow {
 		return verdict
 	}
 	forgeVerdict := evaluateForgeTextRefs(ctx, canonical, root, in)
 	forgeVerdict.Notice = appendLaneNotice(verdict.Notice, forgeVerdict.Notice)
-	return forgeVerdict
+	return judgeLiteralCommitSHAsAfter(ctx, canonical.Command, base, forgeVerdict)
 }
 
 // noInterpreterVerdict differs per event (3.3): pre-edit and stop fail closed (deny; stop's
