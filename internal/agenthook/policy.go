@@ -358,6 +358,7 @@ type shellSpans struct {
 	wordStart                      int
 	nextData, redirectData         bool
 	wordExpansion, wordSplitting   bool
+	argumentsUncertain             bool
 	gitCommand                     string
 	executionStart, executionDepth int
 	wordExecutions                 []string
@@ -568,12 +569,7 @@ func (s *shellSpans) finishWord(end int) {
 	word := s.command[s.wordStart:end]
 	s.enterGitCommand(word, end)
 	data := s.nextData || s.redirectData
-	offset := s.dataOffset(word)
-	if offset >= 0 && !s.wordSplitting {
-		s.mask(s.wordStart+offset, end)
-	} else {
-		s.uncertain = s.uncertain || s.wordExpansion
-	}
+	s.maskWord(word, end)
 	for _, execution := range s.wordExecutions {
 		s.nested = append(s.nested, shellInput{text: execution})
 	}
@@ -583,6 +579,17 @@ func (s *shellSpans) finishWord(end int) {
 	s.wordStart, s.executionStart = -1, -1
 	s.wordExpansion, s.wordSplitting, s.redirectData = false, false, false
 	s.wordExecutions = nil
+}
+
+// maskWord excludes data only while shell expansions preserve argument positions.
+func (s *shellSpans) maskWord(word string, end int) {
+	offset := s.dataOffset(word)
+	if offset >= 0 && !s.wordSplitting && !s.argumentsUncertain {
+		s.mask(s.wordStart+offset, end)
+	} else {
+		s.uncertain = s.uncertain || s.wordExpansion
+	}
+	s.argumentsUncertain = s.argumentsUncertain || s.gitCommand != "" && s.wordSplitting
 }
 
 // enterGitCommand identifies the first Git subcommand before interpreting its operands.
@@ -754,6 +761,7 @@ func (s *shellSpans) split(end, next int) {
 	s.start = next
 	s.uncertain = false
 	s.nextData, s.redirectData = false, false
+	s.argumentsUncertain = false
 	s.gitCommand = ""
 }
 

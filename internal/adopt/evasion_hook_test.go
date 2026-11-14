@@ -229,12 +229,44 @@ func evasionRoundFiveCases() []struct {
 	}
 }
 
+// evasionRoundSevenCases covers argument shifts after splitting expansions and quoted boundaries.
+func evasionRoundSevenCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"empty substitution shifts message", `git commit -m $(printf '') -m -n`, 2},
+		{"empty variable shifts message", `git commit -m $msg -m -n`, 2},
+		{"empty backtick shifts message", "git commit -m `printf ''` -m -n", 2},
+		{"glob shifts message", `git commit -m * -m -n`, 2},
+		{"positional substitution shifts message", `git commit $(printf '') -m -n`, 2},
+		{"positional variable shifts message", `git commit $msg -m -n`, 2},
+		{"positional backtick shifts message", "git commit `printf ''` -m -n", 2},
+		{"positional glob shifts message", `git commit * -m -n`, 2},
+		{"attached substitution shifts message", `git commit --message=$(printf '') -m -n`, 2},
+		{"file substitution shifts message", `git commit -F $(printf '') -m -n`, 2},
+		{"am substitution retains operands", `git am $(printf '') > -n`, 2},
+		{"am variable retains operands", `git am $patch > -n`, 2},
+		{"am backtick retains operands", "git am `printf ''` > -n", 2},
+		{"am glob retains operands", `git am * > -n`, 2},
+		{"quoted empty substitution message", `git commit -m "$(printf '')" -m 'mention -n here'`, 0},
+		{"quoted empty variable message", `git commit -m "$msg" -m 'mention -n here'`, 0},
+		{"quoted empty backtick message", "git commit -m \"`printf ''`\" -m 'mention -n here'", 0},
+		{"quoted glob message", `git commit -m "*" -m 'mention -n here'`, 0},
+		{"uncertainty resets at separator", `git commit -m $msg; git commit -m 'mention -n here'`, 0},
+	}
+}
+
 // TestEmittedEvasionCommitSegments keeps skip flags within their shell command.
 func TestEmittedEvasionCommitSegments(t *testing.T) {
 	python, script := emittedInterceptor(t)
 	cases := append(evasionCommitSegmentCases(), evasionRedirectCases()...)
 	cases = append(append(cases, evasionFallbackCases()...), evasionRoundFourCases()...)
-	for _, tc := range append(cases, evasionRoundFiveCases()...) {
+	cases = append(cases, evasionRoundFiveCases()...)
+	for _, tc := range append(cases, evasionRoundSevenCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
 			if got != tc.want {
@@ -321,8 +353,11 @@ func TestEmittedEvasionSegmentMutants(t *testing.T) {
 			`git commit "$x" && git log -n 1`, 0},
 		{"process execution", "if self.command.startswith((\"<(\", \">(\"), self.position):", "if False:",
 			`git commit <(printf %s -n)`, 0},
-		{"one word operand", "if offset >= 0 and not self.word_splitting:", "if offset >= 0:",
+		{"one word operand", "if offset >= 0 and not self.word_splitting and not self.arguments_uncertain:",
+			"if offset >= 0 and not self.arguments_uncertain:",
 			`git commit -m $(printf '%s %s' msg -n)`, 0},
+		{"argument uncertainty", "self.arguments_uncertain |= bool(self.git_command) and self.word_splitting",
+			"self.arguments_uncertain |= False", `git commit -m $(printf '') -m -n`, 0},
 		{"escaped boundary", "if not self.word_boundary():",
 			"if self.position > 0 and self.command[self.position - 1] not in \" \\t\\n;|&(\":",
 			`git commit -m fix\ #note -n`, 0},

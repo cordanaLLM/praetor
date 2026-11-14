@@ -611,13 +611,45 @@ func roundFiveSegmentCases() []struct {
 	}
 }
 
+// roundSevenSegmentCases covers argument shifts after splitting expansions and quoted boundaries.
+func roundSevenSegmentCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"empty substitution shifts message", `git commit -m $(printf '') -m -n`, 2},
+		{"empty variable shifts message", `git commit -m $msg -m -n`, 2},
+		{"empty backtick shifts message", "git commit -m `printf ''` -m -n", 2},
+		{"glob shifts message", `git commit -m * -m -n`, 2},
+		{"positional substitution shifts message", `git commit $(printf '') -m -n`, 2},
+		{"positional variable shifts message", `git commit $msg -m -n`, 2},
+		{"positional backtick shifts message", "git commit `printf ''` -m -n", 2},
+		{"positional glob shifts message", `git commit * -m -n`, 2},
+		{"attached substitution shifts message", `git commit --message=$(printf '') -m -n`, 2},
+		{"file substitution shifts message", `git commit -F $(printf '') -m -n`, 2},
+		{"am substitution retains operands", `git am $(printf '') > -n`, 2},
+		{"am variable retains operands", `git am $patch > -n`, 2},
+		{"am backtick retains operands", "git am `printf ''` > -n", 2},
+		{"am glob retains operands", `git am * > -n`, 2},
+		{"quoted empty substitution message", `git commit -m "$(printf '')" -m 'mention -n here'`, 0},
+		{"quoted empty variable message", `git commit -m "$msg" -m 'mention -n here'`, 0},
+		{"quoted empty backtick message", "git commit -m \"`printf ''`\" -m 'mention -n here'", 0},
+		{"quoted glob message", `git commit -m "*" -m 'mention -n here'`, 0},
+		{"uncertainty resets at separator", `git commit -m $msg; git commit -m 'mention -n here'`, 0},
+	}
+}
+
 // TestParityEvasionCommitSegments judges every planted row with both implementations.
 func TestParityEvasionCommitSegments(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
 	builtin := policy(t)
 	cases := append(commitSegmentCases(), redirectSegmentCases()...)
 	cases = append(append(cases, fallbackSegmentCases()...), roundFourSegmentCases()...)
-	for _, tc := range append(cases, roundFiveSegmentCases()...) {
+	cases = append(cases, roundFiveSegmentCases()...)
+	for _, tc := range append(cases, roundSevenSegmentCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
 			python := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
@@ -636,6 +668,53 @@ func TestParityEvasionCommitSegments(t *testing.T) {
 			}
 			checkSegmentRefusal(t, tc.name, tc.want, verdict.Reason, python.stderr)
 		})
+	}
+}
+
+// TestEvasionArgumentUncertaintyMutant proves dropping retained state hides a shifted flag.
+func TestEvasionArgumentUncertaintyMutant(t *testing.T) {
+	const command = `git commit -m $(printf '') -m -n`
+	scanner := shellSpans{command: command, judged: []byte(command), wordStart: -1, executionStart: -1}
+	for scanner.position < len(command) {
+		if !scanner.step() {
+			t.Fatal(scanner.err)
+		}
+		scanner.argumentsUncertain = false
+	}
+	scanner.split(len(command), len(command))
+	builtin := policy(t)
+	fixed, mutant := builtin.Command(command), builtin.Command(string(scanner.judged))
+	t.Logf("Go mutant outcome=%v (rc=0); fixed outcome=%v (rc=2)", mutant.Outcome, fixed.Outcome)
+	if mutant.Outcome != Allow || fixed.Outcome != Deny {
+		t.Errorf("Go mutant outcome=%v; fixed outcome=%v", mutant.Outcome, fixed.Outcome)
+	}
+}
+
+// TestParityEvasionArgumentUncertaintyMutant proves later masking can hide a shifted flag.
+func TestParityEvasionArgumentUncertaintyMutant(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	source, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutant := strings.Replace(string(source),
+		"self.arguments_uncertain |= bool(self.git_command) and self.word_splitting",
+		"self.arguments_uncertain |= False", 1)
+	if mutant == string(source) {
+		t.Fatal("argument uncertainty mutation did not change the guard")
+	}
+	script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
+	if err := os.WriteFile(script, []byte(mutant), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload := commandPayload(t, map[string]any{"tool_input": map[string]string{
+		"command": `git commit -m $(printf '') -m -n`,
+	}})
+	fixed := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
+	planted := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
+	t.Logf("canonical mutant rc=%d; fixed rc=%d", planted.exit, fixed.exit)
+	if planted.exit != 0 || !planted.marker || fixed.exit != 1 {
+		t.Errorf("canonical mutant rc=%d marker=%v; fixed rc=%d", planted.exit, planted.marker, fixed.exit)
 	}
 }
 

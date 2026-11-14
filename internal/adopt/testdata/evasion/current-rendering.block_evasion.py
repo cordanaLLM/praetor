@@ -553,6 +553,7 @@ class CommandSpans:
         self.execution_depth = 0
         self.next_data = self.redirect_data = self.word_expansion = False
         self.word_splitting = False
+        self.arguments_uncertain = False
         self.git_command = ""
         self.word_executions, self.nested = [], []
 
@@ -651,17 +652,22 @@ class CommandSpans:
         word = self.command[start:end]
         self.enter_git_command(word, end)
         data = self.next_data or self.redirect_data
-        offset = self.data_offset(word)
-        if offset >= 0 and not self.word_splitting:
-            self.mask(self.word_start + offset, end)
-        else:
-            self.uncertain |= self.word_expansion
+        self.mask_word(word, end)
         self.nested.extend((execution, False) for execution in self.word_executions)
         if data:
             self.next_data = self.next_data and self.redirect_data
         self.word_start = self.execution_start = -1
         self.word_expansion = self.word_splitting = self.redirect_data = False
         self.word_executions = []
+
+    def mask_word(self, word, end):
+        """Exclude data only while expansions preserve argument positions."""
+        offset = self.data_offset(word)
+        if offset >= 0 and not self.word_splitting and not self.arguments_uncertain:
+            self.mask(self.word_start + offset, end)
+        else:
+            self.uncertain |= self.word_expansion
+        self.arguments_uncertain |= bool(self.git_command) and self.word_splitting
 
     def enter_git_command(self, word, end):
         """Identify the Git subcommand before interpreting its operands."""
@@ -822,6 +828,7 @@ class CommandSpans:
         self.start = next_position
         self.uncertain = False
         self.next_data = self.redirect_data = False
+        self.arguments_uncertain = False
         self.git_command = ""
 
     def redirection(self):
