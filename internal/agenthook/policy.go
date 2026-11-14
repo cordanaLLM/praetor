@@ -1000,6 +1000,11 @@ func (p *Policy) commandRulesIn(ctx context.Context, command, workDir string) Ve
 			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
 		}
 	}
+	return p.commandFallback(ctx, command, workDir)
+}
+
+// commandFallback applies admission and worktree checks after the deny rules pass.
+func (p *Policy) commandFallback(ctx context.Context, command, workDir string) Verdict {
 	verdict := Verdict{Outcome: Allow}
 	if p.admission != nil {
 		if verdict = p.admission.judgeInDir(ctx, workDir, command); verdict.Outcome != Allow {
