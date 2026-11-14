@@ -878,11 +878,50 @@ re-runs the commit checks over every commit of a pull request
 
 ### Read-only commands chained after a commit
 
-The short skip flag rule and the skip variable rule have one exemption (#46): they judge the
-command without the words of a read-only command chained after it. Every other rule, and
-every operator rule, always judges the whole command. The exemption applies only when all of
-these hold; in every other case both rules judge the whole command and refuse what they
-refused before:
+The short skip flag rule judges each shell command separately. A short count option in
+`git commit -m 'fix' && git log -1 "$ref" | tail -n 1` belongs to `tail`, so the commit
+passes. The same separation applies to `;`, `||`, `|`, `&` and outer newlines:
+`git commit -m x` followed on the next line by `git log -n 1` passes. Redirections stay
+with their command, so `git commit -m x 2>&1 | tail -n 1` passes while
+`git commit -m x 2>&1 -n` refuses (`TestParityEvasionCommitSegments`,
+`TestEmittedEvasionCommitSegments`).
+
+Message and file operands (`-m`, `--message`, `-F`, `--file`, `-C`, `-c`, `--author`,
+`--date`, including attached values) and here-document bodies are data, excluded from
+short-option matching. Both `git commit -m 'mention -n here'` and a `git commit -F -`
+here-document containing `-n` pass. Executable substitutions in those operands are still
+inspected: `git commit -m "$(git commit -n)"` refuses. A word-starting shell comment ends
+at the newline; `git commit -m x # author's note` passes without treating its apostrophe
+as a quote (the same parity tests).
+
+When an expansion can supply an option or pathspec in the commit or `am` command itself,
+the short-flag scan conservatively retains the whole command. This includes quoted or
+unquoted variables and substitutions, unquoted `*`, `?` and `[` globs, and expandable
+here-documents used in positional substitutions. For example,
+`git commit "$x" && git log -n 1` refuses. An expansion occupying exactly a message or
+file operand remains data: `git commit -m "$x" && git log -n 1` passes. This message
+substitution also passes:
+
+```sh
+git commit -m "$(cat <<EOF
+-n
+EOF
+)" && git log -n 1
+```
+
+Escapes, line breaks inside the commit's syntax, state-changing words and unsupported shell syntax retain conservative
+scanning. A word-starting comment inside a substitution also retains that scan; quotes,
+semicolons and trailing backslashes within the comment remain comment text (the same tests).
+
+Malformed shell stacks and unterminated here-documents refuse only in the commit/`am`
+domain: `git commit` with an unmatched backtick refuses, while `printf 'unfinished`
+continues through this rule. The parser also refuses commands that exceed 16 lexical
+frames, 16 pending here-documents or 256 document body lines, naming the exceeded bound
+(the same tests).
+
+The short skip flag rule also preserves the read-only word exemption (#46) within each
+span. The skip variable rule applies that exemption to the whole command. Every other
+rule, and every operator rule, judges the whole command. The word exemption requires:
 
 - The read-only command follows a plain separator, `;`, `&&`, `||` or `|`, with nothing but
   blanks (space, tab) between the separator and the command name.
@@ -897,12 +936,11 @@ refused before:
   `function`, `hash`, `doskey`, `sal`, `nal`, `Set-Alias` and `New-Alias` in any letter case,
   inside a quoted commit message too.
 
-So `git commit -m x && git log -n 5`, `git commit -s -F msg; sed -n '1,5p' README.md`,
-`git commit -m x | head -n 3` and `git commit -m x; grep -rn SKIP= .github` pass. Still
-refused: a skip flag the commit itself carries; a chain after a redirection, as in
-`git commit -m x 2>&1 | tail -n 5`; `echo -n`, `[ -n "$v" ]` and every other command outside
-the list; a command over more than one line; a commit message holding one of the listed
-words, such as `-m "set default"`.
+So `git commit -m x; grep -rn SKIP= .github` passes. Within a span,
+`git commit -m 'git log -n 1; done'` also passes. A skip flag carried by the commit itself
+still refuses. A message holding a state-changing word, such as `-m "set default"`,
+retains the whole-command fallback; a later short count option can then cause refusal
+(the same parity tests).
 
 Why a dropped word is never a skip: it holds no quote, so it lies wholly inside or wholly
 outside any string still open at the separator. Outside, the separator ends the commit and

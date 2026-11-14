@@ -45,6 +45,369 @@ func emittedInterceptor(t *testing.T) (string, string) {
 	return python, script
 }
 
+// evasionCommitSegmentCases preserves round-one rows and plants bounded shell spans.
+func evasionCommitSegmentCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"chained tail", `git commit -m 'fix: message' && git log -1 | tail -n 1`, 0},
+		{"chained tail with ref", `git commit -m 'fix: message' && git log -1 "$ref" | tail -n 1`, 0},
+		{"quoted separator then flag", `git commit -m 'message && text' -n`, 2},
+		{"bare short flag", `git commit -n`, 2},
+		{"long flag", `git commit --no-` + `verify`, 2},
+		{"am short flag", `git am -n patch`, 2},
+		{"am long flag", `git am --no-` + `verify patch`, 2},
+		{"unbalanced quote", `git commit -m 'unfinished`, 2},
+		{"exempt span", `git commit -m 'message $name' && tail -n 1`, 0},
+		{"quoted operator token", `git commit -m '&&' -n`, 2},
+		{"escaped separator", `git commit -m message\&\&text -n`, 2},
+		{"nested backtick quotes", "git commit -m \"`echo \"a;b\"`\" -n", 2},
+		{"semicolon", `git commit -m 'fix' ; tail -n 1`, 0},
+		{"or", `git commit -m 'fix' || tail -n 1`, 0},
+		{"pipe", `git commit -m 'fix' | tail -n 1`, 0},
+		{"background", `git commit -m 'fix' & tail -n 1`, 0},
+		{"next commit", `git commit -m 'fix' && git commit -n`, 2},
+		{"redirect pipe", `git commit -m x 2>&1 | tail -n 1`, 0},
+		{"substitution message", `git commit -m "$(cat msg.txt)" && git log -1 | tail -n 1`, 0},
+		{"redirect grep then log", `git commit -F msg.txt 2>&1 | grep -c ok; git log -1 | tail -n 1`, 0},
+		{"heredoc message", "git commit -m \"$(cat <<'EOF'\nmessage ; && |\nEOF\n)\" && git log -1 | tail -n 1", 0},
+		{"redirect then flag", `git commit -m x 2>&1 -n`, 2},
+		{"substitution flag", `git commit "$(printf %s -n)"`, 2},
+		// Message backticks remain data; positional backticks retain fallback.
+		{"backtick message", "git commit -m \"`cat msg.txt`\" && tail -n 1", 0},
+		{"backtick flag", "git commit \"`printf %s -n`\"", 2},
+		{"nested substitution", `git commit -m "$(echo "$(cat msg.txt)")" && tail -n 1`, 0},
+		{"nested substitution flag", `git commit "$(echo "$(printf %s -n)")"`, 2},
+		// Outer newlines separate commands.
+		{"newline", "git commit -m x\ngit log -1 | tail -n 1", 0},
+		{"file redirections", `git commit -F msg.txt >>out 2>/dev/null <in && tail -n 1`, 0},
+		{"descriptor input", `git commit -m x 3<&0 2>&- & tail -n 1`, 0},
+		{"heredoc outer", "git commit -F - <<EOF\nmessage ' ; && |\nEOF\ntail -n 1", 0},
+		{"heredoc tabs", "git commit -F - <<-EOF\n\tmessage\n\tEOF\ntail -n 1", 0},
+		{"multiple heredocs", "git commit -F - <<A <<\"B\"\nfirst\nA\nsecond\nB\ntail -n 1", 0},
+		{"substitution separator flag", `git commit "$(cat msg.txt; printf %s -n)"`, 2},
+		{"unterminated substitution", `git commit -m "$(cat msg.txt" && tail -n 1`, 2},
+		{"unterminated heredoc", "git commit -F - <<EOF\nmessage && tail -n 1", 2},
+		{"state alias", `alias git=other; git commit -m x && tail -n 1`, 2},
+		{"state export", `export X=1; git commit -m x && tail -n 1`, 2},
+		{"state function", `function git() { other; }; git commit -m x && tail -n 1`, 2},
+		// Message substitutions at the nesting limit remain data.
+		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -n 1", 0},
+		{"nesting past bound", "git commit -m " + strings.Repeat("$(", 17) + "cat msg.txt" + strings.Repeat(")", 17) + " && tail -n 1", 2},
+		{"heredoc lines at bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 255) + "EOF\ntail -n 1", 0},
+		{"heredoc lines past bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 256) + "EOF\ntail -n 1", 2},
+	}
+}
+
+// evasionFallbackCases covers order engine-block-evasion-commit-span-20261114 round 3.
+func evasionFallbackCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		// Order engine-block-evasion-commit-span-20261114 round 3: own syntax vetoes segmentation.
+		{"own parameter", `git commit $flags -m x && tail -n 1`, 2},
+		{"am parameter", `git am $flags patch && tail -n 1`, 2},
+		{"own substitution", `git commit $(cat flags) -m x && tail -n 1`, 2},
+		{"own escape", `git commit -m a\b && tail -n 1`, 2},
+		{"own continuation", "git commit -m x\\\n && tail -n 1", 2},
+		{"single quoted newline", "git commit -m 'a\nb' && tail -n 1", 2},
+		{"double quoted newline", "git commit -m \"a\nb\" && tail -n 1", 2},
+		{"later newline", "git commit -m x && printf \"a\nb\" | tail -n 1", 0},
+		{"later escape", `git commit -m x && printf a\b | tail -n 1`, 0},
+		{"later parameter", `git commit -m x && git log $flags | tail -n 1`, 0},
+		{"quoted parameter", `git commit -m 'a$b' && tail -n 1`, 0},
+		{"quoted escape", `git commit -m 'a\b' && tail -n 1`, 0},
+		{"own input", `git commit -m a<b && tail -n 1`, 0},
+		{"own output", `git commit -m a>b && tail -n 1`, 0},
+		{"background log", `git commit -m x & git log -n 1`, 0},
+		{"combined pipe", `git commit -m x |& head -n 3`, 0},
+		{"unrelated quote", `printf 'unfinished`, 0},
+		{"unrelated git quote", `git status 'unfinished`, 0},
+		{"commit option quote", `git -C repo --no-pager commit -m 'unfinished`, 2},
+		{"am option quote", `git -c x=y am 'unfinished`, 2},
+		{"unicode commit quote", "git\u00a0commit -m 'unfinished", 2},
+	}
+}
+
+// evasionRoundFourCases covers message operands, executable expansions and malformed shell input.
+func evasionRoundFourCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"am bundled flag", `git am -cn patch`, 2},
+		{"positional parameter", `git commit "$x" && git log -n 1`, 2},
+		{"positional prefixed parameter", `git commit "-$suffix" && git log -n 1`, 2},
+		{"positional substitution", `git commit "$(printf %s -n)" && git log -n 1`, 2},
+		{"positional glob", `git commit * && git log -n 1`, 2},
+		{"positional question glob", `git commit file? && git log -n 1`, 2},
+		{"positional bracket glob", `git commit [ab] && git log -n 1`, 2},
+		{"positional heredoc substitution", "git commit $(cat <<EOF\n-n\nEOF\n) && git log -n 1", 2},
+		{"message heredoc flag text", "git commit -m \"$(cat <<EOF\n-n\nEOF\n)\" && git log -n 1", 0},
+		{"stdin message flag text", "git commit -F - <<EOF\n-n\nEOF\ngit log -n 1", 0},
+		{"stdin message parameter text", "git commit -F - <<EOF\ngit commit -n $name\nEOF\ngit log -n 1", 0},
+		{"stdin message executable", "git commit -F - <<EOF\n$(git commit -n)\nEOF", 2},
+		{"stdin message invalid execution", "git commit -F - <<EOF\n$(cat <<MISSING)\nEOF", 2},
+		{"quoted stdin message expansion", "git commit -F - <<'EOF'\n$(printf %s -n)\nEOF\ngit log -n 1", 0},
+		{"message short flag text", `git commit -m 'mention -n here'`, 0},
+		{"message option operand", `git commit -m -n`, 0},
+		{"message substitution flag text", `git commit -m "$(printf %s -n)" && git log -n 1`, 0},
+		{"message positional flag", `git commit -m "$x" "$flags" && git log -n 1`, 2},
+		{"message joined parameter", `git commit --message="$x" && git log -n 1`, 0},
+		{"file parameter", `git commit -F "$x" && git log -n 1`, 0},
+		{"file joined parameter", `git commit --file="$x" && git log -n 1`, 0},
+		{"reuse parameter", `git commit -C "$x" && git log -n 1`, 0},
+		{"reedit parameter", `git commit -c "$x" && git log -n 1`, 0},
+		{"author parameter", `git commit --author "$x" && git log -n 1`, 0},
+		{"date parameter", `git commit --date="$x" && git log -n 1`, 0},
+		{"message inline flag text", `git commit -m'mention -n here'`, 0},
+		{"message read only span", `git commit -m 'git log -n 1; done'`, 0},
+		{"comment apostrophe", `git commit -m x # author's note`, 0},
+		{"comment flag text", "git commit -m x # -n author's note\ngit log -n 1", 0},
+		{"hash within word", `git commit path#name && git log -n 1`, 0},
+		{"substitution comment", "git commit -m \"$(printf x # )\"; \"\\\n)\" -n", 2},
+		{"substitution comment fallback", "git commit -m \"$(printf x # )\"; \"\\\n)\" && git log -n 1", 2},
+		{"bare unmatched backtick", "git commit `unfinished", 2},
+		{"quote inside substitution", `git commit -m "$(printf 'unfinished)"`, 2},
+		{"heredoc without delimiter", "git commit -F - <<EOF\nmessage", 2},
+		{"literal message nested commit", `git commit -m 'git commit -n'`, 0},
+		{"executable nested commit", `git commit -m "$(git commit -n)"`, 2},
+		{"executable nested message", `git commit -m "$(git commit -m 'mention -n here')"`, 0},
+	}
+}
+
+// TestEmittedEvasionCommitSegments keeps skip flags within their shell command.
+func TestEmittedEvasionCommitSegments(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	cases := append(evasionCommitSegmentCases(), evasionRedirectCases()...)
+	for _, tc := range append(append(cases, evasionFallbackCases()...), evasionRoundFourCases()...) {
+		t.Run(tc.name, func(t *testing.T) {
+			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
+			if got != tc.want {
+				t.Errorf("exit %d, want %d", got, tc.want)
+			}
+			if tc.want != 0 && strings.TrimSpace(stderr) != evasionSegmentRefusal(tc.name) {
+				t.Errorf("refusal %q, want %q", stderr, evasionSegmentRefusal(tc.name))
+			}
+		})
+	}
+}
+
+// evasionSegmentRefusal names the exact refusal required by malformed or flagged rows.
+func evasionSegmentRefusal(name string) string {
+	errors := map[string]string{
+		"unbalanced quote": "unbalanced quote", "commit option quote": "unbalanced quote",
+		"am option quote": "unbalanced quote", "unicode commit quote": "unbalanced quote",
+		"quote inside substitution": "unbalanced quote",
+		"unbalanced double quote":   "unbalanced shell stack", "unterminated backtick": "unbalanced shell stack",
+		"unterminated substitution": "unbalanced shell stack", "bare unmatched backtick": "unbalanced shell stack",
+		"unterminated heredoc": "unterminated here-document", "heredoc without delimiter": "unterminated here-document",
+		"stdin message invalid execution": "unterminated here-document",
+		"nesting past bound":              "nesting bound exceeded: 16",
+		"heredoc pending past bound":      "pending here-document bound exceeded: 16",
+		"heredoc lines past bound":        "here-document body-line bound exceeded: 256",
+	}
+	if suffix, ok := errors[name]; ok {
+		return agenthook.InvalidInputRefusal + "invalid shell command: " + suffix
+	}
+	rule := agenthook.BuiltinRules()[1]
+	if name == "long flag" || name == "am long flag" {
+		rule = agenthook.BuiltinRules()[0]
+	}
+	return rule.RefusalPrefix() + rule.Source
+}
+
+// evasionRedirectCases holds redirection variants that must never split their own flags.
+func evasionRedirectCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"combined output", `git commit -m x &>out && tail -n 1`, 0},
+		{"combined output flag", `git commit -m x &>out -n`, 2},
+		{"clobber output", `git commit -m x >|out && tail -n 1`, 0},
+		{"clobber output flag", `git commit -m x >|out -n`, 2},
+		{"descriptor expansion", `git commit -m x >&"$fd" && tail -n 1`, 0},
+		{"descriptor expansion flag", `git commit -m x >&"$fd" -n`, 2},
+		{"multiline message flag", "git commit -m 'one\ntwo && three' -n", 2},
+		{"unbalanced double quote", `git commit -m "unfinished`, 2},
+		{"unterminated backtick", "git commit -m `cat msg.txt && tail -n 1", 2},
+		{"heredoc own flag", "git commit -F - -n <<EOF\nmessage\nEOF\ntail -1", 2},
+		{"single quoted substitution", `git commit -m '$(cat msg.txt)' && tail -n 1`, 0},
+		{"state set", `set -a; git commit -m x && tail -n 1`, 2},
+		{"heredoc queued chain", "git commit -F - <<EOF && tail -n 1\nmessage\nEOF", 0},
+		{"heredoc queued flag", "git commit -F - <<EOF -n && tail -1\nmessage\nEOF", 2},
+		{"heredoc queued pipeline", "git commit -F - <<EOF | tail -n 1\nmessage\nEOF", 0},
+		{"heredoc nested context", "git commit -F - <<OUT -m \"$(cat <<IN\ninside\nIN\n)\" && tail -n 1\noutside\nOUT", 0},
+		{"heredoc pending at bound", "git commit -F -" + strings.Repeat(" <<EOF", 16) + "\n" + strings.Repeat("EOF\n", 16) + "tail -n 1", 0},
+		{"heredoc pending past bound", "git commit -F -" + strings.Repeat(" <<EOF", 17) + "\n" + strings.Repeat("EOF\n", 17) + "tail -n 1", 2},
+		// Parameter expansions within message data preserve segmentation.
+		{"substitution braces", `git commit -m "$(echo ${msg})" && tail -n 1`, 0},
+	}
+}
+
+// TestEmittedEvasionSegmentMutants proves both whole-command matching paths regress.
+func TestEmittedEvasionSegmentMutants(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	for _, tc := range []struct {
+		name, before, after, command string
+		want                         int
+	}{
+		{"old span", "for segment in segments:", "for segment in [(text, bool(re.search(READ_ONLY_VETO, text)))]:",
+			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
+		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1)", "segments, None)",
+			`git commit -m 'message $name' && tail -n 1`, 2},
+		{"redirection veto", "    if not commit_command(command, short_pattern):",
+			"    if re.search(r\"[<>]\", command):\n        return [(command, True)], []\n    if not commit_command(command, short_pattern):",
+			`git commit -m x 2>&1 | tail -n 1`, 2},
+		{"positional expansion", "self.uncertain |= self.word_expansion", "self.uncertain |= False",
+			`git commit "$x" && git log -n 1`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered := buildBlockEvasionPY()
+			mutant := strings.Replace(rendered, tc.before, tc.after, 1)
+			if mutant == rendered {
+				t.Fatal("mutation did not change the rendering")
+			}
+			script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
+			mustWrite(t, script, mutant)
+			code := runInterceptor(t, python, script, nil, nil, tc.command)
+			fixedCode := runInterceptor(t, python, fixed, nil, nil, tc.command)
+			t.Logf("mutant hook rc=%d; fixed hook rc=%d", code, fixedCode)
+			if code != tc.want {
+				t.Errorf("mutant exit %d, want %d", code, tc.want)
+			}
+			if fixedCode != 2-tc.want {
+				t.Errorf("fixed exit %d, want %d", fixedCode, 2-tc.want)
+			}
+		})
+	}
+}
+
+// TestEmittedEvasionRefusalMutant rejects an unrelated refusal with the correct exit status.
+func TestEmittedEvasionRefusalMutant(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	rendered := buildBlockEvasionPY()
+	mutant := strings.Replace(rendered, `raise Blocked(reason.decode(errors="ignore"))`,
+		`raise Blocked(INVALID_INPUT_REFUSAL + "unrelated refusal")`, 1)
+	if mutant == rendered {
+		t.Fatal("refusal mutation did not change the rendering")
+	}
+	script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
+	mustWrite(t, script, mutant)
+	const command = "git commit -n"
+	code, stderr := runInterceptorOutput(t, python, script, nil, nil, command)
+	fixedCode, fixedStderr := runInterceptorOutput(t, python, fixed, nil, nil, command)
+	want := evasionSegmentRefusal("bare short flag")
+	if code != 2 || fixedCode != 2 || strings.TrimSpace(fixedStderr) != want {
+		t.Fatalf("mutant rc=%d fixed rc=%d fixed refusal=%q", code, fixedCode, fixedStderr)
+	}
+	if strings.TrimSpace(stderr) == want {
+		t.Fatalf("unrelated refusal passed exact comparison: %q", stderr)
+	}
+}
+
+// TestEmittedEvasionQueueBoundMutant proves over-budget executable work fails closed.
+func TestEmittedEvasionQueueBoundMutant(t *testing.T) {
+	python, _ := emittedInterceptor(t)
+	const bound = "        if len(queue) > len(command) + 1:\n" +
+		"            raise ValueError(\n" +
+		"                f\"invalid shell command: executable span bound exceeded: {len(command) + 1}\"\n" +
+		"            )\n"
+	rendered := strings.Replace(buildBlockEvasionPY(), "queue.extend(nested)",
+		"queue.extend([queue[0]] * (len(command) + 1))", 1)
+	mutant := strings.Replace(rendered, bound, "", 1)
+	if mutant == rendered {
+		t.Fatal("queue-bound mutation did not change the rendering")
+	}
+	const command = "git commit -m x"
+	for _, tc := range []struct {
+		name, source string
+		want         int
+	}{
+		{"bounded", rendered, 2}, {"unbounded", mutant, 0},
+	} {
+		script := filepath.Join(t.TempDir(), tc.name+".py")
+		mustWrite(t, script, tc.source)
+		code, stderr := runInterceptorOutput(t, python, script, nil, nil, command)
+		if code != tc.want {
+			t.Errorf("%s rc=%d, want %d: %s", tc.name, code, tc.want, stderr)
+		}
+		if tc.want == 2 && !strings.Contains(stderr, "executable span bound exceeded") {
+			t.Errorf("unrelated bound refusal: %s", stderr)
+		}
+	}
+}
+
+// TestEmittedEvasionGuardSegments regenerates shared segmentation without replacing admission.
+func TestEmittedEvasionGuardSegments(t *testing.T) {
+	path := filepath.Join("..", "..", filepath.FromSlash(evasionHookFile))
+	guard := mustRead(t, path)
+	guard = strings.ReplaceAll(guard, "\r\n", "\n")
+	if os.Getenv(updateEmittedFixturesEnv) == "1" {
+		guard = strings.Replace(guard, "import shlex\n", "", 1)
+		marker := "# Every match of the privilege rule"
+		guard = removeGuardSegments(t, guard, marker)
+		guard = strings.Replace(guard, marker, evasionCommandSegments+marker, 1)
+		if !strings.Contains(guard, "    raw_command = command_str\n") {
+			guard = strings.Replace(guard, "    command_str = join_line_continuations(command_str)",
+				"    raw_command = command_str\n    command_str = join_line_continuations(command_str)", 1)
+		}
+		guard = strings.Replace(guard, "segments = command_segments(command_str)",
+			"segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])", 1)
+		if !strings.Contains(guard, "segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])") {
+			guard = strings.Replace(guard, "    judged = without_read_only_words(command_str)",
+				"    try:\n        segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])\n"+
+					"    except ValueError as error:\n        sys.stderr.write(str(error) + \"\\n\")\n        return False\n"+
+					"    judged = without_read_only_words(command_str)", 1)
+		}
+		guard = strings.Replace(guard, "        if search(pattern, text):\n            reason = (",
+			"        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0]):\n            reason = (", 1)
+		guard = strings.Replace(guard, "sys.stderr.write(str(error) + \"\\n\")",
+			"sys.stderr.write(\""+agenthook.InvalidInputRefusal+"\" + str(error) + \"\\n\")", 1)
+		mustWrite(t, path, guard)
+		current := mustRead(t, filepath.Join(priorEvasionFixtures, currentEvasionFixture))
+		if !strings.Contains(current, "def command_segments(") {
+			mustWrite(t, filepath.Join(priorEvasionFixtures, "before-command-segments.block_evasion.py"), current)
+		}
+	}
+	if !strings.Contains(guard, evasionCommandSegments) ||
+		!strings.Contains(guard, "search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0])") {
+		t.Fatal("engine guard segmentation differs; regenerate with PRAETOR_UPDATE_EMITTED_FIXTURES=1")
+	}
+}
+
+// removeGuardSegments removes the previous shared parser before regeneration.
+func removeGuardSegments(t *testing.T, guard, marker string) string {
+	t.Helper()
+	start := strings.Index(guard, "def commit_command(")
+	if start < 0 {
+		start = strings.Index(guard, "def command_segments(")
+	}
+	if start < 0 {
+		return guard
+	}
+	end := strings.Index(guard[start:], marker)
+	if end < 0 {
+		t.Fatal("engine guard segment boundary missing")
+	}
+	return guard[:start] + guard[start+end:]
+}
+
 // interceptorModule is what the emitted script declares at module level, as Python reads it
 // back from the adjacent literals the layout splits long values into: RULES as (pattern,
 // refusal) pairs and the read-only exemption.
@@ -485,8 +848,9 @@ func benignBoundCommand() string { return boundLines("x") }
 // before the two rules started at the first command word of a line, and `$` runs before a
 // brace inside an open double quote after `git am` and after SKIP= (the costliest shapes the
 // reviews of an earlier quote-aware scan measured). A line break turns the read-only exemption
-// off (agenthook.ReadOnlyVeto), so it only ever reads one line; its shapes are single lines at
-// the line bound: a read-only command with a full line of words, separators back to back, a
+// off for the skip-variable rule (agenthook.ReadOnlyVeto). The short-flag rule now scans each
+// outer command independently, including across newlines. Single-line shapes at the line
+// bound include read-only command words, separators back to back, a
 // separator before blanks, a Git name before blanks.
 //
 // Git global options repeated to the line bound (` -git`, ` --a=git`, ` -C /git`) put a git
@@ -512,7 +876,7 @@ func scanBoundShapes() []scanShape {
 		{"am before even dollar run", boundLines(`git am "$$$${`), 0},
 		{"skip variable dollar runs", boundLines(`SKIP="$$$$$${`), 0},
 		{"read-only words to the end", boundLine("git commit -m x; git log", " -n", width), 0},
-		{"read-only words on lines", boundLines("git commit -m x; git log -n 5 "), 2},
+		{"read-only words on lines", boundLines("git commit -m x; git log -n 5 "), 0},
 		{"separators back to back", boundLine("", "git commit -m x || ", width), 0},
 		{"separator before blanks", boundLine("git commit -m x;", blanks, width-1) + "x", 0},
 		{"read-only name after blanks", boundLine("git commit -m x;git", blanks, width-1) + "x", 0},
@@ -709,7 +1073,7 @@ func TestEmittedInterceptorSearchesLikeTheEngineGuard(t *testing.T) {
 	if !strings.Contains(rendered, guard[start:end]) {
 		t.Fatal("the rendered interceptor does not carry the engine guard's option-run search byte for byte")
 	}
-	if !strings.Contains(rendered, "        if search(pattern, text):\n") || strings.Contains(rendered, "        if re.search(pattern, text):\n") {
+	if !strings.Contains(rendered, "return search(pattern, text)") || strings.Contains(rendered, "        if re.search(pattern, text):\n") {
 		t.Fatal("the rendered interceptor does not judge its rules through search")
 	}
 }
