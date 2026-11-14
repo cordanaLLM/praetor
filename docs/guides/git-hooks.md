@@ -49,8 +49,15 @@ hands govulncheck to `praetorctl security govuln`, the
 In hosted CI, the secrets history scan runs as an emitted standalone gate:
 `go run -tags=secretsgate ./tools/secrets/gate`
 which executes the pinned gitleaks detector with `--log-opts="--full-history --branches --tags --remotes=origin -m"` (the repository's own branches, tags and `origin` remote refs; history fetched from any other remote belongs to that repository's own scan), reads HISS-12 exception entries from the `SECRETS_EXCEPTIONS` environment variable (a JSON list rendered by adopt from `.standards.yaml`), and judges findings with the shared rules package, exiting with status 3 on any finding not excused or any stale or expired entry.
-`go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec github.com/zricethezav/gitleaks/v8`
-puts the same versions on `PATH` for the hooks.
+`go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec`
+writes their pinned binaries to `GOBIN`, or `GOPATH/bin` when `GOBIN` is unset
+(`go env GOBIN GOPATH` shows both). This directory must be on `PATH` for the hooks.
+For gitleaks, use
+`mise use --global gitleaks@<version>`, replacing `<version>` with
+`toolpins.GitleaksVersion` from `internal/toolpins/pins.go`
+without its leading `v`, or install the release archive binary of that same pinned version.
+A Go-built gitleaks lacks the version stamp and shadows the pinned binary when earlier
+on `PATH`, for example in `~/go/bin`.
 
 `make verify-all` also runs `make semgrep-test`, which checks the real matcher on
 temporary positive, negative and boundary fixtures. The engine version comes from

@@ -57,14 +57,19 @@ const (
 	govulnToolScanner = "go tool -modfile=" + toolGoModFile + " govulncheck"
 	// govulnInstallHint is the instruction printed when a declared tool is missing on PATH.
 	govulnInstallHint = "go install golang.org/x/vuln/cmd/govulncheck@latest"
-	// gitleaksInstallHint names the pinned gitleaks version when gitleaks is missing on PATH
-	// (order engine-hiss-unenforced-checks-20261027).
-	gitleaksInstallHint = "go install github.com/zricethezav/gitleaks/v8@" + toolpins.GitleaksVersion
 	// govulnModule is the module path of the Go vulnerability scanner.
 	govulnModule = "golang.org/x/vuln"
 	// govulnToolPackage is the package path run with go tool.
 	govulnToolPackage = "golang.org/x/vuln/cmd/govulncheck"
 )
+
+// gitleaksInstallHint follows "install it with": the pinned mise install the ops checkout uses
+// (order engine-adopt-gitleaks-hint-20261113) or the stamped release binary, and a warning that a
+// Go-built gitleaks carries no version stamp and shadows the pin when it comes earlier on PATH.
+// The text sits unquoted in a shell echo and a Makefile recipe, so it holds no shell syntax.
+var gitleaksInstallHint = "mise use --global gitleaks@" + strings.TrimPrefix(toolpins.GitleaksVersion, "v") +
+	" or the gitleaks " + toolpins.GitleaksVersion + " release archive binary - a Go-built gitleaks lacks the version stamp" +
+	" and shadows the pinned binary when earlier on PATH e.g. ~/go/bin"
 
 // ErrHooksDirEscapesRepo is returned when git discovers a different top-level directory
 // than the adoption target, which happens when the target's .git is not a repository

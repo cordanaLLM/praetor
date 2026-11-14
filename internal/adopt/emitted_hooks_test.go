@@ -17,6 +17,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/toolpins"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
@@ -30,6 +31,43 @@ const emittedFixtureRoot = "testdata/emitted"
 
 // updateEmittedFixturesEnv rewrites the fixtures from the rendering instead of comparing.
 const updateEmittedFixturesEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
+
+// gitleaksHintUnsafe lists shell syntax unsafe in an unquoted guard or Makefile recipe.
+const gitleaksHintUnsafe = "\r\n\"$`'\\;|&<>()*?[]#"
+
+// TestGitleaksInstallHint names the pinned mise install and the stamped release and warns about a Go build shadowing it on PATH.
+func TestGitleaksInstallHint(t *testing.T) {
+	for _, want := range []string{
+		"mise use --global gitleaks@" + strings.TrimPrefix(toolpins.GitleaksVersion, "v"),
+		toolpins.GitleaksVersion + " release archive binary",
+		"Go-built gitleaks lacks the version stamp",
+		"shadows the pinned binary",
+		"earlier on PATH",
+		"~/go/bin",
+	} {
+		if !strings.Contains(gitleaksInstallHint, want) {
+			t.Errorf("gitleaks install hint %q must contain %q", gitleaksInstallHint, want)
+		}
+	}
+	if strings.Contains(gitleaksInstallHint, "go install") {
+		t.Errorf("gitleaks install hint recommends an unstamped Go install: %q", gitleaksInstallHint)
+	}
+	if strings.ContainsAny(gitleaksInstallHint, gitleaksHintUnsafe) {
+		t.Errorf("gitleaks install hint contains shell syntax unsafe in a guard or Makefile recipe: %q", gitleaksInstallHint)
+	}
+}
+
+// TestGitleaksInstallHintRejectsShellSyntax proves the safety check rejects planted globs and a comment marker.
+func TestGitleaksInstallHintRejectsShellSyntax(t *testing.T) {
+	for _, syntax := range []string{"*", "?", "[", "]", "#"} {
+		t.Run(syntax, func(t *testing.T) {
+			hint := gitleaksInstallHint + " " + syntax
+			if !strings.ContainsAny(hint, gitleaksHintUnsafe) {
+				t.Errorf("shell safety check accepted planted shell syntax in hint %q", hint)
+			}
+		})
+	}
+}
 
 // emittedHookRenderings maps each rendered file to the bytes adoption writes. The
 // lefthook.yml fixture is the rendering with every language's jobs, the reuse-lint job and the
