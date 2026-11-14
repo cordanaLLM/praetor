@@ -1,0 +1,2 @@
+type: fixed
+title: The stop hook retries local gh_guard exit-75 throttles with bounded backoff inside its existing review budgets and denies exhausted reads with the try count, while preserving GitHub rate-limit deferrals.

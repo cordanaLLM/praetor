@@ -154,6 +154,9 @@ func readStopReviewCache(ctx context.Context, path, repo string, now time.Time, 
 
 // stopReviewFallback preserves recent completed verdicts, including named denials, after a live failure (#1894).
 func stopReviewFallback(ctx context.Context, path, repo, head string, now time.Time, live Verdict, failure error) Verdict {
+	if stopReviewLocallyThrottled(failure) {
+		return live
+	}
 	cache, valid := readStopReviewCache(ctx, path, repo, now, stopReviewCacheStalenessCap)
 	if !valid || (cache.Verdict.Outcome == Allow && cache.Head != head) {
 		return live
@@ -179,7 +182,9 @@ func readStopReviews(ctx context.Context, reader forge.ReviewReader, repo string
 
 // readStopReviewsResult marks incomplete reads explicitly so they never replace a completed cache (#1894).
 func readStopReviewsResult(ctx, inventoryCtx context.Context, reader forge.ReviewReader, repo string, now time.Time) stopReviewResult {
-	numbers, err := reader.OwnOpen(inventoryCtx, repo)
+	numbers, err := retryStopReviewRead(inventoryCtx, func(ctx context.Context) ([]int, error) {
+		return reader.OwnOpen(ctx, repo)
+	})
 	if err != nil {
 		return stopReviewResult{failure: err, verdict: stopReviewReadFailure(err, fmt.Sprintf("Own pull request review inventory not read in %s: ", repo))}
 	}
@@ -188,7 +193,9 @@ func readStopReviewsResult(ctx, inventoryCtx context.Context, reader forge.Revie
 	}
 	batchCtx, cancel := context.WithTimeout(ctx, stopReviewBatchBudget(len(numbers)))
 	defer cancel()
-	snapshots, batchErr := reader.ReadBatch(batchCtx, repo, numbers)
+	snapshots, batchErr := retryStopReviewRead(batchCtx, func(ctx context.Context) (map[int]forge.ReviewSnapshot, error) {
+		return reader.ReadBatch(ctx, repo, numbers)
+	})
 	batchErr = errors.Join(batchErr, batchCtx.Err())
 	failure := stopReviewBatchFailure(batchErr)
 	denies, complete, known := stopReviewBatchFindings(repo, numbers, snapshots, now, failure.Notice != "")
@@ -234,10 +241,10 @@ func stopReviewBatchFailure(err error) Verdict {
 	return failure
 }
 
-// stopReviewReadFailure denies ordinary errors and reports rate-limit metadata with an explicit unknown reset.
+// stopReviewReadFailure denies local throttles and ordinary errors; GitHub limits retain deferral metadata.
 func stopReviewReadFailure(err error, prefix string) Verdict {
 	var limited *forge.ErrRateLimited
-	if !errors.As(err, &limited) {
+	if stopReviewLocallyThrottled(err) || !errors.As(err, &limited) {
 		return Verdict{Outcome: Deny, Reason: prefix + err.Error()}
 	}
 	notice := "review inventory deferred: GitHub rate limited: " + limited.Error()
