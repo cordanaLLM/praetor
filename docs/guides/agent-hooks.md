@@ -273,10 +273,11 @@ guard by one byte. `TestRegistrationTableMatchesTheTrackedClientFiles` and
    paths chained in order; a bare `~` or a leading `~/` is the home directory. Other
    expansions, missing targets and target probe errors are ignored; more than 16 directory
    operands fails closed (`internal/agenthook/command_targets.go`). Under `hooks.scope: all`
-   a `pre-tool` command outside any repository is judged too, since the command policy
-   reads only the command text (`judgedEverywhere`).
+   a `pre-tool` command outside any repository is judged too (`judgedEverywhere`).
 7. **Judge.** The process environment first, then the command policy, then the forge-text foreign-reference guard ([Forge-text foreign-reference guard](#forge-text-foreign-reference-guard)).
 8. **Encode.** The verdict in the client's dialect.
+
+The native command policy also resolves literal commit guards before execution (`internal/agenthook/lease_sha.go`, `TestPolicyLeaseSHAPlanted`): 7–40 hex digits in `--force-with-lease=<ref>:<sha>` (or its space-separated form), the second positional argument of `squash_merge.sh`, and `gh pr merge --match-head-commit` (space or equals). Read filters require resolution only for full 40-digit names: `gh run list --commit`, commit names embedded in `gh api` paths, and positional names in `git log` or `git show` before `--`. Variables and command substitutions remain runtime values; leases without an explicit SHA and short read prefixes pass untouched. The check runs isolated `git cat-file -e <sha>^{commit}` through `util.RunGitProbeWithin`, with a shared three-second deadline, in the hook working directory adjusted by leading `cd` and Git's successive `-C` options. Missing commits, unresolved repositories and Git failures or timeouts refuse with `[BLOCKED BY HISS]`, naming the operand, its source and repository. This repository-aware rule runs in the native Go policy; the legacy Python adapter's static regex list remains unchanged.
 
 ## Forge-text foreign-reference guard
 

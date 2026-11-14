@@ -444,6 +444,9 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 		}
 	}
 	verdict := Verdict{Outcome: Allow}
+	if shaVerdict := judgeLiteralCommitSHAs(ctx, command, workDir); shaVerdict.Outcome != Allow {
+		return shaVerdict
+	}
 	if p.admission != nil {
 		if verdict = p.admission.judgeInDir(ctx, workDir, command); verdict.Outcome != Allow {
 			return verdict
