@@ -58,6 +58,8 @@ export const SPEC_DIR = 'docs/figures';
 export const OUT_DIR = 'docs/assets/figures';
 export const REBUILD = 'node tools/figures/build.mjs build';
 const REFRESH = 'node tools/figures/build.mjs portable --write';
+const PLAYER_DIR = fileURLToPath(new URL('./player', import.meta.url));
+const LOCK_FILE = fileURLToPath(new URL('./player.lock.json', import.meta.url));
 
 // HISS-02 bounds, so a pathological tree cannot make a check unbounded.
 const MAX_PAGES = 4096;
@@ -909,10 +911,22 @@ function specErrors(page, output, built, figures) {
 }
 
 // An unreleased player.lock.json without a local player directory renders static SVGs by design (ADR-0021).
-function svgOnlySite(config) {
-  const root = dirname(config);
-  if (isDirectory(join(root, 'tools/figures/player'))) return false;
-  const lock = join(root, 'tools/figures/player.lock.json');
+export function svgOnlySite(config, root = undefined) {
+  let playerDir = PLAYER_DIR;
+  let lock = LOCK_FILE;
+  if (root !== undefined && root !== null) {
+    playerDir = join(root, 'tools/figures/player');
+    lock = join(root, 'tools/figures/player.lock.json');
+  } else {
+    const configRoot = dirname(config);
+    const candidatePlayer = join(configRoot, 'tools/figures/player');
+    const candidateLock = join(configRoot, 'tools/figures/player.lock.json');
+    if (isDirectory(candidatePlayer) || isFile(candidateLock)) {
+      playerDir = candidatePlayer;
+      lock = candidateLock;
+    }
+  }
+  if (isDirectory(playerDir)) return false;
   if (!isFile(lock)) return false;
   let data;
   try {
@@ -972,7 +986,7 @@ function pageErrors(built, page) {
  * site is built for ('/' when omitted); an MkDocs site takes none, because the figures hook writes
  * relative URLs.
  */
-export function checkSite(config, docs, site, base = undefined) {
+export function checkSite(config, docs, site, base = undefined, root = undefined) {
   const flavor = siteFlavor(config);
   if (base !== undefined && !flavor.base) {
     throw new CheckError(`a base path applies to an Astro site; ${config} is an ${flavor.generator} configuration, whose figure URLs are relative`);
@@ -982,7 +996,7 @@ export function checkSite(config, docs, site, base = undefined) {
   if (!isFile(join(siteDir, 'index.html'))) throw new CheckError(`${siteDir} holds no built site (no index.html); run ${flavor.build} first`);
   const text = readText(clean(config));
   const built = { flavor, docs: docsDir, dir: siteDir, base: flavor.base ? basePath(base) : null, kinds: flavor.kinds(text), seen: new Map(),
-    svgOnly: svgOnlySite(clean(config)) };
+    svgOnly: svgOnlySite(clean(config), root) };
   const errors = [];
   let diagrams = 0;
   for (const page of flavor.pages(docsDir, text)) {

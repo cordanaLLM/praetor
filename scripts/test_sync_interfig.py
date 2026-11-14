@@ -11,6 +11,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -598,6 +599,19 @@ class TestLayout(unittest.TestCase):
         gate = (sync_interfig.REPO_ROOT / "tools" / "markdownlint" / "verify.mjs").read_text(encoding="utf-8")
         self.assertIn(f'"{sync_interfig.UPSTREAM_REL}/",', gate)
         self.assertNotIn('"third_party/interfig/upstream/"', gate)
+
+    def test_vendor_recovery_block_names_no_engine_only_path(self):
+        """The adopter-facing VENDOR.md recovery block reverts shared paths only."""
+        vendor_md = (sync_interfig.VENDOR_DIR / "VENDOR.md").read_text(encoding="utf-8")
+        code_blocks = re.findall(r"```bash\n(.*?)```", vendor_md, flags=re.DOTALL)
+        recovery_blocks = [b.strip() for b in code_blocks if "git checkout" in b or "git clean" in b]
+        self.assertEqual(len(recovery_blocks), 1, "expected one shared recovery block in VENDOR.md")
+        shared_block = recovery_blocks[0]
+        self.assertIn("tools/figures/third_party/interfig", shared_block)
+        self.assertIn("docs/assets/figures", shared_block)
+        self.assertIn("git checkout", shared_block)
+        self.assertIn("git clean", shared_block)
+        self.assertNotIn("tools/figures/player", shared_block)
 
 
 if __name__ == "__main__":

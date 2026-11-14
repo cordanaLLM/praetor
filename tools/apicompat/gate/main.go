@@ -916,15 +916,11 @@ func compareEach(
 		stdout.printf("Comparing %s (%s) from %s to %s\n", target.dir, target.path, short(repo.base), short(repo.head))
 		buildErr := buildModule(ctx, repo.root, target.dir, stderr.w, repo.runner, repo.wait)
 		if buildErr != nil {
-			var dlErr *downloadError
-			if errors.As(buildErr, &dlErr) {
-				return nil, fmt.Errorf("module %s (%s): %w", target.dir, target.path, buildErr)
-			}
-			note, err := excuseBuildFailure(repo, target, buildErr, stderr)
+			excused, err := buildFailureResult(ctx, repo, target, buildErr, stdout, stderr)
 			if err != nil {
 				return nil, err
 			}
-			results = append(results, result{module: target, notCompared: note})
+			results = append(results, excused)
 			continue
 		}
 		incompatible, err := compareModule(ctx, checker, sites.of(target.dir), target, plan.baseModules, plan.headModules, aliases, stdout.w, stderr.w)
@@ -934,6 +930,26 @@ func compareEach(
 		results = append(results, result{module: target, incompatible: incompatible})
 	}
 	return results, nil
+}
+
+// buildFailureResult judges a module whose build failed. A cancelled or expired run and a failed
+// output write stay fatal, so a deadline never turns into an excused module; otherwise a live
+// exception excuses the failure, a download failure included, and no exception fails the run.
+func buildFailureResult(ctx context.Context, repo repository, target module, buildErr error, stdout, stderr *printer) (result, error) {
+	if ctx.Err() != nil || errors.Is(buildErr, context.Canceled) || errors.Is(buildErr, context.DeadlineExceeded) {
+		return result{}, fmt.Errorf("module %s (%s): %w", target.dir, target.path, buildErr)
+	}
+	if stdout.failed != nil || stderr.failed != nil || errors.Is(buildErr, errRetryDiagnosticWrite) {
+		return result{}, fmt.Errorf("module %s (%s): %w", target.dir, target.path, buildErr)
+	}
+	note, err := excuseBuildFailure(repo, target, buildErr, stderr)
+	if err != nil {
+		return result{}, err
+	}
+	if stderr.failed != nil {
+		return result{}, fmt.Errorf("module %s (%s): %w", target.dir, target.path, stderr.failed)
+	}
+	return result{module: target, notCompared: note}, nil
 }
 
 // toolRunner executes a command in dir with arguments under context.
@@ -1316,7 +1332,7 @@ func selectImportedRequirements(reqs []modRequirement, imports map[string]bool) 
 }
 
 // moduleDownloadArgs selects only non-test requirements; incomplete scans fail before any download.
-func moduleDownloadArgs(ctx context.Context, moduleDir string) ([]string, bool, error) {
+func moduleDownloadArgs(ctx context.Context, moduleDir string, run toolRunner) ([]string, bool, error) {
 	data, err := readBoundedRegularFile(ctx, filepath.Join(moduleDir, "go.mod"), maxGoModBytes)
 	if err != nil {
 		return nil, false, fmt.Errorf("read module requirements: %w", err)
@@ -1325,7 +1341,10 @@ func moduleDownloadArgs(ctx context.Context, moduleDir string) ([]string, bool, 
 	if !ok {
 		return nil, false, fmt.Errorf("module requirements exceed %d lines", maxGoModLines)
 	}
-	buildCtx, err := effectiveBuildContext(ctx, moduleDir, runTool)
+	if run == nil {
+		run = runTool
+	}
+	buildCtx, err := effectiveBuildContext(ctx, moduleDir, run)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1389,6 +1408,9 @@ func downloadAttemptTimeout(ctx context.Context, attempt int, attemptCap time.Du
 	return min(attemptCap, perAttempt), nil
 }
 
+// errRetryDiagnosticWrite keeps a failed retry report fatal even with a live build exception.
+var errRetryDiagnosticWrite = errors.New("write retry diagnostic")
+
 // retryModuleGo runs a Go command up to downloadAttempts times with backoff and deadline caps.
 func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []string, attemptCap time.Duration, stderr io.Writer, run toolRunner, wait waitFunc) (int, error) {
 	var lastErr error
@@ -1404,6 +1426,7 @@ func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []str
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
 		err := run(attemptCtx, moduleDir, io.Discard, stderr, "go", args...)
+		attemptErr := attemptCtx.Err()
 		cancel()
 		if err == nil {
 			return attempt, nil
@@ -1411,9 +1434,9 @@ func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []str
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return attempt, ctxErr
 		}
-		lastErr = err
+		lastErr = errors.Join(err, attemptErr)
 		if _, printErr := fmt.Fprintf(stderr, "%s failed for %s (attempt %d of %d): %v\n", label, dir, attempt, downloadAttempts, err); printErr != nil {
-			return attempt, printErr
+			return attempt, fmt.Errorf("%w: %w", errRetryDiagnosticWrite, printErr)
 		}
 	}
 	return downloadAttempts, lastErr
@@ -1424,7 +1447,10 @@ func downloadModule(ctx context.Context, moduleDir, dir string, stderr io.Writer
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("prepare dependencies of module %s: %w", dir, err)
 	}
-	args, needed, err := moduleDownloadArgs(ctx, moduleDir)
+	if run == nil {
+		run = runTool
+	}
+	args, needed, err := moduleDownloadArgs(ctx, moduleDir, run)
 	if err != nil {
 		return fmt.Errorf("prepare dependencies of module %s: %w", dir, err)
 	}
@@ -1930,14 +1956,19 @@ func short(commit string) string {
 
 // runTool runs name args in dir under moduleTimeout.
 func runTool(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
-	ctx, cancel := context.WithTimeout(ctx, moduleTimeout)
+	return runToolWithTimeout(ctx, dir, stdout, stderr, moduleTimeout, name, args...)
+}
+
+// runToolWithTimeout executes a command with the supplied timeout.
+func runToolWithTimeout(ctx context.Context, dir string, stdout, stderr io.Writer, timeout time.Duration, name string, args ...string) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// #nosec G204 -- callers pass the go or git command and fixed arguments; no shell runs.
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = dir
 	command.Stdout, command.Stderr = stdout, stderr
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), errors.Join(err, ctx.Err()))
 	}
 	return nil
 }

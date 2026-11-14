@@ -192,6 +192,10 @@ environment variable `APICOMPAT_EXCEPTIONS`; the gate reads no manifest. While t
 through the end of its `expires` day in UTC, a build failure of that module is not a failure: the
 gate prints `not compared`, with the reason and the expiry, in its report and as a warning
 annotation, compares the other modules and exits as if the module were absent from the comparison.
+A context cancellation or deadline during the build stays fatal even when an exception covers the
+module: the failure is the timeout, not the build, so excusing it would hide a hung or slow CI
+step (`buildFailureResult` in `tools/apicompat/gate/main.go`).
+
 A module that builds is compared whatever the list says. Once the entry expired, or without one,
 the build failure fails the gate with status 2 as before, naming the expired entry
 (`TestGate_Positive_ExceptedModuleIsReportedNotCompared`,

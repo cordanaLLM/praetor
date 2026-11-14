@@ -134,6 +134,10 @@ jobs:
 // internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
 // shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
+	// The gate before a failed retry diagnostic write stayed fatal when an exception applied.
+	"447bb9436550b94795461c1c6800bbe74d56e794031d853cbc1f877167781598": Directory + "/" + GateFile,
+	// The gate before subprocess and retry deadlines remained fatal.
+	"c9c220c4f615f44bbb6c60ecd239e8d5de83927e75e1c98b8ac1cd7635c31600": Directory + "/" + GateFile,
 	// Emitted sources before complete docstring coverage and explained suppressions.
 	"15b167386b61a6d0a993ce661d49c3a4ce02d4cf2e244fdc0382420d05b2a8f5": Directory + "/" + GateFile,
 	"c52e0e4e59a015a7907ed8042e1cca1d83c15d44c6c1fb6e78c06ec7893ec7cb": Directory + "/" + PlaceholderFile,
@@ -193,6 +197,8 @@ var priorDigests = map[string]string{
 	"9127c94ae1aa6b1aeee2f1b42ae0408e68e471adf927ab6aa43282a41f17283f": Directory + "/" + GateFile,
 	// Outgoing review-round text; fixture: api-gate-main-review-round6.go.txt.
 	"a57af7537bc9c1e3b6b6be6be839c991b26562c1daafbaedbad334d9f88d3507": Directory + "/" + GateFile,
+	// The gate program before deadlines stayed fatal; fixture: api-gate-main-before-fatal-deadlines.go.txt.
+	"6a3656c422cf9f6500a0671fe15c27253219e4fcc9d4a8d3678dbf476b1037ae": Directory + "/" + GateFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}
