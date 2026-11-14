@@ -211,6 +211,11 @@ var priorDigests = map[string]string{
 	"c98a28d2e3a43ca2963d7cbdbf636ad78ed620cc4639c1102bc1c74ee8286cc9": Directory + "/mkdocs_hook.py",
 	// astro.mjs before the player download validated every redirect.
 	"f9d0f2df2922acbe2abd75bf1437fca1264a35a5c2e118beafd6fc2abdbc2f10": Directory + "/astro.mjs",
+	// astro.mjs and checks.mjs before the player lock read was bounded by bytes read.
+	"71c462a61c396c174422a4b417e4da9ec833e6b2d1d62c3972b04610efaff4da": Directory + "/astro.mjs",
+	"0482a435583e816acc9a0a55692042d5fa2180b60b50ed5af2940db6e2d33202": Directory + "/checks.mjs",
+	// checks.mjs before nonblocking open and descriptor file-type validation.
+	"bef335fc666fcb8561473298eb38e1cf3dbfecf678c503100535a2df41ff8bff": Directory + "/checks.mjs",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md

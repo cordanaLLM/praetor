@@ -46,7 +46,7 @@
 // anchors a pattern at docs_dir, a trailing slash matches directories only, and `*`, `?` and `[...]`
 // (negated with `!` or `^`) match within one path component. It refuses a leading `!`, `**` and `\`
 // instead of guessing.
-import { closeSync, fstatSync, openSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ENGINE_FILES, SLOTS, SPEC_CLOSE, SPEC_OPEN, escapeHtml, markup, sha256 } from './core.mjs';
@@ -65,6 +65,9 @@ const MAX_FILE_BYTES = 8 * 1024 * 1024;
 export const MAX_LINES = 100_000;
 const MAX_FIGURES = 256;
 const MAX_ENTRIES = 131_072;
+// One bounded read: chunks of READ_CHUNK_BYTES, at most MAX_READ_CHUNKS of them (256 MiB, above every limit).
+const READ_CHUNK_BYTES = 64 * 1024;
+const MAX_READ_CHUNKS = 4096;
 
 /** Where the figures hook and the Astro integration publish tools/figures/player/loader.js; the loader imports PLAYER beside it. */
 const LOADER = `${PLAYER_URI}/loader.js`;
@@ -175,18 +178,34 @@ function inside(base, target) {
   return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
-/** The bytes of `path`, refusing files over MAX_FILE_BYTES. */
-function readBytes(path) {
+/**
+ * The bytes of `path`, refusing more than `limit` bytes. One descriptor, no size probe by path: the
+ * limit is checked on the bytes read, so a file that grows after any earlier stat cannot slip past it
+ * (CodeQL js/file-system-race). Reads in chunks of READ_CHUNK_BYTES, at most limit + 1 bytes in all,
+ * and fails rather than return a prefix when MAX_READ_CHUNKS reads do not reach the end.
+ */
+export function readBoundedBytes(path, limit) {
   let fd;
   try {
-    fd = openSync(path, 'r');
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   } catch (error) {
     throw new CheckError(`cannot read ${path}: ${error.message}`);
   }
   try {
-    const size = fstatSync(fd).size;
-    if (size > MAX_FILE_BYTES) throw new CheckError(`${path} exceeds ${MAX_FILE_BYTES} bytes`);
-    return readFileSync(fd);
+    if (!fstatSync(fd).isFile()) throw new CheckError(`${path} is not a regular file`);
+    const chunks = [];
+    let total = 0;
+    let ended = false;
+    for (let step = 0; step < MAX_READ_CHUNKS && !ended && total <= limit; step++) {
+      const chunk = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, limit + 1 - total));
+      const count = readSync(fd, chunk, 0, chunk.length, null);
+      ended = count === 0;
+      if (count > 0) chunks.push(chunk.subarray(0, count));
+      total += count;
+    }
+    if (total > limit) throw new CheckError(`${path} exceeds ${limit} bytes`);
+    if (!ended) throw new CheckError(`cannot read ${path}: no end of file within ${MAX_READ_CHUNKS} reads`);
+    return Buffer.concat(chunks, total);
   } catch (error) {
     if (error instanceof CheckError) throw error;
     throw new CheckError(`cannot read ${path}: ${error.message}`);
@@ -195,8 +214,13 @@ function readBytes(path) {
   }
 }
 
+/** The bytes of `path`, refusing files over MAX_FILE_BYTES. */
+function readBytes(path) {
+  return readBoundedBytes(path, MAX_FILE_BYTES);
+}
+
 /** Strict UTF-8 that keeps a byte order mark, as Python's bytes.decode('utf-8') does. */
-const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+export const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 /** The UTF-8 text of `path` with LF line ends, refusing files over MAX_FILE_BYTES. */
 export function readText(path) {
