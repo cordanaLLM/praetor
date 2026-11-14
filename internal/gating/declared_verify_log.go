@@ -56,6 +56,7 @@ func declaredVerifyDiagnostic(output util.CommandBytes) (string, string) {
 	return target, strings.Join(ordered, "\n")
 }
 
+// declaredVerifyMakeTarget extracts a valid make failure's target and nesting depth.
 func declaredVerifyMakeTarget(line string) (string, int) {
 	if !strings.HasPrefix(line, "make") {
 		return "", -1
@@ -100,6 +101,7 @@ func writeDeclaredVerifyLog(ctx context.Context, repoDir, target, diagnostic str
 	return filepath.Join(repoDir, rel), nil
 }
 
+// declaredVerifyLogAllowed requires an existing, git-ignored ledger directory without symlink redirection.
 func declaredVerifyLogAllowed(ctx context.Context, repoDir string) error {
 	info, err := os.Lstat(filepath.Join(repoDir, ".workingdir"))
 	if err != nil {

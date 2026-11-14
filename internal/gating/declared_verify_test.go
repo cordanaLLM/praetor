@@ -215,6 +215,7 @@ type exitCodeError struct{ code int }
 func (e exitCodeError) Error() string { return "exit status" }
 func (e exitCodeError) ExitCode() int { return e.code }
 
+// TestDeclaredVerifyFailureNamesTheOutcome proves failures name exit codes, deadline origins and launch errors with bounded tails.
 func TestDeclaredVerifyFailureNamesTheOutcome(t *testing.T) {
 	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()

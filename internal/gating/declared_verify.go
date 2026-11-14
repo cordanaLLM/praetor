@@ -139,7 +139,10 @@ type declaredVerifyError struct {
 	reason string
 }
 
+// Error returns the declared verification outcome and its bounded diagnostics.
 func (e *declaredVerifyError) Error() string { return e.reason }
+
+// Unwrap preserves the command failure for error inspection.
 func (e *declaredVerifyError) Unwrap() error { return e.cause }
 
 // tail keeps the last limit bytes of text, where a failing command's final report usually is.

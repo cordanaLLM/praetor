@@ -50,6 +50,7 @@ func declaredLogRepo(t *testing.T, ignored, ledger bool) string {
 	return dir
 }
 
+// declaredLogPaths locates declared verification logs beneath the checkout's private ledger.
 func declaredLogPaths(t *testing.T, repo string) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(repo, ".workingdir", "gate", "declared-verify-*.log"))
@@ -59,6 +60,7 @@ func declaredLogPaths(t *testing.T, repo string) []string {
 	return paths
 }
 
+// plantedVerifyMakefile supplies a failing lint target with progress updates and output beyond the tail limit.
 func plantedVerifyMakefile() string {
 	var body strings.Builder
 	body.WriteString(".PHONY: verify-all lint\nverify-all: lint\nlint:\n\t@printf 'old progress\\rprogress done\\n'\n")
@@ -69,6 +71,7 @@ func plantedVerifyMakefile() string {
 	return body.String()
 }
 
+// TestDeclaredVerifyLogPlantedMakeFailure proves a failed stage names its target and saves its tail in the checkout.
 func TestDeclaredVerifyLogPlantedMakeFailure(t *testing.T) {
 	requireMake(t)
 	repo, stageDir := declaredLogRepo(t, true, true), t.TempDir()
@@ -99,6 +102,7 @@ func TestDeclaredVerifyLogPlantedMakeFailure(t *testing.T) {
 	}
 }
 
+// assertDeclaredLog checks the failure header, bounded tail, collapsed progress and private log metadata.
 func assertDeclaredLog(t *testing.T, path, first, last string, count int) {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -116,6 +120,7 @@ func assertDeclaredLog(t *testing.T, path, first, last string, count int) {
 	assertDeclaredLogModes(t, path)
 }
 
+// assertDeclaredLogModes checks UTC log naming and private file and directory permissions.
 func assertDeclaredLogModes(t *testing.T, path string) {
 	t.Helper()
 	stamp := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), "declared-verify-"), ".log")
@@ -133,6 +138,7 @@ func assertDeclaredLogModes(t *testing.T, path string) {
 	}
 }
 
+// TestDeclaredVerifyPassWritesNoLog proves successful verification leaves no failure log.
 func TestDeclaredVerifyPassWritesNoLog(t *testing.T) {
 	requireMake(t)
 	repo, stageDir := declaredLogRepo(t, true, true), t.TempDir()
@@ -147,6 +153,7 @@ func TestDeclaredVerifyPassWritesNoLog(t *testing.T) {
 	}
 }
 
+// TestDeclaredVerifyDiagnosticBoundaries checks empty output and tail limits below, at and above sixty lines.
 func TestDeclaredVerifyDiagnosticBoundaries(t *testing.T) {
 	for _, count := range []int{0, 1, 59, 60, 61, 100} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
@@ -155,6 +162,7 @@ func TestDeclaredVerifyDiagnosticBoundaries(t *testing.T) {
 	}
 }
 
+// assertDeclaredDiagnosticBoundary checks that normalized diagnostics retain the expected final lines.
 func assertDeclaredDiagnosticBoundary(t *testing.T, count int) {
 	t.Helper()
 	var output strings.Builder
@@ -178,6 +186,7 @@ func assertDeclaredDiagnosticBoundary(t *testing.T, count int) {
 	}
 }
 
+// TestDeclaredVerifyMakeTargets proves valid make failures select the innermost target and malformed lines are ignored.
 func TestDeclaredVerifyMakeTargets(t *testing.T) {
 	cases := []struct{ output, want string }{
 		{"make: *** [Makefile:7: lint] Error 2\n", "lint"},
@@ -200,6 +209,7 @@ func TestDeclaredVerifyMakeTargets(t *testing.T) {
 	}
 }
 
+// TestDeclaredVerifyRefusesUnsafeLogLocations proves absent, public or unwritable ledger locations receive no logs.
 func TestDeclaredVerifyRefusesUnsafeLogLocations(t *testing.T) {
 	cases := []struct {
 		name            string
@@ -222,6 +232,7 @@ func TestDeclaredVerifyRefusesUnsafeLogLocations(t *testing.T) {
 	}
 }
 
+// assertDeclaredLogRefusal checks that refused log writes preserve the refusal reason and failure diagnostics.
 func assertDeclaredLogRefusal(t *testing.T, repo, why string) {
 	t.Helper()
 	err := declaredVerifyFailure(t.Context(), repo, time.Minute, "default", util.CommandBytes{Stdout: []byte("first\nlast")}, exitCodeError{2})
@@ -235,6 +246,7 @@ func assertDeclaredLogRefusal(t *testing.T, repo, why string) {
 	}
 }
 
+// assertDeclaredLedgerPresence checks that log refusal does not create a missing ledger.
 func assertDeclaredLedgerPresence(t *testing.T, repo string, present bool) {
 	t.Helper()
 	_, err := os.Stat(filepath.Join(repo, ".workingdir"))
@@ -243,6 +255,7 @@ func assertDeclaredLedgerPresence(t *testing.T, repo string, present bool) {
 	}
 }
 
+// TestDeclaredVerifyLogLineBoundaries proves persisted logs retain sixty normalized lines at the truncation boundary.
 func TestDeclaredVerifyLogLineBoundaries(t *testing.T) {
 	for _, count := range []int{60, 61} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
@@ -261,6 +274,7 @@ func TestDeclaredVerifyLogLineBoundaries(t *testing.T) {
 	}
 }
 
+// TestDeclaredVerifyDiagnosticKeepsTargetBeforeTailAndBothStreams proves target discovery precedes truncation and both streams contribute.
 func TestDeclaredVerifyDiagnosticKeepsTargetBeforeTailAndBothStreams(t *testing.T) {
 	stdout := "old\rstdout-last\nmake[2]: *** [nested.mk:4: lint] Error 1\n" + strings.Repeat("other\n", 61)
 	stderr := strings.Repeat("old stderr progress\r", 8000) + "stderr-last\nmake: *** [Makefile:2: verify-all] Error 2\n"
@@ -274,6 +288,7 @@ func TestDeclaredVerifyDiagnosticKeepsTargetBeforeTailAndBothStreams(t *testing.
 	}
 }
 
+// TestDeclaredVerifyFailureLogBoundsAndCause proves cancellation preserves the cause and bounded diagnostic tails in reasons and logs.
 func TestDeclaredVerifyFailureLogBoundsAndCause(t *testing.T) {
 	repo := declaredLogRepo(t, true, true)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -298,6 +313,7 @@ func TestDeclaredVerifyFailureLogBoundsAndCause(t *testing.T) {
 	}
 }
 
+// assertDeclaredReasonTailBound checks that a failure reason includes diagnostics within the byte limit.
 func assertDeclaredReasonTailBound(t *testing.T, reason string) {
 	t.Helper()
 	_, diagnostic, found := strings.Cut(reason, "\n")
@@ -306,6 +322,7 @@ func assertDeclaredReasonTailBound(t *testing.T, reason string) {
 	}
 }
 
+// TestDeclaredVerifyLogRefusesRedirectedDirectories proves symlinked ledger and gate directories cannot redirect logs.
 func TestDeclaredVerifyLogRefusesRedirectedDirectories(t *testing.T) {
 	for _, leaf := range []string{".workingdir", ".workingdir/gate"} {
 		t.Run(leaf, func(t *testing.T) {
@@ -314,6 +331,7 @@ func TestDeclaredVerifyLogRefusesRedirectedDirectories(t *testing.T) {
 	}
 }
 
+// assertDeclaredRedirectedDirectory checks that symlink refusal leaves the redirect destination empty.
 func assertDeclaredRedirectedDirectory(t *testing.T, leaf string) {
 	t.Helper()
 	repo := declaredLogRepo(t, true, leaf != ".workingdir")
