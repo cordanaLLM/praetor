@@ -112,6 +112,87 @@ func TestOversizedOpenRecovery(t *testing.T) {
 	assertRecoveryArchives(t, root, strings.Count(done, "- [x]"))
 }
 
+// TestArchiveRecoveryFullBacklog rolls a full ledger into indexed history and repeats unchanged.
+func TestArchiveRecoveryFullBacklog(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	backlogFile := filepath.Join(root, WorkingDirName, backlogLedgerName)
+	backlog := strings.Repeat("padding\n", maxLedgerBytes/8)
+	writeIntegrityFile(t, backlogFile, backlog)
+	done := strings.Repeat("- [x] discharged record with padding\n", maxLedgerBytes/35+100)
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	writeIntegrityFile(t, open, done+"- [ ] pending\n")
+	want := strings.Count(done, "- [x]")
+	if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != want {
+		t.Fatalf("full BACKLOG recovery = %d, %v; want %d", count, err, want)
+	}
+	assertIntegrityFile(t, open, "- [ ] pending\n")
+	assertRecoveryArchives(t, root, want)
+	assertArchivedBacklog(t, root, backlog)
+	index, err := contextopt.ReadSnapshot(t.Context(), backlogFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := recoveryHistoryNames(t, root)
+	if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != 0 {
+		t.Fatalf("repeat full BACKLOG recovery = %d, %v", count, err)
+	}
+	assertIntegrityFile(t, backlogFile, string(index))
+	if after := recoveryHistoryNames(t, root); strings.Join(before, "\n") != strings.Join(after, "\n") {
+		t.Fatalf("repeat recovery created history: %v -> %v", before, after)
+	}
+}
+
+// TestArchiveRecoveryIndexOverflow refuses an unindexable archive before publishing history.
+func TestArchiveRecoveryIndexOverflow(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	const body = "- [x] done\n"
+	writeIntegrityFile(t, open, body)
+	sha := strings.Repeat("s", maxLedgerBytes-256)
+	if count, err := ArchiveCompletedTasks(root, sha); count != 0 || err == nil || !strings.Contains(err.Error(), "archive index") {
+		t.Errorf("unindexable archive = %d, %v", count, err)
+	}
+	assertIntegrityFile(t, open, body)
+	if names := recoveryHistoryNames(t, root); len(names) != 0 {
+		t.Fatalf("unindexed history published: %v", names)
+	}
+}
+
+// recoveryHistoryNames enumerates only history files in the fixture ledger directory.
+func recoveryHistoryNames(t *testing.T, root string) []string {
+	t.Helper()
+	names, err := filepath.Glob(filepath.Join(root, WorkingDirName, "BACKLOG.history-*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return names
+}
+
+// assertArchivedBacklog requires an exact copy of the rolled ledger and private history modes.
+func assertArchivedBacklog(t *testing.T, root, backlog string) {
+	t.Helper()
+	found := false
+	names := recoveryHistoryNames(t, root)
+	for i := 0; i < len(names) && i < maxScannedLines; i++ {
+		name := names[i]
+		data, err := contextopt.ReadSnapshot(t.Context(), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found = found || string(data) == backlog
+		t.Run(filepath.Base(name), func(t *testing.T) { testsupport.RequireCreatedMode(t, name, 0o600) })
+	}
+	if !found {
+		t.Fatal("full BACKLOG bytes missing from history")
+	}
+}
+
 // TestArchiveRecoverySnapshotBounds preserves the default limit and rejects stale recovery expectations.
 func TestArchiveRecoverySnapshotBounds(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "OPEN.md")

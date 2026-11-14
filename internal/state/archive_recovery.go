@@ -50,6 +50,9 @@ func completedTaskChunks(ctx context.Context, header string, tasks []string) ([]
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if len(header)+len(tasks[i])+1 > maxLedgerBytes {
+			return nil, fmt.Errorf("archive record exceeds the %d-byte history limit", maxLedgerBytes)
+		}
 		if text.Len()+len(tasks[i])+1 > maxLedgerBytes {
 			chunks = append(chunks, text.String())
 			text.Reset()
@@ -61,10 +64,16 @@ func completedTaskChunks(ctx context.Context, header string, tasks []string) ([]
 	return append(chunks, text.String()), nil
 }
 
-// archiveCompletedChunks publishes bounded history files before their index enters BACKLOG.md.
+// archiveCompletedChunks rolls BACKLOG.md and completed rows into bounded history files.
+// The replacement index's size is checked before any history chunk is published.
 // A failed later write can duplicate records, but OPEN.md still holds every original row.
-func archiveCompletedChunks(ctx context.Context, rootPath, header string, tasks []string) (index string, err error) {
+func archiveCompletedChunks(ctx context.Context, rootPath, header string, backlog []byte, tasks []string) (index string, err error) {
 	chunks, err := completedTaskChunks(ctx, header, tasks)
+	if err != nil {
+		return "", err
+	}
+	chunks = append([]string{string(backlog)}, chunks...)
+	names, index, err := archiveChunkIndex(ctx, header, len(chunks))
 	if err != nil {
 		return "", err
 	}
@@ -73,14 +82,11 @@ func archiveCompletedChunks(ctx context.Context, rootPath, header string, tasks 
 		return "", err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	stamp := time.Now().UTC().Format(stateHistoryStamp)
-	var links strings.Builder
-	links.WriteString(header)
 	for i := 0; i < len(chunks) && i < maxScannedLines; i++ {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		name := fmt.Sprintf("BACKLOG.history-%s-%d.md", stamp, i)
+		name := names[i]
 		created, err := contextopt.CreateRootSnapshot(ctx, root, name, []byte(chunks[i]), 0o600)
 		if err != nil {
 			return "", fmt.Errorf("archive completed records to %s: %w", name, err)
@@ -88,7 +94,30 @@ func archiveCompletedChunks(ctx context.Context, rootPath, header string, tasks 
 		if !created {
 			return "", fmt.Errorf("completed record archive %s already exists", name)
 		}
+	}
+	return index, nil
+}
+
+// archiveChunkIndex plans every history name and refuses an index beyond the ledger limit.
+func archiveChunkIndex(ctx context.Context, header string, count int) ([]string, string, error) {
+	if count > maxScannedLines {
+		return nil, "", fmt.Errorf("archive index exceeds the %d chunk bound", maxScannedLines)
+	}
+	stamp := time.Now().UTC().Format(stateHistoryStamp)
+	names := make([]string, count)
+	var links strings.Builder
+	links.WriteString(defaultBacklogMD())
+	links.WriteString(header)
+	for i := 0; i < count && i < maxScannedLines; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
+		name := fmt.Sprintf("BACKLOG.history-%s-%d.md", stamp, i)
+		names[i] = name
 		fmt.Fprintf(&links, "- Discharged records: [%s](%s)\n", name, filepath.ToSlash(name))
 	}
-	return links.String(), nil
+	if links.Len() > maxLedgerBytes {
+		return nil, "", fmt.Errorf("archive index exceeds the %d-byte ledger limit", maxLedgerBytes)
+	}
+	return names, links.String(), nil
 }

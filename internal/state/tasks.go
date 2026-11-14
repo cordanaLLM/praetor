@@ -293,10 +293,11 @@ func appendCompletedTasks(ctx context.Context, rootPath, commitSHA string, compl
 		return err
 	}
 	if len(backlogContent)+len(archiveText) > maxLedgerBytes {
-		archiveText, err = archiveCompletedChunks(ctx, rootPath, archiveHeader, completedTasks)
+		archiveText, err = archiveCompletedChunks(ctx, rootPath, archiveHeader, backlogContent, completedTasks)
 		if err != nil {
 			return err
 		}
+		backlogContent = nil
 	}
 	updatedBacklog := string(backlogContent) + archiveText
 

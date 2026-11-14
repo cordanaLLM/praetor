@@ -192,6 +192,58 @@ func TestArchiveStructuralMarkers(t *testing.T) {
 	assertIntegrityFile(t, open, pending)
 }
 
+// TestArchiveEscapedPipeStatus keeps escaped description pipes out of the status column.
+func TestArchiveEscapedPipeStatus(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	header := "| Item | Description | Status |\n| --- | --- | --- |\n"
+	pending := "| task | text \\| DONE | TODO |\n"
+	done := "| task | text \\| TODO | DONE |\n"
+	// The header itself can contain an escaped pipe before Status, too.
+	escapedHeader := "| Item \\| Label | Description | Status |\n| --- | --- | --- |\n"
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	writeIntegrityFile(t, open, header+pending+done+escapedHeader+pending+done)
+	if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != 2 {
+		t.Fatalf("escaped pipe archive = %d, %v; want two real DONE rows", count, err)
+	}
+	assertIntegrityFile(t, open, header+pending+escapedHeader+pending)
+}
+
+// TestArchiveWorktreePathCharacters preserves literal suffixes while unwrapping matched pairs.
+func TestArchiveWorktreePathCharacters(t *testing.T) {
+	for _, tc := range []struct{ field, path string }{
+		{"/repo/topic]", "/repo/topic]"}, {"/repo/(x)", "/repo/(x)"}, {"/repo/'q'", "/repo/'q'"},
+		{"`/repo/topic`", "/repo/topic"}, {"\"/repo/topic\"", "/repo/topic"}, {"'/repo/topic'", "/repo/topic"},
+		{"(/repo/topic)", "/repo/topic"}, {"[/repo/topic]", "/repo/topic"},
+		{"(`/repo/topic`)", "/repo/topic"}, {"[ '/repo/topic]' ]", "/repo/topic]"},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			root := t.TempDir()
+			if err := InitWorkingDir(root); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.FromSlash(tc.path)
+			ops := archiveWorktreeOps{
+				list: func(context.Context, string) ([]worktree.WorktreeInfo, error) {
+					return []worktree.WorktreeInfo{{Path: path}}, nil
+				},
+				inspect: func(_ context.Context, name string) (archivePath, error) {
+					return archivePath{path: name, exists: name == path}, nil
+				},
+			}
+			row := "- [x] path:  " + tc.field + "  | branch: fixture\n"
+			open := filepath.Join(root, WorkingDirName, openLedgerName)
+			writeIntegrityFile(t, open, row+"- [x] unrelated\n")
+			if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); err != nil || count != 1 {
+				t.Fatalf("path character archive = %d, %v", count, err)
+			}
+			assertIntegrityFile(t, open, row)
+		})
+	}
+}
+
 // TestArchiveEquivalentPaths retains trailing separators and symlinked ancestor spellings.
 func TestArchiveEquivalentPaths(t *testing.T) {
 	root, linked := archiveWorktreeFixture(t)

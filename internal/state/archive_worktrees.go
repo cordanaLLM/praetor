@@ -74,15 +74,30 @@ func archiveTaskRow(ctx context.Context, line string, statusColumn int) (row, do
 	return done || strings.HasPrefix(line, "|"), done, err
 }
 
-// archiveTableStatusColumn uses the ledger table cells and separator grammar to find Status.
+// archiveTableCells preserves raw cell bytes while splitting only at unescaped pipes.
+// The bug readers retain ledgerTableCells and its separate raw-pipe grammar.
+func archiveTableCells(line string) []string {
+	var cells []string
+	start, escaped := 0, false
+	for i := 0; i < len(line) && i < maxTaskLineBytes; i++ {
+		if line[i] == '|' && !escaped {
+			cells = append(cells, line[start:i])
+			start = i + 1
+		}
+		escaped = line[i] == '\\' && !escaped
+	}
+	return append(cells, line[start:])
+}
+
+// archiveTableStatusColumn uses escape-aware cells and the ledger separator grammar to find Status.
 func archiveTableStatusColumn(ctx context.Context, lines []string, index, previous int) int {
 	if !strings.HasPrefix(strings.TrimSpace(lines[index]), "|") {
 		return 1
 	}
-	if index+1 >= len(lines) || !ledgerTableSeparator(ledgerTableCells(strings.TrimSpace(lines[index+1])), func() bool { return ctx.Err() != nil }) {
+	if index+1 >= len(lines) || !ledgerTableSeparator(archiveTableCells(strings.TrimSpace(lines[index+1])), func() bool { return ctx.Err() != nil }) {
 		return previous
 	}
-	cells := ledgerTableCells(lines[index])
+	cells := archiveTableCells(lines[index])
 	for i := 1; i < len(cells)-1 && i < maxTaskLineBytes; i++ {
 		if ctx.Err() != nil {
 			return previous
@@ -106,7 +121,7 @@ func archiveRecordDone(ctx context.Context, line string, statusColumn int) (bool
 
 // archiveTableDone ignores status-looking pipe cells inside the shared Markdown code spans.
 func archiveTableDone(ctx context.Context, line string, statusColumn int) (bool, error) {
-	cells := ledgerTableCells(line)
+	cells := archiveTableCells(line)
 	if statusColumn < 1 || statusColumn >= len(cells)-1 {
 		return false, nil
 	}
@@ -129,7 +144,7 @@ func archiveTableDone(ctx context.Context, line string, statusColumn int) (bool,
 
 // archiveRowPaths extracts complete pipe-delimited path fields, preserving embedded spaces.
 func archiveRowPaths(ctx context.Context, row string) ([]string, error) {
-	fields := ledgerTableCells(row)
+	fields := archiveTableCells(row)
 	paths := make([]string, 0, len(fields))
 	for i := 0; i < len(fields) && i < maxTaskLineBytes; i++ {
 		if err := ctx.Err(); err != nil {
@@ -149,8 +164,25 @@ func archivePathField(field string) string {
 	if start < 0 {
 		return ""
 	}
-	path := strings.Trim(strings.TrimSpace(field[start:]), "`\"'()[]")
+	path := archiveUnwrapPath(strings.TrimSpace(field[:start]), strings.TrimSpace(field[start:]))
 	return filepath.Clean(filepath.FromSlash(path))
+}
+
+// archiveUnwrapPath removes only paired wrappers immediately surrounding the whole path.
+func archiveUnwrapPath(prefix, path string) string {
+	// Consume the suffix of opening wrappers from outermost to innermost.
+	start := len(strings.TrimRight(prefix, "`\"'([ \t"))
+	for i := start; i < len(prefix) && i < maxTaskLineBytes && len(path) > 0; i++ {
+		wrapper := strings.IndexByte("`\"'([", prefix[i])
+		if wrapper < 0 {
+			continue
+		}
+		if path[len(path)-1] != "`\"')]"[wrapper] {
+			break
+		}
+		path = strings.TrimSpace(path[:len(path)-1])
+	}
+	return path
 }
 
 // archivePathStart accepts a field boundary before native roots, drive letters and slash paths.
@@ -173,7 +205,7 @@ func archivePathStart(field string) int {
 
 // archiveFieldBoundary distinguishes a path field from a slash inside another token.
 func archiveFieldBoundary(field string, start int) bool {
-	return start == 0 || strings.ContainsAny(field[start-1:start], " \t`\"'(:=")
+	return start == 0 || strings.ContainsAny(field[start-1:start], " \t`\"'([:=")
 }
 
 // archiveRowIndex caches normalized fields and their row positions for one archive pass.
