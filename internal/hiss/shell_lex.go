@@ -5,6 +5,8 @@
 package hiss
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -22,6 +24,8 @@ import (
 // open quote or substitution, and a here-document waiting for its closing line.
 
 const (
+	// maxHereDocLineBytes bounds the splitter’s scan of one physical line.
+	maxHereDocLineBytes = 1 << 20
 	// maxShellNesting bounds the stack of open quotes and substitutions (HISS-02).
 	maxShellNesting = 32
 	// maxShellHeredocs bounds the here-documents one line may open (HISS-02).
@@ -68,6 +72,7 @@ type shellLexer struct {
 	// misread records a construct the lexer could not follow: a delimiter it cannot read, or a
 	// bound exceeded. The file is then declined.
 	misread bool
+	spans   [][2]int
 }
 
 // line returns the code of one physical line, or reports that the line belongs to a
@@ -245,7 +250,9 @@ func (l *shellLexer) redirect(text string, i int, b *strings.Builder) int {
 		return i + 3
 	case text[i] == '<' && strings.HasPrefix(rest, "<"):
 		b.WriteString("<<")
-		return l.heredoc(text, i+2)
+		end := l.heredoc(text, i+2)
+		l.spans = append(l.spans, [2]int{i, end})
+		return end
 	}
 	b.WriteByte(text[i])
 	return i + 1
@@ -379,4 +386,151 @@ func (l *shellLexer) arith(text string, i int, frame *shellFrame, b *strings.Bui
 		b.WriteByte(text[i])
 	}
 	return i + 1
+}
+
+// HereDoc contains a body and its owning command word.
+type HereDoc struct {
+	Text    string
+	Command string
+}
+
+// Data reports whether the owning command reads the here-document as data.
+func (h HereDoc) Data() bool {
+	word := hereDocBase(h.Command)
+	return word == "cat" || word == "tee" || word == "gh"
+}
+
+var hereDocCommand = regexp.MustCompile(`^\s*(?:[a-zA-Z_][a-zA-Z0-9_]*=(?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>])*\s+)*([^\s;&|<>()]+)`)
+
+// hereDocSplit accumulates the lexer's bounded body and code output.
+type hereDocSplit struct {
+	lexer  shellLexer
+	code   strings.Builder
+	docs   []HereDoc
+	bodies []strings.Builder
+}
+
+// SplitHereDocs removes redirects and data bodies while retaining code bodies.
+func SplitHereDocs(script string) (string, []HereDoc, error) {
+	if len(script) > 1<<20 {
+		return "", nil, fmt.Errorf("here-document reader exceeds byte limit")
+	}
+	split := hereDocSplit{}
+	for i := 0; len(script) > 0 && i < 100001; i++ {
+		if i == 100000 {
+			return "", nil, fmt.Errorf("here-document reader exceeds line limit")
+		}
+		end := strings.IndexByte(script, '\n')
+		if end < 0 {
+			end = len(script)
+		} else {
+			end++
+		}
+		if err := split.line(script[:end]); err != nil {
+			return "", nil, err
+		}
+		script = script[end:]
+	}
+	if len(split.lexer.bodies) > 0 {
+		return "", nil, fmt.Errorf("unterminated here-document")
+	}
+	for i := 0; i < len(split.docs) && i < maxShellHeredocs; i++ {
+		split.docs[i].Text = split.bodies[i].String()
+	}
+	return split.code.String(), split.docs, nil
+}
+
+// line passes each physical line through the existing lexer and preserves its newline.
+func (s *hereDocSplit) line(raw string) error {
+	line := strings.TrimSuffix(strings.TrimSuffix(raw, "\n"), "\r")
+	if len(line) > maxHereDocLineBytes {
+		return fmt.Errorf("here-document line exceeds reader limit")
+	}
+	if len(s.lexer.bodies) > 0 {
+		before := len(s.lexer.bodies)
+		s.lexer.line(line)
+		if len(s.lexer.bodies) == before {
+			index := len(s.docs) - before
+			body := &s.bodies[index]
+			body.WriteString(raw)
+			if !s.docs[index].Data() {
+				s.code.WriteString(line)
+			}
+		}
+	} else if err := s.codeLine(line); err != nil {
+		return err
+	}
+	if strings.HasSuffix(raw, "\n") {
+		s.code.WriteByte('\n')
+	}
+	return nil
+}
+
+// codeLine removes lexer-recognized redirects and records their command words.
+func (s *hereDocSplit) codeLine(line string) error {
+	s.lexer.spans = nil
+	s.lexer.line(line)
+	if s.lexer.misread {
+		return fmt.Errorf("here-document or shell nesting exceeds reader limit or has invalid delimiter")
+	}
+	if len(s.docs)+len(s.lexer.spans) > maxShellHeredocs {
+		return fmt.Errorf("here-document count exceeds %d", maxShellHeredocs)
+	}
+	var filtered strings.Builder
+	pos := 0
+	for i := 0; i < len(s.lexer.spans) && i < maxShellHeredocs; i++ {
+		span := s.lexer.spans[i]
+		filtered.WriteString(line[pos:span[0]])
+		pos = span[1]
+	}
+	filtered.WriteString(line[pos:])
+	text := filtered.String()
+	for i := 0; i < len(s.lexer.spans) && i < maxShellHeredocs; i++ {
+		command := hereDocOwner(line, s.lexer.spans, i)
+		s.docs = append(s.docs, HereDoc{Command: command})
+		s.bodies = append(s.bodies, strings.Builder{})
+	}
+	s.code.WriteString(text)
+	return nil
+}
+
+// hereDocOwner finds the command word in the redirect's simple command.
+func hereDocOwner(line string, spans [][2]int, index int) string {
+	start, end := 0, len(line)
+	var quote QuoteStepper
+	for i := 0; i < len(line) && i < maxHereDocLineBytes; i++ {
+		if !quote.Open() && strings.ContainsRune(";&|()", rune(line[i])) {
+			if i < spans[index][0] {
+				start = i + 1
+			} else {
+				end = i
+				break
+			}
+		}
+		i = quote.Step(line, i)
+	}
+	var command strings.Builder
+	pos := start
+	for i := 0; i < len(spans) && i < maxShellHeredocs; i++ {
+		span := spans[i]
+		if span[0] < start || span[1] > end {
+			continue
+		}
+		command.WriteString(line[pos:span[0]])
+		pos = span[1]
+	}
+	command.WriteString(line[pos:end])
+	word := hereDocCommand.FindStringSubmatch(command.String())
+	if len(word) < 2 {
+		return ""
+	}
+	return word[1]
+}
+
+// hereDocBase normalizes an absolute command name for data detection.
+func hereDocBase(word string) string {
+	if i := strings.LastIndex(word, "/"); i >= 0 {
+		return word[i+1:]
+	}
+	return word
 }

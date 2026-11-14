@@ -102,6 +102,24 @@ func TestForgeTextRefsRefusedPerForm(t *testing.T) {
 	writeRefusedFormFixtures(t, root)
 
 	cases := []struct{ name, command, wantSpan string }{
+		{"missing heredoc file case 03", "cat > missing-body.md <<'EOF'\nsafe\nEOF\ngh pr comment 9 --body-file missing-body.md", "missing-body.md"},
+		{"missing variable heredoc file case 08", "D=a\ncat > $D/missing-body.md <<'EOF'\nsafe\nEOF\ngh pr comment 9 --body-file $D/missing-body.md", "$D/missing-body.md"},
+		{"variable spelling bypass", "D=a\ncat > $D/body.md <<'EOF'\nsafe\nEOF\nprintf '%s' 'outside-org/project#47' > a/body.md\ngh pr comment 9 --body-file $D/body.md", "$D/body.md"},
+		{"split gh in piped heredoc", "cat <<'EOF' | bash\ng\\\nh pr comment 9 --body \"See outside-org/project#51\"\nEOF\n", "outside-org/project#51"},
+		{"split gh CRLF in piped heredoc", "cat <<'EOF' | bash\ng\\\r\nh pr comment 9 --body \"See outside-org/project#51\"\nEOF\n", "outside-org/project#51"},
+		{"absolute cat missing file", "/usr/bin/cat > missing-body.md <<'EOF'\nsafe\nEOF\ngh pr comment 9 --body-file missing-body.md", "missing-body.md"},
+		{"substitution in data", "cat <<EOF\nreviewer's note $(gh pr comment 9 --body \"outside-org/project#42\")\nEOF", "outside-org/project#42"},
+		{"continued pipe write", "cat <<'EOF' | bash\ngh \\\npr comment 9 --body \"See outside-org/project#50\"\nEOF", "outside-org/project#50"},
+		{"unrelated heredoc foreign", "cat <<EOF\noutside-org/project#47\nEOF\ngh pr comment 9 --body safe", "outside-org/project#47"},
+		{"heredoc variable file foreign", "D=.\ncat > $D/body.md <<'EOF'\nreviewer's outside-org/project#43\nEOF\ngh pr comment 9 --body-file $D/body.md", "outside-org/project#43"},
+		{"heredoc tabs foreign", "gh pr comment 9 --body-file - <<-'EOF'\n\treviewer's outside-org/project#44\n\tEOF\n", "outside-org/project#44"},
+		{"heredoc double quoted foreign", "gh pr comment 9 --body-file - <<\"EOF\"\nreviewer's outside-org/project#45\nEOF\n", "outside-org/project#45"},
+		{"gh write inside a sh heredoc", "sh <<EOF\ngh pr comment 9 --body \"See outside-org/project#48\"\nEOF\n", "outside-org/project#48"},
+		{"gh write inside a cat heredoc piped to bash", "cat <<'EOF' | bash\ngh pr comment 9 --body \"See outside-org/project#47\"\nEOF\n", "outside-org/project#47"},
+		{"gh write inside a heredoc script then run", "cat > run.sh <<'EOF'\ngh pr comment 9 --body \"See outside-org/project#48\"\nEOF\nbash run.sh\n", "outside-org/project#48"},
+		{"gh write inside a bash heredoc", "bash <<'EOF'\ngh pr comment 9 --body \"See outside-org/project#46\"\nEOF\n", "outside-org/project#46"},
+		{"quoted argument inside a bash heredoc", "bash <<'EOF'\ngh pr comment 9 --body \"See outside-org/project#49\"\nEOF\n", "outside-org/project#49"},
+		{"heredoc written file foreign", "cat > body.md <<'EOF'\nreviewer's outside-org/project#42\nEOF\ngh pr comment 9 --body-file body.md", "outside-org/project#42"},
 		{"inline owner/repo#N in --body", `gh issue create --title "Bug report" --body "Reproduces outside-org/project#42 on Linux"`, `outside-org/project#42`},
 		{"github.com/<outside>/<repo>/issues/N in --title", `gh pr create --title "Follow up on https://github.com/outside-org/project/issues/19" --body "Clean fix"`, `https://github.com/outside-org/project/issues/19`},
 		{"github.com/<outside>/<repo>/pull/N in --body-file", `gh pr edit 12 --body-file pr-body.md`, `https://github.com/outside-org/project/pull/77`},
@@ -135,13 +153,21 @@ func TestForgeTextRefsRefusedPerForm(t *testing.T) {
 // numbers, plain text, code spans, code fences, and read-only gh calls are allowed.
 func TestForgeTextRefsAcceptedCases(t *testing.T) {
 	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\nforge:\n  own_organizations:\n    - fleet-org\n    - second-fleet\n")
-	writeTestFixtureFile(t, filepath.Join(root, "good-body.md"),
+	writeTestFixtureFile(t, filepath.Join(root, "body.md"),
 		" fleet reference fleet-org/other#12, local #9, code `outside-org/project#42`, and fence:\n```\nhttps://github.com/outside-org/project/issues/99\n```\n")
 
+	writeTestFixtureFile(t, filepath.Join(root, "$D", "body.md"), "Clean text.\n")
 	cases := []struct {
 		name    string
 		command string
 	}{
+		{name: "python heredoc apostrophe without gh", command: "python3 - <<'EOF'\nreviewer's\nEOF\n"},
+		{name: "assignment heredoc written file apostrophe", command: "FOO=1 cat > body.md <<'EOF'\nreviewer's note\nEOF\ngh pr comment 9 --body-file body.md"},
+		{name: "heredoc written file apostrophe", command: "cat > body.md <<'EOF'\nreviewer's note\nEOF\ncd . && gh pr comment 9 --body-file body.md"},
+		{name: "heredoc written file quotes and substitution", command: "cat > body.md <<'EOF'\nit's \"quoted\" and $(not run)\nEOF\ngh pr comment 9 --body-file body.md"},
+		{name: "heredoc variable file apostrophe", command: "D=.\ncat > $D/body.md <<'EOF'\nreviewer's note\nEOF\ngh pr comment 9 --body-file $D/body.md"},
+		{name: "heredoc strip tabs", command: "gh pr comment 9 --body-file - <<-'EOF'\n\treviewer's note\n\tEOF\n"},
+		{name: "heredoc double quoted", command: "gh pr comment 9 --body-file - <<\"EOF\"\nreviewer's note\nEOF\n"},
 		{
 			name:    "fleet organisation reference from manifest",
 			command: `gh issue create --title "Track fleet-org/other#12" --body "Also https://github.com/second-fleet/service/pull/34 and repo-owner/governed-repo#5"`,
@@ -160,7 +186,7 @@ func TestForgeTextRefsAcceptedCases(t *testing.T) {
 		},
 		{
 			name:    "body file with fleet refs and code spans",
-			command: `gh pr create --title "Clean PR" --body-file good-body.md`,
+			command: `gh pr create --title "Clean PR" --body-file body.md`,
 		},
 		{
 			name:    "gh pr view read command",
@@ -186,6 +212,15 @@ func TestForgeTextRefsAcceptedCases(t *testing.T) {
 	}
 }
 
+// TestForgeTextRefsDataProse permits write-shaped prose without foreign references.
+func TestForgeTextRefsDataProse(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\n")
+	response := runPreToolCommand(t, root, "cat <<'EOF'\nmention gh pr comment in prose\nEOF\ngh pr comment 9 --body safe", nil)
+	if response.ExitCode != 0 {
+		t.Fatalf("expected allow: %s", response.Stderr)
+	}
+}
+
 // TestForgeTextRefsBoundaryAndFailClosedCases verifies that unreadable files, shell reader
 // errors on gh writes, and exceeded file, segment or word bounds fail closed.
 func TestForgeTextRefsBoundaryAndFailClosedCases(t *testing.T) {
@@ -195,6 +230,8 @@ func TestForgeTextRefsBoundaryAndFailClosedCases(t *testing.T) {
 		command  string
 		wantPath string
 	}{
+		{"unterminated heredoc", "gh pr comment 9 --body-file - <<'EOF'\ntext\n", "unterminated"},
+		{"unresolved heredoc path", "cat > $D/body.md <<'EOF'\ntext\nEOF\ngh pr comment 9 --body-file $D/other.md", "$D/other.md"},
 		{"unreadable --body-file", `gh issue create --title "Title" --body-file missing-body.md`, "missing-body.md"},
 		{"unreadable gh api --input", `gh api repos/fleet-org/governed-repo/issues/1/comments --input absent.json`, "absent.json"},
 		{"unreadable $(cat <path>)", `gh pr comment 3 --body "$(cat no-such-file.md)"`, "no-such-file.md"},

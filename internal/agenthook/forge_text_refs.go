@@ -17,6 +17,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -75,6 +76,7 @@ type ghWriteCall struct {
 	files   []ghTextFile
 	fileErr string
 	dir     string
+	bodies  []hiss.HereDoc
 }
 
 // ghDirPolicy holds the resolved trusted organisations, missing-list flag, diagnostic
@@ -100,8 +102,15 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 	if err != nil {
 		return forgeTextDeny("shell reader: "+err.Error(), false)
 	}
-	if len(calls) == 0 {
-		return Verdict{Outcome: Allow}
+	_, bodies, err := hiss.SplitHereDocs(canonical.Command)
+	if err != nil {
+		return forgeTextDeny("shell reader: "+err.Error(), false)
+	}
+	if verdict := judgeHiddenHereDocs(ctx, bodies, baseDir, in); verdict.Outcome != Allow {
+		return verdict
+	}
+	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
+		calls[i].bodies = bodies
 	}
 	dirPolicies := make(map[string]ghDirPolicy, len(calls))
 	var notices []string
@@ -118,6 +127,14 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 		notices = appendUniqueNotice(notices, verdict.Notice)
 	}
 	return Verdict{Outcome: Allow, Notice: strings.Join(notices, "; ")}
+}
+
+// judgeHiddenHereDocs applies the base policy to write-shaped data bodies.
+func judgeHiddenHereDocs(ctx context.Context, bodies []hiss.HereDoc, dir string, in Invocation) Verdict {
+	if !hasHiddenGHWrite(bodies) {
+		return Verdict{Outcome: Allow}
+	}
+	return judgeResolvedGHWriteCall(ctx, ghWriteCall{bodies: bodies}, resolveGHDirPolicy(ctx, dir, in.Getenv))
 }
 
 // appendUniqueNotice appends notice to notices when notice is non-empty and not already present.
@@ -163,6 +180,9 @@ func judgeResolvedGHWriteCall(ctx context.Context, call ghWriteCall, dirPolicy g
 // judgeGHWriteCall checks a single ghWriteCall and its named files against own, refusing
 // file collection errors, unreadable or oversized files, and foreign forge references.
 func judgeGHWriteCall(ctx context.Context, call ghWriteCall, own []string, noOrgList bool) Verdict {
+	if finding := heredocFinding(call.bodies, own); finding != "" {
+		return forgeTextDeny(finding, noOrgList)
+	}
 	if call.fileErr != "" {
 		return forgeTextDeny(call.fileErr, noOrgList)
 	}
@@ -240,7 +260,7 @@ func loadOperatorForgeSettings(ctx context.Context, getenv func(string) string) 
 // per subshell level and returns every scoped gh write call, refusing commands exceeding limits.
 func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 	fields, err := shellFieldsForGH(command)
-	if err != nil || len(fields) == 0 {
+	if err != nil {
 		return nil, err
 	}
 	var calls []ghWriteCall
@@ -260,7 +280,8 @@ func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 		if closers > 0 {
 			segWords = trimSegmentTrailingParens(segWords, closers)
 		}
-		call, nextDir, ok := parseSegmentGHCall(command, segWords, dirStack[len(dirStack)-1])
+		dir := dirStack[len(dirStack)-1]
+		call, nextDir, ok := parseSegmentGHCall(command, segWords, dir)
 		dirStack[len(dirStack)-1] = nextDir
 		if ok {
 			calls = append(calls, call)
@@ -862,4 +883,26 @@ func readForgeTextFile(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// hasHiddenGHWrite detects write-shaped data after shell continuations are joined.
+func hasHiddenGHWrite(docs []hiss.HereDoc) bool {
+	for i := 0; i < len(docs) && i < maxForgeTextWords; i++ {
+		joined := strings.ReplaceAll(docs[i].Text, "\\\r\n", "")
+		joined = strings.ReplaceAll(joined, "\\\n", "")
+		if docs[i].Data() && ghWriteWordPattern.MatchString(joined) {
+			return true
+		}
+	}
+	return false
+}
+
+// heredocFinding returns the first foreign reference in the supplied bodies.
+func heredocFinding(bodies []hiss.HereDoc, own []string) string {
+	for i := 0; i < len(bodies) && i < maxForgeTextWords; i++ {
+		if findings := forge.ForeignReferenceFindings(bodies[i].Text, "here-document", own); bodies[i].Data() && len(findings) > 0 {
+			return findings[0]
+		}
+	}
+	return ""
 }
