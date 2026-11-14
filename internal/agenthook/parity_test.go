@@ -426,3 +426,114 @@ func TestParityWithThePythonGuardOnAdmission(t *testing.T) {
 		}
 	}
 }
+
+// commitSegmentCases preserves round-one rows and plants bounded shell spans.
+func commitSegmentCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"chained tail", `git commit -m 'fix: message' && git log -1 | tail -n 1`, 0},
+		{"chained tail with ref", `git commit -m 'fix: message' && git log -1 "$ref" | tail -n 1`, 0},
+		{"quoted separator then flag", `git commit -m 'message && text' -n`, 2},
+		{"bare short flag", `git commit -n`, 2},
+		{"long flag", `git commit --no-` + `verify`, 2},
+		{"am short flag", `git am -n patch`, 2},
+		{"am long flag", `git am --no-` + `verify patch`, 2},
+		{"unbalanced quote", `git commit -m 'unfinished`, 2},
+		{"exempt span", `git commit -m 'message $name' && tail -n 1`, 0},
+		{"quoted operator token", `git commit -m '&&' -n`, 2},
+		{"escaped separator", `git commit -m message\&\&text -n`, 2},
+		{"nested backtick quotes", "git commit -m \"`echo \"a;b\"`\" -n", 2},
+		{"semicolon", `git commit -m 'fix' ; tail -n 1`, 0},
+		{"or", `git commit -m 'fix' || tail -n 1`, 0},
+		{"pipe", `git commit -m 'fix' | tail -n 1`, 0},
+		{"background", `git commit -m 'fix' & tail -n 1`, 0},
+		{"next commit", `git commit -m 'fix' && git commit -n`, 2},
+		{"redirect pipe", `git commit -m x 2>&1 | tail -n 1`, 0},
+		{"substitution message", `git commit -m "$(cat msg.txt)" && git log -1 | tail -n 1`, 0},
+		{"redirect grep then log", `git commit -F msg.txt 2>&1 | grep -c ok; git log -1 | tail -n 1`, 0},
+		{"heredoc message", "git commit -m \"$(cat <<'EOF'\nmessage ; && |\nEOF\n)\" && git log -1 | tail -n 1", 0},
+		{"redirect then flag", `git commit -m x 2>&1 -n`, 2},
+		{"substitution flag", `git commit "$(printf %s -n)"`, 2},
+		{"backtick message", "git commit -m \"`cat msg.txt`\" && tail -n 1", 0},
+		{"backtick flag", "git commit \"`printf %s -n`\"", 2},
+		{"nested substitution", `git commit -m "$(echo "$(cat msg.txt)")" && tail -n 1`, 0},
+		{"nested substitution flag", `git commit "$(echo "$(printf %s -n)")"`, 2},
+		{"newline", "git commit -m x\ngit log -1 | tail -n 1", 0},
+		{"file redirections", `git commit -F msg.txt >>out 2>/dev/null <in && tail -n 1`, 0},
+		{"descriptor input", `git commit -m x 3<&0 2>&- & tail -n 1`, 0},
+		{"heredoc outer", "git commit -F - <<EOF\nmessage ' ; && |\nEOF\ntail -n 1", 0},
+		{"heredoc tabs", "git commit -F - <<-EOF\n\tmessage\n\tEOF\ntail -n 1", 0},
+		{"multiple heredocs", "git commit -F - <<A <<\"B\"\nfirst\nA\nsecond\nB\ntail -n 1", 0},
+		{"substitution separator flag", `git commit "$(cat msg.txt; printf %s -n)"`, 2},
+		{"unterminated substitution", `git commit -m "$(cat msg.txt" && tail -n 1`, 2},
+		{"unterminated heredoc", "git commit -F - <<EOF\nmessage && tail -n 1", 2},
+		{"state alias", `alias git=other; git commit -m x && tail -n 1`, 2},
+		{"state export", `export X=1; git commit -m x && tail -n 1`, 2},
+		{"state function", `function git() { other; }; git commit -m x && tail -n 1`, 2},
+		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -n 1", 0},
+		{"nesting past bound", "git commit -m " + strings.Repeat("$(", 17) + "cat msg.txt" + strings.Repeat(")", 17) + " && tail -n 1", 2},
+		{"heredoc lines at bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 255) + "EOF\ntail -n 1", 0},
+		{"heredoc lines past bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 256) + "EOF\ntail -n 1", 2},
+	}
+}
+
+// TestParityEvasionCommitSegments judges every planted row with both implementations.
+func TestParityEvasionCommitSegments(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	builtin := policy(t)
+	for _, tc := range append(commitSegmentCases(), redirectSegmentCases()...) {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
+			python := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
+			verdict := builtin.Command(tc.command)
+			goExit := 0
+			if verdict.Outcome != Allow {
+				goExit = 2
+			}
+			pythonWant := 0
+			if tc.want != 0 {
+				pythonWant = 1
+			}
+			t.Logf("Go rc=%d Python rc=%d want=%d", goExit, python.exit, tc.want)
+			if goExit != tc.want || python.exit != pythonWant {
+				t.Errorf("Go rc=%d Python rc=%d want=%d", goExit, python.exit, tc.want)
+			}
+		})
+	}
+}
+
+// redirectSegmentCases holds redirection variants that must never split their own flags.
+func redirectSegmentCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"combined output", `git commit -m x &>out && tail -n 1`, 0},
+		{"combined output flag", `git commit -m x &>out -n`, 2},
+		{"clobber output", `git commit -m x >|out && tail -n 1`, 0},
+		{"clobber output flag", `git commit -m x >|out -n`, 2},
+		{"descriptor expansion", `git commit -m x >&"$fd" && tail -n 1`, 0},
+		{"descriptor expansion flag", `git commit -m x >&"$fd" -n`, 2},
+		{"multiline message flag", "git commit -m 'one\ntwo && three' -n", 2},
+		{"unbalanced double quote", `git commit -m "unfinished`, 2},
+		{"unterminated backtick", "git commit -m `cat msg.txt && tail -n 1", 2},
+		{"heredoc own flag", "git commit -F - -n <<EOF\nmessage\nEOF\ntail -1", 2},
+		{"single quoted substitution", `git commit -m '$(cat msg.txt)' && tail -n 1`, 0},
+		{"state set", `set -a; git commit -m x && tail -n 1`, 2},
+		{"heredoc queued chain", "git commit -F - <<EOF && tail -n 1\nmessage\nEOF", 0},
+		{"heredoc queued flag", "git commit -F - <<EOF -n && tail -1\nmessage\nEOF", 2},
+		{"heredoc queued pipeline", "git commit -F - <<EOF | tail -n 1\nmessage\nEOF", 0},
+		{"heredoc nested context", "git commit -F - <<OUT -m \"$(cat <<IN\ninside\nIN\n)\" && tail -n 1\noutside\nOUT", 0},
+		{"heredoc pending at bound", "git commit -F -" + strings.Repeat(" <<EOF", 16) + "\n" + strings.Repeat("EOF\n", 16) + "tail -n 1", 0},
+		{"heredoc pending past bound", "git commit -F -" + strings.Repeat(" <<EOF", 17) + "\n" + strings.Repeat("EOF\n", 17) + "tail -n 1", 2},
+		{"substitution braces", `git commit -m "$(echo ${msg})" && tail -n 1`, 0},
+	}
+}

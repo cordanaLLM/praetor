@@ -6,7 +6,6 @@ Enforces HISS by intercepting attempts to bypass Git hooks, linters, or verifica
 import sys
 import os
 import re
-import shlex
 import json
 from pathlib import Path
 import shutil
@@ -93,31 +92,182 @@ def join_line_continuations(command_str: str) -> str:
 
 
 def command_segments(command):
-    """Validate shell quoting and retain the raw spans between unquoted separators."""
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
-    lexer.whitespace_split = True
-    lexer.commenters = ""
-    try:
-        list(lexer)
-    except ValueError as error:
-        raise ValueError("invalid shell command: " + str(error)) from error
-    quoted = r"\\[\s\S]|'[^']*'|\"(?:\\[\s\S]|[^\"\\])*\""
-    # Shell state, redirections, substitutions and non-POSIX escapes retain the
-    # existing conservative scan; their punctuation need not start a command.
-    if re.search(READ_ONLY_VETO, re.sub(quoted, "", command)):
-        return [command]
-    parts, start = [], 0
-    for token in re.finditer(quoted + r"|[;&|]+", command):
-        if token.group().startswith('"') and any(
-            opener in token.group() for opener in ("$(", "\x60")
-        ):
+    """Keep outer command spans; retain whole input on uncertain or over-bound syntax."""
+    spans = CommandSpans(command)
+    for _ in range(len(command)):
+        if spans.position >= len(command):
+            break
+        if not spans.step():
             return [command]
-        if token.group()[0] in ";&|\n":
-            end = token.start()
-            parts.append(command[start:end])
-            start = token.end()
-    parts.append(command[start:])
-    return parts
+    if spans.stack == ['"']:
+        raise ValueError("invalid shell command: unbalanced quote")
+    if spans.stack or spans.documents or spans.whole:
+        return [command]
+    start = spans.start
+    return spans.parts + [command[start:]]
+
+
+class CommandSpans:
+    """Walk raw shell spans with bounded frames and here-document body lines."""
+
+    nesting_limit = 16
+    here_line_limit = 256
+    state_start = READ_ONLY_VETO.index("(?i:")
+    state_pattern = READ_ONLY_VETO[state_start:]
+    here_pattern = r"^<<(-?)[ \t]*(\"[^\"]*\"|'[^']*'|[-A-Za-z0-9_]+)"
+    redirect_pattern = r"^&?[<>](?:[<>|]|&[0-9-]*)?"
+
+    def __init__(self, command):
+        """Initialize raw offsets and the conservative shell-state veto."""
+        self.command = command
+        self.parts, self.stack, self.documents = [], [], []
+        self.position = self.start = self.here_lines = 0
+        self.whole = bool(re.search(self.state_pattern, command))
+        self.whole |= bool(re.search(r"--%|%[;&|]", command))
+
+    def top(self):
+        """Return the innermost quote or substitution terminator."""
+        return self.stack[-1] if self.stack else ""
+
+    def push(self, closer):
+        """Bound simultaneously open lexical frames."""
+        if len(self.stack) == self.nesting_limit:
+            return False
+        self.stack.append(closer)
+        return True
+
+    def quoted_step(self):
+        """Handle escapes and constructs also active inside double quotes."""
+        ch = self.command[self.position]
+        if ch == "\\":
+            self.position += 2
+            if self.position > len(self.command):
+                raise ValueError("invalid shell command: trailing escape")
+            return True, True
+        if ch in ('"', "\x60"):
+            if self.top() == ch:
+                self.stack.pop()
+            elif not self.push(ch):
+                return True, False
+            self.position += 1
+            return True, True
+        if self.command.startswith("$(", self.position):
+            self.position += 2
+            return True, self.push(")")
+        return False, True
+
+    def step(self):
+        """Advance a byte or construct, retaining double-quoted punctuation."""
+        handled, ok = self.quoted_step()
+        if handled:
+            return ok
+        if self.top() == '"':
+            self.position += 1
+            return True
+        return self.structural_step()
+
+    def structural_step(self):
+        """Interpret punctuation only outside literal double-quoted text."""
+        ch = self.command[self.position]
+        if ch == "'":
+            return self.single_quote()
+        if ch == "(":
+            self.whole |= self.top() != ")"
+            self.position += 1
+            return self.push(")")
+        if ch == ")":
+            if self.top() == ")":
+                self.stack.pop()
+            else:
+                self.whole = True
+        elif ch in "<>":
+            return self.redirection()
+        elif ch == "\n":
+            return self.newline()
+        elif ch in ";&|":
+            return self.separator()
+        elif not self.stack:
+            if ch in "{}^!#" or ord(ch) > 126 or ord(ch) < 32 and ch != "\t":
+                self.whole = True
+        self.position += 1
+        return True
+
+    def separator(self):
+        """Distinguish combined-output redirection from command boundaries."""
+        if self.command.startswith("&>", self.position):
+            return self.redirection()
+        if not self.stack:
+            self.split(self.position, self.position + 1)
+        self.position += 1
+        return True
+
+    def single_quote(self):
+        """Consume literal text; refuse an unmatched quote."""
+        end = self.command.find("'", self.position + 1)
+        if end < 0:
+            raise ValueError("invalid shell command: unbalanced quote")
+        self.position = end + 1
+        return True
+
+    def split(self, end, next_position):
+        """Record an outer boundary; documents retain their owning part index."""
+        start = self.start
+        self.parts.append(self.command[start:end])
+        self.start = next_position
+
+    def redirection(self):
+        """Keep descriptor duplication and document openers in their owning span."""
+        position = self.position
+        rest = self.command[position:]
+        if rest.startswith("<<"):
+            match = re.match(self.here_pattern, rest)
+            if match is None or len(self.documents) == self.nesting_limit:
+                return False
+            delimiter = match[2].strip("\"'")
+            self.documents.append(
+                (delimiter, match[1] == "-", len(self.parts), len(self.stack))
+            )
+            self.position += match.end()
+            return True
+        self.position += re.match(self.redirect_pattern, rest).end()
+        return True
+
+    def newline(self):
+        """Consume bounded document bodies before ending an outer command."""
+        depth = len(self.stack)
+        self.position += 1
+        if depth == 0:
+            self.split(self.position - 1, self.position)
+        remaining = []
+        for delimiter, tabs, owner, doc_depth in self.documents:
+            if doc_depth != depth:
+                remaining.append((delimiter, tabs, owner, doc_depth))
+                continue
+            body_start = self.position
+            if not self.document_body(delimiter, tabs):
+                return False
+            if depth == 0:
+                position = self.position
+                self.parts[owner] += "\n" + self.command[body_start:position]
+        self.documents = remaining
+        if depth == 0:
+            self.start = self.position
+        return True
+
+    def document_body(self, delimiter, tabs):
+        """Consume at most here_line_limit lines, including closing delimiters."""
+        while self.here_lines < self.here_line_limit:
+            if self.position >= len(self.command):
+                return False
+            self.here_lines += 1
+            position = self.position
+            line, found, _ = self.command[position:].partition("\n")
+            self.position += len(line) + bool(found)
+            if tabs:
+                line = line.lstrip("\t")
+            if line == delimiter:
+                return True
+        return False
 
 
 def search_command(pattern, text, segments, short_pattern):
@@ -125,7 +275,7 @@ def search_command(pattern, text, segments, short_pattern):
     if pattern != short_pattern:
         return search(pattern, text)
     for segment in segments:
-        if search(pattern, segment):
+        if search(pattern, segment.replace("\n", " ")):
             return True
     return False
 
@@ -180,7 +330,7 @@ def audit_command(command_str: str) -> bool:
     try:
         segments = command_segments(command_str)
     except ValueError as error:
-        sys.stderr.write(str(error) + "\n")
+        sys.stderr.write("[BLOCKED BY HISS] Invalid hook input: " + str(error) + "\n")
         return False
     judged = without_read_only_words(command_str)
     for pattern in BLOCKED_PATTERNS:

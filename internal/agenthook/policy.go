@@ -309,6 +309,249 @@ func withoutReadOnlyWords(command string) string {
 	return readOnlyWordsPattern.ReplaceAllString(command, ReadOnlyKept)
 }
 
+// Shell span limits bound substitution nesting, pending documents and document body lines.
+const shellNestingLimit, shellHereLineLimit = 16, 256
+
+var (
+	shellStatePattern        = regexp.MustCompile(ReadOnlyVeto[strings.Index(ReadOnlyVeto, "(?i:"):])
+	shellBoundaryVetoPattern = regexp.MustCompile(`--%|%[;&|]`)
+	shellHerePattern         = regexp.MustCompile(`^<<(-?)[ \t]*("[^"]*"|'[^']*'|[-A-Za-z0-9_]+)`)
+	shellRedirectPattern     = regexp.MustCompile(`^&?[<>](?:[<>|]|&[0-9-]*)?`)
+	shellUnsupportedPattern  = regexp.MustCompile(`[^\t\x20-\x7e]|[{}^!#]`)
+)
+
+// shellDocument records a pending delimiter without interpreting its body as shell syntax.
+type shellDocument struct {
+	delimiter    string
+	tabs         bool
+	owner, depth int
+}
+
+// shellSpans walks raw command bytes once, using a bounded stack rather than recursion.
+type shellSpans struct {
+	command                    string
+	parts                      []string
+	stack                      []byte
+	documents                  []shellDocument
+	position, start, hereLines int
+	whole                      bool
+	err                        error
+}
+
+// commandSegments isolates short-flag scans; uncertain syntax retains the whole-command scan.
+func commandSegments(command string) ([]string, error) {
+	s := shellSpans{command: command, whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command)}
+	for s.position < len(command) {
+		if !s.step() {
+			return []string{command}, s.err
+		}
+	}
+	if len(s.stack) > 0 || len(s.documents) > 0 || s.whole {
+		if len(s.stack) == 1 && s.stack[0] == '"' {
+			return nil, fmt.Errorf("invalid shell command: unbalanced quote")
+		}
+		return []string{command}, nil
+	}
+	return append(s.parts, command[s.start:]), nil
+}
+
+// top returns the innermost quote or substitution terminator, or zero outside constructs.
+func (s *shellSpans) top() byte {
+	if len(s.stack) == 0 {
+		return 0
+	}
+	return s.stack[len(s.stack)-1]
+}
+
+// push admits at most shellNestingLimit simultaneously open lexical frames.
+func (s *shellSpans) push(closer byte) bool {
+	if len(s.stack) == shellNestingLimit {
+		return false
+	}
+	s.stack = append(s.stack, closer)
+	return true
+}
+
+// quotedStep handles escapes and constructs that also open inside double quotes.
+func (s *shellSpans) quotedStep() (bool, bool) {
+	ch := s.command[s.position]
+	switch ch {
+	case '\\':
+		s.position += 2
+		if s.position > len(s.command) {
+			s.err = fmt.Errorf("invalid shell command: trailing escape")
+			return true, false
+		}
+		return true, true
+	case '"', '`':
+		if s.top() == ch {
+			s.stack = s.stack[:len(s.stack)-1]
+		} else if !s.push(ch) {
+			return true, false
+		}
+		s.position++
+		return true, true
+	case '$':
+		if strings.HasPrefix(s.command[s.position:], "$(") {
+			s.position += 2
+			return true, s.push(')')
+		}
+	}
+	return false, true
+}
+
+// step advances a byte or one lexical construct; failure selects the conservative scan.
+func (s *shellSpans) step() bool {
+	if handled, ok := s.quotedStep(); handled {
+		return ok
+	}
+	if s.top() == '"' {
+		s.position++
+		return true
+	}
+	return s.structuralStep()
+}
+
+// structuralStep interprets punctuation only outside literal double-quoted text.
+func (s *shellSpans) structuralStep() bool {
+	ch := s.command[s.position]
+	switch ch {
+	case '\'':
+		return s.singleQuote()
+	case '(':
+		if s.top() != ')' {
+			s.whole = true
+		}
+		s.position++
+		return s.push(')')
+	case ')':
+		if s.top() == ')' {
+			s.stack = s.stack[:len(s.stack)-1]
+		} else {
+			s.whole = true
+		}
+	case '<', '>':
+		return s.redirection()
+	case '\n':
+		return s.newline()
+	case ';', '&', '|':
+		return s.separator()
+	default:
+		if len(s.stack) == 0 {
+			s.whole = s.whole || shellUnsupportedPattern.MatchString(s.command[s.position:s.position+1])
+		}
+	}
+	s.position++
+	return true
+}
+
+// separator distinguishes Bash's combined-output redirection from command boundaries.
+func (s *shellSpans) separator() bool {
+	if strings.HasPrefix(s.command[s.position:], "&>") {
+		return s.redirection()
+	}
+	if len(s.stack) == 0 {
+		s.split(s.position, s.position+1)
+	}
+	s.position++
+	return true
+}
+
+// singleQuote consumes literal text, refusing an unmatched quote as in the prior renderer.
+func (s *shellSpans) singleQuote() bool {
+	end := strings.IndexByte(s.command[s.position+1:], '\'')
+	if end < 0 {
+		s.err = fmt.Errorf("invalid shell command: unbalanced quote")
+		return false
+	}
+	s.position += end + 2
+	return true
+}
+
+// split records an outer boundary while pending documents retain their owning part index.
+func (s *shellSpans) split(end, next int) {
+	s.parts = append(s.parts, s.command[s.start:end])
+	s.start = next
+}
+
+// redirection retains descriptor duplication and document openers in their owning span.
+func (s *shellSpans) redirection() bool {
+	rest := s.command[s.position:]
+	if strings.HasPrefix(rest, "<<") {
+		match := shellHerePattern.FindStringSubmatch(rest)
+		if match == nil || len(s.documents) == shellNestingLimit {
+			return false
+		}
+		delimiter := strings.Trim(match[2], "\"'")
+		s.documents = append(s.documents, shellDocument{delimiter, match[1] == "-", len(s.parts), len(s.stack)})
+		s.position += len(match[0])
+		return true
+	}
+	s.position += len(shellRedirectPattern.FindString(rest))
+	return true
+}
+
+// newline consumes bounded document bodies before ending an outer command.
+func (s *shellSpans) newline() bool {
+	depth := len(s.stack)
+	s.position++
+	if depth == 0 {
+		s.split(s.position-1, s.position)
+	}
+	remaining := make([]shellDocument, 0, len(s.documents))
+	for _, document := range s.documents {
+		if document.depth != depth {
+			remaining = append(remaining, document)
+			continue
+		}
+		bodyStart := s.position
+		if !s.documentBody(document) {
+			return false
+		}
+		if depth == 0 {
+			s.parts[document.owner] += "\n" + s.command[bodyStart:s.position]
+		}
+	}
+	s.documents = remaining
+	if depth == 0 {
+		s.start = s.position
+	}
+	return true
+}
+
+// documentBody consumes at most shellHereLineLimit lines, including closing delimiters.
+func (s *shellSpans) documentBody(document shellDocument) bool {
+	for s.hereLines < shellHereLineLimit && s.position < len(s.command) {
+		s.hereLines++
+		rest := s.command[s.position:]
+		line, _, found := strings.Cut(rest, "\n")
+		s.position += len(line)
+		if found {
+			s.position++
+		}
+		if document.tabs {
+			line = strings.TrimLeft(line, "\t")
+		}
+		if line == document.delimiter {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesCommand applies segmentation only to the built-in short commit/am flag rule.
+func (r denyRule) matchesCommand(text string, segments []string) bool {
+	if r.source != shortSkipFlagRule || !r.readOnlyExempt {
+		return r.matches(text)
+	}
+	for _, segment := range segments {
+		if r.matches(strings.ReplaceAll(segment, "\n", " ")) {
+			return true
+		}
+	}
+	return false
+}
+
 // builtinDevRoot is the generic half of the topology rule: it names no organisation. The dev
 // root ends in either path separator, so a Windows path is refused like a POSIX one (#200).
 // Organisation containers are operator data and arrive through the operator deny list.
@@ -433,13 +676,17 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
 	command = joinLineContinuations(command)
+	segments, err := commandSegments(command)
+	if err != nil {
+		return Verdict{Outcome: Deny, Reason: InvalidInputRefusal + err.Error()}
+	}
 	judged := withoutReadOnlyWords(command)
 	for _, rule := range p.rules {
 		text := command
 		if rule.readOnlyExempt {
 			text = judged
 		}
-		if containsRequiredLiteral(text, rule.requiredAny) && rule.matches(text) {
+		if containsRequiredLiteral(text, rule.requiredAny) && rule.matchesCommand(text, segments) {
 			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
 		}
 	}
