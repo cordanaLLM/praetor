@@ -38,7 +38,7 @@ func (f *rateLimitedStopReviews) ReadBatch(ctx context.Context, repo string, num
 }
 
 // installRateLimitedStopReviews installs a reader and identity without invoking git or gh.
-func installRateLimitedStopReviews(t *testing.T, reader *rateLimitedStopReviews) (string, string) {
+func installRateLimitedStopReviews(t *testing.T, reader forge.ReviewReader) (string, string) {
 	t.Helper()
 	root := t.TempDir()
 	path := filepath.Join(root, "praetor-stop-reviews.json")
@@ -179,6 +179,7 @@ func TestStopReviewJoinedRateLimits(t *testing.T) {
 
 // TestStopReviewErrorWalkBound refuses oversized joined errors instead of hiding unread failures.
 func TestStopReviewErrorWalkBound(t *testing.T) {
+	installStopReviewRetryClock(t)
 	failures := make([]error, 4*forge.MaxReviewPullRequests+1)
 	for i := range failures {
 		failures[i] = &forge.ErrRateLimited{Cause: errors.New("paced read")}
