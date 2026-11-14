@@ -8,12 +8,14 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // denyRule is one compiled pattern with its source and the refusal a match prints ahead of
 // the source (rulePrefix), which names the invariant the rule enforces. A readOnlyExempt rule
 // judges the command without the words of chained read-only commands (withoutReadOnlyWords).
 type denyRule struct {
+	builtin        bool
 	pattern        *regexp.Regexp
 	source         string
 	prefix         string
@@ -53,6 +55,7 @@ const pythonSpace = `[\s\v\x1c-\x1f\x{85}\p{Z}]`
 // `\s` outside bracket expressions only; a test compiles every rule.
 func builtinRule(rule BuiltinRule, message string) denyRule {
 	return denyRule{
+		builtin:        true,
 		pattern:        regexp.MustCompile(strings.ReplaceAll(rule.Source, `\s`, pythonSpace)),
 		source:         rule.Source,
 		prefix:         rulePrefix(rule.Invariant, message),
@@ -432,17 +435,10 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 	if p == nil {
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
-	command = joinLineContinuations(command)
-	judged := withoutReadOnlyWords(command)
-	for _, rule := range p.rules {
-		text := command
-		if rule.readOnlyExempt {
-			text = judged
-		}
-		if containsRequiredLiteral(text, rule.requiredAny) && rule.matches(text) {
-			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
-		}
+	if verdict := p.textVerdict(command); verdict.Outcome != Allow {
+		return verdict
 	}
+	command = joinLineContinuations(command)
 	verdict := Verdict{Outcome: Allow}
 	if p.admission != nil {
 		if verdict = p.admission.judgeInDir(ctx, workDir, command); verdict.Outcome != Allow {
@@ -455,6 +451,39 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 		}
 	}
 	return verdict
+}
+
+// textVerdict ignores proven plain-data bodies of unshadowed cat/tee for built-ins
+// when descriptors and complete command scanning are safe. Executable bodies and
+// unquoted bodies with substitutions are never masked; operator rules inspect the original text.
+func (p *Policy) textVerdict(command string) Verdict {
+	masked := command
+	if data, ok := hiss.MaskDataHeredocs(command, admissionMaxLines); ok {
+		masked = data
+	}
+	command = joinLineContinuations(command)
+	masked = joinLineContinuations(masked)
+	// Bash 5.3 alternate command substitutions also introduce a command position.
+	masked = strings.ReplaceAll(masked, "${|", "$( ")
+	masked = strings.ReplaceAll(masked, "${", "$(")
+	judged := withoutReadOnlyWords(command)
+	maskedJudged := withoutReadOnlyWords(masked)
+	for _, rule := range p.rules {
+		text := command
+		if rule.builtin {
+			text = masked
+		}
+		if rule.readOnlyExempt {
+			text = judged
+			if rule.builtin {
+				text = maskedJudged
+			}
+		}
+		if containsRequiredLiteral(text, rule.requiredAny) && rule.matches(text) {
+			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
+		}
+	}
+	return Verdict{Outcome: Allow}
 }
 
 // containsRequiredLiteral applies the declared prefilter without interpreting literals as regexes.

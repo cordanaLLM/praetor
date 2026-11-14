@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+type: fixed
+title: Built-in command policy ignores plain data in safe heredocs while checking executable bodies and substitutions.
