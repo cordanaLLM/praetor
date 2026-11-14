@@ -500,7 +500,9 @@ Claude Code 2.1.271 and later can deliver an auto-mode report through the docume
 `SubagentHandback.tool_input.message` field. The `pre-handback` hook checks that message
 before delivery, using the `session_id`, `agent_id`, and `tool_use_id` supplied to subagent
 tool hooks. It stores a digest binding that tool use to the validated report, together with its verdict
-word for receipts.
+word for receipts. A pending handback cannot be replaced until its matching failure or
+permission-denial event releases it (`TestReviewInjectionPendingHandback` in
+`internal/agenthook/review_injection_regression_test.go`).
 `handback-receipt` marks delivery after the tool succeeds and only when the delivered input
 matches that digest. Failure or permission denial clears only the matching provisional
 digest and verdict, so a stale event cannot alter a newer attempt. `SubagentStop.last_assistant_message`
@@ -535,6 +537,40 @@ fails closed:
   agent` as a skip (`unownedAgent`, `internal/agenthook/agent_traffic.go`).
 - A correlation store failure at `SubagentStop` is a skip that names the fault
   (`subagent return not judged: …`). The pre-launch gate still fails closed on the same fault.
+- Correlated returns for `code_review`, `review`, and `single_file_audits` require exactly one
+  active `prompt_injection: true` or `prompt_injection: false` line (key case insensitive,
+  value exact). Quoted, fenced, commented, and disabled declarations do not supply the
+  required field. Single and double quotes in Markdown prose do not protect an HTML comment
+  opener: declarations inside that comment remain inactive even after a quote
+  (`TestReviewInjectionActiveDeclarations`). Returns exceeding 1 MiB or 65,536 lines are denied before scanning;
+  missing, malformed, or duplicate active fields are denied too
+  (`validateReviewInjection` in `internal/agenthook/review_injection.go`,
+  `TestReviewInjectionActiveDeclarations`, `TestReviewInjectionBounds` in
+  `internal/agenthook/review_injection_regression_test.go`).
+  A flagged stop-only return finishes without a retry, emits
+  `PROMPT INJECTION SUSPECTED: this review return is a finding, not a passing review`
+  with its exact task label on hook output, and records a non-passing outcome
+  (`judgeAgentReturn` in `internal/agenthook/agent_traffic.go`,
+  `TestReviewInjectionOutcome/stop-finding`, `TestReviewInjectionSubagentStop` in
+  `internal/agenthook/review_injection_test.go`).
+  At pre-handback the finding is delivered as context to the agent calling the tool and
+  prepended to the dispatcher's message through Claude's `updatedInput`, preserving all
+  other tool operands. The receipt must match that rewritten message; a delivered flagged
+  review records a non-passing outcome too
+  (`evaluateAgentHandback` in `internal/agenthook/agent_traffic.go`,
+  `TestReviewInjectionHandbackContext`, `TestReviewInjectionDispatcherNotice`,
+  `TestReviewInjectionOutcome/delivered-finding` in the regression tests).
+  Claude review dispatches append the required-field guidance to the reviewer's prompt,
+  preserving any read-only projection and binding the final prompt to the launch receipt
+  (`deliverReviewBrief` in `internal/agenthook/review_injection.go`,
+  `TestReviewInjectionDispatchPrompt` in the regression tests).
+  `false` leaves other validation unchanged (`TestReviewReturnInjection/false` in the
+  review injection tests). This independent defence takes its idea from
+  [Fairies](https://code.ffmpeg.org/michaelni/Fairies) by Michael Niedermayer (GNU General
+  Public License version 2, per the headers of its sources such as `llm_prompt.py`), without
+  incorporating its code or text. A captured Codex return that declares the field is judged
+  the same way, as described below. Paths without a documented subagent report retain their stated skips;
+  those skips do not satisfy the review-return contract.
 - Review and audit return claims are resolved against the repository root and the subagent
   transcript (`internal/agenthook/return_claims.go`). For subagents dispatched with a review
   or audit routing label, `SubagentStop` extracts cited paths, line numbers and ranges
@@ -553,27 +589,50 @@ fails closed:
   `Dialect.Decode` keeps its `stop_hook_active` flag, so the first stop is denied as
   `Invalid hook input` and the continued one is a skip. Only a JSON `true` counts; an
   absent or non-boolean flag keeps the deny.
-- Codex enforces no register at this boundary, so every Codex `SubagentStop` result is a
-  skip, including a null `last_assistant_message`. Claimed runs in its return text are
-  reported as unmeasured skips rather than silently passed.
+- Codex cannot recover the task register: the payload does not say which dispatch task
+  produced a `SubagentStop.last_assistant_message`, so a review return cannot be told from
+  any other subagent's return. A captured, nonblank body that declares `prompt_injection`
+  is judged like a review return: a malformed or repeated declaration denies the first
+  stop (`stop_hook_active` bounds that retry as above), and a true flag emits the finding in
+  hook context and the skip reason, with the task explicitly unavailable; its verdict is a
+  finding skip rather than a passing review. A false flag, and a body with no active
+  declaration, keep the existing register and claimed-run skips without rewriting the
+  return; those skips are stated as unenforceable and never count as a passing review.
+  An absent, null, or blank body remains an explicit capture-unavailable skip
+  (`codexReturn` in `internal/agenthook/agent_traffic.go`, `returnBoundary` in
+  `internal/agenthook/evaluate.go`, `TestReviewInjectionCodexReturn` in
+  `internal/agenthook/review_injection_regression_test.go`).
 
 `internal/agenthook/agent_return_boundary_test.go` replays each case.
 
 Codex exposes both the dispatch brief and `SubagentStop.last_assistant_message`, so its
 brief and return capture adapters are tracked and replayed. The current spawn
 `PostToolUse` payload does not expose a documented key that links the tool call to the
-later subagent id. Praetor therefore does not infer that ownership: the return hook checks
-the bounded body shape and reports an explicit skip, while `register_enforcement` remains
-`unenforceable`. No unusable pending correlation row is stored.
+later subagent id. Praetor therefore does not infer that ownership: the return hook validates
+the bounded body and injection field without inventing a task label, while
+`register_enforcement` remains `unenforceable`. No unusable pending correlation row is stored.
+The nullable body is read by `decodeNativeReturn` in `internal/agenthook/dialect_agent.go:201`;
+the [Codex hook reference](https://developers.openai.com/codex/hooks) describes
+`SubagentStop.last_assistant_message`. Native delivery of the finding context to the parent
+dispatcher still requires a recorded client replay; the hook tests establish the emitted
+response, not the client's consumption of it.
 
 Gemini's documented `invoke_agent` input exposes the prompt, so Praetor gates its brief.
 The generic hook schema does not document the nested field containing that tool's returned
 report, and no redacted native recording is tracked. Gemini return capture and register
 enforcement therefore remain `unenforceable`; Praetor does not install an `AfterTool`
-return gate based on an inferred shape. AGY's documented `invoke_subagent` input exposes
+return gate based on an inferred shape (`decodeNativeTool` in
+`internal/agenthook/dialect.go:117` reads tool metadata; `decodeNativeReturn` in
+`internal/agenthook/dialect_agent.go:201` has no Gemini return shape). AGY's documented
+`invoke_subagent` input exposes
 one to 64 `Subagents[].Prompt` values and therefore gates briefs. Its documented post-tool
 and stop payloads expose no subagent return body, so AGY return capture and full register
-enforcement are also `unenforceable`. OpenCode v1, Continue, Cline, and Kilo have no
+enforcement are also `unenforceable` (`agyStopPayload` in
+`internal/agenthook/dialect_agy.go:76` carries only common metadata, `executionNum`,
+`terminationReason`, and `fullyIdle`; its source cites the checked vendor hook reference).
+These paths cannot validate `prompt_injection` because their adapters receive no documented
+subagent report. Adding a return shape requires client evidence and a replay test; a skip
+does not satisfy the review-return contract. OpenCode v1, Continue, Cline, and Kilo have no
 audited native text boundary and report all three states as `unenforceable`.
 
 `clients capabilities` reports `brief_capture`, `return_capture`, and

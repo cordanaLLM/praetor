@@ -149,6 +149,42 @@ func TestStripCommentsKeepsCode(t *testing.T) {
 	}
 }
 
+// TestStripCommentsUnquoted checks literal quotes, block continuation, and the default quote protection.
+func TestStripCommentsUnquoted(t *testing.T) {
+	cases := []struct {
+		name, line, want, still string
+		unquoted                bool
+	}{
+		{"double-literal", `evidence: "none <!-- hidden -->"`, `evidence: "none  "`, "", true},
+		{"single-literal", `evidence: 'none <!-- hidden -->'`, `evidence: 'none  '`, "", true},
+		{"double-open", `evidence: "none <!--"`, `evidence: "none`, "-->", true},
+		{"single-open", `evidence: 'none <!--'`, `evidence: 'none`, "-->", true},
+		{"double-default", `evidence: "none <!--"`, `evidence: "none <!--"`, "", false},
+		{"single-default", `evidence: 'none <!--'`, `evidence: 'none <!--'`, "", false},
+		{"literal-without-comment", `evidence: "none"`, `evidence: "none"`, "", true},
+		{"empty-literal", "", "", "", true},
+	}
+	const maxCases = 16
+	if len(cases) > maxCases {
+		t.Fatalf("unquoted cases=%d exceed scalar bound %d", len(cases), maxCases)
+	}
+	checked := 0
+	for index := 0; index < len(cases) && index < maxCases; index++ {
+		checked++
+		tc := cases[index]
+		t.Run(tc.name, func(t *testing.T) {
+			syntax := CommentSyntax{Block: [][2]string{{"<!--", "-->"}}, Unquoted: tc.unquoted}
+			got, still := StripComments(tc.line, syntax, "")
+			if got != tc.want || still != tc.still {
+				t.Fatalf("StripComments(%q) = %q, %q; want %q, %q", tc.line, got, still, tc.want, tc.still)
+			}
+		})
+	}
+	if checked != len(cases) {
+		t.Errorf("checked %d unquoted cases, want %d", checked, len(cases))
+	}
+}
+
 // Boundary: an empty line, an empty block opener, a closer as the last bytes of the line, a
 // word marker as the whole line, and an open block on an empty line.
 func TestStripCommentsBoundary(t *testing.T) {

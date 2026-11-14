@@ -12,6 +12,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
+// ReviewInjectionMarker identifies a review finding that must not count as a pass.
+const ReviewInjectionMarker = "PROMPT INJECTION SUSPECTED: this review return is a finding, not a passing review"
+
 func evaluateAgentTraffic(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	switch row.Event {
 	case EventPreDispatch:
@@ -46,6 +49,7 @@ func evaluateDispatchAbort(ctx context.Context, row Registration, canonical Cano
 	return Verdict{Outcome: Allow}
 }
 
+// evaluateAgentHandback checks a subagent return at the dispatcher handback and marks a review flagged for prompt injection with ReviewInjectionMarker.
 func evaluateAgentHandback(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	store, err := newCorrelationStore(ctx, root, in.CorrelationDir)
 	if err != nil {
@@ -61,9 +65,15 @@ func evaluateAgentHandback(ctx context.Context, row Registration, canonical Cano
 	if entry.HandbackDelivered {
 		return trafficDenied(errors.New("subagent handback already delivered"))
 	}
-	verdict := validateAgentReturn(entry.Resolution, canonical.Return)
+	verdict, injection := validateAgentReturn(entry.Resolution, entry.Task, canonical.Return)
 	if verdict.Outcome != Allow {
 		return verdict
+	}
+	if injection {
+		canonical.Return, err = deliverReviewHandback(canonical, entry.Task, &verdict)
+		if err != nil {
+			return trafficDenied(err)
+		}
 	}
 	if err := store.markHandbackValidated(ctx, row.Client, canonical.ConversationID, canonical.AgentID,
 		canonical.ToolUseID, canonical.Return); err != nil {
@@ -141,6 +151,7 @@ func reserveClaudeDispatch(ctx context.Context, canonical Canonical, in Invocati
 	return nil
 }
 
+// evaluateAgentBriefs validates every brief of one dispatch, reserves its correlation and adds the lane and review notices.
 func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	if len(canonical.Briefs) == 0 || len(canonical.Briefs) > MaxDispatchBriefs {
 		return trafficDenied(fmt.Errorf("dispatch must carry 1..%d briefs", MaxDispatchBriefs))
@@ -165,10 +176,28 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 		return trafficDenied(err)
 	}
 	verdict.Notice = appendLaneNotice(verdict.Notice, offload.Notice)
+	prompt, err = deliverReviewBrief(row.Client, canonical, prompt, &verdict)
+	if err != nil {
+		return trafficDenied(err)
+	}
 	if err := authority.reserveDispatch(ctx, row.Client, canonical, in, root, resolution, prompt, &verdict); err != nil {
 		return trafficDenied(err)
 	}
 	return verdict
+}
+
+// reviewBriefGuidance returns the notice that a review return must state prompt_injection when any brief carries a review label.
+func reviewBriefGuidance(briefs []string) (string, error) {
+	for index := 0; index < len(briefs) && index < MaxDispatchBriefs; index++ {
+		task, err := caveman.ExtractBriefTask(briefs[index])
+		if err != nil {
+			return "", err
+		}
+		if router.IsReviewTask(task) {
+			return "review return requires prompt_injection: true or prompt_injection: false", nil
+		}
+	}
+	return "", nil
 }
 
 func (a briefAuthority) reserveDispatch(ctx context.Context, client string, canonical Canonical, in Invocation, root string, res config.Resolution, prompt string, verdict *Verdict) error {
@@ -231,26 +260,43 @@ func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canoni
 	return verdict
 }
 
+// judgeAgentReturn validates stop-only reports and records flagged reviews as findings without retrying them.
 func judgeAgentReturn(ctx context.Context, client, root string, canonical Canonical, entry *correlationEntry) Verdict {
 	verdict := Verdict{Outcome: Allow}
+	injection := false
 	if !entry.HandbackDelivered {
-		verdict = validateAgentReturn(entry.Resolution, canonical.Return)
+		verdict, injection = validateAgentReturn(entry.Resolution, entry.Task, canonical.Return)
 	}
 	if verdict.Outcome != Allow {
 		return verdict
 	}
 	verdict = evaluateReturnClaims(ctx, client, root, canonical, *entry)
 	if !entry.HandbackDelivered && verdict.Outcome != Deny {
-		entry.HandbackVerdict = claudeVerdictWord(canonical.Return)
+		entry.HandbackVerdict = reviewOutcomeVerdict(canonical.Return, injection)
+		if injection {
+			verdict.Notice = appendLaneNotice(verdict.Notice, reviewInjectionNotice(entry.Task))
+		}
 	}
 	return verdict
 }
 
-// codexReturn reports the Codex return boundary: its spawn receipt carries no documented
-// key linking the dispatch to the later agent id, and last_assistant_message is nullable.
+// codexReturn judges a declared injection field on a captured body. The native receipt cannot
+// recover the task label, so a body without a declaration may be any subagent's return and keeps
+// the stated skips; a declaration that is present but malformed or repeated is refused, and a true
+// flag is delivered as a finding. Register and claimed-run enforcement remain unmeasured.
 func codexReturn(canonical Canonical) Verdict {
 	if strings.TrimFunc(canonical.Return, isPythonSpace) == "" {
 		return Verdict{Outcome: Skip, Reason: "codex return capture unavailable: last_assistant_message is absent"}
+	}
+	injection, err := validateReviewInjection(canonical.Return)
+	if err != nil && !errors.Is(err, errReviewInjectionMissing) {
+		verdict := trafficDenied(err)
+		verdict.reviewInjectionInvalid = true
+		return verdict
+	}
+	if injection {
+		notice := reviewInjectionNotice("unavailable (Codex dispatch correlation)")
+		return Verdict{Outcome: Skip, Reason: notice, AddedContext: notice}
 	}
 	claims, err := caveman.ExtractReturnRan(canonical.Return)
 	if err == nil && len(claims) > 0 {
@@ -323,11 +369,20 @@ func validateAgentBrief(authority briefAuthority, text string) (config.Resolutio
 	return resolution, nil
 }
 
-func validateAgentReturn(resolution config.Resolution, text string) Verdict {
-	if _, err := config.ValidateEmission(resolution, config.SurfaceAgent, caveman.KindReturn, text); err != nil {
-		return trafficDenied(err)
+// validateAgentReturn checks a return's register and, for a review task, its prompt_injection line; the bool reports a true flag.
+func validateAgentReturn(resolution config.Resolution, task, text string) (Verdict, bool) {
+	injection := false
+	if router.IsReviewTask(task) {
+		var err error
+		injection, err = validateReviewInjection(text)
+		if err != nil {
+			return trafficDenied(err), false
+		}
 	}
-	return Verdict{Outcome: Allow}
+	if _, err := config.ValidateEmission(resolution, config.SurfaceAgent, caveman.KindReturn, text); err != nil {
+		return trafficDenied(err), false
+	}
+	return Verdict{Outcome: Allow}, injection
 }
 
 func trafficDenied(err error) Verdict {
