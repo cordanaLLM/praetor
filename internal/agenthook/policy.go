@@ -411,10 +411,10 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 	return &Policy{rules: rules}, nil
 }
 
-var lineContinuationReplacer = strings.NewReplacer("\\\r\n", " ", "\\\n", " ")
+var lineContinuationReplacer = strings.NewReplacer("\\\r\n", "", "\\\n", "")
 
 // joinLineContinuations replaces backslash line continuations (a backslash followed by \r\n or
-// \n) with a single space before any rule runs.
+// \n) with no intervening bytes before any rule runs.
 func joinLineContinuations(command string) string {
 	return lineContinuationReplacer.Replace(command)
 }

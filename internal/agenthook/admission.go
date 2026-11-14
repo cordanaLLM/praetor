@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -1202,7 +1201,7 @@ func commandAfter(words []string, i int, spec wrapperSpec) int {
 
 // commandName is the base name of a command word, without a Windows .exe suffix.
 func commandName(word string) string {
-	return strings.TrimSuffix(path.Base(strings.ReplaceAll(word, `\`, "/")), ".exe")
+	return util.CommandName(word)
 }
 
 // stepLabel names the step for `praetorctl admit --label`: the command and the last word of a

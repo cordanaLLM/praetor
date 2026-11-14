@@ -45,6 +45,8 @@ func TestOperatorHolds_InvalidEntries(t *testing.T) {
 		"{file: hold, commands: [agy], via: []}",
 		"{file: hold, commands: [/bin/agy], via: [run.sh]}",
 		"{file: hold, commands: [agy], via: [agy]}",
+		"{file: hold, commands: [agy], via: [agy.exe]}",
+		"{file: hold, commands: [agy.exe], via: [agy]}",
 		"{file: hold, commands: [agy], via: [run.sh], typo: true}",
 		"{file: hold, file: other, commands: [agy], via: [run.sh]}",
 		"{file: 123, commands: [agy], via: [run.sh]}", "agy",

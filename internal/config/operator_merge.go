@@ -157,18 +157,28 @@ func (m *operatorMerge) appendList(layer string, spec settingSpec, setting Opera
 	if len(setting.List) == 0 {
 		return nil
 	}
-	merged := slices.Clone(m.values[setting.Path].List)
-	for _, item := range setting.List {
-		if !slices.Contains(merged, item) {
-			merged = append(merged, item)
-		}
-	}
-	if len(merged) > spec.maxItems {
-		return fmt.Errorf("merged %s exceeds %d entries", setting.Path, spec.maxItems)
+	merged, err := boundedAppend(m.values[setting.Path].List, setting.List, spec.maxItems, setting.Path,
+		func(a, b string) bool { return a == b }, slices.Clone[[]string])
+	if err != nil {
+		return err
 	}
 	m.values[setting.Path] = OperatorSetting{Path: setting.Path, List: merged}
 	m.contribute(setting.Path, layer)
 	return nil
+}
+
+// boundedAppend clones and appends unique entries, rejecting a merged list over its bound.
+func boundedAppend[T any](current, incoming []T, limit int, path string, equal func(T, T) bool, clone func([]T) []T) ([]T, error) {
+	merged := clone(current)
+	for _, item := range clone(incoming) {
+		if !slices.ContainsFunc(merged, func(existing T) bool { return equal(existing, item) }) {
+			merged = append(merged, item)
+		}
+	}
+	if len(merged) > limit {
+		return nil, fmt.Errorf("merged %s exceeds %d entries", path, limit)
+	}
+	return merged, nil
 }
 
 // contribute records a layer once among a setting's contributors.

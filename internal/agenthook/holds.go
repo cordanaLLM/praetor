@@ -16,13 +16,14 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const holdReadTimeout = time.Second
 
 type holdCheck struct {
 	entries []config.HoldSettings
+	read    func(context.Context, string) ([]byte, error)
 }
 
 // newHoldCheck validates and copies holds with expanded paths, returning nil when none are configured.
@@ -33,15 +34,15 @@ func newHoldCheck(entries []config.HoldSettings) (*holdCheck, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
-	check := &holdCheck{entries: make([]config.HoldSettings, len(entries))}
+	check := &holdCheck{entries: make([]config.HoldSettings, len(entries)), read: readHold}
 	for i, entry := range entries {
 		file, err := expandHoldFile(entry.File)
 		if err != nil {
 			return nil, err
 		}
-		check.entries[i] = config.HoldSettings{File: file, Commands: slices.Clone(entry.Commands), Via: slices.Clone(entry.Via)}
+		check.entries[i] = config.HoldSettings{File: file, Commands: util.CommandNames(entry.Commands), Via: util.CommandNames(entry.Via)}
 	}
-	return check, nil
+	return check, config.ValidateHookHolds(check.entries)
 }
 
 // expandHoldFile resolves environment and home references, rejecting unresolved hold paths.
@@ -59,19 +60,11 @@ func expandHoldFile(file string) (string, error) {
 	return filepath.Clean(expanded), nil
 }
 
-// judge checks command segments against configured holds and returns the first refusal.
+// judge checks each hold, including indeterminate shell forms only while its file is active.
 func (c *holdCheck) judge(ctx context.Context, command, workDir string) Verdict {
-	lines, ok := hiss.ShellCode(command, admissionMaxLines)
-	if !ok {
-		return holdRefusal("hooks.holds: command unreadable; split command or write it to file first")
-	}
-	segments := strings.Split(segmentSeparators.Replace(strings.Join(lines, "\n")), "\n")
-	if len(segments) > admissionMaxSegments {
-		return holdRefusal("hooks.holds: too many simple commands; split command")
-	}
 	for _, entry := range c.entries {
-		if name := guardedHoldCommand(segments, entry); name != "" {
-			if verdict := judgeHeldProgram(ctx, workDir, name, entry); verdict.Outcome != Allow {
+		if name := guardedHoldCommand(command, entry); name != "" {
+			if verdict := c.judgeHeldProgram(ctx, workDir, name, entry); verdict.Outcome != Allow {
 				return verdict
 			}
 		}
@@ -79,59 +72,92 @@ func (c *holdCheck) judge(ctx context.Context, command, workDir string) Verdict 
 	return Verdict{Outcome: Allow}
 }
 
-// guardedHoldCommand returns the first guarded program or parsing limit refusal in the segments.
-func guardedHoldCommand(segments []string, entry config.HoldSettings) string {
-	for _, segment := range segments {
-		if name := holdProgram(strings.Fields(segment), entry); name != "" {
+// holdPayload is one script at a bounded shell/eval nesting depth.
+type holdPayload struct {
+	script string
+	depth  int
+}
+
+// guardedHoldCommand inspects shell payloads iteratively, bounding depth and total scripts.
+func guardedHoldCommand(command string, entry config.HoldSettings) string {
+	pending := []holdPayload{{script: command}}
+	for at := 0; at < len(pending) && at < admissionMaxSegments; at++ {
+		current := pending[at]
+		name, payloads := holdScriptPrograms(current.script, entry)
+		if name != "" {
 			return name
+		}
+		if len(payloads) > 0 && (current.depth >= 4 || len(pending)+len(payloads) > admissionMaxSegments) {
+			return "command exceeds hold payload bound"
+		}
+		for _, payload := range payloads {
+			pending = append(pending, holdPayload{script: payload, depth: current.depth + 1})
 		}
 	}
 	return ""
 }
 
-// holdProgram unwraps command words to find a guarded program, permitted launcher or parsing limit.
-func holdProgram(words []string, entry config.HoldSettings) string {
-	if len(words) > admissionMaxWords {
-		return "command exceeds hold word bound"
+// holdScriptPrograms judges one script and collects literal payloads for the bounded queue.
+func holdScriptPrograms(script string, entry config.HoldSettings) (string, []string) {
+	commands, reason := holdShellCommands(script)
+	if reason != "" {
+		return reason, nil
 	}
-	i := skipPrelude(words)
+	var payloads []string
+	for _, words := range commands {
+		name, payload := holdProgram(words, entry)
+		if name != "" {
+			return name, nil
+		}
+		if payload != nil {
+			payloads = append(payloads, *payload)
+		}
+	}
+	return "", payloads
+}
+
+// holdProgram follows literal command words, launcher exemptions and supported wrappers.
+func holdProgram(words []holdWord, entry config.HoldSettings) (string, *string) {
+	i := holdPrelude(words)
 	for depth := 0; i < len(words) && depth < admissionMaxWrappers; depth++ {
-		name := commandName(words[i])
-		if slices.Contains(entry.Via, name) {
-			return ""
+		word := words[i]
+		if !word.literal {
+			return "cannot judge command word " + word.raw, nil
+		}
+		name := commandName(word.value)
+		if holdExempt(name, words[i+1:], entry) {
+			return "", nil
 		}
 		if slices.Contains(entry.Commands, name) {
-			return name
+			return name, nil
 		}
-		spec, wrapper := holdWrapper(name)
-		if !wrapper {
-			return ""
+		if payload, handled, reason := holdShellPayload(name, words[i+1:]); handled {
+			return reason, payload
 		}
-		i = commandAfter(words, i, spec)
+		next, wrapper, reason := holdWrappedCommand(name, words, i)
+		if reason != "" || !wrapper {
+			return reason, nil
+		}
+		i = next
 	}
 	if i < len(words) {
-		return "command exceeds hold wrapper bound"
+		return "command exceeds hold wrapper bound", nil
 	}
-	return ""
+	return "", nil
 }
 
-// holdWrapper returns wrapper options, including sudo options so holds can inspect its target.
-func holdWrapper(name string) (wrapperSpec, bool) {
-	if name == "sudo" {
-		return wrapperSpec{values: []string{"-C", "--close-from", "-D", "--chdir", "-g", "--group", "-h", "--host",
-			"-p", "--prompt", "-R", "--chroot", "-T", "--command-timeout", "-U", "--other-user", "-u", "--user"}}, true
-	}
-	spec, ok := admissionWrappers[name]
-	return spec, ok
+// holdExempt recognizes a configured launcher or a lookup that starts no guarded program.
+func holdExempt(name string, args []holdWord, entry config.HoldSettings) bool {
+	return slices.Contains(entry.Via, name) || holdLookup(name, args)
 }
 
 // judgeHeldProgram allows a missing hold file and refuses an existing or unreadable one.
-func judgeHeldProgram(ctx context.Context, workDir, name string, entry config.HoldSettings) Verdict {
+func (c *holdCheck) judgeHeldProgram(ctx context.Context, workDir, name string, entry config.HoldSettings) Verdict {
 	file := entry.File
 	if !filepath.IsAbs(file) && workDir != "" {
 		file = filepath.Join(workDir, file)
 	}
-	data, err := readHold(ctx, file)
+	data, err := c.read(ctx, file)
 	if errors.Is(err, os.ErrNotExist) {
 		return Verdict{Outcome: Allow}
 	}
@@ -148,18 +174,34 @@ func holdRefusal(reason string) Verdict {
 	return Verdict{Outcome: Deny, Reason: boundReason(refusal("HISS", reason))}
 }
 
-// readHold reuses stable, regular-file snapshots (1 MiB cap). The outer deadline
-// also bounds a filesystem open that stalls before snapshot's context checks.
+// holdReadSlots caps outstanding filesystem reader goroutines across all policies.
+var holdReadSlots = make(chan struct{}, 1)
+
+// readHold uses the process-wide slot to bound even uncancelable filesystem reads.
 func readHold(ctx context.Context, file string) ([]byte, error) {
+	return readHoldWith(ctx, file, contextopt.ReadSnapshot)
+}
+
+// readHoldWith acquires the read slot before spawning, retaining it until the reader exits.
+func readHoldWith(ctx context.Context, file string, reader func(context.Context, string) ([]byte, error)) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, holdReadTimeout)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	select {
+	case holdReadSlots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("stalled hold read slot for %s: %w", file, ctx.Err())
+	}
 	type result struct {
 		data []byte
 		err  error
 	}
 	done := make(chan result, 1)
 	go func() {
-		data, err := contextopt.ReadSnapshot(ctx, file)
+		defer func() { <-holdReadSlots }()
+		data, err := reader(ctx, file)
 		done <- result{data, err}
 	}()
 	select {

@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -106,8 +107,9 @@ func validateHold(hold HoldSettings) error {
 
 // validateHoldLaunchers rejects launchers that also appear among guarded commands.
 func validateHoldLaunchers(hold HoldSettings) error {
+	commands := util.CommandNames(hold.Commands)
 	for _, name := range hold.Via {
-		if slices.Contains(hold.Commands, name) {
+		if slices.Contains(commands, util.CommandName(name)) {
 			return fmt.Errorf("hooks.holds: launcher %s also appears in commands", name)
 		}
 	}
@@ -147,14 +149,9 @@ func (m *operatorMerge) appendHolds(layer string, spec settingSpec, setting Oper
 	if len(setting.Holds) == 0 {
 		return nil
 	}
-	merged := cloneHolds(m.values[setting.Path].Holds)
-	for _, hold := range setting.Holds {
-		if !slices.ContainsFunc(merged, func(current HoldSettings) bool { return sameHold(current, hold) }) {
-			merged = append(merged, cloneHolds([]HoldSettings{hold})[0])
-		}
-	}
-	if len(merged) > spec.maxItems {
-		return fmt.Errorf("merged %s exceeds %d entries", setting.Path, spec.maxItems)
+	merged, err := boundedAppend(m.values[setting.Path].Holds, setting.Holds, spec.maxItems, setting.Path, sameHold, cloneHolds)
+	if err != nil {
+		return err
 	}
 	m.values[setting.Path] = OperatorSetting{Path: setting.Path, Holds: merged}
 	m.contribute(setting.Path, layer)
