@@ -17,6 +17,7 @@ is deliberately not part of lefthook.yml.
 import json
 import os
 import re
+import shlex
 import sys
 
 MAX_INPUT_BYTES = 1048576
@@ -467,6 +468,44 @@ def join_line_continuations(command):
     return re.sub(r"\\\r?\n", " ", command)
 
 
+def command_segments(command):
+    """Validate shell quoting and retain the raw spans between unquoted separators."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        list(lexer)
+    except ValueError as error:
+        raise ValueError("invalid shell command: " + str(error)) from error
+    quoted = r"\\[\s\S]|'[^']*'|\"(?:\\[\s\S]|[^\"\\])*\""
+    # Shell state, redirections, substitutions and non-POSIX escapes retain the
+    # existing conservative scan; their punctuation need not start a command.
+    if re.search(READ_ONLY_VETO, re.sub(quoted, "", command)):
+        return [command]
+    parts, start = [], 0
+    for token in re.finditer(quoted + r"|[;&|]+", command):
+        if token.group().startswith('"') and any(
+            opener in token.group() for opener in ("$(", "\x60")
+        ):
+            return [command]
+        if token.group()[0] in ";&|\n":
+            end = token.start()
+            parts.append(command[start:end])
+            start = token.end()
+    parts.append(command[start:])
+    return parts
+
+
+def search_command(pattern, text, segments, short_pattern):
+    """Search the short commit/am flag only within each command's own raw span."""
+    if pattern != short_pattern:
+        return search(pattern, text)
+    for segment in segments:
+        if search(pattern, segment):
+            return True
+    return False
+
+
 # The git rule with an option run (the short skip flag rule) is searched once per run (#1283).
 # re retries a rule at every git it finds, and a git inside an option token (-git, --x=git,
 # -C dir/git) starts at a boundary of the run an earlier git already walked: each retry walked
@@ -514,10 +553,14 @@ def check_command(command):
         raise Blocked(SCAN_BOUND_REFUSAL)
     if max(len(line) for line in command.split("\n")) > MAX_SCAN_LINE_CHARS:
         raise Blocked(SCAN_BOUND_REFUSAL)
+    try:
+        segments = command_segments(command)
+    except ValueError as error:
+        raise Blocked(INVALID_INPUT_REFUSAL + str(error)) from error
     judged = without_read_only_words(command)
     for pattern, refusal in RULES:
         text = judged if pattern in READ_ONLY_EXEMPT else command
-        if search(pattern, text):
+        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_1):
             reason = (
                 (refusal + pattern).encode()[:MAX_REASON_BYTES].decode(errors="ignore")
             )

@@ -6,6 +6,7 @@ Enforces HISS by intercepting attempts to bypass Git hooks, linters, or verifica
 import sys
 import os
 import re
+import shlex
 import json
 from pathlib import Path
 import shutil
@@ -91,6 +92,44 @@ def join_line_continuations(command_str: str) -> str:
     return re.sub(r"\\\r?\n", " ", command_str)
 
 
+def command_segments(command):
+    """Validate shell quoting and retain the raw spans between unquoted separators."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        list(lexer)
+    except ValueError as error:
+        raise ValueError("invalid shell command: " + str(error)) from error
+    quoted = r"\\[\s\S]|'[^']*'|\"(?:\\[\s\S]|[^\"\\])*\""
+    # Shell state, redirections, substitutions and non-POSIX escapes retain the
+    # existing conservative scan; their punctuation need not start a command.
+    if re.search(READ_ONLY_VETO, re.sub(quoted, "", command)):
+        return [command]
+    parts, start = [], 0
+    for token in re.finditer(quoted + r"|[;&|]+", command):
+        if token.group().startswith('"') and any(
+            opener in token.group() for opener in ("$(", "\x60")
+        ):
+            return [command]
+        if token.group()[0] in ";&|\n":
+            end = token.start()
+            parts.append(command[start:end])
+            start = token.end()
+    parts.append(command[start:])
+    return parts
+
+
+def search_command(pattern, text, segments, short_pattern):
+    """Search the short commit/am flag only within each command's own raw span."""
+    if pattern != short_pattern:
+        return search(pattern, text)
+    for segment in segments:
+        if search(pattern, segment):
+            return True
+    return False
+
+
 # Every match of the privilege rule contains one of these literal program names.
 # BuiltinRule.RequiredAny supplies the same prefilter to Go and the emitted interceptor.
 RULE_PREFILTERS = {BLOCKED_PATTERNS[-1]: ("sudo", "doas", "pkexec", "run0", "su")}
@@ -138,10 +177,15 @@ def audit_command(command_str: str) -> bool:
     command_str = join_line_continuations(command_str)
     if not scannable(command_str):
         return False
+    try:
+        segments = command_segments(command_str)
+    except ValueError as error:
+        sys.stderr.write(str(error) + "\n")
+        return False
     judged = without_read_only_words(command_str)
     for pattern in BLOCKED_PATTERNS:
         text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else command_str
-        if search(pattern, text):
+        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0]):
             reason = (
                 f"[BLOCKED BY HISS] verification evasion prohibited; commits, pushes and tool "
                 f"calls pass verification gates; pattern: {pattern}"

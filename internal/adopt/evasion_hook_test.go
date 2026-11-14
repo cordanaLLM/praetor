@@ -45,6 +45,104 @@ func emittedInterceptor(t *testing.T) (string, string) {
 	return python, script
 }
 
+// TestEmittedEvasionCommitSegments keeps skip flags within their shell command.
+func TestEmittedEvasionCommitSegments(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	for _, tc := range []struct {
+		name, command string
+		want          int
+	}{
+		{"chained tail", `git commit -m 'fix: message' && git log -1 | tail -n 1`, 0},
+		{"chained tail with ref", `git commit -m 'fix: message' && git log -1 "$ref" | tail -n 1`, 0},
+		{"quoted separator then flag", `git commit -m 'message && text' -n`, 2},
+		{"bare short flag", `git commit -n`, 2},
+		{"long flag", `git commit --no-verify`, 2},
+		{"am short flag", `git am -n patch`, 2},
+		{"am long flag", `git am --no-verify patch`, 2},
+		{"unbalanced quote", `git commit -m 'unfinished`, 2},
+		{"exempt span", `git commit -m 'message $name' && tail -n 1`, 0},
+		{"quoted operator token", `git commit -m '&&' -n`, 2},
+		{"escaped separator", `git commit -m message\&\&text -n`, 2},
+		{"nested backtick quotes", "git commit -m \"`echo \"a;b\"`\" -n", 2},
+		{"semicolon", `git commit -m 'fix' ; tail -n 1`, 0},
+		{"or", `git commit -m 'fix' || tail -n 1`, 0},
+		{"pipe", `git commit -m 'fix' | tail -n 1`, 0},
+		{"background", `git commit -m 'fix' & tail -n 1`, 0},
+		{"next commit", `git commit -m 'fix' && git commit -n`, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runInterceptor(t, python, script, nil, nil, tc.command); got != tc.want {
+				t.Errorf("exit %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEmittedEvasionSegmentMutants proves both whole-command matching paths regress.
+func TestEmittedEvasionSegmentMutants(t *testing.T) {
+	python, _ := emittedInterceptor(t)
+	for _, tc := range []struct {
+		name, before, after, command string
+	}{
+		{"old span", "for text in segments:", "for text in [text]:",
+			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`},
+		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1)", "segments, None)",
+			`git commit -m 'message $name' && tail -n 1`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered := buildBlockEvasionPY()
+			mutant := strings.Replace(rendered, tc.before, tc.after, 1)
+			if mutant == rendered {
+				t.Fatal("mutation did not change the rendering")
+			}
+			script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
+			mustWrite(t, script, mutant)
+			code := runInterceptor(t, python, script, nil, nil, tc.command)
+			t.Logf("mutant hook rc=%d; fixed hook rc=0", code)
+			if code != 2 {
+				t.Errorf("mutant exit %d, want 2", code)
+			}
+		})
+	}
+}
+
+// TestEmittedEvasionGuardSegments regenerates shared segmentation without replacing admission.
+func TestEmittedEvasionGuardSegments(t *testing.T) {
+	path := filepath.Join("..", "..", filepath.FromSlash(evasionHookFile))
+	guard := mustRead(t, path)
+	if os.Getenv(updateEmittedFixturesEnv) == "1" {
+		if !strings.Contains(guard, "import shlex\n") {
+			guard = strings.Replace(guard, "import re\n", "import re\nimport shlex\n", 1)
+		}
+		marker := "# Every match of the privilege rule"
+		if start := strings.Index(guard, "def command_segments("); start >= 0 {
+			end := strings.Index(guard[start:], marker)
+			if end < 0 {
+				t.Fatal("engine guard segment boundary missing")
+			}
+			guard = guard[:start] + guard[start+end:]
+		}
+		guard = strings.Replace(guard, marker, evasionCommandSegments+marker, 1)
+		if !strings.Contains(guard, "segments = command_segments(command_str)") {
+			guard = strings.Replace(guard, "    judged = without_read_only_words(command_str)",
+				"    try:\n        segments = command_segments(command_str)\n"+
+					"    except ValueError as error:\n        sys.stderr.write(str(error) + \"\\n\")\n        return False\n"+
+					"    judged = without_read_only_words(command_str)", 1)
+		}
+		guard = strings.Replace(guard, "        if search(pattern, text):\n            reason = (",
+			"        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0]):\n            reason = (", 1)
+		mustWrite(t, path, guard)
+		current := mustRead(t, filepath.Join(priorEvasionFixtures, currentEvasionFixture))
+		if !strings.Contains(current, "def command_segments(") {
+			mustWrite(t, filepath.Join(priorEvasionFixtures, "before-command-segments.block_evasion.py"), current)
+		}
+	}
+	if !strings.Contains(guard, evasionCommandSegments) ||
+		!strings.Contains(guard, "search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0])") {
+		t.Fatal("engine guard segmentation differs; regenerate with PRAETOR_UPDATE_EMITTED_FIXTURES=1")
+	}
+}
+
 // interceptorModule is what the emitted script declares at module level, as Python reads it
 // back from the adjacent literals the layout splits long values into: RULES as (pattern,
 // refusal) pairs and the read-only exemption.
