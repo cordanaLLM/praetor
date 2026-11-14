@@ -6,8 +6,13 @@ package supplychain
 
 import (
 	"fmt"
+	"maps"
+	"path"
+	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/nodemanifest"
+	"github.com/cordanaLLM/praetor/internal/semver"
 	"github.com/cordanaLLM/praetor/internal/util"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 )
@@ -18,6 +23,9 @@ import (
 // G101 hardcoded-credential rule reads in a constant's name.
 const AcknowledgementsFile = "docs/credits.md"
 
+// consoleManifestFile is the source of the console's exact dependency pins.
+const consoleManifestFile = "console/package.json"
+
 // creditsPlayerAnchor marks that row: the player it names as the packages' use.
 var creditsPlayerAnchor = "`" + figureassets.PlayerDirectory + "/player.js`"
 
@@ -25,8 +33,10 @@ var creditsPlayerAnchor = "`" + figureassets.PlayerDirectory + "/player.js`"
 // the committed player bundles as "<name> <version>", at the version the figure lock installs
 // (figurePlayerRows, the rows RenderNotices writes into NoticesFile). A dependency bump moves the
 // lock, the rebuilt player's license file and the notices together; this holds the hand-written
-// credits row to the same sources, so it cannot keep naming the outgoing versions.
-func CheckCredits(credits string, sources NoticeSources) error {
+// credits row to the same sources, so it cannot keep naming the outgoing versions. Console
+// entries in upstream must name their packages at the pins console/package.json declares;
+// entries without version text need no version claim.
+func CheckCredits(credits string, sources NoticeSources, upstream UpstreamCreditSources) error {
 	components, err := figurePlayerRows(sources.FigureLicenses, sources.FigureLock)
 	if err != nil {
 		return err
@@ -46,7 +56,73 @@ func CheckCredits(credits string, sources NoticeSources) error {
 		return fmt.Errorf("%s: the row for %s does not name %s; write each package at the version %s installs",
 			AcknowledgementsFile, creditsPlayerAnchor, strings.Join(missing, ", "), figureLockFile)
 	}
+	return checkConsoleCreditVersions(upstream)
+}
+
+// checkConsoleCreditVersions extends the credits comparison to entries using the console.
+// The existing manifest reader refuses duplicate keys rather than choosing a pin silently.
+func checkConsoleCreditVersions(sources UpstreamCreditSources) error {
+	usesConsole := func(entry CreditEntry) bool { return slices.Contains(entry.Paths, consoleManifestFile) }
+	if !slices.ContainsFunc(sources.Credits.Entries, usesConsole) {
+		return nil
+	}
+	manifest, err := nodemanifest.ParseManifest([]byte(sources.PathTexts[consoleManifestFile]))
+	if err != nil {
+		return fmt.Errorf("parse %s for credits: %w", consoleManifestFile, err)
+	}
+	pins := map[string]string{}
+	for _, group := range manifest.Groups() {
+		maps.Copy(pins, group)
+	}
+	for index, entry := range sources.Credits.Entries {
+		if usesConsole(entry) {
+			if err := checkConsoleCreditEntry(entry, index, pins); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+// checkConsoleCreditEntry compares every version claim of an entry's own npm packages.
+func checkConsoleCreditEntry(entry CreditEntry, index int, pins map[string]string) error {
+	for _, id := range entry.Packages {
+		name, npm := strings.CutPrefix(id, "npm:")
+		if !npm {
+			continue
+		}
+		for _, version := range consoleDetailVersions(entry.Detail, name) {
+			pin, exists := pins[name]
+			if !exists {
+				return fmt.Errorf("%s names %s %s; %s has no pin for that package", entry.label(index), name, version, consoleManifestFile)
+			}
+			if version != pin {
+				return fmt.Errorf("%s names %s %s; %s pins %s", entry.label(index), name, version, consoleManifestFile, pin)
+			}
+		}
+	}
+	return nil
+}
+
+// consoleDetailVersions reads full or scope-shortened "<name> <version>" terms and a bare
+// version (the entry's packages share that claim). Markdown link destinations never count.
+func consoleDetailVersions(detail, name string) []string {
+	text := util.MarkdownLinkRe.ReplaceAllString(detail, "$1")
+	text = strings.NewReplacer("`", "", ",", " ", ";", " ", "(", " ", ")", " ").Replace(text)
+	fields := strings.Fields(text)
+	var versions []string
+	for index, field := range fields {
+		field = strings.TrimSuffix(field, ".")
+		_, value := semver.CutOperator(field)
+		value = strings.TrimPrefix(value, "v")
+		if len(value) == 0 || value[0] < '0' || value[0] > '9' {
+			continue
+		}
+		if len(fields) == 1 || index > 0 && (fields[index-1] == name || fields[index-1] == path.Base(name)) {
+			versions = append(versions, field)
+		}
+	}
+	return versions
 }
 
 // creditsPlayerRow returns the one table row of credits that names the committed player.
