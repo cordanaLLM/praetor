@@ -7,6 +7,7 @@ package supplychain
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -66,7 +67,7 @@ func repositoryPinExpectations(tb testing.TB, root string) []ImagePin {
 	tb.Helper()
 	var want []ImagePin
 	for _, rel := range []string{"Dockerfile", "docker/dev/Dockerfile"} {
-		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		content, err := fs.ReadFile(os.DirFS(root), rel)
 		if err != nil {
 			tb.Fatal(err)
 		}
