@@ -947,6 +947,53 @@ CI workflows are unchanged. Deterministic injected-runner tests cover these path
 real namespace cases skip with a reason when the host lacks the facility
 (`internal/gating/test_exec_test.go`, `internal/sandbox/test_exec_test.go`).
 
+#### Modules whose tests need host ownership
+
+The wrapper's user namespace maps only the caller, so a file the host's root owns shows the
+overflow uid 65534 inside it (#1868). A test of a production check that requires root ownership,
+such as a check that root owns a trusted `ssh-keygen` and every directory above it, cannot pass
+there. Such a module declares one `go-test-netns` exception in `.standards.yaml` that names its
+`go.mod`:
+
+```yaml
+exceptions:
+  - rule: go-test-netns
+    path: tools/knowledge-retrieval/go.mod
+    category: D
+    entered: 2026-11-09
+    expires: 2027-03-09
+    reason: lifecycle tests run the production ssh-keygen owner check, which needs host root mapped
+```
+
+While the entry holds, the race stage runs that module's test binaries without the wrapper, in
+the gate's own namespaces and on its network. The stage message names the entry, for example
+`Go test binaries of tools/knowledge-retrieval/go.mod: the gate's own namespaces, no loopback
+wrapper (exception go-test-netns, category D, expires 2027-03-09: ...)`. Every other module stays
+wrapped. The production check keeps failing closed; only the test binary's namespace changes.
+
+The entry names one `go.mod` by path, the module form `api-compatibility` uses, with no glob,
+tool, fingerprint or line range. It requires a category even inside the uncategorized grace
+window, so it always expires with its category's interval. The race stage reads the entries once
+and judges every module against them. An expired entry fails its module before any test binary
+runs, empty modules and wrapper-free hosts included, so neither path stands in for the other; the
+audit fails it as well. An entry that names no tracked Go module fails the race stage before any
+module runs, as a stale `gosec` entry fails the security stage. Where the wrapper does not apply
+(CI, a toolchain container, macOS, Windows) a live entry changes nothing: CI runs every module as
+before and stays the second barrier. `praetorctl go test`, the engine's Makefile seam, does not
+read the entry.
+
+The wrapper isolates the network only. It keeps the caller's filesystem and environment
+(`testExecTail` binds `/`), so it is no boundary against hostile test code, and an entry does not
+open one. The entry is part of the change under review: a pull request that adds one shows it in
+the diff, and the stage message names it on every run.
+
+`internal/config/go_test_netns_test.go` pins the entry form,
+`internal/gating/test_netns_exception_test.go` pins which modules run wrapped, and
+`internal/gating/test_netns_real_test.go` (with its Linux-only identity half) runs the planted case on real namespaces: a root-owner
+fixture test fails under the wrapper without the entry and passes with it, its undeclared sibling
+passes only inside the wrapper, and an expired entry fails. The real case skips with the probe's
+reason on a host without user namespaces.
+
 On a host with a container engine socket (the Unix path in `DOCKER_HOST`,
 `/var/run/docker.sock`, or Docker's or Podman's socket under `XDG_RUNTIME_DIR`), a test binary
 may start a container and dial the host port the engine published for it, as testcontainers

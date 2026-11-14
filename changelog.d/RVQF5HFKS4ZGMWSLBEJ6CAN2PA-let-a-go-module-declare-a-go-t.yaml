@@ -1,0 +1,3 @@
+type: added
+title: Let a Go module declare a go-test-netns exception so the gate race stage runs its test binaries without the loopback wrapper, for tests of production root-ownership checks; other modules stay wrapped and an expired entry fails the module
+issue: '#1868'
