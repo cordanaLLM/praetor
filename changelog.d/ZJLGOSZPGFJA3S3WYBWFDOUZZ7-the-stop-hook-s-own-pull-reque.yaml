@@ -1,0 +1,2 @@
+type: fixed
+title: The stop hook's own pull request review check scales its budget with the number of open pull requests and, when a live read still overruns, shows the newest completed read with its age instead of an unread list.

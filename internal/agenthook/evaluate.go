@@ -10,14 +10,18 @@ import (
 )
 
 // Evaluation budgets (3.3 of the rollout spec), each inside its registration's own timeout
-// (registrations.go). Stop sums review, state and checkpoint budgets for the outer
-// deadline Run applies; the question check performs no I/O.
+// (registrations.go). Stop runs review, state and checkpoint under one outer deadline,
+// stopTotalBudget, each step also capped by its own budget; the question check performs no I/O.
 const (
-	preToolBudget        = 10 * time.Second
-	preEditBudget        = 10 * time.Second
-	postToolBudget       = 30 * time.Second
-	stateVerifyBudget    = 20 * time.Second
+	preToolBudget     = 10 * time.Second
+	preEditBudget     = 10 * time.Second
+	postToolBudget    = 30 * time.Second
+	stateVerifyBudget = 20 * time.Second
+	// stopCheckpointBudget caps the checkpoint step; the stop deadline (stopTotalBudget) still bounds it, so it keeps
+	// 30 s when the review read finishes early and at least 18 s when review (16 s) and state (20 s) use their caps (#1894).
 	stopCheckpointBudget = 30 * time.Second
+	// stopTotalBudget is the one stop deadline, below the launcher's 60 s STOP_RUN_TIMEOUT (#1894).
+	stopTotalBudget      = 54 * time.Second
 	environmentBudget    = 5 * time.Second
 	dispatchBudget       = 10 * time.Second
 	claudeDispatchBudget = 25 * time.Second
@@ -31,7 +35,7 @@ func budgetForRow(row Registration) time.Duration {
 	return budgetFor(row.Event)
 }
 
-// budgetFor is the outer context deadline Run applies before evaluate reads anything.
+// budgetFor bounds Run before any reads; stop remains 54 s under the launcher's 60 s limit (#1894).
 func budgetFor(event Event) time.Duration {
 	switch event {
 	case EventPreDispatch, EventDispatchReceipt, EventDispatchAbort, EventPreHandback, EventSubagentStart:
@@ -43,7 +47,7 @@ func budgetFor(event Event) time.Duration {
 	case EventPostTool:
 		return postToolBudget
 	case EventStop:
-		return stopReviewBudget + stateVerifyBudget + stopCheckpointBudget
+		return stopTotalBudget
 	case EventEnvironment:
 		return environmentBudget
 	default:
@@ -293,7 +297,7 @@ func mergeStopChecks(checks ...Verdict) Verdict {
 	return withStopSkips(Verdict{Outcome: Allow}, checks)
 }
 
-// withStopSkips preserves every stated skip and notice alongside the combined stop verdict.
+// withStopSkips preserves every stated skip and notice, including cached-review ages, through stop evaluation (#1894).
 func withStopSkips(verdict Verdict, checks []Verdict) Verdict {
 	for _, check := range checks {
 		verdict.Notice = appendLaneNotice(verdict.Notice, check.Notice)

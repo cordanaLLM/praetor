@@ -9,11 +9,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// stopReviewBudget keeps identity and inventory discovery within 4 s (#1894).
 const stopReviewBudget = 4 * time.Second
+
+// stopReviewPerPRBudget allows batch pagination another 100 ms per own PR (#1894).
+const stopReviewPerPRBudget = 100 * time.Millisecond
+
+// stopReviewBatchBudgetCap caps the batch at 12 s, the whole review check at 16 s (#1894).
+const stopReviewBatchBudgetCap = 12 * time.Second
+
+// stopReviewCacheStalenessCap permits completed-read fallback only younger than 30 min (#1894).
+const stopReviewCacheStalenessCap = 30 * time.Minute
+
 const stopReviewCacheTTL = 2 * time.Minute
 
 // maxStopReviewReadErrors allows bounded wrappers around the entire review inventory.
@@ -23,10 +35,14 @@ const maxStopReviewReadErrors = 4 * forge.MaxReviewPullRequests
 var stopReviewReader = func(root string) forge.ReviewReader { return forge.GHReviewReader{Dir: root} }
 var stopReviewIdentity = resolveStopReviewIdentity
 
+// stopReviewNow permits deterministic cache-age boundary tests for #1894.
+var stopReviewNow = time.Now
+
 type stopReviewCache struct {
+	Complete   bool
 	Repository string
 	Head       string
-	CheckedAt  time.Time
+	CheckedAt  time.Time // Observation start; slow completions cannot refresh older state.
 	Verdict    Verdict
 }
 
@@ -34,34 +50,64 @@ type stopReviewReadError struct {
 	err, diagnostic error
 }
 
-// evaluateStopReviewThreads checks own reviews and caches completed reads, never a rate-limit deferral.
+type stopReviewResult struct {
+	verdict  Verdict
+	known    Verdict
+	complete bool
+	failure  error
+}
+
+// evaluateStopReviewThreads scales live reads and falls back only to recent completed reads (#1894).
 func evaluateStopReviewThreads(ctx context.Context, root string) Verdict {
-	ctx, cancel := context.WithTimeout(ctx, stopReviewBudget)
+	ctx, cancel := context.WithTimeout(ctx, stopReviewBudget+stopReviewBatchBudgetCap)
 	defer cancel()
-	repo, head, cachePath, err := stopReviewIdentity(ctx, root)
+	inventoryCtx, inventoryCancel := context.WithTimeout(ctx, stopReviewBudget)
+	defer inventoryCancel()
+	repo, head, cachePath, err := stopReviewIdentity(inventoryCtx, root)
 	if err != nil {
-		if ctx.Err() != nil {
+		if inventoryCtx.Err() != nil {
 			return Verdict{Outcome: Deny, Reason: "Own pull request review state not read within the stop budget: " + err.Error()}
 		}
 		return reviewSkip(err)
 	}
-	now := time.Now()
-	if verdict, hit := loadStopReviewCache(cachePath, repo, head, now); hit {
+	now := stopReviewNow()
+	if verdict, hit := loadStopReviewCache(ctx, cachePath, repo, head, now); hit {
 		return verdict
 	}
-	verdict := readStopReviews(ctx, stopReviewReader(root), repo, now)
-	if verdict.Outcome == Skip || verdict.Notice != "" {
-		return verdict // Incomplete reads must retry even when HEAD has not moved.
+	result := readStopReviewsResult(ctx, inventoryCtx, stopReviewReader(root), repo, now)
+	verdict := result.verdict
+	if !result.complete {
+		if result.failure != nil && verdict.Notice == "" {
+			fallback := stopReviewFallback(ctx, cachePath, repo, head, stopReviewNow(), verdict, result.failure)
+			if fallback.Notice == "" {
+				return verdict
+			}
+			return mergeStopChecks(result.known, fallback)
+		}
+		return verdict // Incomplete reads and rate-limit deferrals must retry.
 	}
-	cache := stopReviewCache{Repository: repo, Head: head, CheckedAt: now, Verdict: verdict}
-	data, err := json.Marshal(cache)
-	if err != nil {
-		return reviewCacheNotice(verdict, fmt.Errorf("encode review cache: %w", err))
-	}
-	if err := util.WriteFileAtomic(cachePath, data, 0o600); err != nil {
+	cache := stopReviewCache{Complete: true, Repository: repo, Head: head, CheckedAt: now, Verdict: verdict}
+	if err := cache.publish(ctx, cachePath); err != nil {
 		return reviewCacheNotice(verdict, fmt.Errorf("write review cache: %w", err))
 	}
 	return verdict
+}
+
+// publish retains newer observations and compares bytes through the shared snapshot lock.
+func (cache stopReviewCache) publish(ctx context.Context, path string) error {
+	before, exists, err := contextopt.ObserveSnapshot(ctx, path)
+	if err != nil {
+		return err
+	}
+	var previous stopReviewCache
+	if exists && json.Unmarshal(before, &previous) == nil && previous.Repository == cache.Repository && !previous.CheckedAt.Before(cache.CheckedAt) {
+		return nil
+	}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		return fmt.Errorf("encode review cache: %w", err)
+	}
+	return contextopt.ReplaceSnapshot(ctx, path, data, contextopt.ReplaceOptions{Expected: before, Exists: exists, Mode: 0o600})
 }
 
 // resolveStopReviewIdentity resolves the repository, current HEAD commit, and cache file path for review evaluation.
@@ -85,37 +131,72 @@ func resolveStopReviewIdentity(ctx context.Context, root string) (string, string
 		filepath.Join(strings.TrimSpace(gitDir), "praetor-stop-reviews.json"), nil
 }
 
-// loadStopReviewCache reuses only a complete Allow matching repository, commit, and TTL, without notices.
-func loadStopReviewCache(path, repo, head string, now time.Time) (Verdict, bool) {
-	data, err := util.ReadFileLimited(path, 65536)
+// loadStopReviewCache retains the same-HEAD, 2 min Allow fast path independently of fallback (#1894).
+func loadStopReviewCache(ctx context.Context, path, repo, head string, now time.Time) (Verdict, bool) {
+	cache, valid := readStopReviewCache(ctx, path, repo, now, stopReviewCacheTTL)
+	return cache.Verdict, valid && cache.Head == head && cache.Verdict.Outcome == Allow
+}
+
+// readStopReviewCache validates completed verdicts and a strict age bound for either cache path (#1894).
+func readStopReviewCache(ctx context.Context, path, repo string, now time.Time, maxAge time.Duration) (stopReviewCache, bool) {
+	data, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
-		return Verdict{}, false // Missing, malformed and stale caches always force a read.
+		return stopReviewCache{}, false
 	}
 	var cache stopReviewCache
 	if err := json.Unmarshal(data, &cache); err != nil {
-		return Verdict{}, false
+		return stopReviewCache{}, false
 	}
 	age := now.Sub(cache.CheckedAt)
-	valid := cache.Repository == repo && cache.Head == head && age >= 0 && age < stopReviewCacheTTL
-	if cache.Verdict.Outcome != Allow || cache.Verdict.Notice != "" {
-		valid = false
-	}
-	return cache.Verdict, valid
+	complete := cache.Complete && (cache.Verdict.Outcome == Allow || cache.Verdict.Outcome == Deny) && cache.Verdict.Notice == ""
+	return cache, complete && cache.Repository == repo && age >= 0 && age < maxAge
 }
 
-// readStopReviews retains known denials and ordinary batch failures beside rate-limit deferrals.
+// stopReviewFallback preserves recent completed verdicts, including named denials, after a live failure (#1894).
+func stopReviewFallback(ctx context.Context, path, repo, head string, now time.Time, live Verdict, failure error) Verdict {
+	cache, valid := readStopReviewCache(ctx, path, repo, now, stopReviewCacheStalenessCap)
+	if !valid || (cache.Verdict.Outcome == Allow && cache.Head != head) {
+		return live
+	}
+	verdict := cache.Verdict
+	verdict.Notice = fmt.Sprintf("Own pull request review live read overran or failed; using newest completed read for %s, %s old; live failure: %s",
+		repo, forge.ReviewAge(now, cache.CheckedAt), failure)
+	return verdict
+}
+
+// stopReviewBatchBudget scales the batch independently of discovery, saturating before multiplication (#1894).
+func stopReviewBatchBudget(count int) time.Duration {
+	count = max(0, min(count, int((stopReviewBatchBudgetCap-stopReviewBudget)/stopReviewPerPRBudget)))
+	return stopReviewBudget + time.Duration(count)*stopReviewPerPRBudget
+}
+
+// readStopReviews retains known denials and rate-limit deferrals under separate discovery and batch budgets (#1894).
 func readStopReviews(ctx context.Context, reader forge.ReviewReader, repo string, now time.Time) Verdict {
-	numbers, err := reader.OwnOpen(ctx, repo)
+	inventoryCtx, cancel := context.WithTimeout(ctx, stopReviewBudget)
+	defer cancel()
+	return readStopReviewsResult(ctx, inventoryCtx, reader, repo, now).verdict
+}
+
+// readStopReviewsResult marks incomplete reads explicitly so they never replace a completed cache (#1894).
+func readStopReviewsResult(ctx, inventoryCtx context.Context, reader forge.ReviewReader, repo string, now time.Time) stopReviewResult {
+	numbers, err := reader.OwnOpen(inventoryCtx, repo)
 	if err != nil {
-		return stopReviewReadFailure(err, fmt.Sprintf("Own pull request review inventory not read in %s: ", repo))
+		return stopReviewResult{failure: err, verdict: stopReviewReadFailure(err, fmt.Sprintf("Own pull request review inventory not read in %s: ", repo))}
 	}
 	if len(numbers) > forge.MaxReviewPullRequests {
-		return Verdict{Outcome: Deny, Reason: fmt.Sprintf("Own pull request review inventory in %s exceeds 100", repo)}
+		return stopReviewResult{verdict: Verdict{Outcome: Deny, Reason: fmt.Sprintf("Own pull request review inventory in %s exceeds 100", repo)}}
 	}
-	snapshots, batchErr := reader.ReadBatch(ctx, repo, numbers)
+	batchCtx, cancel := context.WithTimeout(ctx, stopReviewBatchBudget(len(numbers)))
+	defer cancel()
+	snapshots, batchErr := reader.ReadBatch(batchCtx, repo, numbers)
+	batchErr = errors.Join(batchErr, batchCtx.Err())
 	failure := stopReviewBatchFailure(batchErr)
-	denies := stopReviewBatchDenies(repo, numbers, snapshots, now, failure.Notice != "")
-	return mergeStopChecks(joinReviewDenies(denies), failure)
+	denies, complete, known := stopReviewBatchFindings(repo, numbers, snapshots, now, failure.Notice != "")
+	if !complete && batchErr == nil {
+		batchErr = errors.New("review batch incomplete")
+	}
+	return stopReviewResult{verdict: mergeStopChecks(joinReviewDenies(denies), failure),
+		complete: complete && batchErr == nil, failure: batchErr, known: known}
 }
 
 // stopReviewBatchFailure walks joined and wrapped failures with a bound, preserving each read's diagnostic.
@@ -171,16 +252,25 @@ func stopReviewReadFailure(err error, prefix string) Verdict {
 	return Verdict{Outcome: Allow, Notice: notice}
 }
 
-// stopReviewBatchDenies retains known findings and invalid snapshots, optionally deferring missing snapshots.
+// stopReviewBatchDenies retains known findings while the shared scanner tracks completeness (#1894).
 func stopReviewBatchDenies(repo string, numbers []int, snapshots map[int]forge.ReviewSnapshot, now time.Time, deferUnread bool) []Verdict {
+	denies, _, _ := stopReviewBatchFindings(repo, numbers, snapshots, now, deferUnread)
+	return denies
+}
+
+// stopReviewBatchFindings reports known threads and unread snapshots without caching partial results (#1894).
+func stopReviewBatchFindings(repo string, numbers []int, snapshots map[int]forge.ReviewSnapshot, now time.Time, deferUnread bool) ([]Verdict, bool, Verdict) {
 	var denies []Verdict
 	var unread []string
+	complete := true
 	for _, number := range numbers {
 		snapshot, ok := snapshots[number]
 		if !ok && deferUnread {
+			complete = false
 			continue
 		}
 		if !ok || snapshot.Number != number || !forge.ValidReviewPRState(snapshot.State) {
+			complete = false
 			unread = append(unread, fmt.Sprintf("#%d", number))
 			continue
 		}
@@ -190,11 +280,12 @@ func stopReviewBatchDenies(repo string, numbers []int, snapshots map[int]forge.R
 			}
 		}
 	}
+	known := joinReviewDenies(denies)
 	if len(unread) > 0 {
 		denies = append(denies, Verdict{Outcome: Deny, Reason: "Own pull request review state not read for " +
 			strings.Join(unread, ", ") + " within the stop budget"})
 	}
-	return denies
+	return denies, complete, known
 }
 
 // stopReviewVerdict inspects a single pull request snapshot and returns a denial verdict if unresolved threads exist.
