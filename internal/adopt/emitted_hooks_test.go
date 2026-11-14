@@ -33,7 +33,7 @@ const emittedFixtureRoot = "testdata/emitted"
 const updateEmittedFixturesEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
 
 // gitleaksHintUnsafe lists shell syntax unsafe in an unquoted guard or Makefile recipe.
-const gitleaksHintUnsafe = "\r\n\"$`'\\;|&<>()*?[]"
+const gitleaksHintUnsafe = "\r\n\"$`'\\;|&<>()*?[]#"
 
 // TestGitleaksInstallHint names the pinned mise install and the stamped release and warns about a Go build shadowing it on PATH.
 func TestGitleaksInstallHint(t *testing.T) {
@@ -57,13 +57,13 @@ func TestGitleaksInstallHint(t *testing.T) {
 	}
 }
 
-// TestGitleaksInstallHintRejectsShellGlobs proves the safety check rejects planted glob syntax.
-func TestGitleaksInstallHintRejectsShellGlobs(t *testing.T) {
-	for _, glob := range []string{"*", "?", "[", "]"} {
-		t.Run(glob, func(t *testing.T) {
-			hint := gitleaksInstallHint + " " + glob
+// TestGitleaksInstallHintRejectsShellSyntax proves the safety check rejects planted globs and a comment marker.
+func TestGitleaksInstallHintRejectsShellSyntax(t *testing.T) {
+	for _, syntax := range []string{"*", "?", "[", "]", "#"} {
+		t.Run(syntax, func(t *testing.T) {
+			hint := gitleaksInstallHint + " " + syntax
 			if !strings.ContainsAny(hint, gitleaksHintUnsafe) {
-				t.Errorf("shell safety check accepted planted glob in hint %q", hint)
+				t.Errorf("shell safety check accepted planted shell syntax in hint %q", hint)
 			}
 		})
 	}
