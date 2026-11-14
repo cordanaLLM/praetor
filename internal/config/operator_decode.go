@@ -13,12 +13,14 @@ import (
 
 // OperatorSetting is one decoded key of an operator section (operatorSectionNames). Path is
 // the dotted key, for example clients.selected.agy.required. A scalar carries its canonical
-// text in Value, a sequence of strings carries List, and hooks.python carries Argv.
+// text in Value, a sequence of strings carries List, hooks.python carries Argv,
+// and hooks.holds carries Holds.
 type OperatorSetting struct {
 	Path  string
 	Value string
 	List  []string
 	Argv  [][]string
+	Holds []HoldSettings
 	Line  int
 }
 
@@ -91,6 +93,7 @@ func decodeSectionMapping(entry sectionEntry) ([]sectionEntry, []OperatorSetting
 	return children, settings, nil
 }
 
+// decodeSettingValue decodes a YAML value according to its operator setting kind.
 func decodeSettingValue(node *yaml.Node, path string, spec settingSpec) (OperatorSetting, error) {
 	setting := OperatorSetting{Path: path}
 	var err error
@@ -103,12 +106,15 @@ func decodeSettingValue(node *yaml.Node, path string, spec settingSpec) (Operato
 		setting.List, err = stringSequence(node, path, spec.maxItems)
 	case kindArgv:
 		setting.Argv, err = argvSequence(node, path)
+	case kindHolds:
+		setting.Holds, err = holdsSequence(node, path)
 	default:
 		setting.Value, err = stringScalar(node, path)
 	}
 	return setting, err
 }
 
+// stringScalar returns a YAML string scalar or an error naming its path.
 func stringScalar(node *yaml.Node, path string) (string, error) {
 	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
 		return "", fmt.Errorf("%s must be a string", path)
@@ -116,6 +122,7 @@ func stringScalar(node *yaml.Node, path string) (string, error) {
 	return node.Value, nil
 }
 
+// boolScalar returns the canonical text of a YAML boolean scalar.
 func boolScalar(node *yaml.Node, path string) (string, error) {
 	var value bool
 	if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" || node.Decode(&value) != nil {
@@ -124,6 +131,7 @@ func boolScalar(node *yaml.Node, path string) (string, error) {
 	return strconv.FormatBool(value), nil
 }
 
+// intScalar returns the canonical decimal text of a YAML integer scalar.
 func intScalar(node *yaml.Node, path string) (string, error) {
 	var value int
 	if node.Kind != yaml.ScalarNode || node.Tag != "!!int" || node.Decode(&value) != nil {
@@ -132,6 +140,7 @@ func intScalar(node *yaml.Node, path string) (string, error) {
 	return strconv.Itoa(value), nil
 }
 
+// stringSequence decodes a YAML string list within the supplied item limit.
 func stringSequence(node *yaml.Node, path string, limit int) ([]string, error) {
 	if node.Kind != yaml.SequenceNode || len(node.Content) > limit {
 		return nil, fmt.Errorf("%s must be a list of at most %d strings", path, limit)

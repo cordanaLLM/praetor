@@ -25,10 +25,12 @@ type operatorMerge struct {
 	contributors map[string][]string
 }
 
+// newOperatorMerge returns an empty setting merger with contributor tracking.
 func newOperatorMerge() *operatorMerge {
 	return &operatorMerge{values: map[string]OperatorSetting{}, contributors: map[string][]string{}}
 }
 
+// apply validates and merges a layer's settings, returning errors with the layer name.
 func (m *operatorMerge) apply(layer string, settings []OperatorSetting) error {
 	if len(settings) > maxOperatorSettings {
 		return fmt.Errorf("%s: operator sections exceed %d settings", layer, maxOperatorSettings)
@@ -67,18 +69,20 @@ func checkSetting(layer string, spec settingSpec, setting OperatorSetting) error
 	return spec.check(layer, setting)
 }
 
-// kindMembers lists which of Value, List and Argv each value kind may carry.
-var kindMembers = map[settingKind][3]bool{
-	kindText: {true, false, false}, kindBool: {true, false, false}, kindInt: {true, false, false},
-	kindList: {false, true, false}, kindArgv: {false, false, true}, kindEntry: {false, false, false},
+// kindMembers lists which of Value, List, Argv and Holds each value kind may carry.
+var kindMembers = map[settingKind][4]bool{
+	kindText: {true, false, false, false}, kindBool: {true, false, false, false}, kindInt: {true, false, false, false},
+	kindList: {false, true, false, false}, kindArgv: {false, false, true, false}, kindEntry: {false, false, false, false},
+	kindHolds: {false, false, false, true},
 }
 
+// checkShape checks value members, scalar formats and list bounds against the setting kind.
 func checkShape(spec settingSpec, setting OperatorSetting) error {
 	allowed, ok := kindMembers[spec.kind]
 	if !ok {
 		return fmt.Errorf("%s is a section, not a value", setting.Path)
 	}
-	present := [3]bool{setting.Value != "", setting.List != nil, setting.Argv != nil}
+	present := [4]bool{setting.Value != "", setting.List != nil, setting.Argv != nil, setting.Holds != nil}
 	for i := range present {
 		if present[i] && !allowed[i] {
 			return fmt.Errorf("%s has an invalid value", setting.Path)
@@ -98,6 +102,7 @@ func checkShape(spec settingSpec, setting OperatorSetting) error {
 	return nil
 }
 
+// merge combines a setting according to its declared merge rule.
 func (m *operatorMerge) merge(layer string, spec settingSpec, setting OperatorSetting) error {
 	switch spec.rule {
 	case ruleAppend:
@@ -144,7 +149,11 @@ func (m *operatorMerge) replace(layer string, setting OperatorSetting) {
 	m.values[setting.Path] = cloneSetting(setting)
 }
 
+// appendList merges unique list entries or holds within their limit and records the layer.
 func (m *operatorMerge) appendList(layer string, spec settingSpec, setting OperatorSetting) error {
+	if spec.kind == kindHolds {
+		return m.appendHolds(layer, spec, setting)
+	}
 	if len(setting.List) == 0 {
 		return nil
 	}
@@ -162,21 +171,27 @@ func (m *operatorMerge) appendList(layer string, spec settingSpec, setting Opera
 	return nil
 }
 
+// contribute records a layer once among a setting's contributors.
 func (m *operatorMerge) contribute(path, layer string) {
 	if !slices.Contains(m.contributors[path], layer) {
 		m.contributors[path] = append(m.contributors[path], layer)
 	}
 }
 
+// named returns the setting's contributing layer names separated by commas.
 func (m *operatorMerge) named(path string) string { return strings.Join(m.contributors[path], ", ") }
 
+// sameSetting reports whether two settings carry equal scalar, list, argument and hold values.
 func sameSetting(a, b OperatorSetting) bool {
 	return a.Value == b.Value && slices.Equal(a.List, b.List) &&
-		slices.EqualFunc(a.Argv, b.Argv, func(x, y []string) bool { return slices.Equal(x, y) })
+		slices.EqualFunc(a.Argv, b.Argv, func(x, y []string) bool { return slices.Equal(x, y) }) &&
+		slices.EqualFunc(a.Holds, b.Holds, sameHold)
 }
 
+// cloneSetting returns a setting with independent copies of its list, argument and hold slices.
 func cloneSetting(setting OperatorSetting) OperatorSetting {
 	setting.List = slices.Clone(setting.List)
+	setting.Holds = cloneHolds(setting.Holds)
 	argv := make([][]string, len(setting.Argv))
 	for i, candidate := range setting.Argv {
 		argv[i] = slices.Clone(candidate)
@@ -221,6 +236,7 @@ func assignSetting(settings *OperatorSettings, path string, setting OperatorSett
 	return assignTarget(settings.targets(), path, setting)
 }
 
+// assignClientSetting stores a client field, supplying selection defaults for a new client.
 func assignClientSetting(settings *OperatorSettings, client clientid.ID, field string, setting OperatorSetting) error {
 	selection, ok := settings.Clients.Selected[client]
 	if !ok {
@@ -233,6 +249,7 @@ func assignClientSetting(settings *OperatorSettings, client clientid.ID, field s
 	return nil
 }
 
+// assignFrameworkTarget stores a language's framework field, creating the target map when needed.
 func assignFrameworkTarget(settings *OperatorSettings, language, field string, setting OperatorSetting) error {
 	if settings.Framework.Targets == nil {
 		settings.Framework.Targets = map[string]FrameworkTarget{}
@@ -257,10 +274,12 @@ func (s *OperatorSettings) targets() map[string]any {
 	return targets
 }
 
+// targets returns client setting paths mapped to their destination fields.
 func (c *ClientSettings) targets() map[string]any {
 	return map[string]any{"clients.mode": &c.Mode, "clients.verified_max_age": &c.VerifiedMaxAge, "clients.govern": &c.Govern}
 }
 
+// targets returns hook setting paths mapped to their destination fields.
 func (h *HookSettings) targets() map[string]any {
 	return map[string]any{
 		"hooks.scope": &h.Scope, "hooks.command_policy.deny": &h.CommandPolicy.Deny, "hooks.python": &h.Python,
@@ -268,9 +287,11 @@ func (h *HookSettings) targets() map[string]any {
 		"hooks.admission.max_jobs_divisor": &h.Admission.MaxJobsDivisor, "hooks.admission.commands": &h.Admission.Commands,
 		"hooks.merge.helper":      &h.Merge.Helper,
 		"hooks.worktrees.enforce": &h.Worktrees.Enforce,
+		"hooks.holds":             &h.Holds,
 	}
 }
 
+// targets returns update setting paths mapped to their destination fields.
 func (u *UpdateSettings) targets() map[string]any {
 	return map[string]any{
 		"update.channel": &u.Channel, "update.source": &u.Source, "update.checkout": &u.Checkout,
@@ -281,10 +302,12 @@ func (u *UpdateSettings) targets() map[string]any {
 	}
 }
 
+// targets returns framework setting paths mapped to their destination fields.
 func (f *FrameworkSettings) targets() map[string]any {
 	return map[string]any{"framework.migration_branch": &f.MigrationBranch}
 }
 
+// targets returns forge setting paths mapped to their destination fields.
 func (f *ForgeSettings) targets() map[string]any {
 	return map[string]any{
 		"forge.default_owner": &f.DefaultOwner, "forge.reconcile_repos": &f.ReconcileRepos, "forge.review_bot": &f.ReviewBot,
@@ -293,6 +316,7 @@ func (f *ForgeSettings) targets() map[string]any {
 	}
 }
 
+// targets returns topology setting paths mapped to their destination fields.
 func (t *TopologySettings) targets() map[string]any {
 	return map[string]any{"topology.org_containers": &t.OrgContainers}
 }
@@ -314,6 +338,7 @@ func (t *FrameworkTarget) targets() map[string]any {
 	}
 }
 
+// assignTarget converts and stores a setting in its mapped field, copying slice values.
 func assignTarget(targets map[string]any, key string, setting OperatorSetting) error {
 	target, ok := targets[key]
 	if !ok {
@@ -332,6 +357,8 @@ func assignTarget(targets map[string]any, key string, setting OperatorSetting) e
 		*field = slices.Clone(setting.List)
 	case *[][]string:
 		*field = cloneSetting(setting).Argv
+	case *[]HoldSettings:
+		*field = cloneHolds(setting.Holds)
 	case *time.Duration:
 		*field, err = time.ParseDuration(setting.Value)
 	default:

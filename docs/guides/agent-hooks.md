@@ -1255,6 +1255,47 @@ string handed to `sh -c`, is not seen. `internal/agenthook/admission_test.go`,
 `cmd/standardsctl/hook_test.go` replay refused, admitted, scoped, job-capped and unreadable
 commands.
 
+## Lane holds
+
+`hooks.holds` is empty by default. An operator layer can guard program basenames
+with a hold file and name the launchers that remain available:
+
+```yaml
+hooks:
+  holds:
+    - file: '${LANE_ROOT}/hold/agy'
+      commands: [agy, praetor-agy-wrapper]
+      via: [agy-run.sh]
+```
+
+Each entry requires a nonempty file path and 1–32 basenames in each of `commands`
+and `via`. A launcher cannot also appear in that entry's guarded commands. Entries
+append across layers without duplicates, up to 32 holds after merging
+([operator settings](effective-policy.md#how-layers-merge)). Paths expand a leading
+`~` and environment variables when the policy is built; an unset variable fails
+construction. Relative paths resolve against the hook working directory.
+
+The pre-tool rule checks the hold at command evaluation time, so creating or removing
+it affects an already built policy. While it exists, `agy models`,
+`praetor-agy-wrapper models`, `env X=1 agy models` and `timeout 60 agy models` are
+refused. The refusal names the file, its first line (holding order and reason), and
+the launcher as the only path. `bash /path/agy-run.sh ... agy:model ...` and direct
+launcher calls remain available; the launcher's own hold refusal stays the second
+barrier. A launcher in one command does not exempt another command on the same line.
+
+The rule shares the admission shell reader and wrapper handling. It judges program
+words in chained commands, skipping quoted text, comments and here-document bodies;
+`echo "agy models"` and a here-document mentioning `agy` remain allowed. Unreadable
+shell input fails closed while holds are configured. A missing hold allows the
+guarded program. An unreadable, nonregular, symlinked, changing or oversized hold
+fails closed by filename. Reads use a stable UTF-8 snapshot capped at 1 MiB and a
+one-second deadline, also bounded by the hook's caller context.
+
+`internal/agenthook/holds_test.go` covers refusal, launcher and text allowances,
+live hold changes, unreadable files, read bounds and path expansion.
+`internal/config/operator_holds_test.go` covers layer merging, defaults, invalid
+entries, merged bounds and policy digest integrity.
+
 ## Worktree locations
 
 Worktree location enforcement is off by default. A host turns it on with

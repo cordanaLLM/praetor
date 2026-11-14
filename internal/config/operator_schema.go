@@ -57,6 +57,7 @@ const (
 	kindArgv                       // sequence of candidates: a string or a sequence of strings
 	kindEntry                      // clients.selected.<id>, framework.targets.<language>: lists the entry, holds its keys
 	kindMapping                    // a nested mapping with keys of its own
+	kindHolds                      // sequence of hold file / command / launcher records
 )
 
 type mergeRule uint8
@@ -110,6 +111,7 @@ var operatorSpecs = map[string]settingSpec{
 	"hooks.admission.commands":              {kind: kindList, rule: ruleAppend, maxItems: MaxAdmissionCommands, check: admissionList},
 	"hooks.worktrees":                       {kind: kindMapping},
 	"hooks.worktrees.enforce":               {kind: kindBool, rule: ruleTighten, strict: "true"},
+	"hooks.holds":                           {kind: kindHolds, rule: ruleAppend, maxItems: MaxHookHolds, check: holdList},
 	"hooks.python":                          {kind: kindArgv, check: pythonCandidates},
 	"hooks.merge":                           {kind: kindMapping},
 	"hooks.merge.helper":                    {check: matching(mergeHelperPattern, "empty or a single shell word without spaces, at most 256 characters")},
@@ -251,6 +253,7 @@ func ValidateAdmissionMaxJobsDivisor(divisor int) error {
 	return nil
 }
 
+// intAtLeast returns a check requiring an integer at or above the lower bound.
 func intAtLeast(low int) settingCheck {
 	return func(_ string, setting OperatorSetting) error {
 		value, err := strconv.Atoi(setting.Value)
@@ -279,8 +282,10 @@ func validatePatterns(what string, patterns []string, maxPatterns int) error {
 	return nil
 }
 
+// isControl reports whether a rune is an ASCII control character or DEL.
 func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 
+// oneOf returns a check accepting listed values and explaining reserved values on rejection.
 func oneOf(allowed ...string) settingCheck {
 	return func(_ string, setting OperatorSetting) error {
 		if slices.Contains(allowed, setting.Value) {
@@ -293,6 +298,7 @@ func oneOf(allowed ...string) settingCheck {
 	}
 }
 
+// durationWithin returns a check requiring a duration within the inclusive bounds.
 func durationWithin(low, high time.Duration) settingCheck {
 	return func(_ string, setting OperatorSetting) error {
 		value, err := time.ParseDuration(setting.Value)
@@ -303,6 +309,7 @@ func durationWithin(low, high time.Duration) settingCheck {
 	}
 }
 
+// matching returns a check requiring a pattern match, using want to describe rejected values.
 func matching(pattern *regexp.Regexp, want string) settingCheck {
 	return func(_ string, setting OperatorSetting) error {
 		if !pattern.MatchString(setting.Value) {
@@ -321,6 +328,7 @@ func ValidBranchName(name string) bool {
 	return branchPattern.MatchString(name) && !strings.Contains(name, "..")
 }
 
+// branchName checks that a setting contains an accepted branch name.
 func branchName(_ string, setting OperatorSetting) error {
 	if !ValidBranchName(setting.Value) {
 		return fmt.Errorf("%s must be %s", setting.Path, branchNameRule)
@@ -346,6 +354,7 @@ func documentPath(_ string, setting OperatorSetting) error {
 	return fmt.Errorf("%s must be a clean relative or absolute path", setting.Path)
 }
 
+// scopeList checks that a nonempty scope list contains only unique supported scopes.
 func scopeList(_ string, setting OperatorSetting) error {
 	if len(setting.List) == 0 {
 		return fmt.Errorf("%s requires at least one scope", setting.Path)
@@ -358,6 +367,7 @@ func scopeList(_ string, setting OperatorSetting) error {
 	return nil
 }
 
+// grantList checks that each permission grant is a nonempty literal within the byte limit.
 func grantList(_ string, setting OperatorSetting) error {
 	for i, grant := range setting.List {
 		if grant == "" || !util.LiteralString(grant, maxGrantBytes) {
@@ -367,6 +377,7 @@ func grantList(_ string, setting OperatorSetting) error {
 	return nil
 }
 
+// denyList validates command deny patterns, adding the setting path to errors.
 func denyList(_ string, setting OperatorSetting) error {
 	if err := ValidateCommandPolicyDeny(setting.List); err != nil {
 		return fmt.Errorf("%s: %w", setting.Path, err)
@@ -374,6 +385,7 @@ func denyList(_ string, setting OperatorSetting) error {
 	return nil
 }
 
+// admissionList validates admission patterns, adding the setting path to errors.
 func admissionList(_ string, setting OperatorSetting) error {
 	if err := ValidateAdmissionCommands(setting.List); err != nil {
 		return fmt.Errorf("%s: %w", setting.Path, err)
@@ -395,6 +407,7 @@ func pythonCandidates(layer string, setting OperatorSetting) error {
 	return nil
 }
 
+// pythonCandidate checks an interpreter command and literal arguments, restricting absolute paths to workstations.
 func pythonCandidate(layer string, candidate []string) error {
 	if len(candidate) == 0 || len(candidate) > 1+maxPythonArgs {
 		return fmt.Errorf("requires a command and at most %d arguments", maxPythonArgs)
@@ -460,6 +473,7 @@ func repositoryList(_ string, setting OperatorSetting) error {
 	return nil
 }
 
+// githubOwner checks a GitHub owner name, adding the setting path to errors.
 func githubOwner(_ string, setting OperatorSetting) error {
 	if err := util.ValidateGitHubOwner(setting.Value); err != nil {
 		return fmt.Errorf("%s: %w", setting.Path, err)
@@ -486,6 +500,7 @@ func orgContainerList(_ string, setting OperatorSetting) error {
 	return nil
 }
 
+// ownOrganizationList validates the configured organization names.
 func ownOrganizationList(_ string, setting OperatorSetting) error {
 	return ValidateOwnOrganizations(setting.List)
 }
