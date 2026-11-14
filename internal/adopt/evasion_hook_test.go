@@ -77,11 +77,13 @@ func evasionCommitSegmentCases() []struct {
 		{"heredoc message", "git commit -m \"$(cat <<'EOF'\nmessage ; && |\nEOF\n)\" && git log -1 | tail -n 1", 0},
 		{"redirect then flag", `git commit -m x 2>&1 -n`, 2},
 		{"substitution flag", `git commit "$(printf %s -n)"`, 2},
-		{"backtick message", "git commit -m \"`cat msg.txt`\" && tail -n 1", 0},
+		// Order engine-block-evasion-commit-span-20261114 round 3: backticks retain fallback.
+		{"backtick message", "git commit -m \"`cat msg.txt`\" && tail -n 1", 2},
 		{"backtick flag", "git commit \"`printf %s -n`\"", 2},
 		{"nested substitution", `git commit -m "$(echo "$(cat msg.txt)")" && tail -n 1`, 0},
 		{"nested substitution flag", `git commit "$(echo "$(printf %s -n)")"`, 2},
-		{"newline", "git commit -m x\ngit log -1 | tail -n 1", 0},
+		// Order engine-block-evasion-commit-span-20261114 round 3: ordinary line breaks retain fallback.
+		{"newline", "git commit -m x\ngit log -1 | tail -n 1", 2},
 		{"file redirections", `git commit -F msg.txt >>out 2>/dev/null <in && tail -n 1`, 0},
 		{"descriptor input", `git commit -m x 3<&0 2>&- & tail -n 1`, 0},
 		{"heredoc outer", "git commit -F - <<EOF\nmessage ' ; && |\nEOF\ntail -n 1", 0},
@@ -93,17 +95,53 @@ func evasionCommitSegmentCases() []struct {
 		{"state alias", `alias git=other; git commit -m x && tail -n 1`, 2},
 		{"state export", `export X=1; git commit -m x && tail -n 1`, 2},
 		{"state function", `function git() { other; }; git commit -m x && tail -n 1`, 2},
-		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -n 1", 0},
+		// Order engine-block-evasion-commit-span-20261114 round 3: unquoted substitution retains fallback.
+		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -n 1", 2},
 		{"nesting past bound", "git commit -m " + strings.Repeat("$(", 17) + "cat msg.txt" + strings.Repeat(")", 17) + " && tail -n 1", 2},
 		{"heredoc lines at bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 255) + "EOF\ntail -n 1", 0},
 		{"heredoc lines past bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 256) + "EOF\ntail -n 1", 2},
 	}
 }
 
+// evasionFallbackCases covers order engine-block-evasion-commit-span-20261114 round 3.
+func evasionFallbackCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		// Order engine-block-evasion-commit-span-20261114 round 3: own syntax vetoes segmentation.
+		{"own parameter", `git commit $flags -m x && tail -n 1`, 2},
+		{"am parameter", `git am $flags patch && tail -n 1`, 2},
+		{"own substitution", `git commit $(cat flags) -m x && tail -n 1`, 2},
+		{"own escape", `git commit -m a\b && tail -n 1`, 2},
+		{"own continuation", "git commit -m x\\\n && tail -n 1", 2},
+		{"single quoted newline", "git commit -m 'a\nb' && tail -n 1", 2},
+		{"double quoted newline", "git commit -m \"a\nb\" && tail -n 1", 2},
+		{"later newline", "git commit -m x && printf \"a\nb\" | tail -n 1", 0},
+		{"later escape", `git commit -m x && printf a\b | tail -n 1`, 0},
+		{"later parameter", `git commit -m x && git log $flags | tail -n 1`, 0},
+		{"quoted parameter", `git commit -m 'a$b' && tail -n 1`, 0},
+		{"quoted escape", `git commit -m 'a\b' && tail -n 1`, 0},
+		{"own input", `git commit -m a<b && tail -n 1`, 0},
+		{"own output", `git commit -m a>b && tail -n 1`, 0},
+		{"background log", `git commit -m x & git log -n 1`, 0},
+		{"combined pipe", `git commit -m x |& head -n 3`, 0},
+		{"unrelated quote", `printf 'unfinished`, 0},
+		{"unrelated git quote", `git status 'unfinished`, 0},
+		{"commit option quote", `git -C repo --no-pager commit -m 'unfinished`, 2},
+		{"am option quote", `git -c x=y am 'unfinished`, 2},
+		{"unicode commit quote", "git\u00a0commit -m 'unfinished", 2},
+	}
+}
+
 // TestEmittedEvasionCommitSegments keeps skip flags within their shell command.
 func TestEmittedEvasionCommitSegments(t *testing.T) {
 	python, script := emittedInterceptor(t)
-	for _, tc := range append(evasionCommitSegmentCases(), evasionRedirectCases()...) {
+	cases := append(evasionCommitSegmentCases(), evasionRedirectCases()...)
+	for _, tc := range append(cases, evasionFallbackCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := runInterceptor(t, python, script, nil, nil, tc.command); got != tc.want {
 				t.Errorf("exit %d, want %d", got, tc.want)
@@ -139,7 +177,8 @@ func evasionRedirectCases() []struct {
 		{"heredoc nested context", "git commit -F - <<OUT -m \"$(cat <<IN\ninside\nIN\n)\" && tail -n 1\noutside\nOUT", 0},
 		{"heredoc pending at bound", "git commit -F -" + strings.Repeat(" <<EOF", 16) + "\n" + strings.Repeat("EOF\n", 16) + "tail -n 1", 0},
 		{"heredoc pending past bound", "git commit -F -" + strings.Repeat(" <<EOF", 17) + "\n" + strings.Repeat("EOF\n", 17) + "tail -n 1", 2},
-		{"substitution braces", `git commit -m "$(echo ${msg})" && tail -n 1`, 0},
+		// Order engine-block-evasion-commit-span-20261114 round 3: unquoted parameter retains fallback.
+		{"substitution braces", `git commit -m "$(echo ${msg})" && tail -n 1`, 2},
 	}
 }
 
@@ -153,8 +192,8 @@ func TestEmittedEvasionSegmentMutants(t *testing.T) {
 			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`},
 		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1)", "segments, None)",
 			`git commit -m 'message $name' && tail -n 1`},
-		{"redirection veto", "spans = CommandSpans(command)",
-			"spans = CommandSpans(command)\n    if re.search(r\"[<>]\", command):\n        return [command]",
+		{"redirection veto", "spans = CommandSpans(command, short_pattern)",
+			"spans = CommandSpans(command, short_pattern)\n    if re.search(r\"[<>]\", command):\n        return [command]",
 			`git commit -m x 2>&1 | tail -n 1`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,7 +220,11 @@ func TestEmittedEvasionGuardSegments(t *testing.T) {
 	if os.Getenv(updateEmittedFixturesEnv) == "1" {
 		guard = strings.Replace(guard, "import shlex\n", "", 1)
 		marker := "# Every match of the privilege rule"
-		if start := strings.Index(guard, "def command_segments("); start >= 0 {
+		start := strings.Index(guard, "def commit_command(")
+		if start < 0 {
+			start = strings.Index(guard, "def command_segments(")
+		}
+		if start >= 0 {
 			end := strings.Index(guard[start:], marker)
 			if end < 0 {
 				t.Fatal("engine guard segment boundary missing")
@@ -189,9 +232,15 @@ func TestEmittedEvasionGuardSegments(t *testing.T) {
 			guard = guard[:start] + guard[start+end:]
 		}
 		guard = strings.Replace(guard, marker, evasionCommandSegments+marker, 1)
-		if !strings.Contains(guard, "segments = command_segments(command_str)") {
+		if !strings.Contains(guard, "    raw_command = command_str\n") {
+			guard = strings.Replace(guard, "    command_str = join_line_continuations(command_str)",
+				"    raw_command = command_str\n    command_str = join_line_continuations(command_str)", 1)
+		}
+		guard = strings.Replace(guard, "segments = command_segments(command_str)",
+			"segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])", 1)
+		if !strings.Contains(guard, "segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])") {
 			guard = strings.Replace(guard, "    judged = without_read_only_words(command_str)",
-				"    try:\n        segments = command_segments(command_str)\n"+
+				"    try:\n        segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])\n"+
 					"    except ValueError as error:\n        sys.stderr.write(str(error) + \"\\n\")\n        return False\n"+
 					"    judged = without_read_only_words(command_str)", 1)
 		}

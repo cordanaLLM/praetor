@@ -24,6 +24,11 @@ func wholeCommandDenies(p *Policy, command string) bool {
 func TestReadOnlyExemption_Positive_ChainedReadOnlyWordsAreNoSkip(t *testing.T) {
 	builtin := policy(t)
 	for command, judged := range map[string]string{
+		// Order engine-block-evasion-commit-span-20261114 round 3: separate reads and redirections allow.
+		"git commit -m x & git log -n 1":                            "git commit -m x & git log -n 1",
+		"git commit -m x |& head -n 3":                              "git commit -m x |& head -n 3",
+		"git commit -m a<b && git log -n 5":                         "git commit -m a<b && git log -n 5",
+		"git commit -m a>b && git log -n 5":                         "git commit -m a>b && git log -n 5",
 		"git commit -m x && git log -n 5":                           "git commit -m x && git log",
 		"git commit -s -F msg; sed -n 1p README.md":                 "git commit -s -F msg; sed",
 		"git commit -s -F msg; sed -n '1,5p' README.md":             "git commit -s -F msg; sed '1,5p' README.md",
@@ -67,8 +72,6 @@ func TestReadOnlyExemption_Negative_RealSkipsStayRefused(t *testing.T) {
 		"SKIP=lint; export SKIP; git commit -m x",
 		"git commit -m x; git log --no-verify",
 		"git status; grep -n LEFTHOOK=0 lefthook.yml",
-		"git commit -m x & git log -n 1",
-		"git commit -m x |& head -n 3",
 	} {
 		if verdict := builtin.Command(command); verdict.Outcome != Deny {
 			t.Errorf("%q allowed", command)
@@ -83,7 +86,8 @@ func TestReadOnlyExemption_Boundary_VetoedConstructs(t *testing.T) {
 	builtin := policy(t)
 	const chained = " && git log -n 5"
 	for _, token := range []string{
-		"é", "\r", "\v", "\\", "`", "^", "$", "(", ")", "{", "}", "<", ">", "!", "--%",
+		// Order engine-block-evasion-commit-span-20261114 round 3: redirections keep spans.
+		"é", "\r", "\v", "\\", "`", "^", "$", "(", ")", "{", "}", "!", "--%",
 	} {
 		vetoed := "git commit -m a" + token + "b" + chained
 		if verdict := builtin.Command(vetoed); verdict.Outcome != Deny {
