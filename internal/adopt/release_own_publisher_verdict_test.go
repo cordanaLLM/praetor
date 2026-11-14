@@ -17,6 +17,17 @@ var ownReleaseVerdictCases = []struct {
 	wantFailSubs []string
 }{
 	{
+		name:         "draft form pass",
+		configs:      map[string][]byte{"release-please-config.json": []byte(`{"draft":true,"force-tag-creation":true,"packages":{".":{}}}`)},
+		wantPassSubs: []string{"every package hands release creation to the own publisher (draft with force-tag-creation)"},
+	},
+	{
+		name:         "mixed forms pass",
+		configs:      map[string][]byte{"release-please-config.json": []byte(`{"packages":{"a":{"skip-github-release":true},"b":{"draft":true,"force-tag-creation":true}}}`)},
+		wantPassSubs: []string{"every package hands release creation to the own publisher (skip-github-release and draft with force-tag-creation)"},
+	},
+
+	{
 		name: "pass line names every publisher",
 		configs: map[string][]byte{
 			"release-please-config.json": []byte(`{"skip-github-release":true,"packages":{".":{}}}`),
@@ -27,7 +38,7 @@ var ownReleaseVerdictCases = []struct {
 		},
 		wantPassSubs: []string{
 			"[PASS] release-own-publisher:",
-			"release-please-config.json: every package resolves skip-github-release to true",
+			"release-please-config.json: every package hands release creation to the own publisher (skip-github-release)",
 			"publishing workflow(s): .github/workflows/publish.yml, .github/workflows/dist.yml.",
 		},
 	},
@@ -57,7 +68,7 @@ var ownReleaseVerdictCases = []struct {
 		wantFailSubs: []string{
 			"[FAIL] release-own-publisher:",
 			"publishing workflow(s): .github/workflows/publish.yml",
-			"set \"skip-github-release\": true at the top level or on every package in release-please-config.json",
+			"set \"skip-github-release\": true, or both \"draft\": true and \"force-tag-creation\": true, at the top level or on every package in release-please-config.json",
 		},
 	},
 	{
@@ -71,6 +82,20 @@ var ownReleaseVerdictCases = []struct {
 		wantFailSubs: []string{
 			"[FAIL] release-own-publisher:",
 			"in .github/release-please-config.json",
+		},
+	},
+	{
+		name: "draft without force names both accepted forms",
+		configs: map[string][]byte{
+			"release-please-config.json": []byte(`{"draft":true,"packages":{".":{}}}`),
+		},
+		publishers: []string{
+			".github/workflows/publish.yml",
+		},
+		wantFailSubs: []string{
+			"[FAIL] release-own-publisher:",
+			"draft true but force-tag-creation not true",
+			"set \"skip-github-release\": true, or both \"draft\": true and \"force-tag-creation\": true,",
 		},
 	},
 	{

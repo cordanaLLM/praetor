@@ -14,67 +14,107 @@ import (
 	"github.com/cordanaLLM/praetor/internal/strictjson"
 )
 
-// releasePackagesSkipGitHub resolves package settings before top-level defaults, as release-please does.
+// releaseSettings holds the effective release-please boolean options.
+type releaseSettings struct {
+	skip, draft, force bool
+}
+
+// releasePackagesSkipGitHub checks whether all packages hand publication to the own publisher.
 func releasePackagesSkipGitHub(data []byte) error {
+	_, err := resolveOwnReleasePackages(data)
+	return err
+}
+
+// resolveOwnReleasePackages validates package settings and returns the accepted forms used.
+func resolveOwnReleasePackages(data []byte) (string, error) {
 	var config map[string]any
 	if len(data) == 0 {
-		return errors.New("release-please configuration missing; a version manifest cannot declare skip-github-release")
+		return "", errors.New("release-please configuration missing; a version manifest cannot declare skip-github-release")
 	}
 	if err := strictjson.Decode(data, &config, strictjson.Options{
 		MaxBytes: contextopt.MaxSourceBytes, MaxDepth: 64, Names: strictjson.ExactNames,
 	}); err != nil {
-		return fmt.Errorf("read release-please configuration: %w", err)
+		return "", fmt.Errorf("read release-please configuration: %w", err)
 	}
-	defaultSkip, err := releaseSkipValue(config, false)
+	defaults, err := resolveReleaseSettings(config, releaseSettings{})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if _, exists := config["packages"]; !exists {
-		return requireReleaseSkip(config, defaultSkip, ".")
+		return releasePackageForms(map[string]any{".": config}, defaults)
 	}
 	packages, ok := config["packages"].(map[string]any)
 	if !ok || len(packages) == 0 || len(packages) > maxReleasePackages {
-		return fmt.Errorf("packages must be an object with 1..%d entries", maxReleasePackages)
+		return "", fmt.Errorf("packages must be an object with 1..%d entries", maxReleasePackages)
 	}
-	return releasePackageSkips(packages, defaultSkip)
+	return releasePackageForms(packages, defaults)
 }
 
-// releasePackageSkips checks every package in stable order within the validated package bound.
-func releasePackageSkips(packages map[string]any, defaultSkip bool) error {
+// releasePackageForms checks every package in stable order and describes its accepted forms.
+func releasePackageForms(packages map[string]any, defaults releaseSettings) (string, error) {
+	var skipUsed, draftUsed bool
 	names := slices.Sorted(maps.Keys(packages))
 	for i := 0; i < len(names) && i < maxReleasePackages; i++ {
-		pkg, ok := packages[names[i]].(map[string]any)
-		if !ok {
-			return fmt.Errorf("package %q must be an object", names[i])
+		settings, err := requireOwnReleasePackage(packages[names[i]], defaults, names[i])
+		if err != nil {
+			return "", err
 		}
-		if err := requireReleaseSkip(pkg, defaultSkip, names[i]); err != nil {
-			return err
-		}
+		skipUsed = skipUsed || settings.skip
+		draftUsed = draftUsed || (settings.draft && settings.force)
 	}
-	return nil
+	if skipUsed && draftUsed {
+		return "skip-github-release and draft with force-tag-creation", nil
+	}
+	if skipUsed {
+		return "skip-github-release", nil
+	}
+	return "draft with force-tag-creation", nil
 }
 
-// requireReleaseSkip reports the first package whose effective setting permits release creation.
-func requireReleaseSkip(pkg map[string]any, inherited bool, name string) error {
-	skip, err := releaseSkipValue(pkg, inherited)
+// requireOwnReleasePackage validates one package and its effective publishing settings.
+func requireOwnReleasePackage(value any, defaults releaseSettings, name string) (releaseSettings, error) {
+	pkg, ok := value.(map[string]any)
+	if !ok {
+		return releaseSettings{}, fmt.Errorf("package %q must be an object", name)
+	}
+	settings, err := resolveReleaseSettings(pkg, defaults)
 	if err != nil {
-		return fmt.Errorf("package %q: %w", name, err)
+		return settings, fmt.Errorf("package %q: %w", name, err)
 	}
-	if !skip {
-		return fmt.Errorf("package %q does not resolve skip-github-release to true", name)
+	if !settings.skip && (!settings.draft || !settings.force) {
+		if settings.draft {
+			return settings, fmt.Errorf("package %q resolves draft true but force-tag-creation not true", name)
+		}
+		return settings, fmt.Errorf("package %q resolves neither skip-github-release nor draft with force-tag-creation to true", name)
 	}
-	return nil
+	return settings, nil
 }
 
-// releaseSkipValue implements release-please's nullish inheritance while refusing non-booleans.
-func releaseSkipValue(config map[string]any, inherited bool) (bool, error) {
-	value := config["skip-github-release"]
+// resolveReleaseSettings resolves all options, including those unnecessary for the verdict.
+func resolveReleaseSettings(config map[string]any, inherited releaseSettings) (releaseSettings, error) {
+	var result releaseSettings
+	var err error
+	result.skip, err = releaseBooleanValue(config, "skip-github-release", inherited.skip)
+	if err != nil {
+		return result, err
+	}
+	result.draft, err = releaseBooleanValue(config, "draft", inherited.draft)
+	if err != nil {
+		return result, err
+	}
+	result.force, err = releaseBooleanValue(config, "force-tag-creation", inherited.force)
+	return result, err
+}
+
+// releaseBooleanValue implements nullish inheritance while refusing non-booleans.
+func releaseBooleanValue(config map[string]any, key string, inherited bool) (bool, error) {
+	value := config[key]
 	if value == nil {
 		return inherited, nil
 	}
-	skip, ok := value.(bool)
+	result, ok := value.(bool)
 	if !ok {
-		return false, errors.New("skip-github-release must be a boolean")
+		return false, fmt.Errorf("%s must be a boolean", key)
 	}
-	return skip, nil
+	return result, nil
 }
