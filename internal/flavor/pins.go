@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
@@ -57,19 +57,38 @@ func ResolveTargets(repoPath string) ([]Target, error) {
 	return resolveTargetsWith(repoPath, Resolve)
 }
 
+// ResolveTargetsContext is ResolveTargets with the caller's context.
+func ResolveTargetsContext(ctx context.Context, repoPath string) ([]Target, error) {
+	return resolveTargetsWithContext(ctx, repoPath, Resolve)
+}
+
 // ResolveTargetsForProfile is ResolveTargets for a caller that has already decided the profile,
 // such as adoption, which records it in the manifest it writes: pins win, else the flavor of
 // profile that matches the repository (ResolveForProfile).
 func ResolveTargetsForProfile(repoPath, profile string) ([]Target, error) {
-	return resolveTargetsWith(repoPath, func(path string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return ResolveTargetsForProfileContext(ctx, repoPath, profile)
+}
+
+// ResolveTargetsForProfileContext resolves pins against the caller's manifest snapshot.
+func ResolveTargetsForProfileContext(ctx context.Context, repoPath, profile string) ([]Target, error) {
+	return resolveTargetsWithContext(ctx, repoPath, func(path string) (string, error) {
 		return ResolveForProfile(path, profile)
 	})
 }
 
 // resolveTargetsWith is the one resolver: the manifest's pins, else the flavor detect names.
 func resolveTargetsWith(repoPath string, detect func(string) (string, error)) ([]Target, error) {
-	manifest, err := config.LoadManifest(filepath.Join(repoPath, ".standards.yaml"))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return resolveTargetsWithContext(ctx, repoPath, detect)
+}
+
+// resolveTargetsWithContext loads the manifest and returns pinned targets, falling back to detection.
+func resolveTargetsWithContext(ctx context.Context, repoPath string, detect func(string) (string, error)) ([]Target, error) {
+	manifest, err := config.LoadRepositoryManifest(ctx, repoPath)
+	if err != nil {
 		return nil, fmt.Errorf("resolve flavor pins: %w", err)
 	}
 	if manifest != nil && len(manifest.Flavors) > 0 {
@@ -158,7 +177,7 @@ func AuditTargetsContext(ctx context.Context, repoPath string) ([]*FlavorAuditRe
 	if ctx == nil {
 		return nil, errors.New("audit flavor: context cannot be nil")
 	}
-	targets, err := ResolveTargets(repoPath)
+	targets, err := ResolveTargetsContext(ctx, repoPath)
 	if err != nil {
 		return nil, err
 	}

@@ -393,8 +393,8 @@ func (s *adoptSession) harnessComplexity(ctx context.Context) config.ComplexityP
 }
 
 // prospectivePolicy resolves the policy this run leaves the repository under from the manifest
-// declarations the policy reads, before register.sources is bound: the existing manifest, which
-// adoption never rewrites beyond register.sources and its layout, or the one it creates
+// declarations the policy reads, before register.sources is bound: the existing manifest with
+// missing exception lifecycle fields repaired, or the one it creates
 // (declaredAdoptionManifest). register.sources is no policy input (ADR-0010). The lock is the one
 // the lockfile step leaves (plannedLock), and the pinned catalog is read under catalogRoot
 // (resolvePlannedPolicy).
@@ -405,6 +405,15 @@ func prospectivePolicy(ctx context.Context, s *adoptSession, catalogRoot string)
 	}
 	if !exists {
 		if manifest, err = config.RenderManifest(declaredAdoptionManifest(s)); err != nil {
+			return nil, err
+		}
+	} else {
+		full, err := repoFile(s.repoPath, manifestFile)
+		if err != nil {
+			return nil, err
+		}
+		manifest, _, err = adoptionExceptionMigration(ctx, full, manifest)
+		if err != nil {
 			return nil, err
 		}
 	}

@@ -6,7 +6,6 @@ package flavor
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -55,9 +54,9 @@ func IsExactSemverPin(version string) bool {
 	return ok
 }
 
-func resolveUISpecContext(_ context.Context, repoPath string) (templates.Context, string) {
-	manifestPath := filepath.Join(repoPath, config.ManifestFileName)
-	manifest, err := config.LoadManifest(manifestPath)
+// resolveUISpecContext loads the manifest to populate the UI template context and optional spec override.
+func resolveUISpecContext(ctx context.Context, repoPath string) (templates.Context, string) {
+	manifest, err := config.LoadRepositoryManifest(ctx, repoPath)
 	if err != nil || manifest == nil {
 		return templates.Context{
 			UIRoutes:     templates.Routes(config.DefaultUIRoute),

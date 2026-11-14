@@ -275,7 +275,7 @@ func snapshotRootCopy(ctx context.Context, root *os.Root, name string, dst io.Wr
 		return 0, err
 	}
 	if !before.Mode().IsRegular() {
-		return 0, fmt.Errorf("source must be regular")
+		return 0, fmt.Errorf("source must be regular: %w", util.ErrNotRegularFile)
 	}
 	if before.Size() > limit {
 		return 0, fmt.Errorf("source exceeds %d bytes: %w", limit, util.ErrFileTooLarge)
