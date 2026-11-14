@@ -50,6 +50,7 @@ type stopReviewCache struct {
 type stopReviewReadError struct {
 	err, diagnostic error
 	limited         *forge.ErrRateLimited
+	tries           int
 }
 
 type stopReviewResult struct {
@@ -217,7 +218,8 @@ func stopReviewBatchFailure(err error) Verdict {
 	return stopReviewReadFailure(err, "Own pull request review batch failed: ")
 }
 
-// walkStopReviewReadErrors visits leaves with their diagnostic and rate metadata; false means unchecked nodes remain.
+// walkStopReviewReadErrors carries each path's diagnostic, rate metadata and nearest retry count to bounded leaves.
+// A false result means unchecked nodes remain.
 func walkStopReviewReadErrors(err error, visit func(stopReviewReadError)) bool {
 	pending := []stopReviewReadError{{err: err, diagnostic: err}}
 	for checked := 0; checked < maxStopReviewReadErrors && len(pending) > 0; checked++ {
@@ -229,13 +231,14 @@ func walkStopReviewReadErrors(err error, visit func(stopReviewReadError)) bool {
 		if limited, ok := next.err.(*forge.ErrRateLimited); ok { //nolint:errorlint // Inspect this node only; errors.As would traverse unchecked joins beyond the bound.
 			next.limited = limited
 		}
+		if exhausted, ok := next.err.(*stopReviewRetryExhausted); ok { //nolint:errorlint // Inspect this node only to preserve the walk bound and nearest wrapper.
+			next.tries = exhausted.tries
+		}
 		if joined, ok := next.err.(interface{ Unwrap() []error }); ok {
-			children := joined.Unwrap()
-			if len(children) > maxStopReviewReadErrors-len(pending) {
+			var complete bool
+			pending, complete = appendStopReviewReadChildren(pending, next, joined.Unwrap())
+			if !complete {
 				return false
-			}
-			for _, child := range children {
-				pending = append(pending, stopReviewReadError{err: child, diagnostic: child, limited: next.limited})
 			}
 			continue
 		}
@@ -247,6 +250,17 @@ func walkStopReviewReadErrors(err error, visit func(stopReviewReadError)) bool {
 		visit(next)
 	}
 	return len(pending) == 0
+}
+
+// appendStopReviewReadChildren preserves path metadata while bounding joined-child expansion.
+func appendStopReviewReadChildren(pending []stopReviewReadError, parent stopReviewReadError, children []error) ([]stopReviewReadError, bool) {
+	if len(children) > maxStopReviewReadErrors-len(pending) {
+		return pending, false
+	}
+	for _, child := range children {
+		pending = append(pending, stopReviewReadError{err: child, diagnostic: child, limited: parent.limited, tries: parent.tries})
+	}
+	return pending, true
 }
 
 // stopReviewReadFailure denies local throttles and ordinary errors; GitHub limits retain deferral metadata.
@@ -262,11 +276,16 @@ func stopReviewReadFailure(err error, prefix string) Verdict {
 	return failure
 }
 
-// stopReviewLeafFailure classifies one bounded leaf using only its own path's GitHub metadata.
+// stopReviewLeafFailure classifies a bounded leaf with path metadata and appends any missing retry suffix once.
 func stopReviewLeafFailure(read stopReviewReadError, prefix string) Verdict {
 	limited := read.limited
 	if stopReviewLocalThrottle(read) || limited == nil {
-		return Verdict{Outcome: Deny, Reason: prefix + read.diagnostic.Error()}
+		reason := read.diagnostic.Error()
+		suffix := fmt.Sprintf(" (after %d tries)", read.tries)
+		if read.tries > 0 && !strings.HasSuffix(reason, suffix) {
+			reason += suffix
+		}
+		return Verdict{Outcome: Deny, Reason: prefix + reason}
 	}
 	notice := "review inventory deferred: GitHub rate limited: " + limited.Error()
 	if limited.Bucket != "" && limited.Remaining != "" && limited.Limit != "" {

@@ -169,8 +169,76 @@ func TestStopReviewThrottleRetryLimit(t *testing.T) {
 		tries++
 		return 0, stopReviewExit(75)
 	})
-	if tries != 4 || fmt.Sprint(*sleeps) != "[1s 2s 4s]" || err == nil || !strings.Contains(err.Error(), "after 4 tries") {
+	if tries != 4 || fmt.Sprint(*sleeps) != "[1s 2s 4s]" || err == nil || err.Error() != "exit status 75 (after 4 tries)" {
 		t.Fatalf("tries=%d sleeps=%v err=%v", tries, *sleeps, err)
+	}
+	if !errors.Is(err, stopReviewExit(75)) {
+		t.Fatalf("exhaustion lost wrapped failure: %v", err)
+	}
+	got := stopReviewBatchFailure(err)
+	if got.Outcome != Deny || got.Notice != "" || got.Reason != "Own pull request review batch failed: exit status 75 (after 4 tries)" {
+		t.Fatalf("single exhausted failure changed: %+v", got)
+	}
+}
+
+// TestStopReviewJoinedThrottleExhaustion retains the attempt count on every named PR failure.
+func TestStopReviewJoinedThrottleExhaustion(t *testing.T) {
+	now, sleeps := installStopReviewRetryClock(t)
+	ctx, cancel := context.WithDeadline(t.Context(), now.Add(stopReviewBatchBudgetCap))
+	defer cancel()
+	reader := &throttledStopReviews{stopReviewFixture: reviewFixture(), failures: 100,
+		failure: errors.Join(fmt.Errorf("read example/widget#7: %w", stopReviewExit(75)),
+			fmt.Errorf("read example/widget#8: %w", stopReviewExit(75)))}
+	_, err := retryStopReviewRead(ctx, func(ctx context.Context) (map[int]forge.ReviewSnapshot, error) {
+		return reader.ReadBatch(ctx, "example/widget", []int{7, 8})
+	})
+	got := stopReviewBatchFailure(errors.Join(err, ctx.Err()))
+	if got.Outcome != Deny || got.Notice != "" || reader.tries != 4 || len(*sleeps) != 3 {
+		t.Fatalf("verdict=%+v tries=%d sleeps=%v", got, reader.tries, *sleeps)
+	}
+	for _, number := range []int{7, 8} {
+		want := fmt.Sprintf("read example/widget#%d: exit status 75 (after 4 tries)", number)
+		if !strings.Contains(got.Reason, want) {
+			t.Errorf("named failure lost attempt count: verdict=%+v want=%q", got, want)
+		}
+	}
+	if strings.Count(got.Reason, "(after 4 tries)") != 2 {
+		t.Errorf("attempt suffix missing or duplicated: %+v", got)
+	}
+}
+
+// TestStopReviewRetryMetadata keeps the nearest retry count through wrappers and joins without sibling leakage.
+func TestStopReviewRetryMetadata(t *testing.T) {
+	inner := &stopReviewRetryExhausted{tries: 2, err: fmt.Errorf("page: %w",
+		errors.Join(errors.New("read #7"), errors.New("read #8")))}
+	outer := &stopReviewRetryExhausted{tries: 4, err: fmt.Errorf("batch: %w", errors.Join(inner, errors.New("read #9")))}
+	got := stopReviewBatchFailure(outer)
+	if got.Outcome != Deny || got.Notice != "" {
+		t.Fatalf("verdict=%+v", got)
+	}
+	for _, want := range []string{"read #7 (after 2 tries)", "read #8 (after 2 tries)", "read #9 (after 4 tries)"} {
+		if !strings.Contains(got.Reason, want) {
+			t.Errorf("nearest retry count lost: verdict=%+v want=%q", got, want)
+		}
+	}
+}
+
+// TestStopReviewRetryLeafSuffix preserves diagnostics with no retry count or an existing suffix.
+func TestStopReviewRetryLeafSuffix(t *testing.T) {
+	for _, tc := range []struct {
+		diagnostic string
+		tries      int
+		want       string
+	}{
+		{"read #7", 0, "read #7"},
+		{"read #7", 4, "read #7 (after 4 tries)"},
+		{"read #7 (after 4 tries)", 4, "read #7 (after 4 tries)"},
+	} {
+		failure := errors.New(tc.diagnostic)
+		got := stopReviewLeafFailure(stopReviewReadError{err: failure, diagnostic: failure, tries: tc.tries}, "batch: ")
+		if got.Outcome != Deny || got.Notice != "" || got.Reason != "batch: "+tc.want {
+			t.Errorf("verdict=%+v want=%q", got, tc.want)
+		}
 	}
 }
 

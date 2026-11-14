@@ -16,6 +16,20 @@ const stopReviewRetryReserve = time.Second
 // stopReviewSleep permits offline tests to advance the clock without sleeping.
 var stopReviewSleep = sleepStopReviewRetry
 
+// stopReviewRetryExhausted preserves the final failure and the number of completed reads.
+type stopReviewRetryExhausted struct {
+	err   error
+	tries int
+}
+
+// Error preserves the existing retry-exhaustion diagnostic.
+func (e *stopReviewRetryExhausted) Error() string {
+	return fmt.Sprintf("%s (after %d tries)", e.err, e.tries)
+}
+
+// Unwrap exposes the final read failure without losing typed attempt metadata.
+func (e *stopReviewRetryExhausted) Unwrap() error { return e.err }
+
 // stopReviewLocallyThrottled recognizes gh_guard's command status through wrapped and joined errors.
 func stopReviewLocallyThrottled(err error) bool {
 	throttled := false
@@ -31,7 +45,7 @@ func stopReviewLocalThrottle(read stopReviewReadError) bool {
 	return ok && exit.ExitCode() == 75 && (read.limited == nil || read.limited.Bucket == "")
 }
 
-// retryStopReviewRead retries only local throttles within the original discovery or batch deadline.
+// retryStopReviewRead retries local throttles within the original deadline and returns typed exhaustion metadata.
 func retryStopReviewRead[T any](ctx context.Context, read func(context.Context) (T, error)) (T, error) {
 	var value T
 	var err error
@@ -45,7 +59,7 @@ func retryStopReviewRead[T any](ctx context.Context, read func(context.Context) 
 			break
 		}
 	}
-	return value, fmt.Errorf("%w (after %d tries)", err, tries)
+	return value, &stopReviewRetryExhausted{err: err, tries: tries}
 }
 
 // waitStopReviewRetry reserves read time before waiting and checks it again after a possibly late wakeup.
