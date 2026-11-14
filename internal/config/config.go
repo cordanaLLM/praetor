@@ -94,8 +94,8 @@ type BranchProtectionPolicy struct {
 	// property of the repository, not of an archetype, so only .standards.yaml sets it.
 	MergeQueue bool `yaml:"merge_queue,omitempty" json:",omitempty"`
 	// CodeQLDefaultSetup declares that the repository scans with CodeQL default setup, which
-	// never runs for a merge group and has no workflow file to read. Under MergeQueue the
-	// ruleset gates pull requests with a code_scanning rule instead of a status context. It is
+	// has no workflow file to read. The ruleset gates pull requests with a code_scanning rule.
+	// Under MergeQueue it drops default setup status contexts, which merge groups never report. It is
 	// repository-only, like MergeQueue. Both carry an omitempty JSON tag: the policy digest
 	// (EffectivePolicy.seal) encodes the struct, and a repository that declares neither keeps
 	// the digest it had before the keys existed.

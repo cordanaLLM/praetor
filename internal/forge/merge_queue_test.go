@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Three workflows: one that triggers on merge_group, one that runs on pull requests only and one
@@ -85,7 +89,7 @@ func requireDocsFinding(t *testing.T, root string) {
 }
 
 // Boundary: without a queue the rendering is the old one, byte for byte: no merge_queue rule,
-// every pull request context, and the same bytes with or without the default-setup declaration.
+// every pull request context, and no code-scanning rule without the default-setup declaration.
 func TestNoMergeQueueRendersTheOldRuleset(t *testing.T) {
 	root := queueFixture(t)
 	policy := config.BranchProtectionPolicy{EnforceLinearHistory: true, RequiredApprovingReviewers: 1}
@@ -103,10 +107,23 @@ func TestNoMergeQueueRendersTheOldRuleset(t *testing.T) {
 	if err != nil || !bytes.Equal(data, again) {
 		t.Fatalf("rendering is not stable: %v", err)
 	}
-	policy.CodeQLDefaultSetup = true
-	withoutQueue, err := RenderRepositoryRuleset(FallbackDefaultBranch, policy, contexts)
-	if err != nil || !bytes.Equal(withoutQueue, data) {
-		t.Fatalf("codeql_default_setup alone must render nothing without a queue: %v", err)
+}
+
+// TestCodeScanningWithoutMergeQueue requires CodeQL scanning and preserves pull request contexts.
+func TestCodeScanningWithoutMergeQueue(t *testing.T) {
+	contexts := []string{"Build", "CodeQL", "Analyze (go)"}
+	policy := config.BranchProtectionPolicy{RequiredApprovingReviewers: 1, CodeQLDefaultSetup: true}
+	data, err := RenderRepositoryRuleset(FallbackDefaultBranch, policy, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(queuedRuleTypes(t, data), "code_scanning") {
+		t.Fatalf("code_scanning missing without a merge queue: %s", data)
+	}
+	for _, name := range contexts {
+		if required, err := RulesetRequiresStatusContext(data, name); err != nil || !required {
+			t.Fatalf("context %q required = %v, %v", name, required, err)
+		}
 	}
 }
 
@@ -252,5 +269,114 @@ func TestForMergeQueueOption(t *testing.T) {
 	var noContext context.Context
 	if _, err := MergeQueueFindings(noContext, root, nil); err == nil {
 		t.Fatal("nil context accepted")
+	}
+}
+
+// TestCodeScanningPriorAcceptsEarlierNonQueueRendering checks the old rendering remains refreshable.
+func TestCodeScanningPriorAcceptsEarlierNonQueueRendering(t *testing.T) {
+	policy := config.BranchProtectionPolicy{RequiredApprovingReviewers: 1}
+	old, err := RenderRepositoryRuleset("main", policy, []string{"CodeQL"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.CodeQLDefaultSetup = true
+	current, err := RenderRepositoryRuleset("main", policy, []string{"CodeQL"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, known, _ := util.LookupCanonicalText(old, PriorRulesetDigests(RulesetBaseline{Branch: "main", Policy: policy, Contexts: []string{"CodeQL"}}, current)); !known {
+		t.Fatalf("earlier rendering not recognised: %s", old)
+	}
+}
+
+// TestCodeScanningMergeKeepsLiveContexts verifies non-queue reconciliation preserves live CodeQL checks.
+func TestCodeScanningMergeKeepsLiveContexts(t *testing.T) {
+	policy := config.BranchProtectionPolicy{CodeQLDefaultSetup: true}
+	data, err := RenderRepositoryRuleset("main", policy, []string{"Build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := jsonObject(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := map[string]any{"rules": []any{map[string]any{"type": "required_status_checks", "parameters": map[string]any{
+		"required_status_checks": []any{map[string]any{"context": "CodeQL"}},
+	}}}}
+	merged, _, _, err := mergeRuleset(live, desired, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(merged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if required, err := RulesetRequiresStatusContext(encoded, "CodeQL"); err != nil || !required {
+		t.Fatalf("live CodeQL context required = %v, %v", required, err)
+	}
+}
+
+// TestCodeScanningPriorAcceptsExistingSetupWhenQueueAdded preserves the current non-queue rendering.
+func TestCodeScanningPriorAcceptsExistingSetupWhenQueueAdded(t *testing.T) {
+	policy := config.BranchProtectionPolicy{CodeQLDefaultSetup: true}
+	old, err := RenderRepositoryRuleset("main", policy, []string{"Build", "CodeQL"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.MergeQueue = true
+	current, err := RenderRepositoryRuleset("main", policy, []string{"Build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := RulesetBaseline{Branch: "main", Policy: policy, Contexts: []string{"Build"}, UnqueuedContexts: []string{"Build", "CodeQL"}}
+	if _, known, _ := util.LookupCanonicalText(old, PriorRulesetDigests(baseline, current)); !known {
+		t.Fatal("the prior CodeQL rendering was not recognised when adding a queue")
+	}
+}
+
+// TestCodeScanningForbiddenIncludesMessage preserves the forge's explanation of a denied read.
+func TestCodeScanningForbiddenIncludesMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		if _, err := w.Write([]byte(`{"message":"secondary rate limit"}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+	driver := NewGitHubDriver("stub-token", server.URL)
+	driver.SetRepository("acme", "widgets")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, err := driver.CodeQLDefaultSetupState(ctx)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 403") || !strings.Contains(err.Error(), "secondary rate limit") {
+		t.Fatalf("error = %v, want HTTP 403 and response message", err)
+	}
+}
+
+// TestCodeScanningPriorQueueRemovedAndSetupDeclared preserves the earlier queued rendering.
+func TestCodeScanningPriorQueueRemovedAndSetupDeclared(t *testing.T) {
+	policy := config.BranchProtectionPolicy{EnforceLinearHistory: true, RequiredApprovingReviewers: 1, CodeQLDefaultSetup: true}
+	queued := policy
+	queued.MergeQueue, queued.CodeQLDefaultSetup = true, false
+	onDisk, err := RenderRepositoryRuleset("main", queued, []string{"Build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := RenderRepositoryRuleset("main", policy, []string{"Build", "Docs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := RulesetBaseline{Branch: "main", Policy: policy, Contexts: []string{"Build", "Docs"}, QueuedContexts: []string{"Build"}, queuedRead: true}
+	priors := PriorRulesetDigests(baseline, current)
+	if _, known, _ := util.LookupCanonicalText(onDisk, priors); !known {
+		t.Error("earlier queued rendering is not a prior")
+	}
+	queued.RequiredApprovingReviewers = 3
+	edited, err := RenderRepositoryRuleset("main", queued, []string{"Build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, known, _ := util.LookupCanonicalText(edited, priors); known {
+		t.Error("edited rendering matched a prior")
 	}
 }

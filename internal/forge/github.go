@@ -363,18 +363,18 @@ func (g *GitHubDriver) ReconcileProtectionReport(ctx context.Context, branch str
 	if err != nil {
 		return nil, nil, err
 	}
-	return g.convergeRuleset(ctx, branch, listPath, name, desired)
+	return g.convergeRuleset(ctx, branch, listPath, name, desired, policy.MergeQueue)
 }
 
 // convergeRuleset writes the desired ruleset named name (a new one, or the live one of that name
 // merged and updated in place), reads it back and requires that it converged. It returns the
 // parameters the merge lowered and kept, with the readback error too, since the write happened.
-func (g *GitHubDriver) convergeRuleset(ctx context.Context, branch, listPath, name string, desired map[string]any) ([]LoweredParameter, []KeptParameter, error) {
+func (g *GitHubDriver) convergeRuleset(ctx context.Context, branch, listPath, name string, desired map[string]any, queue bool) ([]LoweredParameter, []KeptParameter, error) {
 	id, err := g.findRulesetID(ctx, listPath, name)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
 	}
-	written, err := g.writeRuleset(ctx, listPath, id, desired)
+	written, err := g.writeRuleset(ctx, listPath, id, desired, queue)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reconcile ruleset %q for %s: %w", name, branch, err)
 	}
@@ -425,7 +425,7 @@ type rulesetWrite struct {
 
 // writeRuleset creates the desired ruleset when id is 0, and otherwise merges it into the
 // live ruleset id and updates that in place.
-func (g *GitHubDriver) writeRuleset(ctx context.Context, listPath string, id int, desired map[string]any) (rulesetWrite, error) {
+func (g *GitHubDriver) writeRuleset(ctx context.Context, listPath string, id int, desired map[string]any, queue bool) (rulesetWrite, error) {
 	if id == 0 {
 		body, err := g.sendRuleset(ctx, http.MethodPost, listPath, desired, http.StatusCreated)
 		if err != nil {
@@ -443,7 +443,7 @@ func (g *GitHubDriver) writeRuleset(ctx context.Context, listPath string, id int
 	if err != nil {
 		return rulesetWrite{}, fmt.Errorf("read live ruleset: %w", err)
 	}
-	merged, lowered, kept, err := mergeRuleset(live, desired)
+	merged, lowered, kept, err := mergeRuleset(live, desired, queue)
 	if err != nil {
 		return rulesetWrite{}, fmt.Errorf("merge live ruleset: %w", err)
 	}
