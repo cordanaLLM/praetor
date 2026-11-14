@@ -191,17 +191,27 @@ func printForeignDuplicates(report *dedupe.DedupeReport) {
 	for i, d := range report.ForeignDuplicates {
 		fmt.Printf("  [%d] %s, %d lines (hash: %s):\n", i+1, d.Language, d.LOC, d.Hash)
 		for _, loc := range d.Locations {
+			location := formatDedupeLocation(loc)
 			if loc.Expired != "" {
-				fmt.Printf("      - %s:%d (root: %s; its %s exception expired on %s)\n", loc.Path, loc.Line, loc.Root, config.ExceptionRuleDedupe, loc.Expired)
+				fmt.Printf("      - %s (root: %s; its %s exception expired on %s)\n", location, loc.Root, config.ExceptionRuleDedupe, loc.Expired)
 				continue
 			}
 			if loc.Root != "" {
-				fmt.Printf("      - %s:%d (root: %s)\n", loc.Path, loc.Line, loc.Root)
+				fmt.Printf("      - %s (root: %s)\n", location, loc.Root)
 			} else {
-				fmt.Printf("      - %s:%d\n", loc.Path, loc.Line)
+				fmt.Printf("      - %s\n", location)
 			}
 		}
 	}
+}
+
+// formatDedupeLocation includes the span's end only when it extends past the start.
+func formatDedupeLocation(loc dedupe.FileLocation) string {
+	location := fmt.Sprintf("%s:%d", loc.Path, loc.Line)
+	if loc.EndLine > loc.Line && loc.EndLine != 0 {
+		location += fmt.Sprintf("-%d", loc.EndLine)
+	}
+	return location
 }
 
 func printDuplicateBlocks(duplicates []dedupe.DuplicateGroup) {
@@ -222,6 +232,7 @@ func printDuplicateBlocks(duplicates []dedupe.DuplicateGroup) {
 	}
 }
 
+// printExceptedBlocks prints clone locations and their active exception entries.
 func printExceptedBlocks(title string, excepted []dedupe.DuplicateGroup) {
 	if len(excepted) == 0 {
 		return
@@ -231,7 +242,7 @@ func printExceptedBlocks(title string, excepted []dedupe.DuplicateGroup) {
 		fmt.Printf("  [%d] %d lines (hash: %s):\n", i+1, d.LOC, d.Hash)
 		for _, loc := range d.Locations {
 			if loc.FuncName == "" {
-				fmt.Printf("      - %s:%d\n", loc.Path, loc.Line)
+				fmt.Printf("      - %s\n", formatDedupeLocation(loc))
 			} else {
 				fmt.Printf("      - %s:%d in %s()\n", loc.Path, loc.Line, loc.FuncName)
 			}

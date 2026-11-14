@@ -29,10 +29,12 @@ import (
 // JscpdVersion is the pinned jscpd version required for foreign clone detection.
 const JscpdVersion = "5.4.2"
 
-// FileLocation points to a file and line number.
+// FileLocation points to a file and source span.
 type FileLocation struct {
-	Path     string `json:"path"`
-	Line     int    `json:"line"`
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	// EndLine is the last line of this copy's span, 1-based inclusive; 0 when unknown.
+	EndLine  int    `json:"end_line,omitempty"`
 	FuncName string `json:"func_name,omitempty"`
 	Root     string `json:"root,omitempty"`
 	Expired  string `json:"expired,omitempty"`
@@ -264,7 +266,7 @@ func validateExceptionTarget(repoPath string, entry config.Exception) error {
 	return nil
 }
 
-// scanGoFile counts scanned functions and collects clone and sprawl candidates.
+// scanGoFile counts scanned functions and collects clone and sprawl candidates with source ends.
 func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, hashMap map[string][]FileLocation, locMap map[string]int, engineMode bool, adopterStarts *[]adopterGitStart, report *DedupeReport) error {
 	content, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
@@ -309,6 +311,7 @@ func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, 
 		hashMap[hashKey] = append(hashMap[hashKey], FileLocation{
 			Path:     relPath,
 			Line:     pos.Line,
+			EndLine:  fset.Position(fn.End()).Line,
 			FuncName: fn.Name.Name,
 		})
 		locMap[hashKey] = lines

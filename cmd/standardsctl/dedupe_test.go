@@ -39,6 +39,34 @@ func TestPrintDedupeReport_ForeignExceptionMetadata(t *testing.T) {
 	}
 }
 
+// TestPrintDedupeReport_ExceptedForeignEndLine preserves known spans and unknown ends.
+func TestPrintDedupeReport_ExceptedForeignEndLine(t *testing.T) {
+	for i := 0; i < 2; i++ {
+		applicable := i == 0
+		t.Run(fmt.Sprintf("applicable_%v", applicable), func(t *testing.T) {
+			report := &dedupe.DedupeReport{
+				Applicable: applicable, Passed: applicable,
+				ForeignExcepted: []dedupe.DuplicateGroup{{
+					Language: "python", Hash: "fixture", LOC: 15,
+					Locations: []dedupe.FileLocation{
+						{Path: "a.py", Line: 7, EndLine: 11},
+						{Path: "b.py", Line: 21, EndLine: 35},
+						{Path: "c.py", Line: 41},
+						{Path: "d.py", Line: 61, EndLine: 61},
+					},
+				}},
+			}
+			out, err := captureStdout(t, func() error { return printDedupeReport("fixture", report) })
+			if err != nil {
+				t.Fatalf("excepted foreign report verdict: %v", err)
+			}
+			mustContain(t, out, "Excepted Foreign Duplicate Blocks (1):",
+				"      - a.py:7-11\n", "      - b.py:21-35\n",
+				"      - c.py:41\n", "      - d.py:61\n")
+		})
+	}
+}
+
 func TestPrintDedupeReport_ExpiredForeignException(t *testing.T) {
 	report := &dedupe.DedupeReport{
 		Applicable: true, Passed: true,
@@ -52,6 +80,42 @@ func TestPrintDedupeReport_ExpiredForeignException(t *testing.T) {
 		t.Fatalf("foreign findings remain reported without gating: %v", err)
 	}
 	mustContain(t, out, "Foreign Duplicate Blocks (1, reported, not gated):", "app.py:1", "its HISS-19 exception expired on 2026-10-20")
+}
+
+// TestPrintDedupeReport_ForeignEndLine checks spans and metadata across end boundaries.
+func TestPrintDedupeReport_ForeignEndLine(t *testing.T) {
+	for _, tc := range [...]struct {
+		name string
+		end  int
+		want string
+	}{
+		{"span", 11, "app.py:7-11"},
+		{"unknown", 0, "app.py:7"},
+		{"same_line", 7, "app.py:7"},
+		{"reversed", 6, "app.py:7"},
+		{"negative", -1, "app.py:7"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report := &dedupe.DedupeReport{
+				Applicable: true, Passed: true,
+				ForeignDuplicates: []dedupe.DuplicateGroup{{
+					Language: "python", Hash: "fixture", LOC: 5,
+					Locations: []dedupe.FileLocation{
+						{Path: "app.py", Line: 7, EndLine: tc.end},
+						{Path: "app.py", Line: 7, EndLine: tc.end, Root: "fixture"},
+						{Path: "app.py", Line: 7, EndLine: tc.end, Root: "fixture", Expired: "2026-10-20"},
+					},
+				}},
+			}
+			out, err := captureStdout(t, func() error { return printDedupeReport("fixture", report) })
+			if err != nil {
+				t.Fatalf("foreign findings remain reported without gating: %v", err)
+			}
+			mustContain(t, out, "      - "+tc.want+"\n",
+				"      - "+tc.want+" (root: fixture)\n",
+				"      - "+tc.want+" (root: fixture; its HISS-19 exception expired on 2026-10-20)\n")
+		})
+	}
 }
 
 const dedupeSprawlSource = `package sample
