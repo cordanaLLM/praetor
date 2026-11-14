@@ -37,7 +37,8 @@ func TestSandboxPublishExecArguments(t *testing.T) {
 	want := []string{"-t", "none", "-u", "none", "-T", "32768-60999", "-U", "none", "--map-host-loopback", "none", "-D", "none", "--",
 		"/usr/bin/sh", "-c", namespaceRangeScript, "praetor-test-netns", "61000", "65535", "/usr/bin/bwrap"}
 	want = append(want, namespaceArguments(Spec{Network: NetworkLoopback, Identity: &Identity{UID: uid, GID: gid}})...)
-	want = append(want, "--dev-bind", "/", "/", "--proc", "/proc", "--", "/tmp/test binary", "-test.run=Publish")
+	want = append(want, "--dev-bind", "/", "/", "--proc", "/proc",
+		"--setenv", "TESTCONTAINERS_SESSION_ID", testExecSession(t, inv.Args), "--", "/tmp/test binary", "-test.run=Publish")
 	if inv.Path != "/usr/bin/pasta" || !slices.Equal(inv.Args, want) {
 		t.Fatalf("wrong publish invocation:\n got %q\nwant %q", inv.Args, want)
 	}

@@ -31,7 +31,8 @@ func TestSandboxLoopbackExecArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := append(namespaceArguments(Spec{Network: NetworkNone}), "--dev-bind", "/", "/", "--proc", "/proc", "--")
+	want := append(namespaceArguments(Spec{Network: NetworkNone}), "--dev-bind", "/", "/", "--proc", "/proc",
+		"--setenv", "TESTCONTAINERS_SESSION_ID", testExecSession(t, inv.Args), "--")
 	want = append(want, command...)
 	if inv.Path != "/usr/bin/bwrap" || !slices.Equal(inv.Args, want) || slices.Contains(inv.Args, "--clearenv") {
 		t.Fatalf("wrong loopback invocation: %+v", inv)
