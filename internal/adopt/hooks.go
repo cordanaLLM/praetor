@@ -425,6 +425,7 @@ is deliberately not part of lefthook.yml.
 import json
 import os
 import re
+import shlex
 import sys
 
 MAX_INPUT_BYTES = {{MAX_INPUT_BYTES}}
@@ -510,7 +511,7 @@ def join_line_continuations(command):
     return re.sub(r"\\\r?\n", " ", command)
 
 
-# The git rule with an option run (the short skip flag rule) is searched once per run (#1283).
+{{COMMAND_SEGMENTS}}# The git rule with an option run (the short skip flag rule) is searched once per run (#1283).
 # re retries a rule at every git it finds, and a git inside an option token (-git, --x=git,
 # -C dir/git) starts at a boundary of the run an earlier git already walked: each retry walked
 # the rest of that run again, quadratic in the line. A start at a walked boundary reaches the
@@ -557,10 +558,14 @@ def check_command(command):
         raise Blocked(SCAN_BOUND_REFUSAL)
     if max(len(line) for line in command.split("\n")) > MAX_SCAN_LINE_CHARS:
         raise Blocked(SCAN_BOUND_REFUSAL)
+    try:
+        segments = command_segments(command)
+    except ValueError as error:
+        raise Blocked(INVALID_INPUT_REFUSAL + str(error)) from error
     judged = without_read_only_words(command)
     for pattern, refusal in RULES:
         text = judged if pattern in READ_ONLY_EXEMPT else command
-        if search(pattern, text):
+        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_1):
             reason = (
                 (refusal + pattern).encode()[:MAX_REASON_BYTES].decode(errors="ignore")
             )
@@ -580,6 +585,47 @@ def main():
 
 if __name__ == "__main__":
     main()
+`
+
+// evasionCommandSegments preserves quoted words while bounding the short-flag rule to one command.
+const evasionCommandSegments = `def command_segments(command):
+    """Validate shell quoting and retain the raw spans between unquoted separators."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        list(lexer)
+    except ValueError as error:
+        raise ValueError("invalid shell command: " + str(error)) from error
+    quoted = r"\\[\s\S]|'[^']*'|\"(?:\\[\s\S]|[^\"\\])*\""
+    # Shell state, redirections, substitutions and non-POSIX escapes retain the
+    # existing conservative scan; their punctuation need not start a command.
+    if re.search(READ_ONLY_VETO, re.sub(quoted, "", command)):
+        return [command]
+    parts, start = [], 0
+    for token in re.finditer(quoted + r"|[;&|]+", command):
+        if token.group().startswith('"') and any(
+            opener in token.group() for opener in ("$(", "\x60")
+        ):
+            return [command]
+        if token.group()[0] in ";&|\n":
+            end = token.start()
+            parts.append(command[start:end])
+            start = token.end()
+    parts.append(command[start:])
+    return parts
+
+
+def search_command(pattern, text, segments, short_pattern):
+    """Search the short commit/am flag only within each command's own raw span."""
+    if pattern != short_pattern:
+        return search(pattern, text)
+    for segment in segments:
+        if search(pattern, segment):
+            return True
+    return False
+
+
 `
 
 // noInputRefusal is the refusal of a call with neither arguments nor piped input. It is the
@@ -650,6 +696,7 @@ func buildBlockEvasionPY() string {
 		disabled.WriteString(pythonPairEntry(pyToken{value, pyString}, refusal))
 	}
 	return strings.NewReplacer(
+		"{{COMMAND_SEGMENTS}}", evasionCommandSegments,
 		"{{MAX_INPUT_BYTES}}", strconv.Itoa(agenthook.MaxInputBytes),
 		"{{MAX_SCAN_CHARS}}", strconv.Itoa(agenthook.MaxScanChars),
 		"{{MAX_SCAN_LINE_CHARS}}", strconv.Itoa(agenthook.MaxScanLineChars),
@@ -933,6 +980,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"508e148a5fd21b7a89a0d1a25c4a4d5da44493279518a29514fe92718e62420b": "quote-aware command spans for commit and am short skip flags",
 	"3f2ab8c180c95fc84bcbafa58b563586126b689d2251424bf433f0f0206b6333": "complete emitted function docstrings",
 	"b43f0818ef78cf285434e865abd9f78529e6064ebb9f4e8ab6ce97ed49637a59": "privilege refusal with shared necessary-literal prefilter",
 	"64fa5045ca8d31b1917383b878a9549960cac8c8b684013369af171f9f2fcd3e": "HISS-16 labels, own pattern list",
