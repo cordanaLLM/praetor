@@ -45,6 +45,8 @@ var (
 	// taggedDigest matches "<repository>:<tag>@sha256:<64 hex>", the tag-plus-digest form
 	// HISS-11 asks for.
 	taggedDigest = regexp.MustCompile(`([A-Za-z0-9][A-Za-z0-9._/-]*):([A-Za-z0-9][A-Za-z0-9._-]*)@sha256:([0-9a-f]{64})`)
+	// findTaggedDigests exposes regexp work for deterministic scan tests.
+	findTaggedDigests = taggedDigest.FindAllStringSubmatch
 )
 
 // pinnedFileNames are the formats that carry image pins compared across files.
@@ -85,7 +87,7 @@ func CollectImagePins(file, content string) []ImagePin {
 	if !strings.Contains(content, "@sha256:") {
 		return []ImagePin{}
 	}
-	matches := taggedDigest.FindAllStringSubmatch(content, -1)
+	matches := findTaggedDigests(content, -1)
 	pins := make([]ImagePin, 0, len(matches))
 	for i := 0; i < len(matches) && i < maxFileLines; i++ {
 		match := matches[i]
