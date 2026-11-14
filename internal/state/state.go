@@ -66,7 +66,7 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 		return nil, err
 	}
 	lRoot := ledgerRoot(ctx, rootPath)
-	snap.StateHash, err = stateBinding(ctx, lRoot, snap)
+	snap.StateHash, err = syncStateBinding(ctx, lRoot, snap)
 	if err != nil {
 		return nil, err
 	}

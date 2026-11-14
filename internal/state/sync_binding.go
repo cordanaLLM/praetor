@@ -114,7 +114,7 @@ func verifyStateContent(ctx context.Context, rootPath string, content []byte) er
 func bindWorkingDirLedgers(ctx context.Context, root string) ([]string, error) {
 	var parts []string
 	for _, name := range []string{"OPEN.md", "BACKLOG.md", "BUGS.md", "QUESTIONS.md"} {
-		content, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, WorkingDirName, name))
+		content, err := readTaskLedger(ctx, filepath.Join(root, WorkingDirName, name))
 		if err != nil {
 			return nil, ledgerInputError(root, name, err)
 		}

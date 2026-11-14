@@ -250,6 +250,27 @@ Covered by `internal/state/recorded_commit_test.go`, the
 `cmd/standardsctl/standardsctl_test.go` and
 `TestArchiveCompletedTasks_CreatesPrivateBacklog` in `internal/state/tasks_test.go`.
 
+Archive recognizes completed checkboxes (`[x]` and `[X]`), `| DONE` table rows,
+and `[DONE` records outside code fences. Before removing rows, it uses the bounded
+Git worktree listing and checks which directories still exist. For each live
+worktree named by path in a completed row, an existing unarchived row is kept;
+otherwise the last matching row in document order stays verbatim in `OPEN.md`,
+including its id, path, branch, last step and next step. This retention does not
+reopen a completed task. Rows naming removed worktrees can be archived. A file
+with no archivable rows is unchanged. See `TestArchiveLiveWorktree`,
+`TestArchiveWorktreeExistingRow`, `TestArchiveRemovedWorktree` and
+`TestArchiveNoDoneRowsUnchanged` in `internal/state/archive_worktrees_test.go`.
+
+Above 800 KiB (819200 bytes), state sync and the agent stop hook's state check
+warn with the current `OPEN.md` size, its 1 MiB (1048576-byte) read limit, and
+`praetorctl state task archive`. The warning does not fail sync or block stopping;
+exactly 800 KiB does not warn. At most 1 MiB remains readable; a larger file fails
+with the same archive command in the error. Archive before the limit is reached:
+the archive command also requires a readable snapshot. These bounds are declared
+together in `internal/state/ledger_codec.go`; `TestOpenLedgerSizeSync` in
+`internal/state/open_size_test.go` and `TestStopLedgerOpenSize` in
+`internal/agenthook/open_size_test.go` cover the warning and refusal boundaries.
+
 The fence tracker is `util.MarkdownFence` in `internal/util/marked_block.go`, the one
 implementation every scanner that follows fences across a whole document drives
 (HISS-19): the task parser, the bug-ledger parser, the marked-block finder, the

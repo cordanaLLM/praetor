@@ -317,6 +317,7 @@ func joinStopDenies(denies []Verdict) Verdict {
 	return Verdict{Outcome: Deny, Reason: reason}
 }
 
+// evaluateStopLedger denies a stop while the ledger fails sync verification or audit, then applies the OPEN.md size check.
 func evaluateStopLedger(ctx context.Context, root string, canonical Canonical) Verdict {
 	verifyCtx, cancel := context.WithTimeout(ctx, stateVerifyBudget)
 	defer cancel()
@@ -337,6 +338,19 @@ func evaluateStopLedger(ctx context.Context, root string, canonical Canonical) V
 		reason := "Praetor state audit failed: " + detail +
 			". Resolve the listed ledger rows, run praetorctl state audit ., then retry."
 		return Verdict{Outcome: Deny, Reason: stopReason(reason, canonical.StopActive)}
+	}
+	return stopLedgerSizeVerdict(verifyCtx, root, canonical)
+}
+
+// stopLedgerSizeVerdict annotates a verified ledger without blocking on size
+// below the read limit. A stated skip survives other stop checks' skips too.
+func stopLedgerSizeVerdict(ctx context.Context, root string, canonical Canonical) Verdict {
+	warning, err := state.OpenLedgerSizeWarning(ctx, root)
+	if err != nil {
+		return Verdict{Outcome: Deny, Reason: stopReason("Praetor state size check failed: "+err.Error(), canonical.StopActive)}
+	}
+	if warning != "" {
+		return Verdict{Outcome: Skip, Reason: warning}
 	}
 	return Verdict{Outcome: Allow}
 }
