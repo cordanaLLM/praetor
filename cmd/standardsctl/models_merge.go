@@ -28,9 +28,9 @@ type modelMergeFlags struct {
 // addModelMergeFlags registers the merge-check options.
 func addModelMergeFlags(fs *flag.FlagSet) *modelMergeFlags {
 	f := &modelMergeFlags{}
-	fs.Var(&f.drafts, "draft", "models merge-check: draft JSON (repeatable)")
+	fs.Var(&f.drafts, "draft", "models merge-check and replay: review draft JSON file (repeatable)")
 	f.final = fs.String("final", "", "models merge-check: final JSON")
-	f.json = fs.Bool("json", false, "models merge-check: JSON output")
+	f.json = fs.Bool("json", false, "models merge-check and replay: JSON output")
 	return f
 }
 
@@ -123,6 +123,9 @@ func parseModelAction(fs *flag.FlagSet, args []string) (string, error) {
 	}
 	action := positionalAt(positional, 0, "list")
 	err = validateMergeAction(fs, action, len(positional))
+	if err != nil && action == "replay" {
+		return "", wrapActionUsage(action, err)
+	}
 	if err != nil && (action == "merge-check" || mergeOnlyFlagsSet(fs)) {
 		return "", modelMergeError(err)
 	}
@@ -157,8 +160,11 @@ func validateMergeAction(fs *flag.FlagSet, action string, count int) error {
 	if err := validateModelRouteFlags(fs, action); err != nil {
 		return err
 	}
-	if action != "merge-check" && mergeOnlyFlagsSet(fs) {
-		return fmt.Errorf("--draft, --final and --json require models merge-check")
+	if action != "merge-check" && flagWasSet(fs, "final") {
+		return fmt.Errorf("--final requires models merge-check")
+	}
+	if action != "merge-check" && action != "replay" && mergeOnlyFlagsSet(fs) {
+		return fmt.Errorf("--draft, --final and --json require models merge-check (--draft and --json also models replay)")
 	}
 	return nil
 }
