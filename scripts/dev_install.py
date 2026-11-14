@@ -5,7 +5,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,7 +22,7 @@ from portability_selftest import hook_toolchain
 INSTALL_TIMEOUT = 300
 
 
-def hook_interpreter(which=shutil.which):
+def hook_interpreter(which=None):
     """Return the interpreter the Git hooks start on this host, or stop the install.
 
     Every hook starts through .config/lefthook/python.sh, which tries a fixed list of
@@ -32,14 +31,14 @@ def hook_interpreter(which=shutil.which):
     proof. Windows 10 and 11 put python3.exe and python.exe there as Microsoft Store aliases,
     which a lookup finds and which answer the probe with "Python was not found".
 
-    The check here is the hook policy's own resolver for that list (toolchain.python_program),
-    so the install reports what the hooks will run and refuses a host where every hook would
-    fail as a missing dependency. Nothing is stored: no environment variable selects the
-    interpreter, so there is none to set.
+    The hook policy's resolver (toolchain.python_program) asks that same launcher in this
+    checkout, including its own and the main worktree's untracked virtualenvs. The install
+    reports what the hooks will run and refuses a host where every candidate fails.
+    Nothing is stored: no environment variable selects the interpreter.
     """
     toolchain = hook_toolchain()
     try:
-        argv, version = toolchain.python_program(which)
+        argv, version = toolchain.python_program(which, cwd=dev_mcp.ROOT)
     except toolchain.HookError as error:
         raise RuntimeError(f"the Git hooks cannot start on this host: {error}") from error
     return {"command": argv, "version": version}

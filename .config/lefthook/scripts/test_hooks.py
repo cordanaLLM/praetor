@@ -271,27 +271,30 @@ def cli_path(repo):
     return str(repo / PRAETORCTL)
 
 
-def command(repo, *args, data=None, ok=True, maintain_state=True):
+def command(repo, *args, data=None, ok=True, maintain_state=True, env=None):
     """Run one command in the fixture repository, syncing Praetor state before a commit or push unless maintain_state is false."""
     # Most fixtures model an agent obeying the sync obligation. Negative state
     # tests opt out and execute the same real hooks against stale/missing state.
     if (maintain_state and args[:2] in (("git", "commit"), ("git", "push"))
             and (repo / PRAETORCTL).is_file()):
-        run_command(repo, (cli_path(repo), "state", "sync", "."), None, ok)
-    result = run_command(repo, args, data, ok)
+        run_command(repo, (cli_path(repo), "state", "sync", "."), None, ok, env)
+    result = run_command(repo, args, data, ok, env)
     if args[:2] == ("git", "init") and "--bare" not in args and (repo / ".git").is_dir():
-        run_command(repo, ("git", "config", "commit.gpgsign", "false"), None, False)
-        run_command(repo, ("git", "config", "tag.gpgsign", "false"), None, False)
+        run_command(repo, ("git", "config", "commit.gpgsign", "false"), None, False, env)
+        run_command(repo, ("git", "config", "tag.gpgsign", "false"), None, False, env)
     return result
 
 
-def run_command(repo, args, data, ok):
+def run_command(repo, args, data, ok, env=None):
     """Run one fixture command; command() adds the state sync a commit or push obliges.
 
     Kept apart from command() so the sync runs through the same environment without the
     helper calling itself (HISS-01).
     """
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", **LOCALE_ENV, **NO_AUTOCRLF_ENV)
+    if env is None:
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", **LOCALE_ENV, **NO_AUTOCRLF_ENV)
+    else:
+        env = dict(env)
     for key in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
         env.pop(key, None)
     # A test command without explicit input must see EOF, not inherit the operator's
@@ -4881,13 +4884,389 @@ class HookToolRestores(unittest.TestCase):
         self.assertIn("Restore: read .config/lefthook/tool-floors.txt", str(refused.exception))
 
 
-class HookInterpreter(unittest.TestCase):
+@unittest.skipIf(os.name == "nt", POSIX_STUB)
+class PythonLauncherWorktree(unittest.TestCase):
+    """Exercise virtualenv selection in real linked Git worktrees."""
+
+    def setUp(self):
+        """Create a main checkout, one linked worktree and a PATH holding Git and sh."""
+        self.env = {key: value for key, value in os.environ.items()
+                    if not key.startswith("GIT_")}
+        self.env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        self.temp = tempfile.TemporaryDirectory(prefix="praetor-launcher-worktree-")
+        self.addCleanup(self.temp.cleanup)
+        base = Path(self.temp.name)
+        self.main = base / "main"
+        self.main.mkdir()
+        command(self.main, "git", "init", "-q", "-b", "main", env=self.env)
+        command(self.main, "git", "config", "user.name", "Fixture", env=self.env)
+        command(self.main, "git", "config", "user.email", "fixture@example.test", env=self.env)
+        command(self.main, "git", "commit", "-q", "--allow-empty", "-m", "initial", env=self.env)
+        self.worktree = base / "linked"
+        command(self.main, "git", "worktree", "add", "-q", "-b", "linked", str(self.worktree),
+                env=self.env)
+        self.bin = base / "bin"
+        self.bin.mkdir()
+        (self.bin / "git").symlink_to(shutil.which("git"))
+        (self.bin / "sh").symlink_to(shutil.which("sh"))
+        (self.bin / "bash").symlink_to(shutil.which("bash"))
+
+    def launch(self, *args):
+        """Run the hook launcher from the linked worktree with the stub PATH."""
+        env = dict(self.env, PATH=str(self.bin))
+        return subprocess.run([shutil.which("sh") or "sh", str(ROOT / LAUNCHER), *args, "hook.py"],
+                              cwd=self.worktree, env=env, capture_output=True, timeout=60,
+                              check=False)
+
+    def venv(self, root):
+        """Plant a Python 3.13 stand-in at root/.venv/bin/python3 and return its path."""
+        return interpreter_stand_in(root / ".venv/bin", "python3", "3.13\\n")
+
+    def test_launcher_uses_main_worktree_venv(self):
+        """A linked worktree without its own virtualenv starts the main worktree's."""
+        candidate = self.venv(self.main)
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+    def test_python_bash_outside_default_path(self):
+        """A host without Bash on its default utility path uses the caller's Bash."""
+        candidate = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        # Emulate a default utility path lacking Bash without changing the host.
+        script = ('command() { if [ "$1" = -p ] && [ "$2" = bash ]; then '
+                  'return 127; fi; builtin command "$@"; }; '
+                  'launcher=$1; shift; . "$launcher"')
+        result = subprocess.run([shutil.which("bash"), "-p", "-c", script, "fixture",
+                                 str(ROOT / LAUNCHER), "hook.py"], cwd=self.worktree,
+                                env=dict(self.env, PATH=str(self.bin)), capture_output=True,
+                                timeout=60, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+    def test_python_bare_main_worktree_uses_path_candidate(self):
+        """A bare first porcelain record has no main virtualenv to validate."""
+        bare = self.main.parent / "bare.git"
+        command(self.main, "git", "clone", "--bare", "-q", str(self.main), str(bare),
+                env=self.env)
+        self.worktree = self.main.parent / "bare-linked"
+        command(bare, "git", "worktree", "add", "-q", "-b", "bare-linked",
+                str(self.worktree), env=self.env)
+        candidate = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+    def test_python_main_worktree_from_separate_git_metadata(self):
+        """Neither separate Git directories nor submodule-shaped metadata imply a root."""
+        candidate = self.venv(self.main)
+        for relative in ("repository-data", "metadata/modules/component"):
+            with self.subTest(metadata=relative):
+                metadata = self.main.parent / relative
+                metadata.parent.mkdir(parents=True, exist_ok=True)
+                command(self.main, "git", "init", "-q", f"--separate-git-dir={metadata}",
+                        env=self.env)
+                command(self.main, "git", "config", "core.worktree", str(self.main), env=self.env)
+                command(self.main, "git", "worktree", "repair", env=self.env)
+                result = self.launch()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+    def test_python_main_worktree_without_path_format_support(self):
+        """Git versions lacking --path-format still discover the main checkout."""
+        import shlex
+
+        (self.bin / "git").unlink()
+        stand_in(self.bin, "git", 'case "$*" in *--path-format*) exit 129;; esac\n'
+                 f'exec {shlex.quote(shutil.which("git"))} "$@"\n')
+        candidate = self.venv(self.main)
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+    def test_python_separate_gitdir_without_root_metadata_is_named(self):
+        """A separate directory without core.worktree has no recoverable main root."""
+        metadata = self.main.parent / "detached-metadata"
+        command(self.main, "git", "init", "-q", f"--separate-git-dir={metadata}", env=self.env)
+        command(self.main, "git", "worktree", "repair", env=self.env)
+        interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        result = self.launch()
+        self.assertEqual(result.returncode, 125, result.stderr)
+        self.assertIn(b"cannot resolve main worktree", result.stderr)
+        self.assertEqual(result.stdout, b"")
+
+    def test_python_unresolvable_main_worktree_is_named(self):
+        """A metadata error refuses selection even when PATH has a working interpreter."""
+        import shlex
+
+        (self.bin / "git").unlink()
+        stand_in(self.bin, "git", 'case "$*" in *worktree*list*) exit 1;; esac\n'
+                 f'exec {shlex.quote(shutil.which("git"))} "$@"\n')
+        interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        result = self.launch()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(b"cannot resolve main worktree", result.stderr)
+        self.assertEqual(result.stdout, b"")
+
+    def test_python_windows_venv_candidate_and_unix_precedence(self):
+        """A Scripts/python.exe fixture works, with Unix winning when both exist."""
+        for root in (self.main, self.worktree):
+            with self.subTest(root=root):
+                windows = interpreter_stand_in(root / ".venv/Scripts", "python.exe", "3.10\\n")
+                result = self.launch()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.decode().strip(), f"stub:{windows}:1:hook.py")
+                unix = self.venv(root)
+                result = self.launch()
+                self.assertEqual(result.stdout.decode().strip(), f"stub:{unix}:1:hook.py")
+                unix.unlink()
+                windows.unlink()
+
+    def test_python_windows_venv_refused_when_old_or_tracked(self):
+        """Old, malformed and tracked Windows candidates cannot hide the next candidate."""
+        fallback = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        for answer in ("3.9\\n", "not Python\\n", "3.13\\n"):
+            with self.subTest(answer=answer):
+                interpreter_stand_in(self.worktree / ".venv/Scripts", "python.exe", answer)
+                if answer == "3.13\\n":
+                    command(self.worktree, "git", "add", "-f", ".venv", env=self.env)
+                result = self.launch()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.decode().strip(), f"stub:{fallback}:1:hook.py")
+
+    def test_python_installer_and_launcher_share_selection(self):
+        """Installer resolution follows checkout, main, then PATH, including refusals."""
+        scripts = str(ROOT / "scripts")
+        with mock.patch.object(sys, "path", [scripts, *sys.path]):
+            spec = importlib.util.spec_from_file_location("launcher_dev_install", ROOT / "scripts/dev_install.py")
+            installer = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(installer)
+        with mock.patch.object(installer, "hook_toolchain", return_value=toolchain), \
+                mock.patch.object(installer.dev_mcp, "ROOT", self.worktree), \
+                mock.patch.dict(os.environ, dict(self.env, PATH=str(self.bin)), clear=True):
+            fallback = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+            main = self.venv(self.main)
+            checkout = interpreter_stand_in(self.worktree / ".venv/Scripts", "python.exe", "3.13\\n")
+            for candidate in (checkout, main, fallback):
+                with self.subTest(candidate=candidate):
+                    report = installer.hook_interpreter()
+                    result = self.launch()
+                    self.assertEqual(report, {"command": [str(candidate)], "version": "3.13"})
+                    self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+                    candidate.unlink()
+            with self.assertRaisesRegex(RuntimeError, "Git hooks cannot start"):
+                installer.hook_interpreter()
+
+    def test_python_keep_index_checks_checkout_alternate_index(self):
+        """--keep-index refuses a venv staged only in the hook's alternate index."""
+        self.venv(self.worktree)
+        fallback = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        alternate = self.main.parent / "hook-index"
+        env = dict(self.env, PATH=str(self.bin), GIT_INDEX_FILE=str(alternate))
+        # run_command intentionally strips GIT_INDEX_FILE; call Git directly for this index.
+        staged = subprocess.run([shutil.which("git"), "add", "-f", ".venv"],
+                                cwd=self.worktree, env=env, capture_output=True, timeout=30,
+                                check=False)
+        self.assertEqual(staged.returncode, 0, staged.stderr)
+        tracked = command(self.worktree, "git", "ls-files", "--", ".venv", env=self.env)
+        self.assertEqual(tracked.stdout, b"")
+        result = subprocess.run([shutil.which("sh"), str(ROOT / LAUNCHER), "--keep-index", "hook.py"],
+                                cwd=self.worktree, env=env, capture_output=True, timeout=30,
+                                check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{fallback}:1:hook.py")
+        # Default mode deliberately drops the alternate index and checks the real one.
+        result = subprocess.run([shutil.which("sh"), str(ROOT / LAUNCHER), "hook.py"],
+                                cwd=self.worktree, env=env, capture_output=True, timeout=30,
+                                check=False)
+        candidate = self.worktree / ".venv/bin/python3"
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+    def python_descendant(self):
+        """Plant a stubborn grandchild and record its pid for liveness assertions."""
+        import shlex
+
+        pid_file = self.main.parent / f"descendant-{time.monotonic_ns()}.pid"
+        child = (f'trap "" TERM; echo $$ > {shlex.quote(str(pid_file))}; '
+                 f'exec {shlex.quote(shutil.which("sleep"))} 30')
+        stand_in(self.main / ".venv/bin", "python3",
+                 f'command -p sh -c {shlex.quote(child)} &\nwait\n')
+        self.addCleanup(self.python_clean_descendant, pid_file)
+        return pid_file
+
+    def python_clean_descendant(self, pid_file):
+        """Never leave a planted sleeper behind after a red test."""
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def assert_python_descendant_stopped(self, pid_file):
+        """A killed process awaiting its external reaper is no surviving descendant."""
+        self.assertTrue(pid_file.exists(), "fixture did not start its descendant")
+        result = subprocess.run([shutil.which("ps"), "-o", "stat=", "-p", pid_file.read_text().strip()],
+                                capture_output=True, timeout=5, check=False)
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        self.assertTrue(not result.stdout.strip() or result.stdout.strip().startswith(b"Z"),
+                        f"descendant survived: {result.stdout!r}")
+
+    def test_python_probe_timeout_kills_descendants(self):
+        """The version deadline stops a descendant that ignores TERM, with or without PATH."""
+        for fallback in (True, False):
+            with self.subTest(fallback=fallback):
+                pid_file = self.python_descendant()
+                if fallback:
+                    interpreter_stand_in(self.bin, "python3", "3.13\\n")
+                else:
+                    (self.bin / "python3").unlink()
+                result = self.launch()
+                self.assertEqual(result.returncode, 0 if fallback else 127, result.stderr)
+                self.assert_python_descendant_stopped(pid_file)
+
+    def test_python_probe_signal_trap_kills_descendants(self):
+        """Cancellation of the launcher also stops the separate probe process group."""
+        pid_file = self.python_descendant()
+        process = subprocess.Popen([shutil.which("sh"), str(ROOT / LAUNCHER), "hook.py"],
+                                   cwd=self.worktree, env=dict(self.env, PATH=str(self.bin)),
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   start_new_session=True)
+        self.addCleanup(stop_process_group, process, signal.SIGKILL)
+        for _ in range(100):
+            if pid_file.exists():
+                break
+            time.sleep(0.02)
+        self.assertTrue(pid_file.exists(), "fixture did not start its descendant")
+        if not isinstance(process.pid, int) or isinstance(process.pid, bool) or process.pid <= 1 or process.pid == os.getpgrp():
+            self.fail(f"refusing to signal process group {process.pid!r}")
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=5)
+        for _ in range(50):
+            result = subprocess.run([shutil.which("ps"), "-o", "stat=", "-p", pid_file.read_text().strip()],
+                                    capture_output=True, timeout=5, check=False)
+            if not result.stdout.strip() or result.stdout.strip().startswith(b"Z"):
+                break
+            time.sleep(0.02)
+        self.assert_python_descendant_stopped(pid_file)
+
+    def test_launcher_refuses_tracked_main_worktree_venv(self):
+        """A tracked interpreter in the main worktree is skipped for the PATH interpreter."""
+        self.venv(self.main)
+        command(self.main, "git", "add", "-f", ".venv/bin/python3", env=self.env)
+        command(self.main, "git", "commit", "-q", "-m", "track interpreter", env=self.env)
+        candidate = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+    def test_launcher_reports_missing_venv_candidates(self):
+        """With no interpreter anywhere, the refusal names every candidate it tried."""
+        result = self.launch()
+        self.assertEqual(result.returncode, 127, result.stderr)
+        for candidate in (self.worktree / ".venv/bin/python3", self.main / ".venv/bin/python3"):
+            self.assertIn(str(candidate).encode(), result.stderr)
+        self.assertIn(b"python3, python, py -3", result.stderr)
+
+    def test_launcher_keep_index_refuses_tracked_main_worktree_venv(self):
+        """A linked commit's alternate index cannot hide a tracked main interpreter."""
+        import shlex
+
+        self.venv(self.main)
+        command(self.main, "git", "add", "-f", ".venv/bin/python3", env=self.env)
+        command(self.main, "git", "commit", "-q", "-m", "track interpreter", env=self.env)
+        linked_files = command(self.worktree, "git", "ls-files", "--", ".venv", env=self.env)
+        self.assertEqual(linked_files.stdout, b"")
+        candidate = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        shell = shlex.quote(shutil.which("sh") or "sh")
+        launcher = shlex.quote(str(ROOT / LAUNCHER))
+        stand_in(self.main / ".git/hooks", "pre-commit",
+                 f"{shell} {launcher} --keep-index hook.py\n")
+        result = command(self.worktree, "git", "commit", "-q", "--allow-empty", "-m", "linked hook",
+                         env=dict(self.env, PATH=str(self.bin)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"stub:{candidate}:1:hook.py".encode(), result.stdout + result.stderr)
+
+    def test_launcher_bounds_blocking_interpreter_and_tries_next_candidate(self):
+        """A stalled main interpreter expires before fallback and names its timeout."""
+        sleeper = shutil.which("sleep")
+        self.assertIsNotNone(sleeper, "POSIX watchdog fixture requires sleep")
+        stand_in(self.main / ".venv/bin", "python3", f'"{sleeper}" 15\n')
+        for fallback in (True, False):
+            with self.subTest(fallback=fallback):
+                candidate = self.bin / "python3"
+                if fallback:
+                    interpreter_stand_in(self.bin, "python3", "3.13\\n")
+                else:
+                    candidate.unlink()
+                started = time.monotonic()
+                result = self.launch()
+                elapsed = time.monotonic() - started
+                # At most two stalled probes (5 s bound each) run before the launcher gives up.
+                self.assertLess(elapsed, 14, f"version probe took {elapsed:.2f}s")
+                if fallback:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+                else:
+                    self.assertEqual(result.returncode, 127, result.stderr)
+                    timed_out = self.main / ".venv/bin/python3"
+                    self.assertIn(f"{timed_out} (version probe timed out after 5s)".encode(),
+                                  result.stderr)
+
+    def test_launcher_bounds_delayed_watchdog_startup(self):
+        """Delaying the timer helper cannot postpone the interpreter's deadline."""
+        import shlex
+
+        # Widen scheduling between the watchdog fork and its external sleep starting.
+        # The shim preserves privileged Bash startup and only delays that timer helper.
+        bash = shutil.which("bash")
+        (self.bin / "bash").unlink()
+        prefix = ('command() {\n'
+                  '  if [ "$1" = -p ] && [ "${2-}" = sleep ] && [ "${3-}" = 5 ]; then\n'
+                  '    builtin command -p sleep 6\n'
+                  '  fi\n'
+                  '  builtin command "$@"\n'
+                  '}\n')
+        stand_in(self.bin, "bash", 'test "$1" = -p && test "$2" = -c || exit 99\n'
+                 'script=$3; shift 3\n'
+                 f'exec {shlex.quote(bash)} -p -c {shlex.quote(prefix)}"$script" "$@"\n')
+        pid_file = self.python_descendant()
+        candidate = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        started = time.monotonic()
+        result = self.launch()
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+        self.assert_python_descendant_stopped(pid_file)
+        self.assertLess(elapsed, 8, f"delayed watchdog postponed deadline to {elapsed:.2f}s")
+
+    def test_launcher_deadline_applies_only_to_version_probe(self):
+        """A proven interpreter may run its hook longer than the version deadline."""
+        candidate = stand_in(self.main / ".venv/bin", "python3",
+                             'if [ "$1" = -c ]; then printf "3.13\\n"; exit 0; fi\n'
+                             'command -p sleep 6\necho "hook:$0:$*"\nexit 7\n')
+        result = self.launch()
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"hook:{candidate}:hook.py")
+
+    def test_launcher_prefers_checkout_venv(self):
+        """The worktree's own virtualenv wins over the main worktree's."""
+        self.venv(self.main)
+        candidate = self.venv(self.worktree)
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+
+class PythonHookInterpreter(unittest.TestCase):
     """Every hook starts through one launcher, which proves its interpreter first (#339)."""
 
     def launch(self, *args, path=None, data=b"", **variables):
         env = dict(os.environ, **variables)
         if path is not None:
             env["PATH"] = path
+            # Keep Bash available without exposing any host Python candidate.
+            bash = Path(path) / "bash"
+            if not bash.exists():
+                bash.symlink_to(shutil.which("bash"))
         # The path is relative and the directory is the repository root, as for every hook.
         return subprocess.run([shutil.which("sh") or "sh", LAUNCHER, *args], cwd=ROOT, env=env,
                               input=data, capture_output=True, timeout=60, check=False)
@@ -4902,6 +5281,22 @@ class HookInterpreter(unittest.TestCase):
                 failed = self.launch("-c", f"raise SystemExit({status})")
                 self.assertEqual(failed.returncode, status, failed.stderr)
                 self.assertNotIn(b"missing dependency", failed.stderr)
+
+    def test_python_resolution_response_is_validated(self):
+        """The shared resolver refuses malformed reports and an invalid Python version."""
+        program = str(Path(sys.executable))
+        good = f"3.10\0{program}\0".encode()
+        with mock.patch("toolchain.run", return_value=good) as process:
+            self.assertEqual(toolchain.python_program(), ([program], "3.10"))
+        self.assertEqual(process.call_args.args[0][-1], "--resolve")
+        for output in (b"", b"3.13\npython3", b"3.13\0\0", b"\xff\0python3\0",
+                       f"3.9\0{program}\0".encode(), f"4.0\0{program}\0".encode()):
+            with self.subTest(output=output), mock.patch("toolchain.run", return_value=output), \
+                    self.assertRaisesRegex(HookError, "invalid interpreter resolution response"):
+                toolchain.python_program()
+        with mock.patch("toolchain.run", return_value=b"3.13\0praetor-missing-python\0"), \
+                self.assertRaisesRegex(HookError, "selected interpreter disappeared"):
+            toolchain.python_program()
 
     def test_the_probe_leaves_standard_input_to_the_hook(self):
         # The command guard and the post-rewrite hook read their input from stdin.
@@ -4977,9 +5372,11 @@ class HookInterpreter(unittest.TestCase):
                                r"python \(does not answer .*\); py -3 \(does not answer"):
                 toolchain.python_program(which=only(directory))
 
+    @unittest.skipIf(os.name == "nt", "the Bash PATH fixture needs optional Windows symlink privileges")
     def test_no_candidate_on_path_is_a_missing_dependency(self):
-        # Boundary, on every platform: nothing under any candidate name. The launcher needs
-        # nothing but its shell to say so.
+        """With no Python candidate on PATH the launcher and toolchain both name each missing one."""
+        # POSIX boundary: nothing under any candidate name. The fixture exposes only Bash
+        # through a symlink so the launcher can report the missing Python dependency.
         with tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as empty:
             self.refused(self.launch("-B", "hook.py", path=empty))
             with self.assertRaisesRegex(HookError, r"python3 \(not on PATH\); python \(not on "
@@ -5063,7 +5460,8 @@ class HookInterpreter(unittest.TestCase):
                          list(toolchain.PYTHON_CANDIDATES))
         # A candidate is started exactly as it was proven, and nothing else is started.
         self.assertEqual([proved for proved, _ in lines], [started for _, started in lines])
-        self.assertEqual(len(re.findall(r"\bexec\b", launcher)), len(lines))
+        self.assertEqual(len(re.findall(r"\bexec\b", launcher)), len(lines) + 1)
+        self.assertIn('exec "$venv" "$@"', launcher)
         quoted_probe = re.escape("'" + toolchain.PYTHON_PROBE + "'")
         self.assertRegex(launcher, rf"\nprobe={quoted_probe} +#\n")
         major, minor = toolchain.PYTHON_FLOOR.split(".")
@@ -5213,9 +5611,8 @@ class HookInterpreter(unittest.TestCase):
             refused = subprocess.run([*runner, "--require", "python,sh"], env=env, cwd=empty,
                                      capture_output=True, timeout=120, check=False)
             self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
-            self.assertIn(b"python: UNUSABLE: missing dependency: a Python 3.10 or newer "
-                          b"interpreter. Tried: python3 (not on PATH); python (not on PATH); "
-                          b"py -3 (not on PATH)", refused.stdout)
+            self.assertIn(b"python: UNUSABLE: missing dependency: sh is required to resolve "
+                          b"the Git hooks' Python interpreter", refused.stdout)
             self.assertIn(b"sh: UNUSABLE: sh is not on PATH", refused.stdout)
             self.assertIn(b"required hook tools unusable: python, sh", refused.stderr)
             reported = subprocess.run(runner, env=env, cwd=empty, capture_output=True,

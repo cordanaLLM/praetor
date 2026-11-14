@@ -269,10 +269,31 @@ def proven(what, candidates, proof, which=shutil.which):
     raise HookError(f"missing dependency: {what}. Tried: {'; '.join(tried)}")
 
 
-def python_program(which=shutil.which):
-    """Return (argv, version) of the interpreter python.sh starts on this host."""
-    return proven(f"a Python {PYTHON_FLOOR} or newer interpreter", PYTHON_CANDIDATES,
-                  python_proof, which)
+def python_program(which=None, *, cwd=None):
+    """Resolve through the hook launcher, including untracked worktree virtualenvs.
+
+    An explicitly injected lookup checks a synthetic PATH through the generic proof
+    helper. Production selection belongs to python.sh, before any Python can run.
+    """
+    if which is not None:
+        return proven(f"a Python {PYTHON_FLOOR} or newer interpreter", PYTHON_CANDIDATES,
+                      python_proof, which)
+    shell = shutil.which("sh")
+    if shell is None:
+        raise HookError("missing dependency: sh is required to resolve the Git hooks' Python interpreter")
+    launcher = Path(__file__).resolve().parents[1] / "python.sh"
+    # Four virtualenv candidates and three PATH candidates, each bounded to five seconds.
+    output = run([shell, str(launcher), "--resolve"], cwd=cwd, timeout=40)
+    fields = output.decode(errors="surrogateescape").split("\0")
+    if len(fields) not in (3, 4) or fields[-1] != "" or not PYTHON_STATED.fullmatch(fields[0]):
+        raise HookError(f"{launcher}: invalid interpreter resolution response")
+    version, *argv = fields[:-1]
+    if not version.startswith("3.") or below(version, PYTHON_FLOOR) or not argv[0]:
+        raise HookError(f"{launcher}: invalid interpreter resolution response")
+    path = shutil.which(argv[0])
+    if path is None:
+        raise HookError(f"{launcher}: selected interpreter disappeared: {argv[0]}")
+    return [path, *argv[1:]], version
 
 
 def resolved_make(which=shutil.which):
