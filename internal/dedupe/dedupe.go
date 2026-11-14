@@ -188,7 +188,7 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 	funcLocMap := make(map[string]int)
 	var adopterStarts []adopterGitStart
 
-	for _, relPath := range scope.goFiles {
+	for _, relPath := range scannableGoFiles(scope, report) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}

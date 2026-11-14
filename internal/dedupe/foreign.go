@@ -61,6 +61,8 @@ type rawJscpdDuplicate struct {
 	SecondFile rawJscpdFile `json:"secondFile"`
 }
 
+// scanForeign runs jscpd over the scope's non-Go files (and any --across roots), minus the files git marks
+// linguist-generated, and records the clone groups, scanned languages and skipped generated files in report.
 func scanForeign(ctx context.Context, repoPath string, acrossRoots []string, scope sourceScope, report *DedupeReport) error {
 	if ctx == nil {
 		return fmt.Errorf("dedupe scan requires a context")
@@ -72,10 +74,11 @@ func scanForeign(ctx context.Context, repoPath string, acrossRoots []string, sco
 	if err != nil {
 		return fmt.Errorf("normalize scan roots: %w", err)
 	}
-	files, err := collectForeignFiles(ctx, repoPath, mainAbs, roots, scope, isCrossRoot)
+	files, skippedGenerated, err := collectForeignFiles(ctx, repoPath, mainAbs, roots, scope, isCrossRoot)
 	if err != nil {
 		return fmt.Errorf("collect foreign files: %w", err)
 	}
+	report.SkippedGeneratedFiles += skippedGenerated
 	if len(files) == 0 {
 		return nil
 	}
@@ -96,7 +99,7 @@ func scanForeign(ctx context.Context, repoPath string, acrossRoots []string, sco
 	}
 	groups := mergeDuplicatePairs(duplicates, roots, isCrossRoot)
 	report.ForeignDuplicates = filterDuplicateGroups(groups, repoPath, isCrossRoot)
-	updateForeignScannedLanguages(scope, report)
+	updateForeignScannedLanguages(files, report)
 	return nil
 }
 
@@ -129,25 +132,44 @@ func normalizeScanRoots(repoPath string, acrossRoots []string) ([]rootMapping, s
 	return roots, cleanMain, isCrossRoot, nil
 }
 
-func collectForeignFiles(ctx context.Context, repoPath, mainAbs string, roots []rootMapping, scope sourceScope, isCrossRoot bool) ([]string, error) {
-	files := make([]string, 0, len(scope.foreignFiles))
-	for i := 0; i < len(scope.foreignFiles) && i < maxForeignScanFiles; i++ {
-		files = append(files, filepath.Join(mainAbs, scope.foreignFiles[i]))
+// collectForeignFiles lists the absolute paths jscpd scans and counts the linguist-generated files left out,
+// the same marking the native scanner skips (one classifier, both scanners).
+func collectForeignFiles(ctx context.Context, repoPath, mainAbs string, roots []rootMapping, scope sourceScope, isCrossRoot bool) ([]string, int, error) {
+	files, skipped, err := appendForeignScope(mainAbs, scope, nil, 0)
+	if err != nil {
+		return nil, 0, err
 	}
 	if isCrossRoot {
-		var err error
-		files, err = collectAcrossRootsFiles(ctx, mainAbs, roots, files)
+		files, skipped, err = collectAcrossRootsFiles(ctx, mainAbs, roots, files, skipped)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
-	if len(files) > maxForeignScanFiles {
-		return nil, fmt.Errorf("foreign files count %d exceeds limit %d", len(files), maxForeignScanFiles)
-	}
-	return files, nil
+	return files, skipped, nil
 }
 
-func collectAcrossRootsFiles(ctx context.Context, mainAbs string, roots []rootMapping, files []string) ([]string, error) {
+// appendForeignScope applies the combined file cap after generated-file filtering, without truncation.
+func appendForeignScope(root string, scope sourceScope, files []string, skipped int) ([]string, int, error) {
+	if len(scope.foreignFiles) > maxScopeEntries {
+		return nil, 0, fmt.Errorf("foreign scope exceeds %d entries", maxScopeEntries)
+	}
+	for i := 0; i < len(scope.foreignFiles) && i < maxScopeEntries; i++ {
+		rel := scope.foreignFiles[i]
+		if scope.isLinguistGenerated(rel) {
+			skipped++
+			continue
+		}
+		files = append(files, filepath.Join(root, rel))
+		if len(files) > maxForeignScanFiles {
+			return nil, 0, fmt.Errorf("foreign files count %d exceeds limit %d", len(files), maxForeignScanFiles)
+		}
+	}
+	return files, skipped, nil
+}
+
+// collectAcrossRootsFiles appends each extra root's non-generated foreign files to files and adds the generated
+// files it left out to skipped.
+func collectAcrossRootsFiles(ctx context.Context, mainAbs string, roots []rootMapping, files []string, skipped int) ([]string, int, error) {
 	for i := 0; i < len(roots) && i < 1000; i++ {
 		r := roots[i]
 		if r.abs == mainAbs {
@@ -155,13 +177,14 @@ func collectAcrossRootsFiles(ctx context.Context, mainAbs string, roots []rootMa
 		}
 		rScope, err := sourceFiles(ctx, r.raw)
 		if err != nil {
-			return nil, fmt.Errorf("scan root %s: %w", r.raw, err)
+			return nil, 0, fmt.Errorf("scan root %s: %w", r.raw, err)
 		}
-		for j := 0; j < len(rScope.foreignFiles) && j < maxForeignScanFiles; j++ {
-			files = append(files, filepath.Join(r.abs, rScope.foreignFiles[j]))
+		files, skipped, err = appendForeignScope(r.abs, rScope, files, skipped)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan root %s: %w", r.raw, err)
 		}
 	}
-	return files, nil
+	return files, skipped, nil
 }
 
 func resolveJscpdBinary(ctx context.Context, dir string) (string, string, string) {
@@ -606,23 +629,13 @@ func shouldKeepGroup(g DuplicateGroup, mainRoot string) bool {
 
 // updateForeignScannedLanguages records the languages and file counts scanned by jscpd
 // in ForeignScanned. Languages remain in Unscanned because foreign groups are reported, not gated.
-func updateForeignScannedLanguages(scope sourceScope, report *DedupeReport) {
-	if len(scope.foreignFiles) == 0 {
-		return
-	}
-	scannedLangs := make(map[string]bool)
-	for i := 0; i < len(scope.foreignFiles) && i < maxForeignScanFiles; i++ {
-		l := sourceLanguageOf(scope.foreignFiles[i])
-		if l != "" {
-			scannedLangs[l] = true
-		}
-	}
-	for lang := range scannedLangs {
-		if count, ok := report.Unscanned[lang]; ok {
+func updateForeignScannedLanguages(files []string, report *DedupeReport) {
+	for i := 0; i < len(files) && i < maxForeignScanFiles; i++ {
+		if language := foreignSourceLanguage(files[i]); language != "" {
 			if report.ForeignScanned == nil {
 				report.ForeignScanned = make(map[string]int)
 			}
-			report.ForeignScanned[lang] = count
+			report.ForeignScanned[language]++
 		}
 	}
 }

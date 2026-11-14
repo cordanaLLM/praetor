@@ -362,3 +362,47 @@ func TestFilterDriverName_Boundary(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckAttrParserLimits checks bounded readers reject excessive bytes and records.
+func TestCheckAttrParserLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name, input string
+	}{
+		{"bytes", strings.Repeat("p", MaxCommandOutputBytes) + "\x00filter\x00set\x00"},
+		{"records", strings.Repeat("p\x00filter\x00set\x00", maxCheckAttrRecords+1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := []byte(tc.input)
+			if _, err := ParseCheckAttrRecords(out); err == nil {
+				t.Error("record reader accepted excessive input")
+			}
+			if _, err := ParseCheckAttrOutput(out); err == nil {
+				t.Error("grouped reader accepted excessive input")
+			}
+			if _, err := filterAttributeValues(out); err == nil {
+				t.Error("filter reader accepted excessive input")
+			}
+		})
+	}
+}
+
+// TestCheckAttrParserBoundaries checks inclusive byte and record caps preserve complete results.
+func TestCheckAttrParserBoundaries(t *testing.T) {
+	const suffix = "\x00filter\x00set\x00"
+	for _, input := range []string{
+		strings.Repeat("p", MaxCommandOutputBytes-len(suffix)) + suffix,
+		strings.Repeat("p"+suffix, maxCheckAttrRecords),
+	} {
+		out := []byte(input)
+		records, err := ParseCheckAttrRecords(out)
+		if err != nil || len(records) != strings.Count(input, "\x00")/3 {
+			t.Fatalf("boundary record count/error = %d/%v", len(records), err)
+		}
+		if _, err := ParseCheckAttrOutput(out); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := filterAttributeValues(out); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

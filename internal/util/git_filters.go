@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"slices"
@@ -11,6 +12,9 @@ import (
 // path: a driver's clean command and its long-running process. A smudge command only runs on
 // checkout.
 const statusFilterKeys = `^filter\..*\.(clean|process)$`
+
+// maxCheckAttrRecords permits three attributes for each of 200,000 scoped paths.
+const maxCheckAttrRecords = 600000
 
 // gitFilterProbe runs one of the read-only inspections RefuseGitStatusFilters makes. RunGitProbe
 // reads the repository's own configuration and attributes; effectiveGitProbe reads what a git
@@ -67,22 +71,73 @@ func selectedFilterDrivers(ctx context.Context, probe gitFilterProbe, dir string
 	return filterAttributeValues(attributes.Stdout)
 }
 
-// filterAttributeValues parses `git check-attr -z filter` output -- path, attribute name and
-// value, each NUL-terminated -- into the first path that carries each value. The states git
-// prints for a bare, negated or absent attribute ("set", "unset", "unspecified") are kept as
-// values too: a driver can carry one of those names, and a false match only refuses.
-func filterAttributeValues(out []byte) (map[string]string, error) {
+// CheckAttrRecord is one record of `git check-attr -z` output: a path, an attribute name and the
+// value git resolved for it ("set", "unset" and "unspecified" included).
+type CheckAttrRecord struct {
+	Path, Attr, Value string
+}
+
+// ParseCheckAttrRecords splits `git check-attr -z` output -- path, attribute name and value, each
+// NUL-terminated -- into records in the order git printed them. The one reader of that format:
+// callers that need records grouped by path use ParseCheckAttrOutput.
+func ParseCheckAttrRecords(out []byte) ([]CheckAttrRecord, error) {
+	if len(out) > MaxCommandOutputBytes {
+		return nil, fmt.Errorf("git check-attr answer exceeds %d bytes", MaxCommandOutputBytes)
+	}
+	if bytes.Count(out, []byte{0}) > 3*maxCheckAttrRecords {
+		return nil, fmt.Errorf("git check-attr answer exceeds %d records", maxCheckAttrRecords)
+	}
 	fields := strings.Split(string(out), "\x00")
 	if len(fields)%3 != 1 || fields[len(fields)-1] != "" {
 		return nil, fmt.Errorf("git check-attr answer is not a sequence of NUL-terminated records")
 	}
-	values := make(map[string]string)
-	for i := 0; i+2 < len(fields); i += 3 {
-		if fields[i+1] != "filter" {
-			return nil, fmt.Errorf("git check-attr answered attribute %q, not filter", fields[i+1])
+	records := make([]CheckAttrRecord, 0, len(fields)/3)
+	for i := 0; i+2 < len(fields) && i < 3*maxCheckAttrRecords; i += 3 {
+		records = append(records, CheckAttrRecord{Path: fields[i], Attr: fields[i+1], Value: fields[i+2]})
+	}
+	return records, nil
+}
+
+// ParseCheckAttrOutput reads `git check-attr -z` output into path -> attribute -> value.
+func ParseCheckAttrOutput(out []byte) (map[string]map[string]string, error) {
+	records, err := ParseCheckAttrRecords(out)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]map[string]string, len(records))
+	for i := 0; i < len(records) && i < maxCheckAttrRecords; i++ {
+		rec := records[i]
+		if _, ok := result[rec.Path]; !ok {
+			result[rec.Path] = make(map[string]string, 2)
 		}
-		if _, seen := values[fields[i+2]]; !seen {
-			values[fields[i+2]] = fields[i]
+		result[rec.Path][rec.Attr] = rec.Value
+	}
+	return result, nil
+}
+
+// LinguistGeneratedAttrValue reports whether git's linguist-generated attribute marks generated
+// code (GitHub Linguist convention): only an explicit set or true value counts.
+func LinguistGeneratedAttrValue(value string) bool {
+	return value == "set" || value == "true"
+}
+
+// filterAttributeValues parses `git check-attr -z filter` output into the first path, in git's
+// output order, that carries each value. The states git prints for a bare, negated or absent
+// attribute ("set", "unset", "unspecified") are kept as values too: a driver can carry one of
+// those names, and a false match only refuses.
+func filterAttributeValues(out []byte) (map[string]string, error) {
+	records, err := ParseCheckAttrRecords(out)
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]string)
+	for i := 0; i < len(records) && i < maxCheckAttrRecords; i++ {
+		rec := records[i]
+		if rec.Attr != "filter" {
+			return nil, fmt.Errorf("git check-attr answered attribute %q, not filter", rec.Attr)
+		}
+		if _, seen := values[rec.Value]; !seen {
+			values[rec.Value] = rec.Path
 		}
 	}
 	return values, nil

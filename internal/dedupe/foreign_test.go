@@ -44,6 +44,8 @@ func TestForeignScan_ExceptionUsage(t *testing.T) {
 	}
 }
 
+// scanExceptionFixture scans a fixture repository whose native and foreign clone groups one dedupe exception
+// per clone path excuses, with the fake jscpd answering the canned foreign group.
 func scanExceptionFixture(t *testing.T, tc exceptionScanCase) *dedupe.DedupeReport {
 	t.Helper()
 	root := t.TempDir()
@@ -56,21 +58,29 @@ func scanExceptionFixture(t *testing.T, tc exceptionScanCase) *dedupe.DedupeRepo
 	}
 	canned := `{"duplicates":[]}`
 	if tc.foreign {
+		foreignPath := "app.py"
 		canned = fmt.Sprintf(`{"duplicates":[{"format":"python","lines":10,"tokens":50,
 		"firstFile":{"name":%q,"start":1,"end":10},
 		"secondFile":{"name":%q,"start":30,"end":39}}]}`,
-			filepath.Join(root, path), filepath.Join(root, path))
+			filepath.Join(root, foreignPath), filepath.Join(root, foreignPath))
 	}
 	t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
 	t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
 	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
-	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
-		RepoPath: root,
-		Today:    time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
-		Exceptions: []config.Exception{{
-			Rule: config.ExceptionRuleDedupe, Path: path,
+	exceptions := []config.Exception{{
+		Rule: config.ExceptionRuleDedupe, Path: path,
+		Reason: "Category D: retained fixture clones", Expires: tc.expires,
+	}}
+	if tc.native && tc.foreign {
+		exceptions = append(exceptions, config.Exception{
+			Rule: config.ExceptionRuleDedupe, Path: "app.py",
 			Reason: "Category D: retained fixture clones", Expires: tc.expires,
-		}},
+		})
+	}
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath:   root,
+		Today:      time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+		Exceptions: exceptions,
 	})
 	if err != nil {
 		t.Fatalf("scan exception fixture: %v", err)
