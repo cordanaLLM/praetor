@@ -13,13 +13,15 @@ import (
 
 // OperatorSetting is one decoded key of an operator section (operatorSectionNames). Path is
 // the dotted key, for example clients.selected.agy.required. A scalar carries its canonical
-// text in Value, a sequence of strings carries List, and hooks.python carries Argv.
+// text in Value, a sequence of strings carries List, hooks.python carries Argv, and
+// forge.pr_title_limits carries typed repository records.
 type OperatorSetting struct {
-	Path  string
-	Value string
-	List  []string
-	Argv  [][]string
-	Line  int
+	Path          string
+	Value         string
+	List          []string
+	Argv          [][]string
+	PRTitleLimits []PRTitleLimit
+	Line          int
 }
 
 var operatorSectionNames = [...]string{"clients", "hooks", "update", "framework", "forge", "topology"}
@@ -91,6 +93,7 @@ func decodeSectionMapping(entry sectionEntry) ([]sectionEntry, []OperatorSetting
 	return children, settings, nil
 }
 
+// decodeSettingValue decodes the schema-selected scalar or sequence shape.
 func decodeSettingValue(node *yaml.Node, path string, spec settingSpec) (OperatorSetting, error) {
 	setting := OperatorSetting{Path: path}
 	var err error
@@ -103,6 +106,8 @@ func decodeSettingValue(node *yaml.Node, path string, spec settingSpec) (Operato
 		setting.List, err = stringSequence(node, path, spec.maxItems)
 	case kindArgv:
 		setting.Argv, err = argvSequence(node, path)
+	case kindPRTitleLimits:
+		setting.PRTitleLimits, err = decodePRTitleLimits(node, path)
 	default:
 		setting.Value, err = stringScalar(node, path)
 	}
