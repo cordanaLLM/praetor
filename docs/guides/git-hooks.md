@@ -54,7 +54,7 @@ writes their pinned binaries to `GOBIN`, or `GOPATH/bin` when `GOBIN` is unset
 (`go env GOBIN GOPATH` shows both). This directory must be on `PATH` for the hooks.
 For gitleaks, use
 `mise use --global gitleaks@<version>`, replacing `<version>` with
-`toolpins.GitleaksVersion` from [`internal/toolpins/pins.go`](../../internal/toolpins/pins.go)
+`toolpins.GitleaksVersion` from `internal/toolpins/pins.go`
 without its leading `v`, or install the release archive binary of that same pinned version.
 A Go-built gitleaks lacks the version stamp and shadows the pinned binary when earlier
 on `PATH`, for example in `~/go/bin`.
