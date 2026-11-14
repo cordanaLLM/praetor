@@ -173,7 +173,7 @@ func fixtureRegisterSourcesOver(harness []byte) string {
 }
 
 // newAuditFixture builds the fixture: pinned lockfile, zero-debt baseline, compiled agent
-// context, label taxonomy, ruleset and paperclip harness.
+// context, label taxonomy, security policy, ruleset and paperclip harness.
 func newAuditFixture(t *testing.T) *auditFixture {
 	t.Helper()
 	lf := newLockFixture(t)
@@ -193,6 +193,7 @@ func newAuditFixture(t *testing.T) *auditFixture {
 	recompileFixtureContext(t, dir)
 
 	writeFixtureFile(t, dir, ".config/labels.yaml", "version: 1\nlabels: []\n")
+	writeFixtureFile(t, dir, "SECURITY.md", "Report through the [report form](https://github.com/acme/widgets/security/advisories/new).\n")
 	writeDeclaredRuleset(t, dir, config.DefaultPolicy().BranchProtection)
 	writeFixtureFile(t, dir, ".paperclip/harness.json", fixtureHarnessJSON)
 	// The text register block sends agent evidence under .workingdir/; audit fails unless Git

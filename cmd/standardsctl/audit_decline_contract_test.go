@@ -31,6 +31,7 @@ var cliDeclineGates = map[string]string{
 	"paperclip":         "auditPaperclipHarness",
 	"agent-definitions": "auditAgentDefinitions",
 	"git-hooks":         "adopt:AuditGitHookConfig",
+	"security-policy":   "auditSecurityPolicy",
 }
 
 // mcpDeclineGates is cliDeclineGates for standards_audit.
