@@ -12,9 +12,13 @@ import (
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
-// runModels dispatches the models subcommands: sync, list, route, outcome and merge-check.
+// runModels dispatches the models subcommands: sync, list, route, outcome, merge-check and the
+// predicted-merge bundle.
 func runModels(args []string) error {
-	fs := flag.NewFlagSet("models", flag.ContinueOnError)
+	if isModelsBundle(args) {
+		return runModelsBundle(args[1:])
+	}
+	fs := flag.NewFlagSet("models {sync|list|route|outcome|bundle}", flag.ContinueOnError)
 	configPath := fs.String("config", router.DefaultConfigPath, "Path to model routing config")
 	discoverLocal := fs.Bool("discover-local", true, "Auto-discover local Ollama/vLLM models")
 	endpoints := fs.String("local-endpoints", "http://localhost:11434,http://localhost:8000", "Comma-separated local runtime endpoints")
@@ -45,8 +49,10 @@ func runModels(args []string) error {
 		return handleModelsMerge(merge)
 	case "outcome":
 		return handleModelsOutcome(ctx, *configPath, *route.task, outcome)
+	case "bundle":
+		return fmt.Errorf("models bundle must precede its flags: %s", modelBundleUsage)
 	default:
-		return fmt.Errorf("unknown action: %s (supported: sync, list, route, outcome, merge-check)", action)
+		return fmt.Errorf("unknown action: %s (supported: sync, list, route, outcome, merge-check, bundle)", action)
 	}
 }
 

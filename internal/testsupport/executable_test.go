@@ -6,13 +6,11 @@ package testsupport
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -52,33 +50,9 @@ func TestBuildExecutable_Positive_ResolvableByBareName(t *testing.T) {
 	}
 }
 
-// fatalRecorder stands in for the test so a Fatalf inside Build is observed rather than
-// failing this test. Fatalf ends the goroutine, as testing.T does.
-type fatalRecorder struct {
-	testing.TB
-	mu      sync.Mutex
-	message string
-}
-
-func (r *fatalRecorder) Fatalf(format string, args ...any) {
-	r.mu.Lock()
-	r.message = fmt.Sprintf(format, args...)
-	r.mu.Unlock()
-	runtime.Goexit()
-}
-
 func runRecorded(t *testing.T, build func(testing.TB)) string {
 	t.Helper()
-	recorder := &fatalRecorder{TB: t}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		build(recorder)
-	}()
-	<-done
-	recorder.mu.Lock()
-	defer recorder.mu.Unlock()
-	return recorder.message
+	return RecordFatal(t, build)
 }
 
 func TestBuildExecutable_Negative_InvalidSourceAndMissingGo(t *testing.T) {

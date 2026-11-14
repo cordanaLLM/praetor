@@ -7,6 +7,24 @@ and minimizes configured token cost.
 It does not dispatch an agent or call a provider. Prices, capabilities and task
 assignments are operator declarations, not measured quality or current availability.
 
+## Review bundles from the predicted merge
+
+Build a review bundle against the current target tip before distributing it to reviewers:
+
+```bash
+standardsctl models bundle --repo . --target origin/main --head feature/topic --json
+```
+
+The command provides three guarantees, exercised by `internal/reviewbundle/bundle_test.go` and `cmd/standardsctl/models_bundle_test.go`:
+
+- It pins both refs and reads the predicted merge tree for paths the head changed since the merge base. Newer target edits survive in the review content; unchanged target-only paths are excluded.
+- It reports conflicts with their paths and Git classifications while still returning a bundle and exit status 0. Invalid arguments or refs return status 2 with a reason.
+- It bounds retained content to 64 KiB per file, 200 files, and 2 MiB total by default. `--max-file-bytes` and `--max-files` adjust the first two limits. Every shortened or omitted path appears in `cut`; text output marks each file `TRUNCATED: yes|no` and each cut path `TRUNCATED: yes`. Deleted and binary files carry no content. Total bytes count content, excluding metadata; binary detection samples Git's first 8000 bytes for NULs.
+
+JSON includes resolved commit IDs, the merge base, predicted tree, effective limits and independently recorded conflicted paths. `reviewbundle.Validate` checks byte budgets, truncation fields and coverage of those conflict paths without Git I/O; it cannot infer absent conflict evidence from a tree hash alone. Bounded metadata overflow fails explicitly rather than returning a partial path inventory.
+
+The idea comes from [Fairies by Michael Niedermayer](https://code.ffmpeg.org/michaelni/Fairies) (GPL-2.0, commit `c4ed93c30469`); no code or text was taken.
+
 ## Current execution path
 
 ```figure
