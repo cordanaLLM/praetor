@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 
@@ -109,6 +110,14 @@ func runGateLifecycleCase(t *testing.T, entries []rules.Entry) (string, int) {
 	return runGateCLI(t, dir, exceptionsJSON)
 }
 
+// lifecycleDate is a waiver expiry days from today on the real clock the gate reads: a fixed date
+// in a test fixture turns into an expired waiver once the calendar passes it (the dated entry of
+// 2026-11-01 failed every run from 2026-11-02).
+func lifecycleDate(days int) string {
+	return time.Now().AddDate(0, 0, days).Format(time.DateOnly)
+}
+
+// TestGate_ExceptionsLifecycle_3D verifies that 3D-category secret exceptions expire and are enforced by the gate.
 func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
@@ -123,7 +132,7 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 
 	t.Run("dated entry excuses its finding", func(t *testing.T) {
 		entries := []rules.Entry{
-			{Path: "creds.py", RuleID: "generic-api-key", Expires: "2026-11-01", Reason: "dated test waiver"},
+			{Path: "creds.py", RuleID: "generic-api-key", Expires: lifecycleDate(5), Category: "C", Entered: lifecycleDate(0), Reason: "dated test waiver"},
 		}
 		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 0 {
@@ -133,7 +142,7 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 
 	t.Run("expired entry fails", func(t *testing.T) {
 		entries := []rules.Entry{
-			{Path: "creds.py", RuleID: "generic-api-key", Expires: "2026-10-01", Reason: "expired test waiver"},
+			{Path: "creds.py", RuleID: "generic-api-key", Expires: lifecycleDate(-30), Category: "C", Entered: lifecycleDate(-35), Reason: "expired test waiver"},
 		}
 		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 3 {
@@ -143,7 +152,7 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 
 	t.Run("stale entry fails", func(t *testing.T) {
 		entries := []rules.Entry{
-			{Path: "other.py", RuleID: "generic-api-key", Expires: "2026-11-01", Reason: "stale waiver for other file"},
+			{Path: "other.py", RuleID: "generic-api-key", Expires: lifecycleDate(5), Category: "C", Entered: lifecycleDate(0), Reason: "stale waiver for other file"},
 		}
 		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 3 {
