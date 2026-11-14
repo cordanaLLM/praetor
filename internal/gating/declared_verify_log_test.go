@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -175,7 +176,7 @@ func TestDeclaredVerifyLogPlantedMakeFailure(t *testing.T) {
 // assertDeclaredLog checks the failure header, bounded tail, collapsed progress and private log metadata.
 func assertDeclaredLog(t *testing.T, path, first, last string, count int) {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	data, err := fs.ReadFile(os.DirFS(filepath.Dir(path)), filepath.Base(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +375,7 @@ func TestDeclaredVerifyFailureLogBoundsAndCause(t *testing.T) {
 	if len(paths) != 1 {
 		t.Fatalf("cancelled stage got logs %v; want one", paths)
 	}
-	data, readErr := os.ReadFile(paths[0])
+	data, readErr := fs.ReadFile(os.DirFS(filepath.Dir(paths[0])), filepath.Base(paths[0]))
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
