@@ -548,8 +548,12 @@ they emit `[FAIL]` lines and the gate fails the audit (`TestJobTimeout_FailFrom_
 A dated `job-timeout` exception for the workflow excuses its findings; the excused `[PASS]` line
 names each excused job and its kind (`cancel-risk`, `runaway`, `static-ceiling`,
 `missing-timeout` or `unreadable-timeout`), so an exception never hides which risk it covers. An
+optional `fingerprint` narrows the exception to exactly one of those kinds. For example,
+`fingerprint: static-ceiling` excuses only the static bound; measured cancel risks, runaways,
+and missing timeouts in the same workflow still fail after the switch
+(`TestJobTimeout_PortabilityExceptionScope`). An unknown fingerprint excuses nothing. An
 entry that excuses nothing warns, and fails after the switch. A job above the static ceiling that
-passes on the measured path keeps its workflow's entry in use, because a CI run without a forge
+passes on the measured path keeps its matching static-ceiling entry in use, because a CI run without a forge
 token takes the static path and needs it (`TestJobTimeout_StaticOnlyExceptionUsedOnBothPaths`).
 
 The context gate inside `standards_audit` also runs the cache-stability check

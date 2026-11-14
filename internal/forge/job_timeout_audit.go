@@ -46,7 +46,8 @@ var JobTimeoutFailFrom = time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
 
 // JobTimeoutOptions is what AuditJobTimeouts reads: the repository root, the manifest's
 // exceptions list (the check reads the entries of config.ExceptionRuleJobTimeout), the day
-// those entries' expiry is judged against, the forge reader, and branch.
+// those entries' expiry is judged against, the forge reader, and branch. An exception's
+// fingerprint, when set, must equal the finding kind; an empty fingerprint covers all kinds.
 type JobTimeoutOptions struct {
 	Root          string
 	Exceptions    []config.Exception
@@ -271,7 +272,7 @@ func judgeStaticJob(rel string, line int, jobID string, declared int) jobVerdict
 
 // applyExceptions returns the judged lines and how many of them are findings: a finding of a
 // workflow without a live exception, or an entry that excuses nothing. failing marks findings
-// [FAIL] instead of [WARN]; an excused workflow's [PASS] line names each excused job and its kind.
+// [FAIL] instead of [WARN]; an exception's [PASS] line names only its excused jobs and kinds.
 // A workflow in staticOnly without a finding marks its live entry used, so the entry the static
 // path needs is not called stale on the measured path.
 func applyExceptions(findings []jobTimeoutFinding, staticOnly []string, entries []config.Exception, today time.Time, failing bool) ([]string, int) {
@@ -282,11 +283,15 @@ func applyExceptions(findings []jobTimeoutFinding, staticOnly []string, entries 
 	used := make([]bool, len(entries))
 	byWorkflow, wfOrder := groupFindingsByWorkflow(findings)
 	lines, count := judgeWorkflowFindings(byWorkflow, wfOrder, entries, today, used, severity)
-	lines = append(lines, staticOnlyExceptionLines(staticOnly, byWorkflow, entries, today, used)...)
+	lines = append(lines, staticOnlyExceptionLines(staticOnly, entries, today, used)...)
 	for i := 0; i < len(entries) && i < config.MaxExceptions; i++ {
 		if !used[i] {
-			lines = append(lines, fmt.Sprintf("%s %s: the exceptions entry (rule %s, %s) excuses no finding, because the workflow it names has none; remove it.",
-				severity, jobTimeoutGate, entries[i].Rule, entries[i].Target()))
+			why := "the workflow it names has none"
+			if entries[i].Fingerprint != "" {
+				why = "the workflow it names has none of kind " + entries[i].Fingerprint
+			}
+			lines = append(lines, fmt.Sprintf("%s %s: the exceptions entry (rule %s, %s) excuses no finding, because %s; remove it.",
+				severity, jobTimeoutGate, entries[i].Rule, entries[i].Target(), why))
 			count++
 		}
 	}
@@ -306,37 +311,55 @@ func groupFindingsByWorkflow(findings []jobTimeoutFinding) (map[string][]jobTime
 	return byWorkflow, wfOrder
 }
 
-// judgeWorkflowFindings prints each workflow's findings at severity unless a live entry excuses
-// the workflow, and counts the printed findings.
+// jobTimeoutExceptionFor returns the last live entry matching both workflow and finding kind.
+// Only matching entries are marked used; unknown fingerprints excuse nothing.
+func jobTimeoutExceptionFor(entries []config.Exception, workflow, kind string, today time.Time, used []bool) *config.Exception {
+	var live *config.Exception
+	for i := 0; i < len(entries) && i < config.MaxExceptions; i++ {
+		if entries[i].Fingerprint != "" && entries[i].Fingerprint != kind {
+			continue
+		}
+		if match, _ := config.ExceptionFor(entries[i:i+1], workflow, today, used[i:i+1]); match != nil {
+			live = match
+		}
+	}
+	return live
+}
+
+// judgeWorkflowFindings prints unexcused findings at severity and counts them. Pass lines
+// group only findings matched by the same live entry, preserving their first-seen order.
 func judgeWorkflowFindings(byWorkflow map[string][]jobTimeoutFinding, wfOrder []string, entries []config.Exception, today time.Time, used []bool, severity string) ([]string, int) {
 	var lines []string
 	count := 0
 	for _, wf := range wfOrder {
-		wFindings := byWorkflow[wf]
-		live, _ := config.ExceptionFor(entries, wf, today, used)
-		if live != nil {
-			lines = append(lines, fmt.Sprintf("[PASS] %s: %s excepted until %s: %s; excuses %s",
-				jobTimeoutGate, wf, live.Expires, live.Reason, formatExcusedFindings(wFindings)))
-			continue
-		}
-		for _, f := range wFindings {
+		excused := make(map[*config.Exception][]jobTimeoutFinding)
+		var order []*config.Exception
+		for _, f := range byWorkflow[wf] {
+			if live := jobTimeoutExceptionFor(entries, wf, f.Kind, today, used); live != nil {
+				if _, exists := excused[live]; !exists {
+					order = append(order, live)
+				}
+				excused[live] = append(excused[live], f)
+				continue
+			}
 			lines = append(lines, fmt.Sprintf("%s %s: %s:%d job %s: %s",
 				severity, jobTimeoutGate, f.Workflow, f.Line, auditJobID(f.JobID), f.Reason))
 			count++
+		}
+		for _, live := range order {
+			lines = append(lines, fmt.Sprintf("[PASS] %s: %s excepted until %s: %s; excuses %s",
+				jobTimeoutGate, wf, live.Expires, live.Reason, formatExcusedFindings(excused[live])))
 		}
 	}
 	return lines, count
 }
 
-// staticOnlyExceptionLines marks the live entry of each staticOnly workflow without a finding
-// used and names why it stays.
-func staticOnlyExceptionLines(staticOnly []string, byWorkflow map[string][]jobTimeoutFinding, entries []config.Exception, today time.Time, used []bool) []string {
+// staticOnlyExceptionLines marks static-ceiling entries used when measurements pass jobs
+// above the static bound, even if another job in the workflow has an unrelated finding.
+func staticOnlyExceptionLines(staticOnly []string, entries []config.Exception, today time.Time, used []bool) []string {
 	var lines []string
 	for _, wf := range staticOnly {
-		if _, judged := byWorkflow[wf]; judged {
-			continue
-		}
-		if live, _ := config.ExceptionFor(entries, wf, today, used); live != nil {
+		if live := jobTimeoutExceptionFor(entries, wf, jobTimeoutKindStaticCeiling, today, used); live != nil {
 			lines = append(lines, fmt.Sprintf("[INFO] %s: %s: the exceptions entry (until %s) covers jobs above the %dm static bound; the measured path finds none",
 				jobTimeoutGate, wf, live.Expires, staticCeilingMinutes))
 		}

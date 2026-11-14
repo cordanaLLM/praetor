@@ -127,6 +127,30 @@ func TestRenderWorkflow_Negative_RefusesWhatItCannotRender(t *testing.T) {
 	}
 }
 
+// Missing, nonliteral and insufficient job budgets cannot take the installation adjustment.
+// Historical literal budgets retain their own comparison time and round-trip exactly.
+func TestRenderWorkflow_InstallationJobTimeoutBounds(t *testing.T) {
+	settings := Settings{SystemPackages: []string{"libudev-dev"}}
+	for _, timeout := range []string{"", "    timeout-minutes: ${{ inputs.timeout }}\n", "    timeout-minutes: 15\n"} {
+		plain := strings.Replace(Workflow, "    timeout-minutes: 25\n", timeout, 1)
+		if _, err := RenderWorkflow(plain, settings); err == nil {
+			t.Errorf("invalid job timeout %q accepted", timeout)
+		}
+	}
+	prior := strings.Replace(Workflow, "    timeout-minutes: 25\n", "    timeout-minutes: 60\n", 1)
+	rendered := mustRenderOver(t, prior, settings)
+	if !strings.Contains(rendered, "    timeout-minutes: 75\n") {
+		t.Fatal("historical comparison timeout lost its installation budget")
+	}
+	if plain, ok := StripSettings(rendered); !ok || plain != prior {
+		t.Fatalf("historical timeout did not round-trip: ok=%v", ok)
+	}
+	legacy := strings.Replace(rendered, installJobTimeoutMarker+"    timeout-minutes: 75\n", "    timeout-minutes: 60\n", 1)
+	if plain, ok := StripSettings(legacy); !ok || plain != prior {
+		t.Fatalf("legacy installation rendering was not recognised: ok=%v", ok)
+	}
+}
+
 // Positive: StripSettings is RenderWorkflow's inverse for Praetor's own output, packages and
 // exceptions alike, over any plain text: one with a hand-added comment strips to that text, which
 // the family then finds is no text Praetor shipped. Negative: an edited rendering, a package list changed by hand, a hand-written

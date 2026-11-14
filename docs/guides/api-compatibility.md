@@ -157,7 +157,9 @@ non-empty the rendered workflow gains one step, `Install system packages for the
 before the step that runs the gate: it carries the draft condition of every gate step, a 15 minute
 timeout, and runs `sudo apt-get update` and then `sudo apt-get install -y --no-install-recommends`
 with exactly the declared names, one per line so that no line passes yamllint's 80 columns (`TestRenderWorkflow_Positive_InstallStepRunsBeforeTheChecker` in
-`tools/apicompat/render_test.go`). An absent or empty list renders the workflow byte-identical to
+`tools/apicompat/render_test.go`). The job also reserves those 15 minutes in addition to its
+25-minute comparison budget, giving 40 minutes when installation is configured
+(`TestAPICompatibilityJobTimeoutIncludesSystemPackages`). An absent or empty list renders the workflow byte-identical to
 the text before the key existed (`TestRenderWorkflow_Boundary_EmptySettingsKeepTheBytes`). Nothing
 sets `CGO_ENABLED`: a module is never compared with cgo silently switched off.
 

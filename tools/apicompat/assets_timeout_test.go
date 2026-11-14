@@ -52,3 +52,38 @@ func TestAPICompatibilityJobTimeoutFitsEveryAdopter(t *testing.T) {
 		t.Errorf("negative case lost: a 5-minute bound must cancel the slowest adopter (p95 %.1f)", slowest)
 	}
 }
+
+// Configuring packages reserves the install step's full bound in addition to the existing
+// comparison budget. The plain workflow and its measured adopter windows stay unchanged.
+func TestAPICompatibilityJobTimeoutIncludesSystemPackages(t *testing.T) {
+	rendered := mustRender(t, Settings{SystemPackages: []string{"libudev-dev"}})
+	spec, err := ghworkflow.Parse([]byte(rendered))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := spec.Jobs["api-compatibility"]
+	declared, err := strconv.Atoi(job.TimeoutMinutes.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	install := 0
+	for _, step := range job.Steps {
+		if step.Name == InstallStepName {
+			install, err = strconv.Atoi(step.TimeoutMinutes.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	slowest := 0.0
+	for _, p95 := range apiCompatibilityAdopterP95 {
+		slowest = math.Max(slowest, p95)
+	}
+	comparison := int(math.Max(5, math.Ceil(2*slowest)))
+	if install != InstallTimeoutMinutes || declared != comparison+install {
+		t.Fatalf("job timeout = %d, install = %d; want comparison %d plus install %d", declared, install, comparison, InstallTimeoutMinutes)
+	}
+	if plain, ok := StripSettings(rendered); !ok || plain != Workflow {
+		t.Fatalf("configured timeout did not round-trip to the plain workflow: ok=%v", ok)
+	}
+}

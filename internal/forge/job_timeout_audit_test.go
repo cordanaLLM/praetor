@@ -329,6 +329,97 @@ func TestJobTimeout_StaticOnlyExceptionUsedOnBothPaths(t *testing.T) {
 	}
 }
 
+// The repository's portability waiver excuses only static ceilings. Measured risks and
+// missing declarations must still fail, including when another job uses the waiver.
+func TestJobTimeout_PortabilityExceptionScope(t *testing.T) {
+	manifest, err := config.LoadManifest(filepath.Join("..", "..", config.ManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := config.ExceptionsFor(manifest.Exceptions, config.ExceptionRuleJobTimeout)
+	cases := []struct {
+		name, timeout, finding string
+		minutes                float64
+	}{
+		{"static ceiling", "163", "", 0},
+		{"measured within band", "163", "", 81.3},
+		{"measured cancel risk", "153", "cancel risk", 150},
+		{"measured runaway", "163", "runaway", 10},
+		{"missing timeout", "", "declares no timeout-minutes", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			content := "on: push\njobs:\n  shard:\n    name: Shard\n"
+			if tc.timeout != "" {
+				content += "    timeout-minutes: " + tc.timeout + "\n"
+			}
+			content += "    steps:\n      - run: echo shard\n"
+			// A static finding in the same workflow must not excuse the shard's other kinds.
+			content += "  harness:\n    timeout-minutes: 153\n    steps:\n      - run: echo harness\n"
+			writeWorkflow(t, root, "portability.yml", content)
+			opts := JobTimeoutOptions{Root: root, Today: JobTimeoutFailFrom, Exceptions: entries}
+			if tc.minutes > 0 {
+				opts.Reader = singleRunJobTimeoutReader("portability.yml", jobDurationRecord("Shard", tc.minutes))
+				opts.Branch = "main"
+			}
+			out, err := AuditJobTimeouts(t.Context(), opts)
+			assertPortabilityTimeoutFinding(t, out, err, tc.finding)
+		})
+	}
+}
+
+// assertPortabilityTimeoutFinding checks a failing kind or the retained static exception.
+func assertPortabilityTimeoutFinding(t *testing.T, out string, err error, finding string) {
+	t.Helper()
+	if finding == "" {
+		if err != nil || !strings.Contains(out, "excuses job harness static-ceiling") {
+			t.Fatalf("static ceiling must stay excepted; out=%s err=%v", out, err)
+		}
+		return
+	}
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] job-timeout:") || !strings.Contains(err.Error(), finding) {
+		t.Fatalf("want failing %s; out=%s err=%v", finding, out, err)
+	}
+}
+
+// Scoped entries remain live on the measured path only for static-ceiling scope. Expired,
+// unknown and unmatched scopes stay unexcused, and unrelated findings never mark them used.
+func TestJobTimeout_ScopedExceptionUsage(t *testing.T) {
+	const workflow = ".github/workflows/portability.yml"
+	cases := []struct {
+		name, scope, kind, expires string
+		staticOnly                 bool
+		want                       int
+	}{
+		{"static", jobTimeoutKindStaticCeiling, jobTimeoutKindStaticCeiling, "2027-03-06", false, 0},
+		{"cancel", jobTimeoutKindStaticCeiling, jobTimeoutKindCancelRisk, "2027-03-06", false, 2},
+		{"unknown", "typo", jobTimeoutKindStaticCeiling, "2027-03-06", false, 2},
+		{"expired", jobTimeoutKindStaticCeiling, jobTimeoutKindStaticCeiling, "2026-01-01", false, 1},
+		{"measured", jobTimeoutKindStaticCeiling, "", "2027-03-06", true, 0},
+		{"wrong measured scope", jobTimeoutKindCancelRisk, "", "2027-03-06", true, 1},
+		{"mixed measured", jobTimeoutKindStaticCeiling, jobTimeoutKindMissing, "2027-03-06", true, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := []config.Exception{{Rule: config.ExceptionRuleJobTimeout, Path: workflow,
+				Fingerprint: tc.scope, Expires: tc.expires}}
+			var findings []jobTimeoutFinding
+			if tc.kind != "" {
+				findings = []jobTimeoutFinding{{Workflow: workflow, JobID: "shard", Kind: tc.kind}}
+			}
+			var staticOnly []string
+			if tc.staticOnly {
+				staticOnly = []string{workflow}
+			}
+			lines, count := applyExceptions(findings, staticOnly, entries, JobTimeoutFailFrom, true)
+			if count != tc.want {
+				t.Fatalf("findings = %d, want %d; lines=%v", count, tc.want, lines)
+			}
+		})
+	}
+}
+
 // Before the switch the gate never fails the audit: a repository with every kind of finding still exits 0 from the gate function.
 func TestJobTimeout_WarnOnlyBeforeFailFrom(t *testing.T) {
 	root := t.TempDir()

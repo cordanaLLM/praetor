@@ -99,6 +99,7 @@ exceptions:
     expires: "2027-01-04"
   - rule: "job-timeout"
     path: ".github/workflows/portability.yml"
+    fingerprint: "static-ceiling"
     category: "D"
     reason: "category D: the harness job (153 minutes, macOS p95 76.3) and windows-shard (163 minutes, p95 81.3) take twice their measured p95, above the 120-minute static ceiling; CI audits run without a forge token on the static path, which cannot read that measurement (#729 tracks splitting the suite)"
     entered: "2026-11-06"
