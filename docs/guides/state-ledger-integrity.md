@@ -250,9 +250,7 @@ Covered by `internal/state/recorded_commit_test.go`, the
 `cmd/standardsctl/standardsctl_test.go` and
 `TestArchiveCompletedTasks_CreatesPrivateBacklog` in `internal/state/tasks_test.go`.
 
-Archive recognizes completed checkboxes (`[x]` and `[X]`), `| DONE` table rows,
-and `[DONE` records outside code fences. Before removing rows, it uses the bounded
-Git worktree listing and checks which directories still exist. For each live
+Archive recognizes completed checkboxes (`[x]` and `[X]`), a table status cell equal to `DONE` or starting with `DONE —`, and a leading `[DONE ...]` record outside code fences. Completion words in prose, descriptions and code spans stay in place. It compares whole path fields, preserving spaces and resolving equivalent spellings through existing ancestors. Before writing, it revalidates a fresh bounded Git worktree listing and checks directory existence under the archive deadline; a failed or oversized listing or a stalled lookup aborts without removing rows. For each live
 worktree named by path in a completed row, an existing unarchived row is kept;
 otherwise the last matching row in document order stays verbatim in `OPEN.md`,
 including its id, path, branch, last step and next step. This retention does not
@@ -265,9 +263,7 @@ Above 800 KiB (819200 bytes), state sync and the agent stop hook's state check
 warn with the current `OPEN.md` size, its 1 MiB (1048576-byte) read limit, and
 `praetorctl state task archive`. The warning does not fail sync or block stopping;
 exactly 800 KiB does not warn. At most 1 MiB remains readable; a larger file fails
-with the same archive command in the error. Archive before the limit is reached:
-the archive command also requires a readable snapshot. These bounds are declared
-together in `internal/state/ledger_codec.go`; `TestOpenLedgerSizeSync` in
+with the same archive command in the error. Run `praetorctl state task archive` from the repository root to recover an oversized ledger: its separate snapshot bound is 8 MiB, with the existing 200,000-line and 64 KiB-per-line bounds. If the discharged output cannot fit in `BACKLOG.md`, the command writes owner-only `BACKLOG.history-*.md` files of at most 1 MiB and indexes them from `BACKLOG.md`. It preserves every pending row and retained live-worktree row; if those rows alone exceed 1 MiB, recovery refuses to replace `OPEN.md`. `TestOversizedOpenRecovery` and `TestArchiveRecoveryRefusesPendingOverflow` in `internal/state/open_size_test.go` exercise these outcomes. The ordinary size bounds are declared in `internal/state/ledger_codec.go`; `TestOpenLedgerSizeSync` in
 `internal/state/open_size_test.go` and `TestStopLedgerOpenSize` in
 `internal/agenthook/open_size_test.go` cover the warning and refusal boundaries.
 

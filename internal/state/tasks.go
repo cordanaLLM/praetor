@@ -70,7 +70,7 @@ func listLedgerTasks(ctx context.Context, rootPath, name string) ([]TaskItem, er
 		return nil, fmt.Errorf("read %s: %w", name, err)
 	}
 
-	parsed, err := parseLedgerTaskLines(name, strings.Split(string(content), "\n"))
+	parsed, err := parseLedgerTaskLines(ctx, name, strings.Split(string(content), "\n"))
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func AddTask(rootPath, description string) error {
 		return fmt.Errorf("read OPEN.md: %w", err)
 	}
 
-	if _, err := parseTaskLines(strings.Split(string(content), "\n")); err != nil {
+	if _, err := parseTaskLines(ctx, strings.Split(string(content), "\n")); err != nil {
 		return err
 	}
 
@@ -144,7 +144,7 @@ func CompleteTask(rootPath, selector string) error {
 	}
 
 	lines := strings.Split(string(content), "\n")
-	parsed, err := parseTaskLines(lines)
+	parsed, err := parseTaskLines(ctx, lines)
 	if err != nil {
 		return err
 	}
@@ -163,66 +163,113 @@ func CompleteTask(rootPath, selector string) error {
 func ArchiveCompletedTasks(rootPath, commitSHA string) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	openFile := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, "OPEN.md")
-	content, err := readTaskLedger(ctx, openFile)
+	return archiveCompletedTasks(ctx, rootPath, commitSHA, defaultArchiveWorktreeOps())
+}
+
+// archiveCompletedTasks revalidates live worktrees immediately before publishing the archive.
+func archiveCompletedTasks(ctx context.Context, rootPath, commitSHA string, ops archiveWorktreeOps) (int, error) {
+	openFile := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, openLedgerName)
+	content, err := readArchiveOpen(ctx, openFile)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
 	if err != nil {
 		return 0, fmt.Errorf("read OPEN.md: %w", err)
 	}
-
-	remainingLines, completedTasks, err := splitCompletedTasks(ctx, rootPath, string(content))
+	plan, err := planTaskArchive(ctx, string(content), ops)
 	if err != nil {
 		return 0, err
 	}
-
-	if len(completedTasks) == 0 {
+	if len(plan.archive) == 0 {
 		return 0, nil
 	}
-
-	// Preserve completed records in BACKLOG.md before removing them from OPEN.md.
-	// A failed second write can leave duplicates; it must never lose the records.
-	if err := appendCompletedTasks(ctx, rootPath, commitSHA, completedTasks); err != nil {
+	if err := retainWorktreeRows(ctx, rootPath, plan.index, plan.archive, ops); err != nil {
 		return 0, err
 	}
-	if err := contextopt.ReplaceSnapshot(ctx, openFile, []byte(strings.Join(remainingLines, "\n")), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: util.SecureFilePerm}); err != nil {
-		return 0, fmt.Errorf("write OPEN.md: %w", err)
+	// A new worktree can appear after the first listing; protect it before either write.
+	if err := retainWorktreeRows(ctx, rootPath, plan.index, plan.archive, ops); err != nil {
+		return 0, err
 	}
-	return len(completedTasks), nil
+	remaining, completed, err := plan.split(ctx)
+	if err != nil || len(completed) == 0 {
+		return 0, err
+	}
+	return publishTaskArchive(ctx, rootPath, openFile, commitSHA, content, remaining, completed)
 }
 
-// splitCompletedTasks separates archivable rows from the rest of OPEN.md. It
-// resolves rows through the shared numbering authority, so a completed checkbox
-// inside a fenced code block stays where it is instead of being archived.
-func splitCompletedTasks(ctx context.Context, rootPath, content string) (remaining, completed []string, err error) {
-	lines := strings.Split(content, "\n")
-	parsed, err := parseTaskLines(lines)
+// publishTaskArchive preserves completed rows first, then atomically replaces the observed OPEN.md.
+func publishTaskArchive(ctx context.Context, rootPath, openFile, commitSHA string, content []byte, remaining, completed []string) (int, error) {
+	updated := []byte(strings.Join(remaining, "\n"))
+	if len(updated) > maxLedgerBytes {
+		return 0, fmt.Errorf("OPEN.md recovery retains %d bytes; pending and live rows exceed the %d-byte read limit", len(updated), maxLedgerBytes)
+	}
+	if err := appendCompletedTasks(ctx, rootPath, commitSHA, completed); err != nil {
+		return 0, err
+	}
+	options := contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: util.SecureFilePerm, ExpectedLimit: maxArchiveRecoveryBytes}
+	if err := contextopt.ReplaceSnapshot(ctx, openFile, updated, options); err != nil {
+		return 0, fmt.Errorf("write OPEN.md: %w", err)
+	}
+	return len(completed), nil
+}
+
+// taskArchivePlan indexes rows once and carries the mutable set of completed row positions.
+type taskArchivePlan struct {
+	lines   []string
+	archive map[int]bool
+	index   map[string][]int
+}
+
+// planTaskArchive validates the shared task grammar before indexing structural record paths.
+func planTaskArchive(ctx context.Context, content string, ops archiveWorktreeOps) (taskArchivePlan, error) {
+	plan := taskArchivePlan{lines: strings.Split(content, "\n"), archive: make(map[int]bool)}
+	if err := ctx.Err(); err != nil {
+		return plan, err
+	}
+	if _, err := parseTaskLines(ctx, plan.lines); err != nil {
+		return plan, err
+	}
+	rows, err := archiveTaskRows(ctx, plan.lines, plan.archive)
 	if err != nil {
-		return nil, nil, err
+		return plan, err
 	}
-	archive := make(map[int]bool, len(lines))
-	for _, task := range parsed {
-		if task.completed {
-			archive[task.line] = true
-		}
+	if len(plan.archive) > 0 {
+		plan.index, err = indexWorktreeRows(ctx, rows, ops)
 	}
-	rows := archiveTaskRows(lines, archive)
-	if len(archive) > 0 {
-		if err := retainWorktreeRows(ctx, rootPath, rows, archive); err != nil {
+	return plan, err
+}
+
+// split partitions the bounded plan without changing any retained line's bytes.
+func (plan taskArchivePlan) split(ctx context.Context) (remaining, completed []string, err error) {
+	for i := 0; i < len(plan.lines) && i < maxScannedLines; i++ {
+		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-	}
-	for i, line := range lines {
-		if archive[i] {
-			completed = append(completed, strings.TrimSpace(line))
+		if plan.archive[i] {
+			completed = append(completed, strings.TrimSpace(plan.lines[i]))
 			continue
 		}
-		remaining = append(remaining, line)
+		remaining = append(remaining, plan.lines[i])
 	}
 	return remaining, completed, nil
 }
 
+// splitCompletedTasks separates completed rows using the same grammar and retention index as archiving.
+func splitCompletedTasks(ctx context.Context, rootPath, content string) (remaining, completed []string, err error) {
+	ops := defaultArchiveWorktreeOps()
+	plan, err := planTaskArchive(ctx, content, ops)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(plan.archive) > 0 {
+		if err := retainWorktreeRows(ctx, rootPath, plan.index, plan.archive, ops); err != nil {
+			return nil, nil, err
+		}
+	}
+	return plan.split(ctx)
+}
+
+// appendCompletedTasks publishes completed records or bounded archive links in BACKLOG.md.
 func appendCompletedTasks(ctx context.Context, rootPath, commitSHA string, completedTasks []string) error {
 	backlogFile := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, "BACKLOG.md")
 	backlogContent, err := contextopt.ReadSnapshot(ctx, backlogFile)
@@ -241,11 +288,18 @@ func appendCompletedTasks(ctx context.Context, rootPath, commitSHA string, compl
 	}
 
 	archiveHeader := fmt.Sprintf("\n### Discharged Tasks [%s, commit `%s`]\n", timeStr, shaLabel)
-	for _, t := range completedTasks {
-		archiveHeader += fmt.Sprintf("%s\n", t)
+	archiveText, err := completedTaskText(ctx, archiveHeader, completedTasks)
+	if err != nil {
+		return err
 	}
+	if len(backlogContent)+len(archiveText) > maxLedgerBytes {
+		archiveText, err = archiveCompletedChunks(ctx, rootPath, archiveHeader, completedTasks)
+		if err != nil {
+			return err
+		}
+	}
+	updatedBacklog := string(backlogContent) + archiveText
 
-	updatedBacklog := string(backlogContent) + archiveHeader
 	if err := contextopt.ReplaceSnapshot(ctx, backlogFile, []byte(updatedBacklog), contextopt.ReplaceOptions{Expected: expected, Exists: exists, Mode: util.SecureFilePerm}); err != nil {
 		return fmt.Errorf("write BACKLOG.md: %w", err)
 	}
@@ -278,13 +332,13 @@ type taskLine struct {
 // prints is the number `state task complete` acts on. Pending and completed
 // rows are numbered alike, and checkbox lines inside a fenced code block are
 // examples, never tasks.
-func parseTaskLines(lines []string) ([]taskLine, error) {
-	return parseLedgerTaskLines(openLedgerName, lines)
+func parseTaskLines(ctx context.Context, lines []string) ([]taskLine, error) {
+	return parseLedgerTaskLines(ctx, openLedgerName, lines)
 }
 
 // parseLedgerTaskLines parses the checkbox rows of the task ledger name, which its errors
 // name. OPEN.md and BACKLOG.md share it, so both read fences, headings and rows alike.
-func parseLedgerTaskLines(name string, lines []string) ([]taskLine, error) {
+func parseLedgerTaskLines(ctx context.Context, name string, lines []string) ([]taskLine, error) {
 	if len(lines) > maxScannedLines {
 		return nil, fmt.Errorf("%s exceeds the %d line scan bound", name, maxScannedLines)
 	}
@@ -292,6 +346,9 @@ func parseLedgerTaskLines(name string, lines []string) ([]taskLine, error) {
 	var fence util.MarkdownFence
 	opened, section := 0, ""
 	for i := 0; i < len(lines); i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if len(lines[i]) >= maxTaskLineBytes {
 			return nil, fmt.Errorf("%s line %d reaches the %d byte line bound", name, i+1, maxTaskLineBytes)
 		}

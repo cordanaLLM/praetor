@@ -30,7 +30,7 @@ func syncStateBinding(ctx context.Context, root string, snap *StateSnapshot) (st
 }
 
 // OpenLedgerSizeWarning checks the bounded OPEN.md snapshot without writing it.
-// The warning is advisory through the read limit; the next byte is an error.
+// The warning is advisory through the read limit; larger files name the bounded recovery.
 func OpenLedgerSizeWarning(ctx context.Context, rootPath string) (string, error) {
 	content, err := readTaskLedger(ctx, filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, openLedgerName))
 	if err != nil {
@@ -48,7 +48,7 @@ func OpenLedgerSizeWarning(ctx context.Context, rootPath string) (string, error)
 func readTaskLedger(ctx context.Context, path string) ([]byte, error) {
 	content, err := contextopt.ReadSnapshot(ctx, path)
 	if filepath.Base(path) == openLedgerName && errors.Is(err, util.ErrFileTooLarge) {
-		return nil, fmt.Errorf("OPEN.md read limit %d bytes; run `%s`: %w", maxLedgerBytes, archiveTaskCommand, err)
+		return nil, fmt.Errorf("OPEN.md read limit %d bytes; run `%s` (bounded recovery up to %d bytes; completed rows split into readable archives): %w", maxLedgerBytes, archiveTaskCommand, maxArchiveRecoveryBytes, err)
 	}
 	return content, err
 }

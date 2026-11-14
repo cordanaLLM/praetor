@@ -45,16 +45,23 @@ func ReadRootSnapshot(ctx context.Context, root *os.Root, name string) ([]byte, 
 // ReadSnapshot reads one immutable regular UTF-8 file using the same bounded,
 // symlink-resistant path traversal as context preparation.
 func ReadSnapshot(ctx context.Context, path string) ([]byte, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("context is required")
+	return ReadSnapshotLimit(ctx, path, MaxSourceBytes)
+}
+
+// ReadSnapshotLimit reads text through the shared confined streaming snapshot implementation.
+// Recovery callers can raise the byte bound up to MaxTotalBytes; ordinary reads stay at 1 MiB.
+func ReadSnapshotLimit(ctx context.Context, path string, limit int64) ([]byte, error) {
+	if limit < 1 || limit > MaxTotalBytes {
+		return nil, fmt.Errorf("snapshot read limit must be 1..%d bytes", MaxTotalBytes)
 	}
-	ctx, cancel := context.WithTimeout(ctx, MaxDuration)
-	defer cancel()
-	abs, err := filepath.Abs(path)
-	if err != nil {
+	var buffer bytes.Buffer
+	if _, err := copyBinarySnapshot(ctx, path, &buffer, limit, MaxDuration); err != nil {
 		return nil, err
 	}
-	return snapshot(ctx, abs)
+	if err := validateText(buffer.Bytes()); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
 }
 
 // ReadBinarySnapshot reads bounded stable bytes through confined directories.

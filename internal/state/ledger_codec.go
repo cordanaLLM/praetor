@@ -132,3 +132,25 @@ func decodeLedgerMetadataJSON(raw []byte) (*ledgerMetadata, error) {
 	}
 	return metadata, nil
 }
+
+// ledgerTableCells is the shared raw cell reader for state ledger tables.
+func ledgerTableCells(line string) []string {
+	return strings.Split(line, "|")
+}
+
+// ledgerTableSeparator recognizes the padded dash cells used by the ledger table reader.
+func ledgerTableSeparator(parts []string, interrupted func() bool) bool {
+	if len(parts) < 3 || strings.TrimSpace(parts[0])+strings.TrimSpace(parts[len(parts)-1]) != "" {
+		return false
+	}
+	for i := 1; i < len(parts)-1 && i < maxTaskLineBytes; i++ {
+		if interrupted != nil && interrupted() {
+			return false
+		}
+		cell := strings.TrimSpace(parts[i])
+		if strings.Count(cell, "-") < 3 || strings.Trim(cell, ":-") != "" {
+			return false
+		}
+	}
+	return true
+}

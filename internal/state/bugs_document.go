@@ -145,18 +145,10 @@ func isBugHeader(line string) bool {
 	return true
 }
 
+// isBugSeparator checks the six-column shape through the shared ledger separator reader.
 func isBugSeparator(line string) bool {
-	parts := strings.Split(line, "|")
-	if len(parts) != 8 || strings.TrimSpace(parts[0])+strings.TrimSpace(parts[7]) != "" {
-		return false
-	}
-	for _, part := range parts[1:7] {
-		cell := strings.TrimSpace(part)
-		if strings.Count(cell, "-") < 3 || strings.Trim(cell, ":-") != "" {
-			return false
-		}
-	}
-	return true
+	parts := ledgerTableCells(line)
+	return len(parts) == 8 && ledgerTableSeparator(parts, nil)
 }
 
 func (doc *bugDocument) insertRow(row string) string {
