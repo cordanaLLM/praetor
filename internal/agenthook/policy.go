@@ -318,6 +318,9 @@ var (
 	shellHerePattern         = regexp.MustCompile(`^<<(-?)[ \t]*("[^"]*"|'[^']*'|[-A-Za-z0-9_]+)`)
 	shellRedirectPattern     = regexp.MustCompile(`^&?[<>](?:[<>|]|&[0-9-]*)?`)
 	shellUnsupportedPattern  = regexp.MustCompile(`[^\t\x20-\x7e]|[{}^!#]`)
+	// Reuse the short-flag rule's Git option prefilter without requiring its flag tail.
+	shellCommitPattern = regexp.MustCompile(strings.ReplaceAll(
+		shortSkipFlagRule[:strings.Index(shortSkipFlagRule, `(commit\b`)]+`(commit\b|am\b)`, `\s`, pythonSpace))
 )
 
 // shellDocument records a pending delimiter without interpreting its body as shell syntax.
@@ -335,24 +338,29 @@ type shellSpans struct {
 	documents                  []shellDocument
 	position, start, hereLines int
 	whole                      bool
+	uncertain                  bool
 	err                        error
 }
 
 // commandSegments isolates short-flag scans; uncertain syntax retains the whole-command scan.
 func commandSegments(command string) ([]string, error) {
+	if !shellCommitPattern.MatchString(joinLineContinuations(command)) {
+		return []string{command}, nil
+	}
 	s := shellSpans{command: command, whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command)}
 	for s.position < len(command) {
 		if !s.step() {
 			return []string{command}, s.err
 		}
 	}
+	s.split(len(command), len(command))
 	if len(s.stack) > 0 || len(s.documents) > 0 || s.whole {
 		if len(s.stack) == 1 && s.stack[0] == '"' {
 			return nil, fmt.Errorf("invalid shell command: unbalanced quote")
 		}
 		return []string{command}, nil
 	}
-	return append(s.parts, command[s.start:]), nil
+	return s.parts, nil
 }
 
 // top returns the innermost quote or substitution terminator, or zero outside constructs.
@@ -377,6 +385,7 @@ func (s *shellSpans) quotedStep() (bool, bool) {
 	ch := s.command[s.position]
 	switch ch {
 	case '\\':
+		s.uncertain = true
 		s.position += 2
 		if s.position > len(s.command) {
 			s.err = fmt.Errorf("invalid shell command: trailing escape")
@@ -384,6 +393,7 @@ func (s *shellSpans) quotedStep() (bool, bool) {
 		}
 		return true, true
 	case '"', '`':
+		s.uncertain = s.uncertain || ch == '`'
 		if s.top() == ch {
 			s.stack = s.stack[:len(s.stack)-1]
 		} else if !s.push(ch) {
@@ -392,6 +402,7 @@ func (s *shellSpans) quotedStep() (bool, bool) {
 		s.position++
 		return true, true
 	case '$':
+		s.uncertain = s.uncertain || s.top() != '"'
 		if strings.HasPrefix(s.command[s.position:], "$(") {
 			s.position += 2
 			return true, s.push(')')
@@ -406,6 +417,7 @@ func (s *shellSpans) step() bool {
 		return ok
 	}
 	if s.top() == '"' {
+		s.uncertain = s.uncertain || s.command[s.position] == '\n'
 		s.position++
 		return true
 	}
@@ -464,14 +476,18 @@ func (s *shellSpans) singleQuote() bool {
 		s.err = fmt.Errorf("invalid shell command: unbalanced quote")
 		return false
 	}
+	s.uncertain = s.uncertain || strings.ContainsAny(s.command[s.position:s.position+end+2], "\r\n")
 	s.position += end + 2
 	return true
 }
 
 // split records an outer boundary while pending documents retain their owning part index.
 func (s *shellSpans) split(end, next int) {
-	s.parts = append(s.parts, s.command[s.start:end])
+	part := s.command[s.start:end]
+	s.whole = s.whole || s.uncertain && shellCommitPattern.MatchString(joinLineContinuations(part))
+	s.parts = append(s.parts, part)
 	s.start = next
+	s.uncertain = false
 }
 
 // redirection retains descriptor duplication and document openers in their owning span.
@@ -494,6 +510,11 @@ func (s *shellSpans) redirection() bool {
 // newline consumes bounded document bodies before ending an outer command.
 func (s *shellSpans) newline() bool {
 	depth := len(s.stack)
+	hasDocument := false
+	for _, document := range s.documents {
+		hasDocument = hasDocument || document.depth == depth
+	}
+	s.uncertain = s.uncertain || !hasDocument
 	s.position++
 	if depth == 0 {
 		s.split(s.position-1, s.position)
@@ -545,7 +566,7 @@ func (r denyRule) matchesCommand(text string, segments []string) bool {
 		return r.matches(text)
 	}
 	for _, segment := range segments {
-		if r.matches(strings.ReplaceAll(segment, "\n", " ")) {
+		if strings.Contains(segment, "-") && r.matches(strings.ReplaceAll(joinLineContinuations(segment), "\n", " ")) {
 			return true
 		}
 	}
@@ -675,11 +696,11 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 	if p == nil {
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
-	command = joinLineContinuations(command)
 	segments, err := commandSegments(command)
 	if err != nil {
 		return Verdict{Outcome: Deny, Reason: InvalidInputRefusal + err.Error()}
 	}
+	command = joinLineContinuations(command)
 	judged := withoutReadOnlyWords(command)
 	for _, rule := range p.rules {
 		text := command

@@ -550,6 +550,7 @@ def search(pattern, text):
 
 def check_command(command):
     """Reject oversized commands and commands matching the evasion policy."""
+    raw_command = command
     command = join_line_continuations(command)
     # re backtracks, so a longer command or line could stall this script past the harness's
     # hook timeout. Such a command is refused, never truncated.
@@ -558,7 +559,7 @@ def check_command(command):
     if max(len(line) for line in command.split("\n")) > MAX_SCAN_LINE_CHARS:
         raise Blocked(SCAN_BOUND_REFUSAL)
     try:
-        segments = command_segments(command)
+        segments = command_segments(raw_command, READ_ONLY_EXEMPT_1)
     except ValueError as error:
         raise Blocked(INVALID_INPUT_REFUSAL + str(error)) from error
     judged = without_read_only_words(command)
@@ -585,20 +586,29 @@ if __name__ == "__main__":
 `
 
 // evasionCommandSegments preserves quoted words while bounding the short-flag rule to one command.
-const evasionCommandSegments = `def command_segments(command):
+const evasionCommandSegments = `def commit_command(command, short_pattern):
+    """Reuse the short-flag rule's Git option prefilter without its flag tail."""
+    head, _, _ = short_pattern.partition(GIT_OPTION_RUN_JOIN)
+    domain = head + GIT_OPTION_RUN_JOIN + r"commit\b|am\b)"
+    return search(domain, join_line_continuations(command))
+
+
+def command_segments(command, short_pattern):
     """Keep outer command spans; retain whole input on uncertain or over-bound syntax."""
-    spans = CommandSpans(command)
+    if not commit_command(command, short_pattern):
+        return [command]
+    spans = CommandSpans(command, short_pattern)
     for _ in range(len(command)):
         if spans.position >= len(command):
             break
         if not spans.step():
             return [command]
+    spans.split(len(command), len(command))
     if spans.stack == ['"']:
         raise ValueError("invalid shell command: unbalanced quote")
     if spans.stack or spans.documents or spans.whole:
         return [command]
-    start = spans.start
-    return spans.parts + [command[start:]]
+    return spans.parts
 
 
 class CommandSpans:
@@ -610,10 +620,12 @@ class CommandSpans:
     state_pattern = READ_ONLY_VETO[state_start:]
     here_pattern = r"^<<(-?)[ \t]*(\"[^\"]*\"|'[^']*'|[-A-Za-z0-9_]+)"
     redirect_pattern = r"^&?[<>](?:[<>|]|&[0-9-]*)?"
+    literal_pattern = re.compile(r'(?:[^"\\$\x60\n]|\$(?!\())+')
 
-    def __init__(self, command):
+    def __init__(self, command, short_pattern):
         """Initialize raw offsets and the conservative shell-state veto."""
         self.command = command
+        self.short_pattern, self.uncertain = short_pattern, False
         self.parts, self.stack, self.documents = [], [], []
         self.position = self.start = self.here_lines = 0
         self.whole = bool(re.search(self.state_pattern, command))
@@ -634,17 +646,21 @@ class CommandSpans:
         """Handle escapes and constructs also active inside double quotes."""
         ch = self.command[self.position]
         if ch == "\\":
+            self.uncertain = True
             self.position += 2
             if self.position > len(self.command):
                 raise ValueError("invalid shell command: trailing escape")
             return True, True
         if ch in ('"', "\x60"):
+            self.uncertain |= ch == "\x60"
             if self.top() == ch:
                 self.stack.pop()
             elif not self.push(ch):
                 return True, False
             self.position += 1
             return True, True
+        if ch == "$" and self.top() != '"':
+            self.uncertain = True
         if self.command.startswith("$(", self.position):
             self.position += 2
             return True, self.push(")")
@@ -656,6 +672,11 @@ class CommandSpans:
         if handled:
             return ok
         if self.top() == '"':
+            literal = self.literal_pattern.match(self.command, self.position)
+            if literal:
+                self.position = literal.end()
+                return True
+            self.uncertain |= self.command[self.position] == "\n"
             self.position += 1
             return True
         return self.structural_step()
@@ -700,14 +721,21 @@ class CommandSpans:
         end = self.command.find("'", self.position + 1)
         if end < 0:
             raise ValueError("invalid shell command: unbalanced quote")
-        self.position = end + 1
+        end += 1
+        start = self.position
+        literal = self.command[start:end]
+        self.uncertain |= "\n" in literal or "\r" in literal
+        self.position = end
         return True
 
     def split(self, end, next_position):
         """Record an outer boundary; documents retain their owning part index."""
         start = self.start
-        self.parts.append(self.command[start:end])
+        part = self.command[start:end]
+        self.whole |= self.uncertain and commit_command(part, self.short_pattern)
+        self.parts.append(part)
         self.start = next_position
+        self.uncertain = False
 
     def redirection(self):
         """Keep descriptor duplication and document openers in their owning span."""
@@ -729,6 +757,8 @@ class CommandSpans:
     def newline(self):
         """Consume bounded document bodies before ending an outer command."""
         depth = len(self.stack)
+        has_document = any(doc[3] == depth for doc in self.documents)
+        self.uncertain |= not has_document
         self.position += 1
         if depth == 0:
             self.split(self.position - 1, self.position)
@@ -769,7 +799,9 @@ def search_command(pattern, text, segments, short_pattern):
     if pattern != short_pattern:
         return search(pattern, text)
     for segment in segments:
-        if search(pattern, segment.replace("\n", " ")):
+        if "-" in segment and search(
+            pattern, join_line_continuations(segment).replace("\n", " ")
+        ):
             return True
     return False
 
@@ -1128,7 +1160,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
-	"22a101bf764e66cbca6c84619f590b94164a4722a717940800f7935a940b39c1": "bounded command spans with redirection, substitution and here-document ownership",
+	"3c2416dbe1f892181f074ed1962f5439967a0c8fc365474e953a2f43f060440f": "bounded command spans with redirection, substitution and here-document ownership",
 	"3f2ab8c180c95fc84bcbafa58b563586126b689d2251424bf433f0f0206b6333": "complete emitted function docstrings",
 	"b43f0818ef78cf285434e865abd9f78529e6064ebb9f4e8ab6ce97ed49637a59": "privilege refusal with shared necessary-literal prefilter",
 	"64fa5045ca8d31b1917383b878a9549960cac8c8b684013369af171f9f2fcd3e": "HISS-16 labels, own pattern list",

@@ -459,11 +459,13 @@ func commitSegmentCases() []struct {
 		{"heredoc message", "git commit -m \"$(cat <<'EOF'\nmessage ; && |\nEOF\n)\" && git log -1 | tail -n 1", 0},
 		{"redirect then flag", `git commit -m x 2>&1 -n`, 2},
 		{"substitution flag", `git commit "$(printf %s -n)"`, 2},
-		{"backtick message", "git commit -m \"`cat msg.txt`\" && tail -n 1", 0},
+		// Order engine-block-evasion-commit-span-20261114 round 3: backticks retain fallback.
+		{"backtick message", "git commit -m \"`cat msg.txt`\" && tail -n 1", 2},
 		{"backtick flag", "git commit \"`printf %s -n`\"", 2},
 		{"nested substitution", `git commit -m "$(echo "$(cat msg.txt)")" && tail -n 1`, 0},
 		{"nested substitution flag", `git commit "$(echo "$(printf %s -n)")"`, 2},
-		{"newline", "git commit -m x\ngit log -1 | tail -n 1", 0},
+		// Order engine-block-evasion-commit-span-20261114 round 3: ordinary line breaks retain fallback.
+		{"newline", "git commit -m x\ngit log -1 | tail -n 1", 2},
 		{"file redirections", `git commit -F msg.txt >>out 2>/dev/null <in && tail -n 1`, 0},
 		{"descriptor input", `git commit -m x 3<&0 2>&- & tail -n 1`, 0},
 		{"heredoc outer", "git commit -F - <<EOF\nmessage ' ; && |\nEOF\ntail -n 1", 0},
@@ -475,10 +477,45 @@ func commitSegmentCases() []struct {
 		{"state alias", `alias git=other; git commit -m x && tail -n 1`, 2},
 		{"state export", `export X=1; git commit -m x && tail -n 1`, 2},
 		{"state function", `function git() { other; }; git commit -m x && tail -n 1`, 2},
-		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -n 1", 0},
+		// Order engine-block-evasion-commit-span-20261114 round 3: unquoted substitution retains fallback.
+		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -n 1", 2},
 		{"nesting past bound", "git commit -m " + strings.Repeat("$(", 17) + "cat msg.txt" + strings.Repeat(")", 17) + " && tail -n 1", 2},
 		{"heredoc lines at bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 255) + "EOF\ntail -n 1", 0},
 		{"heredoc lines past bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 256) + "EOF\ntail -n 1", 2},
+	}
+}
+
+// fallbackSegmentCases covers order engine-block-evasion-commit-span-20261114 round 3.
+func fallbackSegmentCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		// Order engine-block-evasion-commit-span-20261114 round 3: own syntax vetoes segmentation.
+		{"own parameter", `git commit $flags -m x && tail -n 1`, 2},
+		{"am parameter", `git am $flags patch && tail -n 1`, 2},
+		{"own substitution", `git commit $(cat flags) -m x && tail -n 1`, 2},
+		{"own escape", `git commit -m a\b && tail -n 1`, 2},
+		{"own continuation", "git commit -m x\\\n && tail -n 1", 2},
+		{"single quoted newline", "git commit -m 'a\nb' && tail -n 1", 2},
+		{"double quoted newline", "git commit -m \"a\nb\" && tail -n 1", 2},
+		{"later newline", "git commit -m x && printf \"a\nb\" | tail -n 1", 0},
+		{"later escape", `git commit -m x && printf a\b | tail -n 1`, 0},
+		{"later parameter", `git commit -m x && git log $flags | tail -n 1`, 0},
+		{"quoted parameter", `git commit -m 'a$b' && tail -n 1`, 0},
+		{"quoted escape", `git commit -m 'a\b' && tail -n 1`, 0},
+		{"own input", `git commit -m a<b && tail -n 1`, 0},
+		{"own output", `git commit -m a>b && tail -n 1`, 0},
+		{"background log", `git commit -m x & git log -n 1`, 0},
+		{"combined pipe", `git commit -m x |& head -n 3`, 0},
+		{"unrelated quote", `printf 'unfinished`, 0},
+		{"unrelated git quote", `git status 'unfinished`, 0},
+		{"commit option quote", `git -C repo --no-pager commit -m 'unfinished`, 2},
+		{"am option quote", `git -c x=y am 'unfinished`, 2},
+		{"unicode commit quote", "git\u00a0commit -m 'unfinished", 2},
 	}
 }
 
@@ -486,7 +523,8 @@ func commitSegmentCases() []struct {
 func TestParityEvasionCommitSegments(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
 	builtin := policy(t)
-	for _, tc := range append(commitSegmentCases(), redirectSegmentCases()...) {
+	cases := append(commitSegmentCases(), redirectSegmentCases()...)
+	for _, tc := range append(cases, fallbackSegmentCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
 			python := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
@@ -534,6 +572,7 @@ func redirectSegmentCases() []struct {
 		{"heredoc nested context", "git commit -F - <<OUT -m \"$(cat <<IN\ninside\nIN\n)\" && tail -n 1\noutside\nOUT", 0},
 		{"heredoc pending at bound", "git commit -F -" + strings.Repeat(" <<EOF", 16) + "\n" + strings.Repeat("EOF\n", 16) + "tail -n 1", 0},
 		{"heredoc pending past bound", "git commit -F -" + strings.Repeat(" <<EOF", 17) + "\n" + strings.Repeat("EOF\n", 17) + "tail -n 1", 2},
-		{"substitution braces", `git commit -m "$(echo ${msg})" && tail -n 1`, 0},
+		// Order engine-block-evasion-commit-span-20261114 round 3: unquoted parameter retains fallback.
+		{"substitution braces", `git commit -m "$(echo ${msg})" && tail -n 1`, 2},
 	}
 }
