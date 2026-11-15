@@ -148,6 +148,19 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 		if exitCode != 3 {
 			t.Fatalf("expected exit code 3 for expired entry, got %d: %s", exitCode, out)
 		}
+		if !strings.Contains(out, "expired on "+entries[0].Expires) {
+			t.Fatalf("expected the expired entry diagnostic: %s", out)
+		}
+		// A valid waiver for the same finding allows it, so exit 3 can only come from the expired entry.
+		entries = append(entries, rules.Entry{
+			Path: "creds.py", RuleID: "generic-api-key", Expires: lifecycleDate(5),
+			Category: "C", Entered: lifecycleDate(0), Reason: "valid test waiver",
+		})
+		out, exitCode = runGateLifecycleCase(t, entries)
+		if exitCode != 3 || !strings.Contains(out, "secrets: allowed:") ||
+			!strings.Contains(out, "secrets: FAIL: 1 expired exception(s)") {
+			t.Fatalf("expected only the expired entry to fail with the finding allowed, got %d: %s", exitCode, out)
+		}
 	})
 
 	t.Run("stale entry fails", func(t *testing.T) {
