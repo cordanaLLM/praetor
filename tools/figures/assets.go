@@ -220,6 +220,8 @@ var priorDigests = map[string]string{
 	"0482a435583e816acc9a0a55692042d5fa2180b60b50ed5af2940db6e2d33202": Directory + "/checks.mjs",
 	// checks.mjs before nonblocking open and descriptor file-type validation.
 	"bef335fc666fcb8561473298eb38e1cf3dbfecf678c503100535a2df41ff8bff": Directory + "/checks.mjs",
+	// checks.mjs before its Codacy path-rule suppression comments.
+	"912d4b111b3e2b9025ef8e365f19bf9adb160f86c2595fe6c5cd9dcba0cc9ea0": Directory + "/checks.mjs",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md

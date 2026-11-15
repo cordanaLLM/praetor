@@ -1046,6 +1046,7 @@ test('async bounded reads cap a regular file growing after descriptor stat at li
 test('async bounded reads reject a stalled open and close its late descriptor without reading', { timeout: 5000 }, (t) => withTempDir(async (dir) => {
   const file = join(dir, 'late');
   write(file, '{}');
+  // nosemgrep: javascript_pathtraversal_rule-non-literal-fs-filename -- the fixture path is inside the test's own temporary directory
   const handle = await fsPromises.open(file, 'r');
   const stat = t.mock.method(handle, 'stat');
   const close = handle.close.bind(handle);

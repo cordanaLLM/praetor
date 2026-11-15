@@ -236,6 +236,7 @@ export function readBoundedBytes(path, limit) {
 
 /** One async descriptor, checked before reading; inclusive `end` caps the stream at limit + 1. */
 async function readRegularBytes(path, limit, signal) {
+  // nosemgrep: javascript_pathtraversal_rule-non-literal-fs-filename -- caller joins the checked root and a fixed name; regular file, bounded read
   const handle = await fsPromises.open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   try {
     signal.throwIfAborted();
