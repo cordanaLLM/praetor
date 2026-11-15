@@ -798,10 +798,51 @@ func flagValue(args []string, i int, short string, names ...string) (string, int
 			return val, i, true, val != ""
 		}
 	}
-	if short != "" && !strings.HasPrefix(tok, "--") && strings.HasPrefix(tok, short) && len(tok) > len(short) {
+	return shortFlagValue(args, i, tok, short)
+}
+
+// shortFlagValue preserves direct shorthands and reads a value after create's boolean cluster.
+func shortFlagValue(args []string, i int, tok, short string) (string, int, bool, bool) {
+	if short == "" || strings.HasPrefix(tok, "--") {
+		return "", i, false, false
+	}
+	if strings.HasPrefix(tok, short) && len(tok) > len(short) {
 		return tok[len(short):], i, true, true
 	}
-	return "", i, false, false
+	option, tail, _ := ghCreateShortOption(tok)
+	if option != short {
+		return "", i, false, false
+	}
+	if tail != "" {
+		value := strings.TrimPrefix(tail, "=")
+		return value, i, true, value != ""
+	}
+	if i+1 < len(args) {
+		return args[i+1], i + 1, true, true
+	}
+	return tok, i, true, false
+}
+
+// ghCreateShortOption stops at the first value shorthand or unknown cluster member.
+// Create shorthands: cli/cli v2.104.0 pkg/cmd/pr/create/create.go; R: pkg/cmd/pr/pr.go.
+// https://github.com/cli/cli/blob/v2.104.0/pkg/cmd/pr/create/create.go
+// Cobra v1.10.2 command.go adds boolean h. pflag v1.1.0 flag.go consumes the remaining value.
+func ghCreateShortOption(tok string) (option, tail, unknown string) {
+	if !strings.HasPrefix(tok, "-") || strings.HasPrefix(tok, "--") {
+		return "", "", ""
+	}
+	for j := 1; j < len(tok); j++ {
+		if strings.ContainsRune("tRabFBHrlpmT", rune(tok[j])) {
+			return "-" + tok[j:j+1], tok[j+1:], ""
+		}
+		if !strings.ContainsRune("defwh", rune(tok[j])) {
+			return "", "", "-" + tok[j:j+1]
+		}
+		if j+1 < len(tok) && tok[j+1] == '=' {
+			return "", "", ""
+		}
+	}
+	return "", "", ""
 }
 
 // extractAPIFieldFile extracts the file path from a gh api key=@path field assignment,

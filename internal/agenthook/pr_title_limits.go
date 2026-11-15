@@ -6,6 +6,7 @@ package agenthook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -22,6 +23,8 @@ type ghPRTitleCall struct {
 	title    string
 	repo     string
 	argument string
+	explicit bool
+	unknown  string
 }
 
 // evaluatePRTitleLimits checks explicit titles before checkout governance can skip a command.
@@ -56,40 +59,46 @@ func evaluatePRTitleLimits(ctx context.Context, canonical Canonical, in Invocati
 	return Verdict{Outcome: Allow}
 }
 
-// explicitPRTitleCalls selects only parsed gh pr create calls carrying an explicit title.
+// explicitPRTitleCalls selects create calls with an explicit title or unknown shorthand.
 func explicitPRTitleCalls(calls []ghWriteCall) []ghPRTitleCall {
 	var candidates []ghPRTitleCall
 	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
 		if !calls[i].prCreate {
 			continue
 		}
-		title, repo, argument, explicit := ghPRTitleOptions(calls[i].args)
-		if explicit {
-			candidates = append(candidates, ghPRTitleCall{call: calls[i], title: title, repo: repo, argument: argument})
+		candidate := ghPRTitleOptions(calls[i].args)
+		if candidate.explicit || candidate.unknown != "" {
+			candidate.call = calls[i]
+			candidates = append(candidates, candidate)
 		}
 	}
 	return candidates
 }
 
 // ghPRTitleOptions reads title and repository flags through the shared gh flag reader.
-func ghPRTitleOptions(args []string) (title, repo, argument string, explicit bool) {
+func ghPRTitleOptions(args []string) ghPRTitleCall {
+	var candidate ghPRTitleCall
 	for i := 0; i < len(args) && i < maxForgeTextWords; i++ {
 		if unquoteShellWord(args[i]) == "--" {
 			break
 		}
 		if value, raw, next, matched := ghPRDecodedFlag(args, i, "-t", "--title"); matched {
-			title, argument, explicit, i = value, raw, true, next
+			candidate.title, candidate.argument, candidate.explicit, i = value, raw, true, next
 			continue
 		}
 		if value, _, next, matched := ghPRDecodedFlag(args, i, "-R", "--repo"); matched {
-			repo, i = value, next
+			candidate.repo, i = value, next
 			continue
 		}
-		if ghPRValueFlag(unquoteShellWord(args[i])) {
+		word := unquoteShellWord(args[i])
+		if _, _, unknown := ghCreateShortOption(word); unknown != "" {
+			candidate.unknown = unknown
+		}
+		if ghPRValueFlag(word) {
 			i++
 		}
 	}
-	return title, repo, argument, explicit
+	return candidate
 }
 
 // ghPRDecodedFlag decodes the whole shell argument once and preserves its raw spelling.
@@ -101,8 +110,14 @@ func ghPRDecodedFlag(args []string, i int, short, long string) (string, string, 
 	return value, args[next], next, matched
 }
 
-// ghPRValueFlag identifies other separate-value create flags so their values remain data.
+// ghPRValueFlag identifies separate values, including after boolean clusters, that remain data.
 func ghPRValueFlag(word string) bool {
+	if option, tail, _ := ghCreateShortOption(word); option != "" {
+		if tail != "" {
+			return false
+		}
+		word = option
+	}
 	switch word {
 	case "-a", "--assignee", "--attach", "-B", "--base", "-b", "--body", "-F", "--body-file",
 		"-H", "--head", "-l", "--label", "-m", "--milestone", "-p", "--project",
@@ -124,6 +139,9 @@ func judgePRTitle(ctx context.Context, candidate ghPRTitleCall, limits []config.
 		limit := limits[i]
 		if !strings.EqualFold(target, limit.Repo) {
 			continue
+		}
+		if candidate.unknown != "" {
+			return prTitleLimitDeny(fmt.Sprintf("repository %s: unknown shorthand %q in gh pr create option cluster", target, candidate.unknown))
 		}
 		if unresolvedPRTitleArgument(candidate.argument) {
 			return prTitleLimitDeny(fmt.Sprintf("repository %s: title argument %q contains unresolved shell syntax", target, candidate.argument))
@@ -150,11 +168,7 @@ func resolvePRTitleRepository(ctx context.Context, call ghWriteCall, repo string
 	if repo != "" {
 		return normalizePRTitleRepository(repo)
 	}
-	owner, name, err := util.ResolveRemoteIdentity(ctx, call.dir)
-	if err != nil {
-		return "", err
-	}
-	return owner + "/" + name, nil
+	return ghPRRemoteRepository(ctx, call.dir)
 }
 
 // ghPRRepositoryEnvironment preserves an empty command-local override of inherited GH_REPO.
@@ -170,16 +184,69 @@ func ghPRRepositoryEnvironment(local *string, getenv func(string) string) string
 
 // normalizePRTitleRepository accepts gh's URL and host-prefixed forms as owner/repo policy keys.
 func normalizePRTitleRepository(repo string) (string, error) {
-	repo = strings.TrimPrefix(strings.TrimPrefix(repo, "https://"), "http://")
-	parts := strings.Split(repo, "/")
-	if len(parts) == 3 {
-		repo = strings.Join(parts[1:], "/")
+	if strings.Contains(repo, ":") {
+		remote, err := util.ParseGitRemote(repo)
+		if err != nil {
+			return "", err
+		}
+		repo = remote.Path
+	} else {
+		repo = util.CleanGitURL(repo)
+		parts := strings.Split(repo, "/")
+		if len(parts) == 3 {
+			repo = strings.Join(parts[1:], "/")
+		}
 	}
 	owner, name, err := util.SplitGitHubRepository(repo)
 	if err != nil {
 		return "", err
 	}
 	return owner + "/" + name, nil
+}
+
+// ghPRRemoteRepository follows cli/cli v2.104.0 context/remote.go's remoteNameSortScore.
+// https://github.com/cli/cli/blob/v2.104.0/context/remote.go
+// Invalid network remotes are ignored as TranslateRemotes does; unanswered git reads fail closed.
+func ghPRRemoteRepository(ctx context.Context, dir string) (string, error) {
+	text, err := util.RunGit(ctx, dir, "remote")
+	if err != nil {
+		return "", fmt.Errorf("list gh repository remotes: %w", err)
+	}
+	names := strings.Fields(text)
+	if len(names) > maxForgeTextWords {
+		return "", fmt.Errorf("gh repository exceeds %d remotes", maxForgeTextWords)
+	}
+	selected, score := "", -1
+	for i := 0; i < len(names) && i < maxForgeTextWords; i++ {
+		remote, err := util.ReadGitRemote(ctx, dir, names[i])
+		if errors.Is(err, util.ErrGitRemoteNotNetwork) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if rank := ghPRRemoteRank(names[i]); rank > score {
+			selected, score = remote.Owner+"/"+remote.Repo, rank
+		}
+	}
+	if selected == "" {
+		return "", fmt.Errorf("%w: no gh repository remote", util.ErrRepoIdentityUnresolved)
+	}
+	return selected, nil
+}
+
+// ghPRRemoteRank matches gh's case-insensitive upstream, github, origin, then other ordering.
+func ghPRRemoteRank(name string) int {
+	switch strings.ToLower(name) {
+	case "upstream":
+		return 3
+	case "github":
+		return 2
+	case "origin":
+		return 1
+	default:
+		return 0
+	}
 }
 
 // ghPRDefaultRepository reads gh repo set-default's remote resolution from checkout git config.
@@ -207,7 +274,7 @@ func ghPRDefaultRepository(ctx context.Context, dir string) (string, error) {
 	return "", nil
 }
 
-// ghCommandRepository captures GH_REPO assignments only in the parsed command prefix.
+// ghCommandRepository captures GH_REPO assignments and env removals in the command prefix.
 func ghCommandRepository(words []string) *string {
 	var repo *string
 	for i := 0; i < len(words) && i < maxForgeTextWords; i++ {
@@ -215,8 +282,13 @@ func ghCommandRepository(words []string) *string {
 		if assigned && name == "GH_REPO" {
 			decoded := unquoteShellWord(value)
 			repo = &decoded
-		} else if strings.HasPrefix(words[i], "-") {
-			_, _, i = directoryOption(words, i)
+		} else if strings.HasPrefix(unquoteShellWord(words[i]), "-") {
+			option, value, next := directoryOption(words, i)
+			i = next
+			if (option == "-u" || option == "--unset") && unquoteShellWord(value) == "GH_REPO" {
+				empty := ""
+				repo = &empty
+			}
 		}
 	}
 	return repo

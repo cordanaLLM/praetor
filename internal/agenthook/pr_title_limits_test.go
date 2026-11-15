@@ -336,3 +336,111 @@ func TestPRTitleLimitsEngineCheckout(t *testing.T) {
 		t.Logf("engine checkout %s, length %d, exit %d, refusal %s", root, count, response.ExitCode, response.Stderr)
 	}
 }
+
+// TestPRTitleLimitsShortClusters plants pflag clusters and their value boundaries.
+func TestPRTitleLimitsShortClusters(t *testing.T) {
+	root := repository(t, false)
+	for _, prefix := range []string{"-dt ", "-dt", "-dt=", "-eft ", "-wt ", "-ht ", "-dR example/widget -dt "} {
+		t.Run(prefix, func(t *testing.T) {
+			assertPRTitleBoundary(t, root, "gh pr create -R example/widget "+prefix, " --body ok", "example/other")
+		})
+	}
+	for _, args := range []string{"-db --title -t ", "-db--title -t ", "-d=false -t "} {
+		t.Run(args, func(t *testing.T) {
+			assertPRTitleBoundary(t, root, "gh pr create -R example/widget "+args, "", "example/other")
+		})
+	}
+}
+
+// assertPRTitleBoundary requires the cap to pass and the next Unicode length to fail.
+func assertPRTitleBoundary(t *testing.T, root, prefix, suffix, inherited string) {
+	t.Helper()
+	for _, count := range []int{64, 65} {
+		title := strings.Repeat("é", count)
+		got := assertTitleLimitVerdict(t, root, prefix+`"`+title+`"`+suffix, inherited, count == 65)
+		if count == 65 && !strings.Contains(got.Reason, "title length 65 exceeds limit 64") {
+			t.Fatalf("wrong target or measurement: %+v", got)
+		}
+	}
+}
+
+// TestPRTitleLimitsUnknownCluster refuses an unknown shorthand only for a capped target.
+func TestPRTitleLimitsUnknownCluster(t *testing.T) {
+	root := repository(t, false)
+	for _, repo := range []string{"example/widget", "example/other"} {
+		for _, count := range []int{64, 65} {
+			command := "gh pr create -R " + repo + ` -dzt "` + strings.Repeat("x", count) + `" --body ok`
+			got := assertTitleLimitVerdict(t, root, command, "", repo == "example/widget")
+			if repo == "example/widget" && !strings.Contains(got.Reason, `unknown shorthand "-z"`) {
+				t.Fatalf("unknown shorthand not named: %+v", got)
+			}
+		}
+	}
+	assertTitleLimitVerdict(t, root, "gh pr create -R example/widget -dz --body ok", "", true)
+}
+
+// TestPRTitleLimitsRemotePrecedence plants conflicting remotes without a gh-resolved default.
+func TestPRTitleLimitsRemotePrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		remotes [][2]string
+	}{
+		{"upstream before origin", [][2]string{{"origin", "other"}, {"upstream", "widget"}}},
+		{"github before origin", [][2]string{{"origin", "other"}, {"github", "widget"}}},
+		{"upstream before github", [][2]string{{"github", "other"}, {"upstream", "widget"}}},
+		{"case insensitive upstream", [][2]string{{"origin", "other"}, {"UPSTREAM", "widget"}}},
+		{"origin before others", [][2]string{{"another", "other"}, {"origin", "widget"}}},
+		{"other remote", [][2]string{{"another", "widget"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := repository(t, false)
+			for _, remote := range tc.remotes {
+				testsupport.RunFixtureGit(t, root, []string{"remote", "add", remote[0], "https://github.com/example/" + remote[1] + ".git"})
+			}
+			assertPRTitleBoundary(t, root, "gh pr create -t ", " --body ok", "")
+		})
+	}
+	root := repository(t, false)
+	testsupport.RunFixtureGit(t, root,
+		[]string{"remote", "add", "origin", "https://github.com/example/widget.git"},
+		[]string{"remote", "add", "upstream", "https://github.com/example/other.git"})
+	assertTitleLimitVerdict(t, root, `gh pr create -t "`+strings.Repeat("x", 65)+`"`, "", false)
+}
+
+// TestPRTitleLimitsNormalizedTargets plants suffix and transport variants at both lengths.
+func TestPRTitleLimitsNormalizedTargets(t *testing.T) {
+	root := repository(t, false)
+	testsupport.RunFixtureGit(t, root, []string{"remote", "add", "origin", "https://github.com/example/other.git"})
+	for _, target := range []string{
+		"https://github.com/example/widget.git", "https://github.com/example/widget/",
+		"https://github.com/example/widget.git/", "http://github.com/example/widget.git/",
+		"git@github.com:example/widget.git", "git@github.com:example/widget/",
+		"git@github.com:example/widget.git/", "ssh://git@github.com/example/widget.git",
+		"ssh://git@github.com/example/widget/", "ssh://git@github.com/example/widget.git/",
+	} {
+		t.Run(target, func(t *testing.T) {
+			assertPRTitleBoundary(t, root, "gh pr create -R "+target+" -t ", "", "example/other")
+			assertPRTitleBoundary(t, root, "gh pr create -t ", "", target)
+		})
+	}
+}
+
+// TestPRTitleLimitsEnvRemoval prevents inherited GH_REPO from returning after env removes it.
+func TestPRTitleLimitsEnvRemoval(t *testing.T) {
+	root := repository(t, false)
+	testsupport.RunFixtureGit(t, root, []string{"remote", "add", "origin", "https://github.com/example/widget.git"})
+	for _, wrapper := range []string{
+		"env -u GH_REPO", "env --unset=GH_REPO", "env --unset GH_REPO",
+		"env -u 'GH_REPO'", "GH_REPO=example/other env -u GH_REPO",
+		"env -u GH_REPO GH_REPO=example/widget", "env --unset=OTHER",
+	} {
+		t.Run(wrapper, func(t *testing.T) {
+			inherited := "example/other"
+			if wrapper == "env --unset=OTHER" {
+				inherited = "example/widget"
+			}
+			assertPRTitleBoundary(t, root, wrapper+" gh pr create -t ", " --body ok", inherited)
+		})
+	}
+	assertTitleLimitVerdict(t, root, `env -u GH_REPO GH_REPO=example/other gh pr create -t "`+strings.Repeat("x", 65)+`"`, "example/widget", false)
+}
