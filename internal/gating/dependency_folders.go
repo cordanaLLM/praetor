@@ -383,7 +383,7 @@ func executeDeclaredVerify(tCtx context.Context, cfg *stageConfig, dir string, b
 		return fmt.Errorf("%s: %w", declaredVerifyCommand, envErr)
 	}
 
-	output, runErr := util.RunCommandBytes(runCtx, dir, "make", util.MaxCommandOutputBytes, declaredVerifyTarget)
+	output, runErr := runDeclaredVerifyCommand(runCtx, cfg, dir)
 
 	var failure error
 	if runErr != nil {

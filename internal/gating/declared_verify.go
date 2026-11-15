@@ -41,20 +41,28 @@ var makefileNames = []string{"GNUmakefile", "makefile", "Makefile"}
 // declaredVerifyCommand is the command line the stage runs and every reason names.
 var declaredVerifyCommand = "make " + declaredVerifyTarget
 
-// declaredVerifyEnvironment keeps make's diagnostics parseable: LC_MESSAGES=C, LANGUAGE
-// absent, and LC_ALL=C only when LC_ALL was set by the caller. Without LC_ALL, other locale
-// categories retain the caller's settings. GNU gettext's manual, sections 2.3.2 and 2.3.3
-// (info gettext "Locale Environment Variables" and "The LANGUAGE variable"), documents
-// LC_ALL's category override and LANGUAGE's message priority. InheritedEnvironment retains
-// the existing Git repository-variable scrub and the declared-verification recursion guard.
+// declaredVerifyEnvironment selects C messages without changing recipe data locales.
+// GNU gettext 2.3.2/2.3.3 documents LC_ALL's override and LANGUAGE's message priority:
+// https://www.gnu.org/software/gettext/manual/html_node/Locale-Environment-Variables.html
+// https://www.gnu.org/software/gettext/manual/html_node/The-LANGUAGE-variable.html
+// A nonempty LC_ALL is expanded into POSIX and GNU non-message categories before removal.
+// InheritedEnvironment preserves the Git repository-variable scrub and recursion guard.
 func declaredVerifyEnvironment() []string {
-	overrides := []string{DeclaredVerifyGuardEnv + "=1", "LC_MESSAGES=C"}
-	if _, set := os.LookupEnv("LC_ALL"); set {
-		overrides = append(overrides, "LC_ALL=C")
+	overrides := []string{DeclaredVerifyGuardEnv + "=1", "LC_MESSAGES=C", "LANGUAGE=C"}
+	if all := os.Getenv("LC_ALL"); all != "" {
+		for _, category := range declaredVerifyLocaleCategories {
+			overrides = append(overrides, category+"="+all)
+		}
 	}
 	return util.FilterEnvironment(util.InheritedEnvironment(overrides), func(name string) bool {
-		return name == "LANGUAGE"
+		return name == "LC_ALL"
 	})
+}
+
+// declaredVerifyLocaleCategories includes POSIX and GNU categories except messages.
+var declaredVerifyLocaleCategories = [...]string{
+	"LC_CTYPE", "LC_COLLATE", "LC_NUMERIC", "LC_TIME", "LC_MONETARY",
+	"LC_PAPER", "LC_NAME", "LC_ADDRESS", "LC_TELEPHONE", "LC_MEASUREMENT", "LC_IDENTIFICATION",
 }
 
 // runDeclaredVerifyStage runs `make verify-all` when the root holds no toolchain marker and its
@@ -142,12 +150,13 @@ func declaredVerifyFailure(ctx context.Context, repoDir string, bound time.Durat
 	if diagnostic == "" {
 		diagnostic = err.Error()
 	}
-	logPath, logErr := writeDeclaredVerifyLog(ctx, repoDir, target, diagnostic)
+	execution := "execution error: " + util.UTF8Tail(strings.ReplaceAll(err.Error(), "\n", "; "), maxDeclaredVerifyDiagnostic)
+	logPath, logErr := writeDeclaredVerifyLog(ctx, repoDir, target+"\n"+execution, diagnostic)
 	logNote := "gate log: " + logPath
 	if logErr != nil {
 		logNote = "no gate log written: " + logErr.Error()
 	}
-	return &declaredVerifyError{cause: err, reason: fmt.Sprintf("declared verification %s %s; %s; %s:\n%s", declaredVerifyCommand, outcome, target, logNote, tail(diagnostic, maxDeclaredVerifyDiagnostic))}
+	return &declaredVerifyError{cause: err, reason: fmt.Sprintf("declared verification %s %s; %s; %s:\n%s", declaredVerifyCommand, outcome, target+"; "+execution, logNote, util.UTF8Tail(diagnostic, maxDeclaredVerifyDiagnostic))}
 }
 
 type declaredVerifyError struct {
@@ -160,14 +169,3 @@ func (e *declaredVerifyError) Error() string { return e.reason }
 
 // Unwrap preserves the command failure for error inspection.
 func (e *declaredVerifyError) Unwrap() error { return e.cause }
-
-// tail keeps the last limit bytes of text, where a failing command's final report usually is.
-func tail(text string, limit int) string {
-	if len(text) <= limit {
-		return text
-	}
-	if limit < 3 {
-		return text[len(text)-limit:]
-	}
-	return "..." + text[len(text)-(limit-3):]
-}

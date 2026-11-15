@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -36,9 +37,9 @@ func main() {
 	}
 	_, language := os.LookupEnv("LANGUAGE")
 	all, allSet := os.LookupEnv("LC_ALL")
-	fmt.Fprintf(os.Stderr, "LANG=%s LC_NUMERIC=%s LC_ALL=%s/%t LC_MESSAGES=%s LANGUAGE=%t guard=%s\n",
+	fmt.Fprintf(os.Stderr, "LANG=%s LC_NUMERIC=%s LC_ALL=%s/%t LC_MESSAGES=%s LANGUAGE=%t guard=%s LC_CTYPE=%s LC_COLLATE=%s\n",
 		os.Getenv("LANG"), os.Getenv("LC_NUMERIC"), all, allSet, os.Getenv("LC_MESSAGES"), language,
-		os.Getenv("PRAETOR_GATE_DECLARED_VERIFY"))
+		os.Getenv("PRAETOR_GATE_DECLARED_VERIFY"), os.Getenv("LC_CTYPE"), os.Getenv("LC_COLLATE"))
 	fmt.Fprintf(os.Stderr, "make: *** [Makefile:9: lint] %s 2\n", word)
 	os.Exit(2)
 }
@@ -63,8 +64,16 @@ func assertDeclaredVerifyGermanParent(t *testing.T, all string) {
 	t.Setenv("LC_MESSAGES", "de_DE.UTF-8")
 	t.Setenv("LANGUAGE", "de")
 	t.Setenv("LC_NUMERIC", "de_DE.UTF-8")
+	t.Setenv("LC_CTYPE", "fr_FR.UTF-8")
+	t.Setenv("LC_COLLATE", "sv_SE.UTF-8")
 	t.Setenv("LC_ALL", all)
-	wantAll := "C/true"
+	wantAll := "/false"
+	wantCType, wantCollate := "fr_FR.UTF-8", "sv_SE.UTF-8"
+	switch all {
+	case "", "unset":
+	default:
+		wantCType, wantCollate = all, all
+	}
 	if all == "unset" {
 		if err := os.Unsetenv("LC_ALL"); err != nil {
 			t.Fatal(err)
@@ -79,7 +88,7 @@ func assertDeclaredVerifyGermanParent(t *testing.T, all string) {
 		t.Fatal("planted make failure passed")
 	}
 	for _, want := range []string{"make verify-all exited 2", "failing make target: lint",
-		"LANG=de_DE.UTF-8 LC_NUMERIC=de_DE.UTF-8 LC_ALL=" + wantAll + " LC_MESSAGES=C LANGUAGE=false guard=1"} {
+		"LANG=de_DE.UTF-8 LC_NUMERIC=de_DE.UTF-8 LC_ALL=" + wantAll + " LC_MESSAGES=C LANGUAGE=true guard=1 LC_CTYPE=" + wantCType + " LC_COLLATE=" + wantCollate} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("stage reason missing %q: %s", want, err)
 		}
@@ -203,6 +212,10 @@ func assertDeclaredLogModes(t *testing.T, path string) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		private, other, privacyErr := util.OwnerOnlyAccess(path)
+		if privacyErr != nil || !private {
+			t.Errorf("%s privacy: owner-only=%v other=%q err=%v", path, private, other, privacyErr)
+		}
 		if runtime.GOOS != "windows" && info.Mode().Perm() != mode {
 			t.Errorf("%s mode = %o; want %o", path, info.Mode().Perm(), mode)
 		}
@@ -266,6 +279,12 @@ func TestDeclaredVerifyMakeTargets(t *testing.T) {
 		{"make: *** [C:/source/check.mk:12: lint] Error 2\r\n", "lint"},
 		{"make[999999999999999999999999999999]: *** [Makefile:2: bad] Error 1", ""},
 		{"make: *** [Makefile:2: lint] not an error", ""},
+		{"make[2]: *** [nested.mk:8: inner] Segmentation fault\nmake: *** [Makefile:2: verify-all] Error 2", "inner"},
+		{"make[3]: [nested.mk:9: ignored] Error 1 (ignored)\nmake: *** [Makefile:2: lint] Error 2", "lint"},
+		{"make[3]: [nested.mk:9: ignored] Segmentation fault (ignored)\nmake: *** [Makefile:2: lint] Error 2", "lint"},
+		{"make[2]: *** [inner] Aborted (core dumped)", "inner"},
+		{"make: *** No rule to make target 'absent', needed by 'verify-all'.  Stop.", "absent"},
+		{"make[2]: *** No rule to make target `absent'.  Stop.\nmake: *** [verify-all] Error 2", "absent"},
 		{"an unrelated tool failed\n", ""},
 	}
 	for i, tc := range cases {
@@ -426,5 +445,163 @@ func assertDeclaredRedirectedDirectory(t *testing.T, leaf string) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("redirected directory got files: %v", entries)
+	}
+}
+
+// TestDeclaredVerifyFailureUTF8 proves byte bounds keep repeated multibyte text intact.
+func TestDeclaredVerifyFailureUTF8(t *testing.T) {
+	repo := declaredLogRepo(t, true, true)
+	output := util.CommandBytes{Stdout: []byte(strings.Repeat("é", 40000))}
+	err := declaredVerifyFailure(t.Context(), repo, time.Minute, "default", output, exitCodeError{2})
+	assertDeclaredReasonTailBound(t, err.Error())
+	if !utf8.ValidString(err.Error()) {
+		t.Fatal("displayed diagnostic split a UTF-8 rune")
+	}
+	paths := declaredLogPaths(t, repo)
+	if len(paths) != 1 {
+		t.Fatalf("logs = %v; want one", paths)
+	}
+	data, readErr := fs.ReadFile(os.DirFS(filepath.Dir(paths[0])), filepath.Base(paths[0]))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !utf8.Valid(data) || len(data) > maxDeclaredVerifyLogBytes {
+		t.Fatalf("log UTF-8 valid=%v size=%d", utf8.Valid(data), len(data))
+	}
+}
+
+// TestDeclaredVerifyExecutionErrorSurvivesTail preserves overflow separately from partial output.
+func TestDeclaredVerifyExecutionErrorSurvivesTail(t *testing.T) {
+	repo := declaredLogRepo(t, true, true)
+	cause := errors.Join(exitCodeError{2}, fmt.Errorf("command output exceeds %d bytes per stream", util.MaxCommandOutputBytes))
+	output := util.CommandBytes{Stdout: []byte(strings.Repeat("partial output\n", 100))}
+	err := declaredVerifyFailure(t.Context(), repo, time.Minute, "default", output, cause)
+	if !errors.Is(err, cause) || !strings.Contains(err.Error(), "command output exceeds 16777216 bytes per stream") {
+		t.Fatalf("execution error lost: %v", err)
+	}
+	paths := declaredLogPaths(t, repo)
+	if len(paths) != 1 {
+		t.Fatalf("logs = %v; want one", paths)
+	}
+	data, readErr := fs.ReadFile(os.DirFS(filepath.Dir(paths[0])), filepath.Base(paths[0]))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(data), "execution error:") || !strings.Contains(string(data), "command output exceeds 16777216 bytes per stream") || !strings.Contains(string(data), "partial output") {
+		t.Fatal("log lost execution error or partial output")
+	}
+}
+
+// TestDeclaredVerifyConfiguredRunner prevents invoking real make when a runner was supplied.
+func TestDeclaredVerifyConfiguredRunner(t *testing.T) {
+	repo, dir := declaredLogRepo(t, true, true), t.TempDir()
+	writeFile(t, filepath.Join(dir, "Makefile"), "verify-all:\n\t@echo real-make-ran > bypassed\n")
+	calls := 0
+	cfg := &stageConfig{repoDir: repo, run: func(_ context.Context, gotDir, name string, args ...string) (string, error) {
+		calls++
+		if gotDir != dir || name != "make" || strings.Join(args, " ") != "verify-all" {
+			t.Errorf("runner invocation = %q %q %v", gotDir, name, args)
+		}
+		return "make: *** [stub.mk:7: injected] Error 2", exitCodeError{2}
+	}}
+	err := executeDeclaredVerify(t.Context(), cfg, dir, time.Minute, "default")
+	if calls != 1 || err == nil || !strings.Contains(err.Error(), "failing make target: injected") {
+		t.Fatalf("calls=%d error=%v", calls, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bypassed")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("real make ran instead of stub: %v", err)
+	}
+}
+
+// TestDeclaredVerifyRecipeLocale uses real make to check recipe categories and parseable failures.
+func TestDeclaredVerifyRecipeLocale(t *testing.T) {
+	requireMake(t)
+	for _, all := range []string{"", "C.UTF-8"} {
+		t.Run(all, func(t *testing.T) {
+			t.Setenv("LC_ALL", all)
+			t.Setenv("LC_CTYPE", "C")
+			t.Setenv("LC_COLLATE", "POSIX")
+			t.Setenv("LANGUAGE", "de")
+			repo, dir := declaredLogRepo(t, true, true), t.TempDir()
+			writeFile(t, filepath.Join(dir, "Makefile"), "verify-all: locale-check\nlocale-check:\n\t@echo LC_CTYPE=$(LC_CTYPE) LC_COLLATE=$(LC_COLLATE)\n\t@exit 2\n")
+			err := executeDeclaredVerify(t.Context(), &stageConfig{repoDir: repo}, dir, time.Minute, "default")
+			ctype, collate := "C", "POSIX"
+			if all != "" {
+				ctype, collate = all, all
+			}
+			if err == nil || !strings.Contains(err.Error(), "failing make target: locale-check") || !strings.Contains(err.Error(), "LC_CTYPE="+ctype+" LC_COLLATE="+collate) {
+				t.Fatalf("recipe locale or target lost: %v", err)
+			}
+		})
+	}
+}
+
+// outputLimitMake overflows stdout without requiring a shell or platform-specific utilities.
+const outputLimitMake = `package main
+import ("bytes"; "os")
+func main() {
+	_, err := os.Stdout.Write(bytes.Repeat([]byte("partial-output "), 2000000))
+	if err != nil { os.Exit(2) }
+}
+`
+
+// TestDeclaredVerifyRealOutputLimit preserves the real bounded runner's stop cause and output.
+func TestDeclaredVerifyRealOutputLimit(t *testing.T) {
+	bin := t.TempDir()
+	testsupport.BuildExecutable(t, bin, "make", outputLimitMake)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	repo := declaredLogRepo(t, true, true)
+	cfg := newStageConfig(repo, false, &PipelineReport{})
+	err := executeDeclaredVerify(t.Context(), cfg, t.TempDir(), time.Minute, "default")
+	if err == nil || !strings.Contains(err.Error(), "command output exceeds 16777216 bytes per stream") || !strings.Contains(err.Error(), "partial-output") {
+		t.Fatalf("capture overflow or output lost: %v", err)
+	}
+	assertDeclaredReasonTailBound(t, err.Error())
+	paths := declaredLogPaths(t, repo)
+	if len(paths) != 1 {
+		t.Fatalf("logs = %v; want one", paths)
+	}
+	data, readErr := fs.ReadFile(os.DirFS(filepath.Dir(paths[0])), filepath.Base(paths[0]))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(data) > maxDeclaredVerifyLogBytes || !strings.Contains(string(data), "command output exceeds 16777216 bytes per stream") || !strings.Contains(string(data), "partial-output") {
+		t.Fatal("log lost capture stop cause or output")
+	}
+}
+
+// TestDeclaredVerifyMissingRule names a prerequisite missing from an actual makefile.
+func TestDeclaredVerifyMissingRule(t *testing.T) {
+	requireMake(t)
+	repo, dir := declaredLogRepo(t, true, true), t.TempDir()
+	writeFile(t, filepath.Join(dir, "Makefile"), "verify-all: absent-prerequisite\n")
+	err := executeDeclaredVerify(t.Context(), &stageConfig{repoDir: repo}, dir, time.Minute, "default")
+	if err == nil || !strings.Contains(err.Error(), "failing make target: absent-prerequisite") {
+		t.Fatalf("missing prerequisite lost: %v", err)
+	}
+}
+
+// TestDeclaredVerifyConfiguredRunnerStderr preserves the string runner's stderr-in-error contract.
+func TestDeclaredVerifyConfiguredRunnerStderr(t *testing.T) {
+	repo := declaredLogRepo(t, true, true)
+	cfg := &stageConfig{repoDir: repo, run: func(context.Context, string, string, ...string) (string, error) {
+		return "", errors.New("make: *** [stub.mk:7: stderr-target] Error 2")
+	}}
+	err := executeDeclaredVerify(t.Context(), cfg, t.TempDir(), time.Minute, "default")
+	if err == nil || !strings.Contains(err.Error(), "failing make target: stderr-target") {
+		t.Fatalf("configured runner stderr target lost: %v", err)
+	}
+}
+
+// TestDeclaredVerifyRunnerOutputBounds covers success, exact capture bound and injected overflow.
+func TestDeclaredVerifyRunnerOutputBounds(t *testing.T) {
+	for _, size := range []int{0, util.MaxCommandOutputBytes, util.MaxCommandOutputBytes + 1} {
+		cfg := &stageConfig{run: func(context.Context, string, string, ...string) (string, error) {
+			return strings.Repeat("x", size), nil
+		}}
+		output, err := runDeclaredVerifyCommand(t.Context(), cfg, t.TempDir())
+		if len(output.Stdout) > util.MaxCommandOutputBytes || (err != nil) != (size > util.MaxCommandOutputBytes) {
+			t.Errorf("size=%d captured=%d error=%v", size, len(output.Stdout), err)
+		}
 	}
 }
