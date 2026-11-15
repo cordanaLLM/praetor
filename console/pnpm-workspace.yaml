@@ -1,6 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
 # SPDX-License-Identifier: EUPL-1.2
 
+# pnpm 11+ reads these settings only from pnpm-workspace.yaml.
+saveExact: true
+engineStrict: true
+overrides:
+  minimatch: 11.0.4
+
 # deepmerge 4.3.1 is the latest release and still sets the result prototype from an own
 # "__proto__" key (GHSA-gcqx-w48m-w2h4); the patch refuses that key until upstream ships a fix.
 # scripts/deepmerge-patch.test.ts pins it. Drop both when @sveltejs/vite-plugin-svelte no longer
