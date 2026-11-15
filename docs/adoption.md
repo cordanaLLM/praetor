@@ -692,7 +692,7 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `formatter-ignore` | `.prettierignore` entries for managed artifacts, where a formatter is configured |
 | `renovate-ignore` | the managed-file and engine-update suppression rules, plus the workflow engine pin custom manager, in an existing Renovate configuration; none is created |
 | `actionlint-labels` | `.github/actionlint.yaml` runner labels |
-| `coderabbit` | `.coderabbit.yaml`: `reviews.auto_review.drafts` and `reviews.auto_review.base_branches` |
+| `coderabbit` | `.coderabbit.yaml`: `reviews.auto_review.drafts`, `reviews.auto_review.base_branches` and a catch-all `reviews.path_instructions` entry |
 | `contributing` | `CONTRIBUTING.md` |
 | `pull-request-template` | `.github/pull_request_template.md` |
 | `security-policy` | `SECURITY.md` |
@@ -711,7 +711,7 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 The `asdecided` step and its export and pin-check commands are described in
 [Decision recall](guides/decision-recall.md).
 
-The `coderabbit` step manages two keys in `.coderabbit.yaml`: it sets
+The `coderabbit` step manages three keys in `.coderabbit.yaml`: it sets
 `reviews.auto_review.drafts: true` and adds `.*` to `reviews.auto_review.base_branches`
 so draft pull requests and stacked branches come into the scope of automatic review. Both
 keys widen that scope only: adoption leaves `reviews.auto_review.enabled` as the file sets it,
@@ -722,6 +722,14 @@ apply to draft and stacked pull requests (CodeRabbit configuration schema v2,
 <https://coderabbit.ai/integrations/schema.v2.json>). An absent file gets a
 YAML language server comment pointing to the CodeRabbit v2 schema. An existing file keeps its
 other keys, comments and base-branch patterns; an unchanged rerun leaves its bytes intact.
+The third key, `reviews.path_instructions`, gets one entry with the path `**`. Its
+instructions tell CodeRabbit that a green run of the CI job whose step runs `make verify-all`
+on the pull request head answers a request to run that target, and that the turn-end rules in
+`AGENTS.md` and `CLAUDE.md` bind coding agents, not the reviewer. Adoption adds the entry only
+when no existing entry has the path `**`, so a global instruction the repository wrote stays as
+written; every existing entry needs string `path` and `instructions` fields (schema v2), or
+adoption stops and names the entry (`TestCodeRabbitCIEvidenceKeepsUserGlobal`,
+`TestCodeRabbitCIEvidenceRefusesMalformed`).
 To keep an intentional `drafts: false`, list `coderabbit` under `adoption.decline` in
 `.standards.yaml`; otherwise adoption enforces the managed keys and reports the update
 (`internal/adopt/coderabbit.go`, `TestAdoptCodeRabbitCreatesAndPreserves`,
