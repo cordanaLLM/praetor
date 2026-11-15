@@ -946,7 +946,7 @@ func TestEmittedReuseSteps_RunLocallyInTempRepo(t *testing.T) {
 	}
 	repoPath := newTestRepo(t, "temp-reuse-repo")
 	licDir := filepath.Join(repoPath, "LICENSES")
-	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
 	if err := os.MkdirAll(licDir, 0o700); err != nil {
 		t.Fatalf("mkdir LICENSES: %v", err)
 	}
