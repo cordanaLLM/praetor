@@ -11,7 +11,9 @@ name: Security Scan
     - cron: '0 4 * * *'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.number || github.run_id }}
+  group: >-
+    ${{ github.workflow }}-${{ github.event.pull_request.number ||
+    github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
