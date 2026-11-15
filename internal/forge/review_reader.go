@@ -58,9 +58,26 @@ type GHReviewReader struct {
 	Run func(context.Context, string, ...string) ([]byte, error)
 }
 
+const (
+	// reviewReadTimeout bounds one review read when the caller gives no short deadline of its own.
+	reviewReadTimeout = 10 * time.Second
+	// reviewReadBudgetCap is the longest caller deadline a review read adopts instead of reviewReadTimeout: a short
+	// batch budget (the stop hook's) governs its reads, a long-lived caller keeps the per-read bound.
+	reviewReadBudgetCap = 30 * time.Second
+)
+
+// reviewReadContext bounds one review read: a caller deadline within reviewReadBudgetCap is used as is, any other
+// caller gets reviewReadTimeout.
+func reviewReadContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= reviewReadBudgetCap {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, reviewReadTimeout)
+}
+
 // call executes a bounded gh read with pacing sleeps disabled and classifies rate limits.
 func (r GHReviewReader) call(ctx context.Context, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := reviewReadContext(ctx)
 	defer cancel()
 	ctx, err := util.WithCommandEnvironment(ctx, util.InheritedEnvironment([]string{"PRAETOR_GH_NOWAIT=1"}))
 	if err != nil {
@@ -125,7 +142,7 @@ func ParseReviewRepository(repo string) (string, string, error) {
 // Read requests complete connections within ten pages of 100 items each. Thread
 // creation time is the first comment's createdAt: the thread has no such field.
 func (r GHReviewReader) Read(ctx context.Context, repo string, number int) (ReviewSnapshot, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := reviewReadContext(ctx)
 	defer cancel()
 	owner, name, err := ParseReviewRepository(repo)
 	if err != nil {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // TestStopReviewCacheKeyAndTTL pins cache key matching, expiration TTL, and outcome invalidation rules.
@@ -24,7 +24,7 @@ func TestStopReviewCacheKeyAndTTL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := util.ReadFileLimited(path, 65536)
+	data, err := contextopt.ReadSnapshot(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestStopReviewCacheKeyAndTTL(t *testing.T) {
 	} {
 		cache.Verdict.Outcome = scenario.outcome
 		writeStopReviewCache(t, path, cache)
-		if _, hit := loadStopReviewCache(path, scenario.repo, scenario.head, scenario.when); hit != scenario.hit {
+		if _, hit := loadStopReviewCache(t.Context(), path, scenario.repo, scenario.head, scenario.when); hit != scenario.hit {
 			t.Fatalf("cache scenario=%+v hit=%t", scenario, hit)
 		}
 	}
@@ -64,11 +64,12 @@ func TestStopReviewCacheKeyAndTTL(t *testing.T) {
 // writeStopReviewCache serializes and atomically writes a test stopReviewCache entry to disk.
 func writeStopReviewCache(t *testing.T, path string, cache stopReviewCache) {
 	t.Helper()
+	cache.Complete = true
 	data, err := json.Marshal(cache)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := util.WriteFileAtomic(path, data, 0o600); err != nil {
+	if err := contextopt.WriteSnapshot(t.Context(), path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -99,7 +100,7 @@ func TestStopReviewMalformedCacheForcesRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`{"Outcome":0}`), 0o600); err != nil {
+	if err := contextopt.WriteSnapshot(t.Context(), path, []byte(`{"Outcome":0}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if verdict := evaluateStopReviewThreads(t.Context(), root); verdict.Outcome != Deny || fixture.reads.Load() != 1 {

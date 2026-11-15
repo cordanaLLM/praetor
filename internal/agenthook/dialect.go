@@ -152,10 +152,21 @@ func fillCheckpointSession(canonical *Canonical, object map[string]json.RawMessa
 	}
 }
 
-// Encode renders a verdict in the client's dialect. canonical carries the event that
-// produced verdict (canonical.Event) plus whatever else the encoder needs from the
-// decoded payload (agy's Encode reads canonical.StopActive for a Stop verdict).
+// Encode renders the client's dialect and preserves every stop notice on stderr, including cached denials (#1894).
 func (d Dialect) Encode(canonical Canonical, verdict Verdict) Response {
+	notice := ""
+	if canonical.Event == EventStop {
+		notice, verdict.Notice = verdict.Notice, ""
+	}
+	response := d.encodeVerdict(canonical, verdict)
+	if notice != "" {
+		response.Stderr = append(response.Stderr, []byte("praetor hook: "+boundReason(notice)+"\n")...)
+	}
+	return response
+}
+
+// encodeVerdict retains native decisions and block-once behavior before stop notices are attached (#1894).
+func (d Dialect) encodeVerdict(canonical Canonical, verdict Verdict) Response {
 	if d.encode != nil {
 		return d.encode(d, canonical, verdict)
 	}
