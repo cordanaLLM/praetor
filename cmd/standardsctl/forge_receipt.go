@@ -83,9 +83,8 @@ func verifyReceiptSnapshot(ctx context.Context, path, expectedTree string) error
 	return gating.VerifyCleanTree(ctx, path)
 }
 
-// verifyReceiptRaceScope accepts an unscoped full run or the same explicit package scope.
-// VerifyPinnedReceiptFile already validates the signed header and race-stage evidence;
-// reuse its renderer rather than introducing another reader for that format.
+// verifyReceiptRaceScope requires passed race tests for a nonempty push scope, covered by a full or matching run.
+// Pinned verification precedes this reuse-only policy; the shared reader validates certified stage evidence.
 func verifyReceiptRaceScope(output, scope string) error {
 	packages, err := util.ParseRacePackages(scope)
 	if err != nil {
@@ -95,6 +94,16 @@ func verifyReceiptRaceScope(output, scope string) error {
 	if strings.Contains(output, "\nrace_packages\t") && !strings.Contains(output, fullScope) &&
 		!strings.Contains(output, "\n"+lockdown.RacePackagesLine(packages)+"\n") {
 		return errors.New("cached receipt race scope differs from this push's affected Go packages")
+	}
+	if len(packages) == 0 {
+		return nil
+	}
+	status, err := lockdown.ReceiptRaceStageStatus(output)
+	if err != nil {
+		return fmt.Errorf("cached receipt race stage: %w", err)
+	}
+	if status != "passed" {
+		return errors.New("cached receipt must certify passed race tests for this push's affected Go packages")
 	}
 	return nil
 }

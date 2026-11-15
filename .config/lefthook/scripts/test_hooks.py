@@ -444,6 +444,7 @@ import (
     "github.com/cordanaLLM/praetor/internal/lockdown"
     "github.com/cordanaLLM/praetor/internal/util"
 )
+// main signs fixture receipts with a disposable key and reports failures without panic.
 func main() {
     seed := make([]byte, ed25519.SeedSize)
     if len(os.Args) > 3 && os.Args[3] == "foreign" { seed[0] = 1 }
@@ -455,18 +456,28 @@ func main() {
     command := util.GateReceiptCommand
     if os.Args[3] != "gate" && os.Args[3] != "foreign" { command = "another command" }
     output := lockdown.GateOutputVersion + "\\n" + lockdown.WorktreeCleanLine(os.Args[4] == "clean") + "\\n"
-    if len(os.Args) == 6 {
-        packages, err := util.ParseRacePackages(os.Args[5])
-        if err != nil { panic(err) }
-        output += lockdown.RacePackagesLine(packages) + "\\n"
-        status, reason := "passed", lockdown.RacePackagesReason(packages)
-        if len(packages) == 0 { status, reason = "not_applicable", lockdown.NoAffectedGoPackage }
-        output += "stage\\t" + lockdown.RaceStageName + "\\t" + status + "\\t" + reason + "\\n"
-    }
+    race, err := fixtureRaceOutput(os.Args[5:])
+    if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+    output += race
     receipt, err := lockdown.CreateReceipt(command, 0, []byte(output), os.Args[2], "fixture/repo", key)
-    if err != nil { panic(err) }
+    if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
     err = lockdown.SaveReceiptFile(os.Args[1], &lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: output}, 0o600)
-    if err != nil { panic(err) }
+    if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+}
+
+// fixtureRaceOutput renders explicit scopes or historical unscoped race stages.
+func fixtureRaceOutput(args []string) (string, error) {
+    if len(args) == 0 { return "", nil }
+    output, status, reason := "", "passed", "fixture race tests"
+    if args[0] != "unscoped" {
+        packages, err := util.ParseRacePackages(args[0])
+        if err != nil { return "", err }
+        output = lockdown.RacePackagesLine(packages) + "\\n"
+        reason = lockdown.RacePackagesReason(packages)
+        if len(packages) == 0 { status, reason = "not_applicable", lockdown.NoAffectedGoPackage }
+    }
+    if len(args) == 3 { status, reason = args[1], args[2] }
+    return output + "stage\\t" + lockdown.RaceStageName + "\\t" + status + "\\t" + reason + "\\n", nil
 }
 '''
 
@@ -520,10 +531,14 @@ class PushedReceipt(unittest.TestCase):
         return subprocess.check_output(["git", *args], cwd=self.repo, env=self.env,
                                        stderr=subprocess.STDOUT, timeout=30)
 
-    def mint(self, head=None, command="gate", clean="clean", scope=None):
+    def mint(self, head=None, command="gate", clean="clean", scope=None, status=None, reason="fixture race tests"):
         """Sign fixture output with the engine's receipt writer and a disposable test key."""
         args = [str(self.signer), str(self.receipt), head or self.head, command, clean]
-        subprocess.run(args + ([] if scope is None else [scope]), env=self.env, check=True, timeout=30)
+        if status is not None:
+            args += [scope or "unscoped", status, reason]
+        elif scope is not None:
+            args += [scope]
+        subprocess.run(args, env=self.env, check=True, timeout=30)
 
     def check_snapshot(self, reused, packages=()):
         """Keep file and auxiliary checks observable while replacing the expensive gate."""
@@ -631,6 +646,44 @@ class PushedReceipt(unittest.TestCase):
             with self.subTest(scope=scope, packages=packages):
                 self.mint(scope=scope)
                 self.check_snapshot(reused=reused, packages=packages)
+
+    def test_pushed_receipt_nonpassing_race_stage_runs_full_gate(self):
+        """Affected packages require passed race tests, even with an unscoped or full-scope receipt."""
+        for scope in (None, "./..."):
+            for status in ("skipped", "not_applicable"):
+                with self.subTest(scope=scope, status=status):
+                    reason = "race detector unavailable"
+                    if scope is not None:
+                        reason += "; " + "race packages: ./...; affected Go packages supplied explicitly"
+                    self.mint(scope=scope, status=status, reason=reason)
+                    self.check_snapshot(reused=False, packages=("example.test/affected",))
+
+    def test_pushed_receipt_nonpassing_race_stage_with_no_affected_packages(self):
+        """No affected Go package preserves unscoped and full-scope reuse regardless of race execution."""
+        for scope in (None, "./..."):
+            for status in ("skipped", "not_applicable"):
+                with self.subTest(scope=scope, status=status):
+                    reason = "race detector unavailable"
+                    if scope is not None:
+                        reason += "; " + "race packages: ./...; affected Go packages supplied explicitly"
+                    self.mint(scope=scope, status=status, reason=reason)
+                    self.check_snapshot(reused=True)
+
+    def test_pushed_receipt_unscoped_passed_race_stage(self):
+        """An unscoped receipt certifying passed race tests covers affected Go packages."""
+        self.mint(status="passed")
+        self.check_snapshot(reused=True, packages=("example.test/affected",))
+
+    def test_pushed_receipt_signer_errors_are_nonzero(self):
+        """Invalid scopes and unwritable receipt destinations fail checked signer calls without panic."""
+        for destination, scope in ((self.receipt, "../outside"), (self.receipt.parent, "none")):
+            with self.subTest(destination=destination, scope=scope):
+                with self.assertRaises(subprocess.CalledProcessError) as failure:
+                    subprocess.run([str(self.signer), str(destination), self.head, "gate", "clean", scope],
+                                   env=self.env, check=True, capture_output=True, text=True, timeout=30)
+                self.assertEqual(failure.exception.returncode, 1)
+                self.assertTrue(failure.exception.stderr.strip())
+                self.assertNotIn("panic:", failure.exception.stderr)
 
     def test_pushed_receipt_snapshot_tree_mismatch_runs_full_gate(self):
         """A snapshot tree that differs from the pushed tree is not reused."""

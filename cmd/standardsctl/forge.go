@@ -56,11 +56,7 @@ func runForge(args []string) error {
 
 	sub := args[0]
 	subArgs := args[1:]
-	timeout := 2 * time.Minute
-	if sub == "refactor-check" {
-		timeout = 35 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), forgeTimeout(sub))
 	defer cancel()
 
 	switch sub {
@@ -84,6 +80,14 @@ func runForge(args []string) error {
 	default:
 		return fmt.Errorf("unknown forge subcommand: %s", sub)
 	}
+}
+
+// forgeTimeout preserves the longer test-running budget for refactor-check.
+func forgeTimeout(sub string) time.Duration {
+	if sub == "refactor-check" {
+		return 35 * time.Minute
+	}
+	return 2 * time.Minute
 }
 
 func runForgeSyncWiki(ctx context.Context, args []string) error {
