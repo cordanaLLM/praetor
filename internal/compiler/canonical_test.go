@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// TestCompilePreservesCanonicalBody leaves canonical policy at its source instead of copying it.
 func TestCompilePreservesCanonicalBody(t *testing.T) {
 	source := "# Fixture\n\nUnique policy: DEV_MCP_PREFLIGHT_SENTINEL.\n\n```sh\ncustom-check --strict\n```\n"
 	result, err := NewTranspiler().CompileContent(source)
@@ -14,8 +15,8 @@ func TestCompilePreservesCanonicalBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, file := range result.Files {
-		if !strings.Contains(file.Content, source) {
-			t.Errorf("%s discarded canonical source body", file.RelativePath)
+		if strings.Contains(file.Content, "DEV_MCP_PREFLIGHT_SENTINEL") {
+			t.Errorf("%s copied canonical source body", file.RelativePath)
 		}
 		if strings.Contains(file.Content, "make verify-all") {
 			t.Errorf("%s injected policy absent from canonical source", file.RelativePath)
@@ -23,10 +24,11 @@ func TestCompilePreservesCanonicalBody(t *testing.T) {
 	}
 }
 
-func TestVerifyDetectsCanonicalBodyChange(t *testing.T) {
+// TestVerifyAcceptsCanonicalBodyChange requires regeneration only for client-only edits.
+func TestVerifyAcceptsCanonicalBodyChange(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "AGENTS.md")
-	writeCanonicalFixture(t, source, "# Fixture\n\nOriginal policy.\n")
+	writeCanonicalFixture(t, source, "# Fixture\n\nOriginal policy.\n\n## Claude Code\nOriginal client policy.\n")
 	compiler := NewTranspiler()
 	result, err := compiler.Compile(source)
 	if err != nil {
@@ -38,9 +40,13 @@ func TestVerifyDetectsCanonicalBodyChange(t *testing.T) {
 	if err := compiler.Verify(source, root); err != nil {
 		t.Fatalf("unchanged source: %v", err)
 	}
-	writeCanonicalFixture(t, source, "# Fixture\n\nChanged policy.\n")
+	writeCanonicalFixture(t, source, "# Fixture\n\nChanged policy.\n\n## Claude Code\nOriginal client policy.\n")
+	if err := compiler.Verify(source, root); err != nil {
+		t.Fatalf("shared body edit invalidated pointer: %v", err)
+	}
+	writeCanonicalFixture(t, source, "# Fixture\n\nChanged policy.\n\n## Claude Code\nChanged client policy.\n")
 	if err := compiler.Verify(source, root); err == nil {
-		t.Fatal("body-only change incorrectly verified")
+		t.Fatal("client-only edit incorrectly verified")
 	}
 	for _, file := range result.Files {
 		content, err := os.ReadFile(filepath.Join(root, file.RelativePath))
@@ -58,9 +64,11 @@ func TestCompileRejectsEmptyCanonicalSource(t *testing.T) {
 	}
 }
 
-func TestCompileCanonicalLineBudget(t *testing.T) {
+// TestCompileVendorLineBudget refuses client-only text above the projection line cap.
+func TestCompileVendorLineBudget(t *testing.T) {
 	compiler := NewTranspiler()
-	minimal, err := compiler.CompileContent("# Fixture")
+	compiler.Clients = []string{"cursor"}
+	minimal, err := compiler.CompileContent("## Cursor\npolicy")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +78,7 @@ func TestCompileCanonicalLineBudget(t *testing.T) {
 			maxLines = file.LineCount
 		}
 	}
-	source := "# Fixture" + strings.Repeat("\npolicy", MaxLineBudget-maxLines)
+	source := "## Cursor\npolicy" + strings.Repeat("\npolicy", MaxLineBudget-maxLines)
 	result, err := compiler.CompileContent(source)
 	if err != nil {
 		t.Fatalf("exact maximum budget rejected: %v", err)

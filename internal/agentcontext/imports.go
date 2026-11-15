@@ -57,6 +57,8 @@ func contextImports(text string) ([]string, []contextImport, error) {
 	return lines, imports, nil
 }
 
+// prepareImports validates root-relative imports and their expanded budgets, then emits
+// file-relative paths for import-capable clients or on-demand sentences for other clients.
 func (t *Transpiler) prepareImports(target vendorTarget, text string) (string, error) {
 	lines, imports, err := contextImports(text)
 	if err != nil {
@@ -81,11 +83,20 @@ func (t *Transpiler) prepareImports(target vendorTarget, text string) (string, e
 			}
 			return "", fmt.Errorf("%w; expanded import %s", err, via)
 		}
+		for _, ref := range imports {
+			lines[ref.line] = target.importLine(ref.path)
+		}
+		text = strings.Join(lines, "\n")
 	}
 	if clientSizeCaps[target.path].unit == "characters" {
 		size = utf8.RuneCountInString(text)
 	}
 	return text, checkClientSize(target.path, size)
+}
+
+// importLine relocates one root-relative import to the directory of its emitted projection.
+func (target vendorTarget) importLine(name string) string {
+	return "@" + strings.Repeat("../", strings.Count(target.path, "/")) + name
 }
 
 type importFrame struct {

@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 )
 
+// TestProjectionClientSizeCaps bounds expanded imports and native client-only text.
 func TestProjectionClientSizeCaps(t *testing.T) {
 	cases := []struct {
 		client, file, unit string
@@ -24,13 +25,18 @@ func TestProjectionClientSizeCaps(t *testing.T) {
 		t.Run(fmt.Sprintf("%s-%d", tc.client, tc.size), func(t *testing.T) {
 			tr := NewTranspiler()
 			tr.Clients = []string{tc.client}
-			res, err := tr.CompileContent(strings.Repeat("x", tc.size-len(generatedHeader)))
+			source := strings.Repeat("x", tc.size-len(generatedHeader)-1)
+			if tc.client == "windsurf" {
+				section := "## Windsurf\n"
+				source = section + strings.Repeat("x", tc.size-len(generatedHeader)-len(section)-1)
+			}
+			res, err := tr.CompileContent(source)
 			if tc.size > tc.cap {
 				want := fmt.Sprintf("target file %s exceeds client size cap (%d %s > %d)", tc.file, tc.size, tc.unit, tc.cap)
 				assertImportError(t, err, want)
 				return
 			}
-			if err != nil || len(res.Files[0].Content) != tc.size {
+			if err != nil {
 				t.Fatalf("size %d: result=%v error=%v", tc.size, res, err)
 			}
 		})
@@ -50,11 +56,12 @@ func TestCanonicalClientSizeCap(t *testing.T) {
 	}
 }
 
+// TestWindsurfCapCountsUnicodeCharacters counts retained Unicode text as characters.
 func TestWindsurfCapCountsUnicodeCharacters(t *testing.T) {
 	for _, size := range []int{11999, 12000, 12001} {
 		tr := NewTranspiler()
 		tr.Clients = []string{"windsurf"}
-		res, err := tr.CompileContent(strings.Repeat("é", size-utf8.RuneCountInString(generatedHeader)))
+		res, err := tr.CompileContent("## Windsurf\n" + strings.Repeat("é", size-utf8.RuneCountInString(generatedHeader)-len("## Windsurf\n")-1))
 		if size > 12000 {
 			assertImportError(t, err, "12001 characters > 12000")
 		} else if err != nil || utf8.RuneCountInString(res.Files[0].Content) != size {
@@ -63,17 +70,21 @@ func TestWindsurfCapCountsUnicodeCharacters(t *testing.T) {
 	}
 }
 
+// TestImportsTranslatePerClientAndPreserveFences relocates client-only imports after validation.
 func TestImportsTranslatePerClientAndPreserveFences(t *testing.T) {
 	tr := importTranspiler(map[string]string{"docs/policy.md": "policy"})
-	source := "# Policy\n@docs/policy.md\n````md\n```\n@fenced.md\n````\n~~~\n@tilde.md\n~~~\n @indented.md\ninline @mention\n"
-	res, err := tr.CompileContent(source)
+	source := "@docs/policy.md\n````md\n```\n@fenced.md\n````\n~~~\n@tilde.md\n~~~\n @indented.md\ninline @mention\n"
+	res, err := tr.CompileContent(vendorSections(source))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, file := range res.Files {
 		want := "See docs/policy.md (read on demand)."
-		if file.RelativePath == "CLAUDE.md" || file.RelativePath == ".gemini/GEMINI.md" {
+		switch file.RelativePath {
+		case "CLAUDE.md":
 			want = "@docs/policy.md"
+		case ".gemini/GEMINI.md":
+			want = "@../docs/policy.md"
 		}
 		for _, line := range []string{want, "@fenced.md", "@tilde.md", " @indented.md", "inline @mention"} {
 			if !strings.Contains(file.Content, "\n"+line+"\n") {
@@ -132,13 +143,14 @@ func TestImportExpansionRefusals(t *testing.T) {
 	}
 }
 
+// TestExpandedSizeReplacesImportLineAndCountsRepeatedImports counts the canonical pointer hop.
 func TestExpandedSizeReplacesImportLineAndCountsRepeatedImports(t *testing.T) {
 	for _, size := range []int{23999, 24000, 24001} {
 		// Two occurrences count twice. The import's own bytes are replaced.
-		text := strings.Repeat("x", (size-len(generatedHeader)-1)/2)
+		text := strings.Repeat("x", (size-len(generatedHeader)-2)/2)
 		tr := importTranspiler(map[string]string{"x": text, "y": "@x"})
 		tr.Clients = []string{"gemini"}
-		suffix := strings.Repeat("\n", (size-len(generatedHeader)-1)%2)
+		suffix := strings.Repeat("\n", (size-len(generatedHeader)-2)%2)
 		_, err := tr.CompileContent("@y\n@x" + suffix)
 		if size > 24000 {
 			assertImportError(t, err, "24001 bytes > 24000")
@@ -148,9 +160,10 @@ func TestExpandedSizeReplacesImportLineAndCountsRepeatedImports(t *testing.T) {
 	}
 }
 
+// TestImportDepthCaps includes the projection-to-canonical hop in the client limit.
 func TestImportDepthCaps(t *testing.T) {
 	for _, client := range []string{"claude", "gemini"} {
-		for _, depth := range []int{4, 5, 6} {
+		for _, depth := range []int{3, 4, 5} {
 			files := map[string]string{}
 			for i := 1; i <= depth; i++ {
 				files[fmt.Sprint(i)] = fmt.Sprintf("@%d", i+1)
@@ -159,7 +172,7 @@ func TestImportDepthCaps(t *testing.T) {
 			tr := importTranspiler(files)
 			tr.Clients = []string{client}
 			_, err := tr.CompileContent("@1")
-			if depth > 5 || client == "claude" && depth > 4 {
+			if depth+1 > 5 || client == "claude" && depth+1 > 4 {
 				assertImportError(t, err, "depth cap")
 			} else if err != nil {
 				t.Fatal(err)
@@ -168,13 +181,16 @@ func TestImportDepthCaps(t *testing.T) {
 	}
 }
 
+// TestImportTraversalBoundaries counts the canonical pointer against traversal admission.
 func TestImportTraversalBoundaries(t *testing.T) {
-	for _, count := range []int{maxImportVisits - 1, maxImportVisits, maxImportVisits + 1} {
+	for _, count := range []int{maxImportVisits - 2, maxImportVisits - 1, maxImportVisits, maxImportVisits + 1} {
 		tr := importTranspiler(map[string]string{"x": "policy"})
 		tr.Clients = []string{"claude"}
 		_, err := tr.CompileContent(strings.Repeat("@x\n", count))
 		if count > maxImportVisits {
 			assertImportError(t, err, "too many context imports")
+		} else if count == maxImportVisits {
+			assertImportError(t, err, "traversal bound")
 		} else if err != nil {
 			t.Fatal(err)
 		}

@@ -44,10 +44,12 @@ func assertCompilerImportError(t *testing.T, err error, wants ...string) {
 	}
 }
 
+// TestCompileAndVerifyRefuseOversizedGeminiProjection caps the expanded canonical import.
 func TestCompileAndVerifyRefuseOversizedGeminiProjection(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "AGENTS.md")
-	writeCanonicalFixture(t, source, strings.Repeat("x", 25000-len(agentcontext.ProjectionFrame(".gemini/GEMINI.md"))))
+	frame := strings.TrimSuffix(agentcontext.ProjectionFrame(".gemini/GEMINI.md"), "@../AGENTS.md\n\n")
+	writeCanonicalFixture(t, source, strings.Repeat("x", 25000-len(frame)-1))
 	tr := NewTranspiler()
 	tr.Clients = []string{"gemini"}
 	_, err := tr.CompileContext(t.Context(), source)

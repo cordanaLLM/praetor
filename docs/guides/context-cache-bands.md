@@ -23,10 +23,13 @@ head. Then run `praetorctl compile-context`.
 | config | the text register block, `## <Client>` sections | a manifest or client edit |
 | tail | verification commands, repository-state text | the repository changes |
 
-`compile-context` writes the static generated header first, then head, config and tail, for
-all six vendor files, whatever order the source wrote the bands in. The markers do not appear
-in the compiled files. Blank lines at a band edge are trimmed and the bands are joined by one
-blank line.
+The bands order `AGENTS.md` itself. Every client reads that file directly or through the
+import its vendor file names, so head, config and tail are cached where the client loads them.
+A vendor file points to `AGENTS.md` instead of copying it (an `@AGENTS.md` import, native
+reading, or the sentence "Read AGENTS.md for canonical agent instructions."), and keeps only
+its static generated header and its own `## <Client>` section, which is config. The markers do
+not appear in the compiled files. Blank lines at a band edge are trimmed and the bands are
+joined by one blank line.
 
 ## Reference
 

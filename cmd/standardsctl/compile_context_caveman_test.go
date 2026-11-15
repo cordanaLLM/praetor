@@ -28,6 +28,7 @@ func TestCompileContextCaveman_Positive(t *testing.T) {
 	mustContain(t, out, "caveman lint passed:", "register block lines left to the renderer")
 }
 
+// TestCompileContextCaveman_Negative lints canonical prose after writing pointer projections.
 func TestCompileContextCaveman_Negative(t *testing.T) {
 	dir := newContextFixture(t, false)
 	writeFixtureFile(t, dir, "AGENTS.md", proseAgentsMD)
@@ -40,7 +41,7 @@ func TestCompileContextCaveman_Negative(t *testing.T) {
 	if strings.Contains(out, "completed successfully") {
 		t.Fatalf("a failed lint must not print success:\n%s", out)
 	}
-	if !strings.Contains(readFixtureFile(t, dir, "CLAUDE.md"), "Two implementations of one behavior") {
+	if !strings.Contains(readFixtureFile(t, dir, "CLAUDE.md"), "@AGENTS.md") {
 		t.Fatal("compiling prose must still write the targets")
 	}
 	_, err = runCompileContextCmd(t, dir, "--verify")

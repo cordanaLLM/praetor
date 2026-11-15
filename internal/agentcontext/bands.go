@@ -104,17 +104,16 @@ func appendConfigLine(parts []string, origin, prevOrigin band, line string) ([]s
 	return append(parts, line), origin
 }
 
-// splitBands collects the lines of every band for one vendor target. Lines of that vendor's
-// section are client configuration and always join the config band; lines of any other
-// vendor's section, and marker lines, are left out. An empty section selects no vendor, so
-// the head it returns is the head every vendor file shares. This is the one place the band
+// splitBands collects only section's owned lines in their bands. Vendor lines always join
+// the config band; shared lines stay in AGENTS.md. An empty section selects shared lines,
+// so HeadBand still inspects the canonical head. This is the one place the band
 // membership of a line is decided (HISS-19): layoutBands and HeadBand both read it.
 func splitBands(lines, owners []string, bands []band, section string) [bandCount][]string {
 	var parts [bandCount][]string
 	prevConfigOrigin := bandMarker
 	for i, line := range lines {
 		b := bands[i]
-		if b == bandMarker || (owners[i] != "" && owners[i] != section) || blankAfterMarker(lines, bands, i) {
+		if b == bandMarker || owners[i] != section || blankAfterMarker(lines, bands, i) {
 			continue
 		}
 		if owners[i] != "" {

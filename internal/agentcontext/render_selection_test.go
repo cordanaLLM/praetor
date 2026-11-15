@@ -209,11 +209,12 @@ type sizeCapCase struct {
 	wantErr []string
 }
 
+// sizeCapCases exercises caps only on text loaded by selected clients.
 func sizeCapCases() []sizeCapCase {
-	overWindsurf := sizedSource(80, 180) // 14,412 characters: over windsurf (12,000), under gemini (24,000)
-	overCodex := sizedSource(200, 170)   // 34,012 bytes: over the AGENTS.md cap (32,768)
+	overWindsurf := "## Windsurf\n" + strings.Repeat(strings.Repeat("a", 179)+"\n", 80) // 14,412 characters: over windsurf (12,000), under gemini (24,000)
+	overCodex := sizedSource(200, 170)                                                  // 34,012 bytes: over the AGENTS.md cap (32,768)
 	exactCodex := "# Harness\n\n" + strings.Repeat("a", 32768-len("# Harness\n\n")-1) + "\n"
-	exactWindsurf := strings.Repeat("a", 12000-len(generatedHeader))
+	exactWindsurf := "## Windsurf\n" + strings.Repeat("a", 12000-len(generatedHeader)-len("## Windsurf\n")-1)
 	return []sizeCapCase{
 		{"undeclared windsurf over cap passes", []string{"claude", "codex", "gemini"}, overWindsurf, nil},
 		{"no selection still caps windsurf", nil, overWindsurf, []string{".windsurfrules", "> 12000"}},

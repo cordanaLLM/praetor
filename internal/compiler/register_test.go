@@ -36,6 +36,7 @@ func readRegisterFixture(t *testing.T, path string) string {
 	return string(data)
 }
 
+// TestSyncRegisterBlockPositive keeps the register block canonical and projections thin.
 func TestSyncRegisterBlockPositive(t *testing.T) {
 	root := t.TempDir()
 	ctx := context.Background()
@@ -61,8 +62,8 @@ func TestSyncRegisterBlockPositive(t *testing.T) {
 		t.Fatalf("compile: %v", err)
 	}
 	for _, file := range res.Files {
-		if strings.Count(file.Content, config.RegisterBlockStart) != 1 || strings.Count(file.Content, config.RegisterBlockHeading) != 1 {
-			t.Errorf("%s must carry the block exactly once", file.RelativePath)
+		if strings.Count(file.Content, config.RegisterBlockStart) != 0 || strings.Count(file.Content, config.RegisterBlockHeading) != 0 {
+			t.Errorf("%s copied the canonical register block", file.RelativePath)
 		}
 	}
 	if err := tr.WriteOutputsContext(ctx, res, root); err != nil {

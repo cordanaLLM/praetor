@@ -15,6 +15,7 @@ const (
 
 var testPaths = []string{"CLAUDE.md", ".cursor/rules/hiss-invariants.mdc", ".github/copilot-instructions.md", ".windsurfrules", ".gemini/GEMINI.md", ".codex/rules.md"}
 
+// TestCompileContentGoldenAndBudget pins pointer bytes and the remaining vendor line budget.
 func TestCompileContentGoldenAndBudget(t *testing.T) {
 	source := "# Fixture\nCanonical policy only.\n"
 	tr := NewTranspiler()
@@ -26,15 +27,16 @@ func TestCompileContentGoldenAndBudget(t *testing.T) {
 		t.Fatalf("got %d outputs", len(result.Files))
 	}
 	for i, file := range result.Files {
-		want := testHeader + source
+		want := testHeader + testReferenceFor(file.RelativePath)
 		if i == 1 {
 			want = testFrontmatter + want
 		}
+		want = strings.TrimRight(want, "\n") + "\n"
 		if file.RelativePath != testPaths[i] || file.Content != want || file.LineCount != strings.Count(want, "\n")+1 {
 			t.Fatalf("projection changed: %+v", file)
 		}
 	}
-	for _, invalid := range []string{"", " \n", strings.Repeat("line\n", MaxLineBudget)} {
+	for _, invalid := range []string{"", " \n", "## Claude Code\n" + strings.Repeat("line\n", MaxLineBudget)} {
 		if got, err := tr.CompileContent(invalid); err == nil || got != nil {
 			t.Fatalf("invalid canonical accepted: %v", err)
 		}
@@ -66,6 +68,7 @@ var vendorFixture = strings.Join([]string{
 	"",
 }, "\n")
 
+// TestCompileContentKeepsOnlyOwnVendorSection excludes shared policy and other vendor sections.
 func TestCompileContentKeepsOnlyOwnVendorSection(t *testing.T) {
 	result, err := NewTranspiler().CompileContent(vendorFixture)
 	if err != nil {
@@ -79,8 +82,8 @@ func TestCompileContentKeepsOnlyOwnVendorSection(t *testing.T) {
 	}
 	for _, file := range result.Files {
 		for _, want := range shared {
-			if !strings.Contains(file.Content, want) {
-				t.Fatalf("%s dropped shared line %q", file.RelativePath, want)
+			if strings.Contains(file.Content, want) {
+				t.Fatalf("%s copied shared line %q", file.RelativePath, want)
 			}
 		}
 		for path, lines := range owned {
@@ -100,10 +103,11 @@ func TestCompileContentKeepsOnlyOwnVendorSection(t *testing.T) {
 	}
 }
 
+// TestCompileContentVendorScanBoundary bounds canonical scanning independently of projection size.
 func TestCompileContentVendorScanBoundary(t *testing.T) {
 	tr := NewTranspiler()
 	atLimit := strings.Repeat("x\n", maxCanonicalLines-1)
-	if _, err := tr.CompileContent(atLimit); err == nil || !strings.Contains(err.Error(), "exceeds max line budget") {
+	if _, err := tr.CompileContent(atLimit); err != nil {
 		t.Fatalf("at-limit canonical: %v", err)
 	}
 	overLimit := strings.Repeat("x\n", maxCanonicalLines)
@@ -141,8 +145,8 @@ func TestCompileContentNestedFenceOpensNoVendorSection(t *testing.T) {
 	}
 	for _, file := range result.Files {
 		for _, shared := range []string{"# Harness", "## Shared Appendix", "Everyone reads this."} {
-			if !strings.Contains(file.Content, shared) {
-				t.Fatalf("%s lost the shared line %q to a fenced heading", file.RelativePath, shared)
+			if strings.Contains(file.Content, shared) {
+				t.Fatalf("%s copied the shared line %q", file.RelativePath, shared)
 			}
 		}
 		// The whole quoted block stays inside the section it was written in.
@@ -382,8 +386,9 @@ func TestIsContextPath_Boundary(t *testing.T) {
 }
 
 // TestCompileContent_RelativeLinks_Positive pins positive link rewriting for subdirectory targets (#129).
+// TestCompileContent_RelativeLinks_Positive relocates links in client-only sections.
 func TestCompileContent_RelativeLinks_Positive(t *testing.T) {
-	source := "# Harness\n[a](docs/x.md)\n![i](img/p.png \"t\")\n[r]: notes/y.md\n"
+	source := vendorSections("[a](docs/x.md)\n![i](img/p.png \"t\")\n[r]: notes/y.md\n")
 	result, err := NewTranspiler().CompileContent(source)
 	if err != nil {
 		t.Fatalf("CompileContent failed: %v", err)
@@ -427,6 +432,7 @@ func TestCompileContent_RelativeLinks_Negative(t *testing.T) {
 		"[^1]: docs/footnote.md is a footnote, not a link",
 		"",
 	}, "\n")
+	source = vendorSections(strings.TrimPrefix(source, "# Harness\n"))
 	result, err := NewTranspiler().CompileContent(source)
 	if err != nil {
 		t.Fatalf("CompileContent failed: %v", err)
@@ -456,6 +462,7 @@ func TestCompileContent_RelativeLinks_Boundary(t *testing.T) {
 		t.Errorf("rewriteRelativeLinks depth 2 = %q, want %q", got, want)
 	}
 	source := "# Harness\n[doc](docs/guide.md)\n[]()\n"
+	source = vendorSections(strings.TrimPrefix(source, "# Harness\n"))
 	result, err := NewTranspiler().CompileContent(source)
 	if err != nil {
 		t.Fatalf("CompileContent failed: %v", err)

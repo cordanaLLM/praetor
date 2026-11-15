@@ -89,7 +89,7 @@ func TestCheckoutLineEndings_Positive_CRLFSourceCompilesAsLF(t *testing.T) {
 func TestCheckoutLineEndings_Negative_CRLFContentEditStillFails(t *testing.T) {
 	root := crlfCompiledFixture(t)
 	claude := filepath.Join(root, "CLAUDE.md")
-	writeOutputFixture(t, claude, strings.Replace(readFixtureText(t, claude), "# Policy", "# Edited policy", 1))
+	writeOutputFixture(t, claude, strings.Replace(readFixtureText(t, claude), "@AGENTS.md", "@missing.md", 1))
 	err := verifyFixtureContext(t, root)
 	if err == nil || !strings.Contains(err.Error(), "target CLAUDE.md is out of sync") || strings.Contains(err.Error(), "byte for byte") {
 		t.Fatalf("an edited CRLF vendor file: %v", err)
