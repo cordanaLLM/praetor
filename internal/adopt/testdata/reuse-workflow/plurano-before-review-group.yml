@@ -1,0 +1,23 @@
+---
+# REUSE licensing gate, written by praetorctl adopt because the repository
+# carries REUSE.toml or LICENSES/. It calls plurano/horistes' licence workflow
+# at the pinned commit.
+name: REUSE
+
+'on':
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: ['main']
+  merge_group:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  licence:
+    name: Licence
+    uses: plurano/horistes/.github/workflows/licence.yml@5a2700ef8898bc377f0f9d13d5c95abf54f0fa4c  # 2026-10-19

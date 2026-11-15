@@ -946,7 +946,8 @@ func TestEmittedReuseSteps_RunLocallyInTempRepo(t *testing.T) {
 	}
 	repoPath := newTestRepo(t, "temp-reuse-repo")
 	licDir := filepath.Join(repoPath, "LICENSES")
-	if err := os.MkdirAll(licDir, 0o755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	if err := os.MkdirAll(licDir, 0o700); err != nil {
 		t.Fatalf("mkdir LICENSES: %v", err)
 	}
 	mitText := "SPDX-FileCopyrightText: 2026 lusoris\nSPDX-License-Identifier: MIT\n\nMIT License Text\n"
@@ -1084,8 +1085,61 @@ func TestAdopt_PluranoRefreshesCopiedReuseWorkflow(t *testing.T) {
 	}
 }
 
-// Negative: a plurano-owned repository holding a caller with a non-SHA ref (tag, branch, short SHA)
-// is refused.
+// Positive: plain adoption refreshes the caller emitted before review runs shared the PR group.
+func TestAdopt_RefreshesPriorPluranoCaller(t *testing.T) {
+	repoPath := newTestRepo(t, "plurano-prior-caller")
+	writeOriginRemote(t, repoPath, "https://github.com/plurano/plurano-prior-caller.git")
+	mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
+	workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+	prior := mustRead(t, filepath.Join("testdata", "reuse-workflow", "plurano-before-review-group.yml"))
+	mustWrite(t, workflowPath, prior)
+	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+	if got := mustRead(t, workflowPath); got != renderPluranoLicenceWorkflow(forge.FallbackDefaultBranch, pluranoHoristesLicenceWorkflowSHA) {
+		t.Fatalf("prior caller was not refreshed without --force:\n%s", got)
+	}
+	if hasAction(rep, reuseWorkflowFile, actionReplace) || !strings.Contains(reuseGateDetails(rep), "Refreshed") {
+		t.Fatalf("want a refresh without --force: %+v", rep.ActionDetails)
+	}
+}
+
+// Positive and boundary: LF and CRLF prior callers are removed without a keep warning.
+// Negative: an adopter edit stays, with the warning explaining why.
+func TestReuseGate_PriorPluranoCallerRemoved(t *testing.T) {
+	prior := mustRead(t, filepath.Join("testdata", "reuse-workflow", "plurano-before-review-group.yml"))
+	for _, tc := range []struct {
+		name     string
+		text     string
+		unedited bool
+	}{
+		{"LF", prior, true},
+		{"CRLF", crlfText(prior), true},
+		{"edited", prior + "# adopter customization\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isPriorRendering([]byte(tc.text), priorReuseWorkflowDigests); got != tc.unedited {
+				t.Errorf("prior rendering = %v, want %v", got, tc.unedited)
+			}
+			repoPath := newTestRepo(t, "remove-prior-plurano")
+			workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+			mustWrite(t, workflowPath, tc.text)
+			s := &adoptSession{repoPath: repoPath, report: &AdoptReport{}}
+			if err := s.removeReuseGate(t.Context(), reuseNotDeclared); err != nil {
+				t.Fatal(err)
+			}
+			if fileExists(workflowPath) == tc.unedited || hasAction(s.report, reuseWorkflowFile, actionRemove) != tc.unedited {
+				t.Errorf("removal = %+v; unedited = %v", s.report.ActionDetails, tc.unedited)
+			}
+			keptWarning := slices.ContainsFunc(s.report.Warnings, func(w string) bool {
+				return strings.Contains(w, reuseWorkflowFile+" kept:")
+			})
+			if keptWarning == tc.unedited {
+				t.Errorf("keep warnings = %v; unedited = %v", s.report.Warnings, tc.unedited)
+			}
+		})
+	}
+}
+
+// Negative: a caller with a tag, branch or short SHA is refused.
 func TestAdopt_PluranoRefusesNonSHACaller(t *testing.T) {
 	cases := map[string]string{
 		"branch main": "main",

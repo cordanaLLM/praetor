@@ -53,6 +53,7 @@ const (
 // itself (reuseRenderingBranch). testdata/reuse-workflow reproduces each digest
 // (reuse_gate_test.go).
 var priorReuseWorkflowDigests = map[string]string{
+	"f1df62af36d2bec7eadf64d625b153cf6e8c2606255169ca663efafc392d6bae": "the Plurano licence caller before review runs shared the pull request's concurrency group, default branch main",
 	"544d1a325cf241e5f03e4024176f5e46d50a555e5b82fa99976b1fa1cc600e7d": "reuse 6.x hash-pinned requirements.txt in venv, checkout pinned by commit digest, hosted gate shape",
 	"2401b69ff8a083d79517191e2c5ed6f7ecee4cea7d90f4b7ae07f98c41e91c82": "reuse-action v6 and checkout pinned by commit digest, hosted gate shape with merge_group and concurrency group",
 	"c8b2b85f7d8f3be75dc21737409a7583e159adca329ba91c9578f180ccf17b25": "reuse-action v6, checkout v7, hosted gate shape, default branch main, 10-minute timeout",

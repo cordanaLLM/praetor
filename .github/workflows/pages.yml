@@ -158,6 +158,9 @@ jobs:
           include-hidden-files: true
 
   deploy:
+    concurrency:
+      group: github-pages-deploy
+      cancel-in-progress: false
     # Engine-only: skipped outside the canonical repository (#189). The literal is the
     # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
     name: Deploy to GitHub Pages (canonical repository only)
