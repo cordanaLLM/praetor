@@ -288,6 +288,25 @@ func evasionRoundEightCases() []struct {
 	}
 }
 
+// evasionRoundNineCases covers splitting before a subcommand and command-word masking.
+func evasionRoundNineCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"pre-subcommand positional array", `set -- . commit -n -m; git -C "$@" commit -m -n`, 2},
+		{"pre-subcommand quoted array", `arr=(. commit -n -m); git -C "${arr[@]}" commit -m -n`, 2},
+		{"pre-subcommand splitting scalar", `var='. commit -n -m'; git -C $var commit -m -n`, 2},
+		{"command word scalar", `$HOME/bin/git commit -m 'mention -n here'`, 0},
+		{"indented command word scalar", `  $HOME/bin/git commit -m 'mention -n here'`, 0},
+		{"pre-subcommand quoted scalar", `git -C "$dir" commit -m 'mention -n here'`, 0},
+		{"pre-subcommand uncertainty resets", `git -C $dir commit -m x; git commit -m 'mention -n here'`, 0},
+	}
+}
+
 // TestEmittedEvasionCommitSegments keeps skip flags within their shell command.
 func TestEmittedEvasionCommitSegments(t *testing.T) {
 	python, script := emittedInterceptor(t)
@@ -295,7 +314,8 @@ func TestEmittedEvasionCommitSegments(t *testing.T) {
 	cases = append(append(cases, evasionFallbackCases()...), evasionRoundFourCases()...)
 	cases = append(cases, evasionRoundFiveCases()...)
 	cases = append(cases, evasionRoundSevenCases()...)
-	for _, tc := range append(cases, evasionRoundEightCases()...) {
+	cases = append(cases, evasionRoundEightCases()...)
+	for _, tc := range append(cases, evasionRoundNineCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
 			t.Logf("emitted rc=%d want=%d", got, tc.want)
@@ -386,8 +406,11 @@ func TestEmittedEvasionSegmentMutants(t *testing.T) {
 		{"one word operand", "if offset >= 0 and not self.word_splitting and not self.arguments_uncertain:",
 			"if offset >= 0 and not self.arguments_uncertain:",
 			`git commit -m $(printf '%s %s' msg -n)`, 0},
-		{"argument uncertainty", "self.arguments_uncertain |= bool(self.git_command) and self.word_splitting",
+		{"argument uncertainty", "self.arguments_uncertain |= self.command_word_seen and self.word_splitting",
 			"self.arguments_uncertain |= False", `git commit -m $(printf '') -m -n`, 0},
+		{"pre-subcommand uncertainty", "self.arguments_uncertain |= self.command_word_seen and self.word_splitting",
+			"self.arguments_uncertain |= bool(self.git_command) and self.word_splitting",
+			evasionRoundNineCases()[0].command, 0},
 		{"escaped boundary", "if not self.word_boundary():",
 			"if self.position > 0 and self.command[self.position - 1] not in \" \\t\\n;|&(\":",
 			`git commit -m fix\ #note -n`, 0},

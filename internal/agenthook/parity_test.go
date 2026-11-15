@@ -670,6 +670,25 @@ func roundEightSegmentCases() []struct {
 	}
 }
 
+// roundNineSegmentCases covers splitting before a subcommand and command-word masking.
+func roundNineSegmentCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"pre-subcommand positional array", `set -- . commit -n -m; git -C "$@" commit -m -n`, 2},
+		{"pre-subcommand quoted array", `arr=(. commit -n -m); git -C "${arr[@]}" commit -m -n`, 2},
+		{"pre-subcommand splitting scalar", `var='. commit -n -m'; git -C $var commit -m -n`, 2},
+		{"command word scalar", `$HOME/bin/git commit -m 'mention -n here'`, 0},
+		{"indented command word scalar", `  $HOME/bin/git commit -m 'mention -n here'`, 0},
+		{"pre-subcommand quoted scalar", `git -C "$dir" commit -m 'mention -n here'`, 0},
+		{"pre-subcommand uncertainty resets", `git -C $dir commit -m x; git commit -m 'mention -n here'`, 0},
+	}
+}
+
 // TestParityEvasionCommitSegments judges every planted row with both implementations.
 func TestParityEvasionCommitSegments(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
@@ -678,7 +697,8 @@ func TestParityEvasionCommitSegments(t *testing.T) {
 	cases = append(append(cases, fallbackSegmentCases()...), roundFourSegmentCases()...)
 	cases = append(cases, roundFiveSegmentCases()...)
 	cases = append(cases, roundSevenSegmentCases()...)
-	for _, tc := range append(cases, roundEightSegmentCases()...) {
+	cases = append(cases, roundEightSegmentCases()...)
+	for _, tc := range append(cases, roundNineSegmentCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
 			python := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
@@ -700,50 +720,75 @@ func TestParityEvasionCommitSegments(t *testing.T) {
 	}
 }
 
-// TestEvasionArgumentUncertaintyMutant proves dropping retained state hides a shifted flag.
-func TestEvasionArgumentUncertaintyMutant(t *testing.T) {
-	const command = `git commit -m $(printf '') -m -n`
+// maskWithoutArgumentUncertainty drops retained splitting at the chosen mutation boundary.
+func maskWithoutArgumentUncertainty(t *testing.T, command string, beforeCommand bool) string {
+	t.Helper()
 	scanner := shellSpans{command: command, judged: []byte(command), wordStart: -1, executionStart: -1}
 	for scanner.position < len(command) {
 		if !scanner.step() {
 			t.Fatal(scanner.err)
 		}
-		scanner.argumentsUncertain = false
+		if !beforeCommand || scanner.gitCommand == "" {
+			scanner.argumentsUncertain = false
+		}
 	}
 	scanner.split(len(command), len(command))
-	builtin := policy(t)
-	fixed, mutant := builtin.Command(command), builtin.Command(string(scanner.judged))
-	t.Logf("Go mutant outcome=%v (rc=0); fixed outcome=%v (rc=2)", mutant.Outcome, fixed.Outcome)
-	if mutant.Outcome != Allow || fixed.Outcome != Deny {
-		t.Errorf("Go mutant outcome=%v; fixed outcome=%v", mutant.Outcome, fixed.Outcome)
+	return string(scanner.judged)
+}
+
+// TestEvasionArgumentUncertaintyMutant proves losing splitting state hides shifted flags.
+func TestEvasionArgumentUncertaintyMutant(t *testing.T) {
+	for _, tc := range []struct {
+		name, command string
+		beforeCommand bool
+	}{
+		{"after subcommand", `git commit -m $(printf '') -m -n`, false},
+		{"before subcommand", roundNineSegmentCases()[0].command, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			builtin := policy(t)
+			fixed := builtin.Command(tc.command)
+			mutant := builtin.Command(maskWithoutArgumentUncertainty(t, tc.command, tc.beforeCommand))
+			t.Logf("Go mutant outcome=%v (rc=0); fixed outcome=%v (rc=2)", mutant.Outcome, fixed.Outcome)
+			if mutant.Outcome != Allow || fixed.Outcome != Deny {
+				t.Errorf("Go mutant outcome=%v; fixed outcome=%v", mutant.Outcome, fixed.Outcome)
+			}
+		})
 	}
 }
 
-// TestParityEvasionArgumentUncertaintyMutant proves later masking can hide a shifted flag.
+// TestParityEvasionArgumentUncertaintyMutant proves canonical masking needs splitting state.
 func TestParityEvasionArgumentUncertaintyMutant(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
 	source, err := os.ReadFile(pythonGuard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutant := strings.Replace(string(source),
-		"self.arguments_uncertain |= bool(self.git_command) and self.word_splitting",
-		"self.arguments_uncertain |= False", 1)
-	if mutant == string(source) {
-		t.Fatal("argument uncertainty mutation did not change the guard")
-	}
-	script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
-	if err := os.WriteFile(script, []byte(mutant), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	payload := commandPayload(t, map[string]any{"tool_input": map[string]string{
-		"command": `git commit -m $(printf '') -m -n`,
-	}})
-	fixed := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
-	planted := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
-	t.Logf("canonical mutant rc=%d; fixed rc=%d", planted.exit, fixed.exit)
-	if planted.exit != 0 || !planted.marker || fixed.exit != 1 {
-		t.Errorf("canonical mutant rc=%d marker=%v; fixed rc=%d", planted.exit, planted.marker, fixed.exit)
+	for _, tc := range []struct {
+		name, replacement, command string
+	}{
+		{"all argument uncertainty", "False", `git commit -m $(printf '') -m -n`},
+		{"pre-subcommand uncertainty", "bool(self.git_command) and self.word_splitting", roundNineSegmentCases()[0].command},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutant := strings.Replace(string(source),
+				"self.arguments_uncertain |= self.command_word_seen and self.word_splitting",
+				"self.arguments_uncertain |= "+tc.replacement, 1)
+			if mutant == string(source) {
+				t.Fatal("argument uncertainty mutation did not change the guard")
+			}
+			script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
+			if err := os.WriteFile(script, []byte(mutant), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
+			fixed := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
+			planted := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
+			t.Logf("canonical mutant rc=%d; fixed rc=%d", planted.exit, fixed.exit)
+			if planted.exit != 0 || !planted.marker || fixed.exit != 1 {
+				t.Errorf("canonical mutant rc=%d marker=%v; fixed rc=%d", planted.exit, planted.marker, fixed.exit)
+			}
+		})
 	}
 }
 

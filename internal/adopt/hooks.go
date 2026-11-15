@@ -681,6 +681,7 @@ class CommandSpans:
         self.next_data = self.redirect_data = self.word_expansion = False
         self.word_splitting = False
         self.arguments_uncertain = False
+        self.command_word_seen = False
         self.git_command = ""
         self.word_executions, self.nested = [], []
 
@@ -780,6 +781,7 @@ class CommandSpans:
         self.enter_git_command(word, end)
         data = self.next_data or self.redirect_data
         self.mask_word(word, end)
+        self.command_word_seen |= not self.redirect_data
         self.nested.extend((execution, False) for execution in self.word_executions)
         if data:
             self.next_data = self.next_data and self.redirect_data
@@ -788,13 +790,13 @@ class CommandSpans:
         self.word_executions = []
 
     def mask_word(self, word, end):
-        """Exclude data only while expansions preserve argument positions."""
+        """Exclude data; retain splitting after the command word, before subcommands."""
         offset = self.data_offset(word)
         if offset >= 0 and not self.word_splitting and not self.arguments_uncertain:
             self.mask(self.word_start + offset, end)
         else:
             self.uncertain |= self.word_expansion
-        self.arguments_uncertain |= bool(self.git_command) and self.word_splitting
+        self.arguments_uncertain |= self.command_word_seen and self.word_splitting
 
     def enter_git_command(self, word, end):
         """Identify the Git subcommand before interpreting its operands."""
@@ -960,6 +962,7 @@ class CommandSpans:
         self.uncertain = False
         self.next_data = self.redirect_data = False
         self.arguments_uncertain = False
+        self.command_word_seen = False
         self.git_command = ""
 
     def redirection(self):
@@ -1407,6 +1410,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"07b82432098bf77cfbaa590d926183831786af235b577a2a8ca9f9d1e68056aa": "splitting Git option values retain uncertainty before the subcommand",
 	"48e31ba22b03e31c38f447d2f31bedb0cc7b38e65913a50d4530c9d183ac8c51": "quoted array expansions retain splitting inside data operands",
 	"804a1a23108279ab7651d1e10e0a98190a63b291e3d261c482c19f478fa75ffc": "bounded command spans with redirection, substitution and here-document ownership",
 	"3f2ab8c180c95fc84bcbafa58b563586126b689d2251424bf433f0f0206b6333": "complete emitted function docstrings",

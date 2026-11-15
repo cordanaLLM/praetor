@@ -360,6 +360,7 @@ type shellSpans struct {
 	nextData, redirectData         bool
 	wordExpansion, wordSplitting   bool
 	argumentsUncertain             bool
+	commandWordSeen                bool
 	gitCommand                     string
 	executionStart, executionDepth int
 	wordExecutions                 []string
@@ -571,6 +572,7 @@ func (s *shellSpans) finishWord(end int) {
 	s.enterGitCommand(word, end)
 	data := s.nextData || s.redirectData
 	s.maskWord(word, end)
+	s.commandWordSeen = s.commandWordSeen || !s.redirectData
 	for _, execution := range s.wordExecutions {
 		s.nested = append(s.nested, shellInput{text: execution})
 	}
@@ -582,7 +584,7 @@ func (s *shellSpans) finishWord(end int) {
 	s.wordExecutions = nil
 }
 
-// maskWord excludes data only while shell expansions preserve argument positions.
+// maskWord excludes data while retaining splitting after the command word, before any subcommand.
 func (s *shellSpans) maskWord(word string, end int) {
 	offset := s.dataOffset(word)
 	if offset >= 0 && !s.wordSplitting && !s.argumentsUncertain {
@@ -590,7 +592,7 @@ func (s *shellSpans) maskWord(word string, end int) {
 	} else {
 		s.uncertain = s.uncertain || s.wordExpansion
 	}
-	s.argumentsUncertain = s.argumentsUncertain || s.gitCommand != "" && s.wordSplitting
+	s.argumentsUncertain = s.argumentsUncertain || s.commandWordSeen && s.wordSplitting
 }
 
 // enterGitCommand identifies the first Git subcommand before interpreting its operands.
@@ -764,6 +766,7 @@ func (s *shellSpans) split(end, next int) {
 	s.uncertain = false
 	s.nextData, s.redirectData = false, false
 	s.argumentsUncertain = false
+	s.commandWordSeen = false
 	s.gitCommand = ""
 }
 
