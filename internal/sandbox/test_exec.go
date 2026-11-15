@@ -5,6 +5,7 @@ package sandbox
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -45,10 +46,13 @@ func loopbackArguments(command []string) []string {
 	return append(namespaceArguments(Spec{Network: NetworkNone}), testExecTail(command)...)
 }
 
-// testExecTail is the bubblewrap tail both modes share: the caller's filesystem, a private /proc,
-// then the command.
+// testExecTail shares the caller's filesystem with a private /proc and a fresh
+// testcontainers session per binary. Namespace parents all have PID 1; an inherited
+// TESTCONTAINERS_SESSION_ID also bypasses bootstrap's parent start-time identity.
+// Override it inside bubblewrap so neither packages nor runs share a Ryuk name.
 func testExecTail(command []string) []string {
-	return append([]string{"--dev-bind", "/", "/", "--proc", "/proc", "--"}, command...)
+	return append([]string{"--dev-bind", "/", "/", "--proc", "/proc",
+		"--setenv", "TESTCONTAINERS_SESSION_ID", rand.Text(), "--"}, command...)
 }
 
 // publishArguments is the argv after pasta for a container engine host: pasta forwards connects to
