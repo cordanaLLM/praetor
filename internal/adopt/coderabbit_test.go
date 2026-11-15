@@ -7,6 +7,7 @@ package adopt
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,6 +16,162 @@ import (
 	"github.com/cordanaLLM/praetor/internal/docstrings"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// TestCodeRabbitCIEvidenceCreated checks the actual scaffold's schema-defined review guidance.
+func TestCodeRabbitCIEvidenceCreated(t *testing.T) {
+	repo := t.TempDir()
+	s := &adoptSession{repoPath: repo, report: &AdoptReport{}}
+	if err := reconcileCodeRabbit(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	assertCodeRabbitCIEvidence(t, mustRead(t, filepath.Join(repo, codeRabbitFile)))
+}
+
+// assertCodeRabbitCIEvidence checks the global path, schema limit and evidence contract.
+func assertCodeRabbitCIEvidence(t *testing.T, text string) {
+	t.Helper()
+	var got struct {
+		Reviews struct {
+			Instructions []struct {
+				Path         string `yaml:"path"`
+				Instructions string `yaml:"instructions"`
+			} `yaml:"path_instructions"`
+		} `yaml:"reviews"`
+	}
+	if err := util.DecodeYAMLDocument([]byte(text), &got, util.YAMLDocumentOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range got.Reviews.Instructions {
+		if entry.Path != "**" {
+			continue
+		}
+		if len([]rune(entry.Instructions)) > 20000 {
+			t.Fatal("review guidance exceeds schema maxLength 20000")
+		}
+		for _, want := range []string{"CI verification job", ".github/workflows", "make verify-all", "green run", "pull request head", "AGENTS.md", "CLAUDE.md", "coding agents", "not the CodeRabbit reviewer"} {
+			if !strings.Contains(entry.Instructions, want) {
+				t.Errorf("review guidance missing %q: %s", want, entry.Instructions)
+			}
+		}
+		return
+	}
+	t.Fatal("reviews.path_instructions lacks a global CI evidence instruction")
+}
+
+// TestCodeRabbitCIEvidenceManaged checks additive edits and byte preservation of user policy.
+func TestCodeRabbitCIEvidenceManaged(t *testing.T) {
+	const prefix = "# keep header\nreviews:\n  auto_review:\n    drafts: true\n    base_branches: [.*] # keep bases\n"
+	const custom = "  path_instructions: # keep instructions\n    - path: '*.go' # keep glob\n      instructions: |-\n        Keep  two spaces.\n        Keep this line.\n"
+	const suffix = "# keep footer\nchat: {auto_reply: false} # keep chat\n"
+	for name, policy := range map[string]string{"missing": "", "custom": custom} {
+		t.Run(name, func(t *testing.T) {
+			initial := prefix + policy + suffix
+			got, err := mergeCodeRabbit(t.Context(), []byte(initial))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCodeRabbitCIEvidence(t, string(got))
+			if !strings.HasPrefix(string(got), prefix+policy) || !strings.HasSuffix(string(got), suffix) {
+				t.Fatalf("user text or comments changed: %s", got)
+			}
+			rerun, err := mergeCodeRabbit(t.Context(), got)
+			if err != nil || string(rerun) != string(got) {
+				t.Fatalf("instruction not idempotent: %s, %v", rerun, err)
+			}
+		})
+	}
+}
+
+// TestCodeRabbitCIEvidenceKeepsUserGlobal checks existing global guidance remains byte-identical.
+func TestCodeRabbitCIEvidenceKeepsUserGlobal(t *testing.T) {
+	const initial = "reviews:\n  auto_review: {drafts: true, base_branches: [.*]}\n  path_instructions:\n    - path: '**' # user-owned global\n      instructions: 'Use our custom CI policy.' # keep wording\n"
+	got, err := mergeCodeRabbit(t.Context(), []byte(initial))
+	if err != nil || string(got) != initial {
+		t.Fatalf("user global instruction changed: %s, %v", got, err)
+	}
+}
+
+// TestCodeRabbitCIEvidenceEmittedFixture pins the scaffold, fixture and engine configuration.
+func TestCodeRabbitCIEvidenceEmittedFixture(t *testing.T) {
+	for _, path := range [2]string{"testdata/emitted/.coderabbit.yaml", "../../.coderabbit.yaml"} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertCodeRabbitCIEvidence(t, string(got))
+		if string(got) != codeRabbitConfig {
+			t.Errorf("%s differs from codeRabbitConfig", path)
+		}
+	}
+}
+
+// TestCodeRabbitCIEvidenceRefusesMalformed checks that unsafe policy never gets replaced.
+func TestCodeRabbitCIEvidenceRefusesMalformed(t *testing.T) {
+	for name, policy := range map[string]string{
+		"scalar": "true", "mapping": "{}", "scalar entry": "[false]",
+		"missing instructions":    "[{path: '**'}]",
+		"non-string instructions": "[{path: '**', instructions: false}]",
+		"invalid after global":    "[{path: '**', instructions: keep}, {path: 1, instructions: keep}]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := mergeCodeRabbit(t.Context(), []byte("reviews:\n  path_instructions: "+policy+"\n")); err == nil {
+				t.Fatal("accepted malformed path instructions")
+			}
+		})
+	}
+}
+
+// TestCodeRabbitCIEvidenceLayouts checks null, empty, flow and CRLF policy merges.
+func TestCodeRabbitCIEvidenceLayouts(t *testing.T) {
+	for name, policy := range map[string]string{
+		"null":  "  path_instructions: null # keep null\n",
+		"empty": "  path_instructions: [] # keep empty\n",
+		"flow":  "  path_instructions: [{path: '*.go', instructions: 'Keep  spaces.'}] # keep flow\n",
+		"CRLF":  "  path_instructions:\r\n    - path: '*.go'\r\n      instructions: Keep it. # keep CRLF\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			initial := "reviews:\n" + policy
+			if name == "CRLF" {
+				initial = "reviews:\r\n" + policy
+			}
+			got, err := mergeCodeRabbit(t.Context(), []byte(initial))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCodeRabbitCIEvidence(t, string(got))
+			if !strings.Contains(string(got), "# keep") {
+				t.Fatal("lost policy comment")
+			}
+			rerun, err := mergeCodeRabbit(t.Context(), got)
+			if err != nil || string(rerun) != string(got) {
+				t.Fatalf("layout not idempotent: %s, %v", rerun, err)
+			}
+		})
+	}
+}
+
+// TestCodeRabbitCIEvidenceInstructionBounds checks insertion and rejection at the entry cap.
+func TestCodeRabbitCIEvidenceInstructionBounds(t *testing.T) {
+	const prefix = "reviews:\n  auto_review: {drafts: true, base_branches: [.*]}\n  path_instructions:\n"
+	const item = "    - {path: '*.go', instructions: keep}\n"
+	below := prefix + strings.Repeat(item, maxAdoptManifestMappingNodes-1)
+	got, err := mergeCodeRabbit(t.Context(), []byte(below))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCodeRabbitCIEvidence(t, string(got))
+	rerun, err := mergeCodeRabbit(t.Context(), got)
+	if err != nil || string(rerun) != string(got) {
+		t.Fatalf("configured list at cap changed: %v", err)
+	}
+	for name, initial := range map[string]string{"full": below + item, "overfull": string(got) + item} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := mergeCodeRabbit(t.Context(), []byte(initial)); err == nil {
+				t.Fatal("accepted instruction list without capacity")
+			}
+		})
+	}
+}
 
 // TestAdoptCodeRabbitCreatesAndPreserves verifies managed keys, unrelated text and rerun stability.
 func TestAdoptCodeRabbitCreatesAndPreserves(t *testing.T) {
@@ -65,6 +222,8 @@ func assertCodeRabbitSettings(t *testing.T, repo, initial, got string) {
 	}
 	want := strings.Replace(initial, "drafts: false", "drafts: true", 1)
 	want = strings.Replace(want, "['release/.*']", "['release/.*', .*]", 1)
+	instructions := codeRabbitConfig[strings.Index(codeRabbitConfig, "  path_instructions:"):]
+	want = strings.Replace(want, "\nchat:", "\n"+instructions+"chat:", 1)
 	if got != want {
 		t.Fatalf("unrelated text changed:\n%s\nwant:\n%s", got, want)
 	}
@@ -157,7 +316,11 @@ func TestCodeRabbitBranchesBoundary(t *testing.T) {
 		t.Fatalf("append at bound: %v", err)
 	}
 	assertCodeRabbitDraftKeys(t, string(got))
-	for _, initial := range [2]string{at, string(got)} {
+	configured, err := mergeCodeRabbit(t.Context(), []byte(at))
+	if err != nil {
+		t.Fatalf("configure at bound: %v", err)
+	}
+	for _, initial := range [2]string{string(configured), string(got)} {
 		rerun, err := mergeCodeRabbit(t.Context(), []byte(initial))
 		if err != nil || string(rerun) != initial {
 			t.Fatalf("configured at-bound list changed on rerun: %v", err)

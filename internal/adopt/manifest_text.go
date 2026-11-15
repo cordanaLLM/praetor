@@ -295,19 +295,31 @@ func yamlPathBlock(keys []string, value *yaml.Node, indent int, eol string) (str
 	return block.String(), nil
 }
 
-// patchYAMLLeaf edits a plain scalar token or appends one string to an existing sequence.
+// patchYAMLLeaf edits a plain scalar token or appends one node to an existing sequence.
 // Other layouts use the shared node encoder, preserving comments and unrelated values.
 func patchYAMLLeaf(text manifestText, key, old, value *yaml.Node, boundary int) (string, bool) {
 	if old.Kind == yaml.SequenceNode && value.Kind == yaml.SequenceNode && len(value.Content) == len(old.Content)+1 {
-		item := util.YAMLScalar(value.Content[len(old.Content)].Value)
-		if old.Style&yaml.FlowStyle != 0 {
-			return extendFlowYAMLSequence(text, old, []string{item})
-		}
-		end := text.blockEnd(boundary)
-		block := strings.Repeat(" ", old.Column-1) + "- " + item + text.eol
-		return string(text.splice(end, end, block)), true
+		return patchYAMLSequence(text, old, value, boundary)
 	}
 	return patchYAMLScalar(text, key, old, value)
+}
+
+// patchYAMLSequence appends one encoded node without rewriting existing items or comments.
+func patchYAMLSequence(text manifestText, old, value *yaml.Node, boundary int) (string, bool) {
+	addition := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: value.Content[len(old.Content):]}
+	if old.Style&yaml.FlowStyle != 0 {
+		item := *addition.Content[0]
+		item.Style = yaml.FlowStyle
+		encoded, err := util.EncodeYAMLDocument(&item)
+		if err != nil {
+			return "", false
+		}
+		token := strings.TrimSuffix(strings.TrimPrefix(string(encoded), util.YAMLDocumentStart), "\n")
+		return extendFlowYAMLSequence(text, old, []string{token})
+	}
+	end := text.blockEnd(boundary)
+	block, err := yamlPathBlock(nil, addition, old.Column-1, text.eol)
+	return string(text.splice(end, end, block)), err == nil
 }
 
 // patchYAMLScalar replaces a plain scalar token while retaining its line's spacing and comment.
