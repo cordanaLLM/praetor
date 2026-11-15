@@ -227,9 +227,12 @@ func TestStateSyncUntrackedSymlink(t *testing.T) {
 // the reason; a ledger at the bound binds.
 func TestStateSyncIrregularStateInputFailsClosed_3D(t *testing.T) {
 	t.Run("oversized ledger", func(t *testing.T) {
-		root := syncFixture(t)
+		root := t.TempDir()
+		if err := InitWorkingDir(root); err != nil {
+			t.Fatal(err)
+		}
 		backlog := filepath.Join(root, WorkingDirName, "BACKLOG.md")
-		writeIntegrityFile(t, backlog, strings.Repeat("x", contextopt.MaxSourceBytes))
+		writeIntegrityFile(t, backlog, strings.Repeat("xxxxxxx\n", contextopt.MaxSourceBytes/8))
 		if _, err := SyncState(t.Context(), root, "ledger at the bound"); err != nil {
 			t.Fatalf("a ledger at the per-file bound failed the sync: %v", err)
 		}

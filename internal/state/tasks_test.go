@@ -7,11 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// TestInitWorkingDirContext uses cancelled, nil, and valid contexts and requires initialization to reject invalid contexts without writing and create a readable ledger for the valid one.
 func TestInitWorkingDirContext(t *testing.T) {
 	dir := t.TempDir()
 	cancelled, cancel := context.WithCancel(t.Context())
@@ -19,7 +22,7 @@ func TestInitWorkingDirContext(t *testing.T) {
 	if err := InitWorkingDirContext(cancelled, dir); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancelled initialization: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, WorkingDirName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), filepath.Join(dir, WorkingDirName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("cancelled initialization wrote working directory: %v", err)
 	}
 	var absent context.Context
@@ -34,6 +37,7 @@ func TestInitWorkingDirContext(t *testing.T) {
 	}
 }
 
+// TestArchiveCompletedTasksPreservesOpenWhenBacklogUnreadable plants a completed task and an unreadable backlog and requires archiving to fail without losing the open ledger.
 func TestArchiveCompletedTasksPreservesOpenWhenBacklogUnreadable(t *testing.T) {
 	dir := t.TempDir()
 	if err := InitWorkingDir(dir); err != nil {
@@ -54,12 +58,13 @@ func TestArchiveCompletedTasksPreservesOpenWhenBacklogUnreadable(t *testing.T) {
 	if count, err := ArchiveCompletedTasks(dir, "fixture"); err == nil || count != 0 {
 		t.Fatalf("unreadable backlog should fail: %d, %v", count, err)
 	}
-	content, err := os.ReadFile(open)
+	content, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), open)
 	if err != nil || string(content) != original {
 		t.Fatalf("archive lost OPEN content: %q, %v", content, err)
 	}
 }
 
+// TestTasks_Positive_Lifecycle adds, completes and archives one task into its monthly file.
 func TestTasks_Positive_Lifecycle(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -96,18 +101,19 @@ func TestTasks_Positive_Lifecycle(t *testing.T) {
 		t.Fatalf("ArchiveCompletedTasks failed (%d archived): %v", archived, err)
 	}
 
-	verifyBacklogArchived(t, tempDir, "Milestone Engine")
+	verifyTaskArchived(t, tempDir, "Milestone Engine")
 }
 
-func verifyBacklogArchived(t *testing.T, tempDir, expectedTask string) {
+// verifyTaskArchived checks the monthly archive rather than the live backlog.
+func verifyTaskArchived(t *testing.T, tempDir, expectedTask string) {
 	t.Helper()
-	backlogPath := filepath.Join(tempDir, WorkingDirName, "BACKLOG.md")
-	content, err := os.ReadFile(backlogPath)
+	backlogPath := filepath.Join(tempDir, WorkingDirName, "archive", "OPEN-"+time.Now().UTC().Format(archiveMonthLayout)+".md")
+	content, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), backlogPath)
 	if err != nil {
-		t.Fatalf("read BACKLOG.md failed: %v", err)
+		t.Fatalf("read monthly task archive failed: %v", err)
 	}
 	if !strings.Contains(string(content), expectedTask) {
-		t.Errorf("expected BACKLOG.md to contain '%s', got: %s", expectedTask, string(content))
+		t.Errorf("expected monthly task archive to contain '%s', got: %s", expectedTask, string(content))
 	}
 }
 
@@ -160,10 +166,10 @@ func TestTasks_Boundary_MultipleAndNumeric(t *testing.T) {
 	}
 }
 
-// TestArchiveCompletedTasks_CreatesPrivateBacklog pins the ledger's private mode: a BACKLOG.md
-// the archive creates is owner-only, like OPEN.md. An earlier revision of this change widened
+// TestArchiveCompletedTasks_CreatesPrivateMonthlyArchive pins the ledger's private mode: an
+// archive is owner-only, like OPEN.md. An earlier revision widened
 // both to 0644; the literal mode here fails on any such widening.
-func TestArchiveCompletedTasks_CreatesPrivateBacklog(t *testing.T) {
+func TestArchiveCompletedTasks_CreatesPrivateMonthlyArchive(t *testing.T) {
 	dir := t.TempDir()
 	workingdir := filepath.Join(dir, WorkingDirName)
 	if err := os.Mkdir(workingdir, 0o700); err != nil {
@@ -175,12 +181,12 @@ func TestArchiveCompletedTasks_CreatesPrivateBacklog(t *testing.T) {
 	if count, err := ArchiveCompletedTasks(dir, "fixture"); err != nil || count != 1 {
 		t.Fatalf("archive = %d, %v; want 1 task archived", count, err)
 	}
-	testsupport.RequireCreatedMode(t, filepath.Join(workingdir, "BACKLOG.md"), 0o600)
+	testsupport.RequireCreatedMode(t, filepath.Join(workingdir, "archive", "OPEN-"+time.Now().UTC().Format(archiveMonthLayout)+".md"), 0o600)
 }
 
 // ListBacklogTasksContext reads BACKLOG.md through the OPEN.md parser: each row carries its
-// heading and its 1-based line, an archived discharged row is completed, and a fenced row is
-// an example. An archive into the seeded ledger keeps every row it writes completed.
+// heading and its 1-based line, and a fenced row is an example. Archiving OPEN.md never adds
+// its completed rows to the live backlog.
 func TestListBacklogTasks_Positive_SectionsLinesAndArchivedRows(t *testing.T) {
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
@@ -203,17 +209,11 @@ func TestListBacklogTasks_Positive_SectionsLinesAndArchivedRows(t *testing.T) {
 	}
 	want := map[string]row{"deferred": {"Future Workstreams", 8, false}, "later": {"Later", 13, false}}
 	for _, task := range tasks {
-		if task.Description == "shipped" {
-			if !task.Completed || !strings.HasPrefix(task.Section, "Discharged Tasks") {
-				t.Errorf("archived row = %+v", task)
-			}
-			continue
-		}
 		if got, ok := want[task.Description]; !ok || got != (row{task.Section, task.Line, task.Completed}) {
 			t.Errorf("row %+v, want %+v", task, got)
 		}
 	}
-	if len(tasks) != 3 {
+	if len(tasks) != 2 {
 		t.Fatalf("tasks = %+v", tasks)
 	}
 }
