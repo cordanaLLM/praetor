@@ -826,8 +826,12 @@ class CommandSpans:
         return True
 
     def split(self, end, next_position):
-        """Record an outer boundary and reset its argument context."""
+        """Refuse splitting commit/am arguments before resetting command context."""
         self.finish_word(end)
+        if self.git_command and self.arguments_uncertain and not self.stack:
+            raise ValueError(
+                "argument list unknown at scan time: write arguments literally or quote expansion"
+            )
         start = self.start
         part = "".join(self.judged[start:end])
         self.whole |= self.uncertain and commit_command(part, self.short_pattern)

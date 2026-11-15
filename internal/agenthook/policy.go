@@ -426,7 +426,7 @@ func (s *shellSpans) documentStep() bool {
 	return true
 }
 
-// scanCommandSpans masks data operands while collecting executable message substitutions.
+// scanCommandSpans masks data operands and refuses unknown commit/am argument lists.
 func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 	if !shellCommitPattern.MatchString(joinLineContinuations(command)) {
 		return []shellSpan{{command, readOnlyVetoPattern.MatchString(command)}}, nil, nil
@@ -434,11 +434,14 @@ func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 	s := shellSpans{command: command, judged: []byte(command), wordStart: -1, executionStart: -1,
 		whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command)}
 	for s.position < len(command) {
-		if !s.step() {
+		if !s.step() || s.err != nil {
 			return nil, nil, s.err
 		}
 	}
 	s.split(len(command), len(command))
+	if s.err != nil {
+		return nil, nil, s.err
+	}
 	if len(s.stack) > 0 {
 		return nil, nil, fmt.Errorf("invalid shell command: unbalanced shell stack")
 	}
@@ -756,9 +759,13 @@ func (s *shellSpans) singleQuote() bool {
 	return true
 }
 
-// split records an outer boundary while pending documents retain their owning part index.
+// split refuses splitting commit/am arguments before resetting the command context.
 func (s *shellSpans) split(end, next int) {
 	s.finishWord(end)
+	if s.gitCommand != "" && s.argumentsUncertain && len(s.stack) == 0 {
+		s.err = fmt.Errorf("argument list unknown at scan time: write arguments literally or quote expansion")
+		return
+	}
 	part := string(s.judged[s.start:end])
 	s.whole = s.whole || s.uncertain && shellCommitPattern.MatchString(joinLineContinuations(part))
 	s.parts = append(s.parts, shellSpan{part, readOnlyVetoPattern.MatchString(s.command[s.start:end])})

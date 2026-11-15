@@ -95,8 +95,8 @@ func evasionCommitSegmentCases() []struct {
 		{"state alias", `alias git=other; git commit -m x && tail -n 1`, 2},
 		{"state export", `export X=1; git commit -m x && tail -n 1`, 2},
 		{"state function", `function git() { other; }; git commit -m x && tail -n 1`, 2},
-		// The nesting bound admits unquoted execution; its value still can split.
-		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -1", 0},
+		// The nesting bound admits parsing; unquoted execution retains splitting.
+		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -1", 2},
 		{"nesting past bound", "git commit -m " + strings.Repeat("$(", 17) + "cat msg.txt" + strings.Repeat(")", 17) + " && tail -n 1", 2},
 		{"heredoc lines at bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 255) + "EOF\ntail -n 1", 0},
 		{"heredoc lines past bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 256) + "EOF\ntail -n 1", 2},
@@ -256,7 +256,7 @@ func evasionRoundSevenCases() []struct {
 		{"quoted empty variable message", `git commit -m "$msg" -m 'mention -n here'`, 0},
 		{"quoted empty backtick message", "git commit -m \"`printf ''`\" -m 'mention -n here'", 0},
 		{"quoted glob message", `git commit -m "*" -m 'mention -n here'`, 0},
-		{"uncertainty resets at separator", `git commit -m $msg; git commit -m 'mention -n here'`, 0},
+		{"uncertainty resets at separator", `git commit -m $msg; git commit -m 'mention -n here'`, 2},
 	}
 }
 
@@ -303,7 +303,59 @@ func evasionRoundNineCases() []struct {
 		{"command word scalar", `$HOME/bin/git commit -m 'mention -n here'`, 0},
 		{"indented command word scalar", `  $HOME/bin/git commit -m 'mention -n here'`, 0},
 		{"pre-subcommand quoted scalar", `git -C "$dir" commit -m 'mention -n here'`, 0},
-		{"pre-subcommand uncertainty resets", `git -C $dir commit -m x; git commit -m 'mention -n here'`, 0},
+		{"pre-subcommand uncertainty resets", `git -C $dir commit -m x; git commit -m 'mention -n here'`, 2},
+	}
+}
+
+// evasionRoundTenCases removes later flags from the reviewer's runtime-only examples.
+func evasionRoundTenCases() []struct {
+	name, command string
+	want          int
+} {
+	previous := evasionRoundEightCases()
+	tail := " && git log -n 1"
+	values := strings.Join([]string{"msg", "-n"}, " ")
+	variable := "msg='" + values + "'; "
+	positional := "set -- " + values + "; "
+	cases := []struct {
+		name, command string
+		want          int
+	}{
+		{"runtime-only message parameter", variable + strings.TrimSuffix(previous[0].command, tail), 2},
+		{"runtime-only positional array", positional + strings.TrimSuffix(previous[1].command, tail), 2},
+		{"runtime-only quoted message parameter", variable + strings.TrimSuffix(previous[8].command, tail), 0},
+		{"runtime-only quoted positional scalar", positional + strings.TrimSuffix(previous[9].command, tail), 0},
+		{"runtime-only quoted positional message", positional + `msg="$*"; ` + strings.TrimSuffix(previous[8].command, tail), 0},
+	}
+	for _, tc := range previous {
+		tc.name = "standalone " + tc.name
+		tc.command = strings.TrimSuffix(tc.command, tail)
+		cases = append(cases, tc)
+	}
+	for _, tc := range evasionRoundNineCases()[:3] {
+		tc.name = "standalone " + tc.name
+		tc.command = strings.TrimSuffix(tc.command, " -m -n")
+		cases = append(cases, tc)
+	}
+	return append(cases, evasionRoundTenCasesControls()...)
+}
+
+// evasionRoundTenCasesControls plants literal arguments and separator-local uncertainty controls.
+func evasionRoundTenCasesControls() []struct {
+	name, command string
+	want          int
+} {
+	previous := evasionRoundSevenCases()
+	reset := strings.Replace(evasionRoundNineCases()[6].command, "commit -m x;", "status;", 1)
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"standalone substitution", strings.TrimSuffix(previous[0].command, " -m -n"), 2},
+		{"standalone glob", strings.TrimSuffix(previous[3].command, " -m -n"), 2},
+		{"standalone am substitution", strings.TrimSuffix(previous[10].command, " > -n"), 2},
+		{"literal commit arguments", strings.Join([]string{"git", "commit", "-m", "msg"}, " "), 0},
+		{"read-only uncertainty resets", reset, 0},
 	}
 }
 
@@ -315,7 +367,8 @@ func TestEmittedEvasionCommitSegments(t *testing.T) {
 	cases = append(cases, evasionRoundFiveCases()...)
 	cases = append(cases, evasionRoundSevenCases()...)
 	cases = append(cases, evasionRoundEightCases()...)
-	for _, tc := range append(cases, evasionRoundNineCases()...) {
+	cases = append(cases, evasionRoundNineCases()...)
+	for _, tc := range append(cases, evasionRoundTenCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
 			t.Logf("emitted rc=%d want=%d", got, tc.want)
@@ -329,8 +382,47 @@ func TestEmittedEvasionCommitSegments(t *testing.T) {
 	}
 }
 
+// splittingSegmentCase enumerates rows whose argument lists can split at runtime.
+func splittingSegmentCase(name string) bool {
+	name = strings.TrimPrefix(name, "standalone ")
+	return slices.Contains([]string{
+		"nesting at bound", "own parameter",
+		"am parameter", "own substitution",
+		"positional glob", "positional question glob",
+		"positional bracket glob", "positional heredoc substitution",
+		"process input flag", "process output flag",
+		"process am flag", "process file flag",
+		"process nested executable", "splitting message execution",
+		"splitting nested execution", "splitting message parameter",
+		"splitting file parameter", "splitting reuse parameter",
+		"splitting reedit parameter", "splitting author parameter",
+		"splitting date parameter", "splitting message glob",
+		"splitting joined message", "splitting message backticks",
+		"substitution suffix hash flag", "empty substitution shifts message",
+		"empty variable shifts message", "empty backtick shifts message",
+		"glob shifts message", "positional substitution shifts message",
+		"positional variable shifts message", "positional backtick shifts message",
+		"positional glob shifts message", "attached substitution shifts message",
+		"file substitution shifts message", "am substitution retains operands",
+		"am variable retains operands", "am backtick retains operands",
+		"am glob retains operands", "uncertainty resets at separator",
+		"runtime splitting message parameter", "quoted positional array message",
+		"quoted braced positional array message", "quoted array message",
+		"quoted prefix names message", "quoted array keys message",
+		"quoted array slice message", "quoted array shifts message",
+		"pre-subcommand positional array", "pre-subcommand quoted array",
+		"pre-subcommand splitting scalar", "pre-subcommand uncertainty resets",
+		"runtime-only message parameter", "runtime-only positional array",
+		"substitution", "glob",
+		"am substitution",
+	}, name)
+}
+
 // evasionSegmentRefusal names the exact refusal required by malformed or flagged rows.
 func evasionSegmentRefusal(name string) string {
+	if splittingSegmentCase(name) {
+		return agenthook.InvalidInputRefusal + "argument list unknown at scan time: write arguments literally or quote expansion"
+	}
 	errors := map[string]string{
 		"unbalanced quote": "unbalanced quote", "commit option quote": "unbalanced quote",
 		"am option quote": "unbalanced quote", "unicode commit quote": "unbalanced quote",
@@ -385,10 +477,12 @@ func evasionRedirectCases() []struct {
 	}
 }
 
-// TestEmittedEvasionSegmentMutants proves both whole-command matching paths regress.
-func TestEmittedEvasionSegmentMutants(t *testing.T) {
-	python, fixed := emittedInterceptor(t)
-	for _, tc := range []struct {
+// evasionSegmentMutants builds independent regressions of the retained parsing defences.
+func evasionSegmentMutants() []struct {
+	name, before, after, command string
+	want                         int
+} {
+	return []struct {
 		name, before, after, command string
 		want                         int
 	}{
@@ -403,9 +497,10 @@ func TestEmittedEvasionSegmentMutants(t *testing.T) {
 			`git commit "$x" && git log -n 1`, 0},
 		{"process execution", "if self.command.startswith((\"<(\", \">(\"), self.position):", "if False:",
 			`git commit <(printf %s -n)`, 0},
-		{"one word operand", "if offset >= 0 and not self.word_splitting and not self.arguments_uncertain:",
-			"if offset >= 0 and not self.arguments_uncertain:",
-			`git commit -m $(printf '%s %s' msg -n)`, 0},
+		{"runtime-only message parameter", "if self.git_command and self.arguments_uncertain and not self.stack:",
+			"if False:", evasionRoundTenCases()[0].command, 0},
+		{"runtime-only positional array", "if self.git_command and self.arguments_uncertain and not self.stack:",
+			"if False:", evasionRoundTenCases()[1].command, 0},
 		{"argument uncertainty", "self.arguments_uncertain |= self.command_word_seen and self.word_splitting",
 			"self.arguments_uncertain |= False", `git commit -m $(printf '') -m -n`, 0},
 		{"pre-subcommand uncertainty", "self.arguments_uncertain |= self.command_word_seen and self.word_splitting",
@@ -414,7 +509,13 @@ func TestEmittedEvasionSegmentMutants(t *testing.T) {
 		{"escaped boundary", "if not self.word_boundary():",
 			"if self.position > 0 and self.command[self.position - 1] not in \" \\t\\n;|&(\":",
 			`git commit -m fix\ #note -n`, 0},
-	} {
+	}
+}
+
+// TestEmittedEvasionSegmentMutants proves both whole-command matching paths regress.
+func TestEmittedEvasionSegmentMutants(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	for _, tc := range evasionSegmentMutants() {
 		t.Run(tc.name, func(t *testing.T) {
 			rendered := buildBlockEvasionPY()
 			mutant := strings.Replace(rendered, tc.before, tc.after, 1)
@@ -972,7 +1073,12 @@ func boundLine(prefix, unit string, width int) string {
 // boundLines fills the scan bound with lines of unit repeated, each one character short of
 // agenthook.MaxScanLineChars so the line break fits.
 func boundLines(unit string) string {
-	line := boundLine("", unit, agenthook.MaxScanLineChars-1) + "\n"
+	return boundLinesWithFrame("", unit, "")
+}
+
+// boundLinesWithFrame fills the scan bound with framed lines, including their closing suffix.
+func boundLinesWithFrame(prefix, unit, suffix string) string {
+	line := boundLine(prefix, unit, agenthook.MaxScanLineChars-1-len(suffix)) + suffix + "\n"
 	return strings.Repeat(line, agenthook.MaxScanChars/agenthook.MaxScanLineChars)
 }
 
@@ -985,8 +1091,9 @@ func benignBoundCommand() string { return boundLines("x") }
 // filling the bound. Those are the find line and lines of `sed -i `, which cost cubic time
 // before the two rules started at the first command word of a line, and `$` runs before a
 // brace inside an open double quote after `git am` and after SKIP= (the costliest shapes the
-// reviews of an earlier quote-aware scan measured). A line break turns the read-only exemption
-// off for the skip-variable rule (agenthook.ReadOnlyVeto). The short-flag rule now scans each
+// reviews of an earlier quote-aware scan measured). Git am dollar runs remain literal printf
+// data, so argument uncertainty cannot short-circuit the matcher workload. A line break turns
+// the read-only exemption off for the skip-variable rule (agenthook.ReadOnlyVeto). The short-flag rule now scans each
 // outer command independently, including across newlines. Single-line shapes at the line
 // bound include read-only command words, separators back to back, a
 // separator before blanks, a Git name before blanks.
@@ -1010,8 +1117,8 @@ func scanBoundShapes() []scanShape {
 		{"git option chains", boundLines(" -git"), 0},
 		{"git option values naming git", boundLines(" --a=git"), 0},
 		{"git directory options naming git", boundLines(" -C /git"), 0},
-		{"am before odd dollar runs", boundLines(`git am "$$$$$$$$$${`), 0},
-		{"am before even dollar run", boundLines(`git am "$$$${`), 0},
+		{"am before odd dollar runs", boundLinesWithFrame(`printf '%s' '`, `git am "$$$$$$$$$${`, `'`), 0},
+		{"am before even dollar run", boundLinesWithFrame(`printf '%s' '`, `git am "$$$${`, `'`), 0},
 		{"skip variable dollar runs", boundLines(`SKIP="$$$$$${`), 0},
 		{"read-only words to the end", boundLine("git commit -m x; git log", " -n", width), 0},
 		{"read-only words on lines", boundLines("git commit -m x; git log -n 5 "), 0},
@@ -1080,7 +1187,7 @@ func TestScanPassBudgetRefusesPlantedSuperlinearMatchers(t *testing.T) {
 	// margin (around 750 passes on host, >= 10x budget) against runner interference.
 	shapes["planted dollar runs"] = scanShape{
 		name:    "planted dollar runs",
-		command: boundLines(`git am "$$$$$$$$$$$${`),
+		command: boundLinesWithFrame(`printf '%s' '`, `git am "$$$$$$$$$$$${`, `'`),
 		want:    0,
 	}
 	// The find plant on find lines held 128 to 131 passes on host but dropped to 89.2 on

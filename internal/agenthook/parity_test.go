@@ -477,8 +477,8 @@ func commitSegmentCases() []struct {
 		{"state alias", `alias git=other; git commit -m x && tail -n 1`, 2},
 		{"state export", `export X=1; git commit -m x && tail -n 1`, 2},
 		{"state function", `function git() { other; }; git commit -m x && tail -n 1`, 2},
-		// The nesting bound admits unquoted execution; its value still can split.
-		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -1", 0},
+		// The nesting bound admits parsing; unquoted execution retains splitting.
+		{"nesting at bound", "git commit -m " + strings.Repeat("$(", 16) + "cat msg.txt" + strings.Repeat(")", 16) + " && tail -1", 2},
 		{"nesting past bound", "git commit -m " + strings.Repeat("$(", 17) + "cat msg.txt" + strings.Repeat(")", 17) + " && tail -n 1", 2},
 		{"heredoc lines at bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 255) + "EOF\ntail -n 1", 0},
 		{"heredoc lines past bound", "git commit -F - <<EOF\n" + strings.Repeat("x\n", 256) + "EOF\ntail -n 1", 2},
@@ -638,7 +638,7 @@ func roundSevenSegmentCases() []struct {
 		{"quoted empty variable message", `git commit -m "$msg" -m 'mention -n here'`, 0},
 		{"quoted empty backtick message", "git commit -m \"`printf ''`\" -m 'mention -n here'", 0},
 		{"quoted glob message", `git commit -m "*" -m 'mention -n here'`, 0},
-		{"uncertainty resets at separator", `git commit -m $msg; git commit -m 'mention -n here'`, 0},
+		{"uncertainty resets at separator", `git commit -m $msg; git commit -m 'mention -n here'`, 2},
 	}
 }
 
@@ -685,7 +685,59 @@ func roundNineSegmentCases() []struct {
 		{"command word scalar", `$HOME/bin/git commit -m 'mention -n here'`, 0},
 		{"indented command word scalar", `  $HOME/bin/git commit -m 'mention -n here'`, 0},
 		{"pre-subcommand quoted scalar", `git -C "$dir" commit -m 'mention -n here'`, 0},
-		{"pre-subcommand uncertainty resets", `git -C $dir commit -m x; git commit -m 'mention -n here'`, 0},
+		{"pre-subcommand uncertainty resets", `git -C $dir commit -m x; git commit -m 'mention -n here'`, 2},
+	}
+}
+
+// roundTenSegmentCases removes later flags from the reviewer's runtime-only examples.
+func roundTenSegmentCases() []struct {
+	name, command string
+	want          int
+} {
+	previous := roundEightSegmentCases()
+	tail := " && git log -n 1"
+	values := strings.Join([]string{"msg", "-n"}, " ")
+	variable := "msg='" + values + "'; "
+	positional := "set -- " + values + "; "
+	cases := []struct {
+		name, command string
+		want          int
+	}{
+		{"runtime-only message parameter", variable + strings.TrimSuffix(previous[0].command, tail), 2},
+		{"runtime-only positional array", positional + strings.TrimSuffix(previous[1].command, tail), 2},
+		{"runtime-only quoted message parameter", variable + strings.TrimSuffix(previous[8].command, tail), 0},
+		{"runtime-only quoted positional scalar", positional + strings.TrimSuffix(previous[9].command, tail), 0},
+		{"runtime-only quoted positional message", positional + `msg="$*"; ` + strings.TrimSuffix(previous[8].command, tail), 0},
+	}
+	for _, tc := range previous {
+		tc.name = "standalone " + tc.name
+		tc.command = strings.TrimSuffix(tc.command, tail)
+		cases = append(cases, tc)
+	}
+	for _, tc := range roundNineSegmentCases()[:3] {
+		tc.name = "standalone " + tc.name
+		tc.command = strings.TrimSuffix(tc.command, " -m -n")
+		cases = append(cases, tc)
+	}
+	return append(cases, roundTenSegmentCasesControls()...)
+}
+
+// roundTenSegmentCasesControls plants literal arguments and separator-local uncertainty controls.
+func roundTenSegmentCasesControls() []struct {
+	name, command string
+	want          int
+} {
+	previous := roundSevenSegmentCases()
+	reset := strings.Replace(roundNineSegmentCases()[6].command, "commit -m x;", "status;", 1)
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"standalone substitution", strings.TrimSuffix(previous[0].command, " -m -n"), 2},
+		{"standalone glob", strings.TrimSuffix(previous[3].command, " -m -n"), 2},
+		{"standalone am substitution", strings.TrimSuffix(previous[10].command, " > -n"), 2},
+		{"literal commit arguments", strings.Join([]string{"git", "commit", "-m", "msg"}, " "), 0},
+		{"read-only uncertainty resets", reset, 0},
 	}
 }
 
@@ -698,7 +750,8 @@ func TestParityEvasionCommitSegments(t *testing.T) {
 	cases = append(cases, roundFiveSegmentCases()...)
 	cases = append(cases, roundSevenSegmentCases()...)
 	cases = append(cases, roundEightSegmentCases()...)
-	for _, tc := range append(cases, roundNineSegmentCases()...) {
+	cases = append(cases, roundNineSegmentCases()...)
+	for _, tc := range append(cases, roundTenSegmentCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
 			python := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
@@ -748,10 +801,11 @@ func TestEvasionArgumentUncertaintyMutant(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			builtin := policy(t)
 			fixed := builtin.Command(tc.command)
-			mutant := builtin.Command(maskWithoutArgumentUncertainty(t, tc.command, tc.beforeCommand))
-			t.Logf("Go mutant outcome=%v (rc=0); fixed outcome=%v (rc=2)", mutant.Outcome, fixed.Outcome)
-			if mutant.Outcome != Allow || fixed.Outcome != Deny {
-				t.Errorf("Go mutant outcome=%v; fixed outcome=%v", mutant.Outcome, fixed.Outcome)
+			masked := maskWithoutArgumentUncertainty(t, tc.command, tc.beforeCommand)
+			matched := builtinRule(BuiltinRules()[1], evasionMessage).matches(masked)
+			t.Logf("Go masking mutant flag match=%v; fixed outcome=%v (rc=2)", matched, fixed.Outcome)
+			if matched || fixed.Outcome != Deny {
+				t.Errorf("Go masking mutant flag match=%v; fixed outcome=%v", matched, fixed.Outcome)
 			}
 		})
 	}
@@ -792,6 +846,35 @@ func TestParityEvasionArgumentUncertaintyMutant(t *testing.T) {
 	}
 }
 
+// TestParityEvasionUnknownArgumentsMutant proves both exact examples need explicit refusal.
+func TestParityEvasionUnknownArgumentsMutant(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	source, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutant := strings.Replace(string(source),
+		"if self.git_command and self.arguments_uncertain and not self.stack:", "if False:", 1)
+	if mutant == string(source) {
+		t.Fatal("unknown argument refusal mutation did not change the guard")
+	}
+	script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
+	if err := os.WriteFile(script, []byte(mutant), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range roundTenSegmentCases()[:2] {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
+			fixed := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
+			planted := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
+			t.Logf("canonical mutant rc=%d; fixed rc=%d", planted.exit, fixed.exit)
+			if planted.exit != 0 || !planted.marker || fixed.exit != 1 {
+				t.Errorf("canonical mutant rc=%d marker=%v; fixed rc=%d", planted.exit, planted.marker, fixed.exit)
+			}
+		})
+	}
+}
+
 // checkSegmentRefusal rejects crashes and unrelated refusals for flagged parity rows.
 func checkSegmentRefusal(t *testing.T, name string, code int, reason string, stderr []byte) {
 	t.Helper()
@@ -807,8 +890,47 @@ func checkSegmentRefusal(t *testing.T, name string, code int, reason string, std
 	}
 }
 
+// splittingSegmentCase enumerates rows whose argument lists can split at runtime.
+func splittingSegmentCase(name string) bool {
+	name = strings.TrimPrefix(name, "standalone ")
+	return slices.Contains([]string{
+		"nesting at bound", "own parameter",
+		"am parameter", "own substitution",
+		"positional glob", "positional question glob",
+		"positional bracket glob", "positional heredoc substitution",
+		"process input flag", "process output flag",
+		"process am flag", "process file flag",
+		"process nested executable", "splitting message execution",
+		"splitting nested execution", "splitting message parameter",
+		"splitting file parameter", "splitting reuse parameter",
+		"splitting reedit parameter", "splitting author parameter",
+		"splitting date parameter", "splitting message glob",
+		"splitting joined message", "splitting message backticks",
+		"substitution suffix hash flag", "empty substitution shifts message",
+		"empty variable shifts message", "empty backtick shifts message",
+		"glob shifts message", "positional substitution shifts message",
+		"positional variable shifts message", "positional backtick shifts message",
+		"positional glob shifts message", "attached substitution shifts message",
+		"file substitution shifts message", "am substitution retains operands",
+		"am variable retains operands", "am backtick retains operands",
+		"am glob retains operands", "uncertainty resets at separator",
+		"runtime splitting message parameter", "quoted positional array message",
+		"quoted braced positional array message", "quoted array message",
+		"quoted prefix names message", "quoted array keys message",
+		"quoted array slice message", "quoted array shifts message",
+		"pre-subcommand positional array", "pre-subcommand quoted array",
+		"pre-subcommand splitting scalar", "pre-subcommand uncertainty resets",
+		"runtime-only message parameter", "runtime-only positional array",
+		"substitution", "glob",
+		"am substitution",
+	}, name)
+}
+
 // segmentRefusal names the exact refusal required by each malformed or flagged row.
 func segmentRefusal(name string) string {
+	if splittingSegmentCase(name) {
+		return InvalidInputRefusal + "argument list unknown at scan time: write arguments literally or quote expansion"
+	}
 	errors := map[string]string{
 		"unbalanced quote": "unbalanced quote", "commit option quote": "unbalanced quote",
 		"am option quote": "unbalanced quote", "unicode commit quote": "unbalanced quote",

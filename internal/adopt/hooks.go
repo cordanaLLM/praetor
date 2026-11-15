@@ -950,8 +950,12 @@ class CommandSpans:
         return True
 
     def split(self, end, next_position):
-        """Record an outer boundary and reset its argument context."""
+        """Refuse splitting commit/am arguments before resetting command context."""
         self.finish_word(end)
+        if self.git_command and self.arguments_uncertain and not self.stack:
+            raise ValueError(
+                "argument list unknown at scan time: write arguments literally or quote expansion"
+            )
         start = self.start
         part = "".join(self.judged[start:end])
         self.whole |= self.uncertain and commit_command(part, self.short_pattern)
@@ -1410,6 +1414,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"6c6f93592ceb1781566f9862c45fc645c59bf8d232074797c1f27ffd3d67691c": "refuse commit/am argument lists with runtime splitting",
 	"07b82432098bf77cfbaa590d926183831786af235b577a2a8ca9f9d1e68056aa": "splitting Git option values retain uncertainty before the subcommand",
 	"48e31ba22b03e31c38f447d2f31bedb0cc7b38e65913a50d4530c9d183ac8c51": "quoted array expansions retain splitting inside data operands",
 	"804a1a23108279ab7651d1e10e0a98190a63b291e3d261c482c19f478fa75ffc": "bounded command spans with redirection, substitution and here-document ownership",
