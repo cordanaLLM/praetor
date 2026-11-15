@@ -193,6 +193,30 @@ func TestArchiveEscapedPipeWorktree(t *testing.T) {
 	}
 }
 
+// TestArchiveTableHeaderNotRetained keeps the completed task row of a live worktree when the
+// table header repeats the worktree path: headers and separators are never task rows.
+func TestArchiveTableHeaderNotRetained(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.FromSlash("/repo/topic")
+	ops := defaultArchiveWorktreeOps()
+	ops.list = func(context.Context, string) ([]worktree.WorktreeInfo, error) {
+		return []worktree.WorktreeInfo{{Path: path}}, nil
+	}
+	ops.inspect = func(_ context.Context, field string) (archivePath, error) {
+		return archivePath{path: field, exists: field == path}, nil
+	}
+	table := "| /repo/topic | Status |\n| --- | --- |\n| /repo/topic | DONE |\n"
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	writeIntegrityFile(t, open, table+"- [x] unrelated\n")
+	if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); err != nil || count != 1 {
+		t.Fatalf("header archive = %d, %v; want only the unrelated row removed", count, err)
+	}
+	assertIntegrityFile(t, open, table)
+}
+
 // TestArchiveStructuralMarkers refuses completion words outside their status position.
 func TestArchiveStructuralMarkers(t *testing.T) {
 	root := t.TempDir()

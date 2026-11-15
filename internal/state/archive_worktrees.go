@@ -49,6 +49,9 @@ func archiveTaskRows(ctx context.Context, lines []string, archive map[int]bool) 
 			continue
 		}
 		statusColumn = archiveTableStatusColumn(ctx, lines, i, statusColumn)
+		if archiveTableFrame(ctx, lines, i) {
+			continue
+		}
 		row, done, err := archiveTaskRow(ctx, line, statusColumn)
 		if err != nil {
 			return nil, err
@@ -72,6 +75,21 @@ func archiveTaskRow(ctx context.Context, line string, statusColumn int) (row, do
 	}
 	done, err = archiveRecordDone(ctx, line, statusColumn)
 	return done || strings.HasPrefix(line, "|"), done, err
+}
+
+// archiveTableFrame reports a table header (a pipe row followed by a separator row) or the
+// separator itself. Neither is a task row, so a header that repeats a live worktree path
+// cannot stand in for that worktree's retained task row.
+func archiveTableFrame(ctx context.Context, lines []string, index int) bool {
+	line := strings.TrimSpace(lines[index])
+	if !strings.HasPrefix(line, "|") {
+		return false
+	}
+	stop := func() bool { return ctx.Err() != nil }
+	if ledgerTableSeparator(archiveTableCells(line), stop) {
+		return true
+	}
+	return index+1 < len(lines) && ledgerTableSeparator(archiveTableCells(strings.TrimSpace(lines[index+1])), stop)
 }
 
 // archiveTableCells preserves raw cell bytes while splitting only at unescaped pipes.
