@@ -121,6 +121,10 @@ var priorPlayerDigests = map[string]map[string]string{
 // ledger line was appended from the text itself. The registry allows 64 entries per family
 // (managedasset.MaxPriorTexts); the family's declaration states what each kind of change costs.
 var priorDigests = map[string]string{
+	// Figure readers before the player lock used an asynchronous deadline.
+	"a585b81f6f8ac2f3df4053b43e1b1cc34f1f49ce7d4356c0ddb606345dedf7ee": Directory + "/astro.mjs",
+	"655e28131b2984e8ad34ac1c7413af87bd0af686690c6305a2e845aa9da920cf": Directory + "/checks.mjs",
+	"931a9fef46ca205b3720ce087de065ddde26902253cfda245e73d9b5b74f2fe6": Directory + "/build.mjs",
 	// Emitted sources before complete docstring coverage and explained suppressions.
 	"547d4bfe5d1895a907cba6c0aaf4540f3825811838af94c1b6c0e77082acb211": Directory + "/checks.mjs",
 	"8d2a6afce5c8fd2cf0bf0c9457199a19a6fad93868a5f5dd9f9faf32241fe257": Directory + "/astro.mjs",

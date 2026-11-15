@@ -47,6 +47,8 @@
 // (negated with `!` or `^`) match within one path component. It refuses a leading `!`, `**` and `\`
 // instead of guessing.
 import { closeSync, constants, fstatSync, openSync, readSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { buffer } from 'node:stream/consumers';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ENGINE_FILES, SLOTS, SPEC_CLOSE, SPEC_OPEN, escapeHtml, markup, sha256 } from './core.mjs';
@@ -124,6 +126,24 @@ const FOLD_CASE = process.platform === 'win32';
 
 /** An input a check cannot read: a usage failure (exit status 2), never a pass. */
 export class CheckError extends Error {}
+
+/** Rejects when `promise` has not settled within `ms`; optionally cancels its pending work. */
+export async function withTimeout(promise, ms, what, onTimeout) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`${what} did not finish within ${ms} ms`);
+      error.name = 'TimeoutError';
+      reject(error);
+      onTimeout?.(error);
+    }, ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const strip = (text) => text.replace(EDGE_SPACE, '');
 const lstrip = (text) => text.replace(LEAD_SPACE, '');
@@ -211,6 +231,38 @@ export function readBoundedBytes(path, limit) {
     throw new CheckError(`cannot read ${path}: ${error.message}`);
   } finally {
     closeSync(fd);
+  }
+}
+
+/** One async descriptor, checked before reading; inclusive `end` caps the stream at limit + 1. */
+async function readRegularBytes(path, limit, signal) {
+  const handle = await fsPromises.open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  try {
+    signal.throwIfAborted();
+    const stat = await handle.stat();
+    signal.throwIfAborted();
+    if (!stat.isFile()) throw new CheckError(`${path} is not a regular file`);
+    const bytes = await buffer(handle.createReadStream({ start: 0, end: limit, signal }));
+    if (bytes.length > limit) throw new CheckError(`${path} exceeds ${limit} bytes`);
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Bounded bytes with one deadline over open, descriptor stat, read and close (HISS-02).
+ * The race rejects even if a pending OS operation cannot yet be cancelled. Its eventual
+ * completion checks the signal and closes the handle without starting another read.
+ */
+export async function readBoundedBytesAsync(path, limit, timeoutMs = 5000) {
+  const controller = new AbortController();
+  try {
+    return await withTimeout(readRegularBytes(path, limit, controller.signal), timeoutMs,
+      `reading ${path}`, (error) => controller.abort(error));
+  } catch (error) {
+    if (error instanceof CheckError) throw error;
+    throw new CheckError(`cannot read ${path}: ${error.name}: ${error.message}`, { cause: error });
   }
 }
 

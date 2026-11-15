@@ -9,6 +9,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, unlinkSync } from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
@@ -764,8 +766,8 @@ test('an adopted integration refuses an oversized player.lock.json naming the ar
     }),
     /player\.lock\.json exceeds 4194304 bytes/,
   );
-  assert.throws(
-    () => readPlayerLock(lockPath),
+  await assert.rejects(
+    async () => readPlayerLock(lockPath),
     /player\.lock\.json exceeds 4194304 bytes/,
   );
 }));
@@ -785,10 +787,50 @@ test('readPlayerLock refuses a FIFO lock before reading it',
       ['--input-type=commonjs', '-e', `try { require('node:fs').writeFileSync(process.argv[1], '{' + ' '.repeat(${4 * 1024 * 1024}) + '}'); } catch {}`, lockPath],
       { stdio: 'ignore', timeout: 20_000 });
     const exited = new Promise((resolve) => writer.on('exit', resolve));
-    assert.throws(() => readPlayerLock(lockPath), /player\.lock\.json is not a regular file/);
+    await assert.rejects(async () => readPlayerLock(lockPath), /player\.lock\.json is not a regular file/);
     writer.kill();
     await exited;
   }));
+
+test('readPlayerLock refuses a stalled regular-file read with TimeoutError', { timeout: 5000 }, (t) => withTempDir(async (dir) => {
+  const lockPath = join(dir, 'player.lock.json');
+  write(lockPath, '{}');
+  const open = fsPromises.open.bind(fsPromises);
+  let signal;
+  let stream;
+  let handle;
+  t.mock.method(fsPromises, 'open', async (...args) => {
+    handle = await open(...args);
+    t.mock.method(handle, 'createReadStream', (options) => {
+      signal = options.signal;
+      stream = new Readable({ read() {}, signal });
+      return stream;
+    });
+    return handle;
+  });
+  await assert.rejects(async () => readPlayerLock(lockPath, 20), (error) => {
+    assert.match(error.message, /player\.lock\.json.*TimeoutError.*20 ms/);
+    assert.equal(error.cause.name, 'TimeoutError');
+    return true;
+  });
+  assert.equal(signal.aborted, true);
+  assert.equal(stream.destroyed, true);
+  await handle.close();
+}));
+
+test('readPlayerLock parses objects and refuses invalid UTF-8, JSON and non-object values', () => withTempDir(async (dir) => {
+  const file = join(dir, 'player.lock.json');
+  write(file, '{"release":"v1.4.0"}');
+  assert.deepEqual(await readPlayerLock(file), { release: 'v1.4.0' });
+  for (const invalid of ['[]', 'null', '42']) {
+    write(file, invalid);
+    await assert.rejects(readPlayerLock(file), /does not hold a JSON object/);
+  }
+  for (const invalid of ['{', Buffer.from([0xff])]) {
+    write(file, invalid);
+    await assert.rejects(readPlayerLock(file), /cannot read/);
+  }
+}));
 
 test('config setup adds the remark plugin and the head loader for the site\'s base', () => withTempDir((dir) => {
   for (const [base, prefix] of [[undefined, '/'], ['/', '/'], ['/docs/', '/docs/'], ['/docs', '/docs/']]) {

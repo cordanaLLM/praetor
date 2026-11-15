@@ -44,7 +44,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
-import { CheckError, OUT_DIR, ROOT, UTF8, figureMeta, figureSlug, filesDigest, fillSlots, readBoundedBytes } from './checks.mjs';
+import { CheckError, OUT_DIR, ROOT, UTF8, figureMeta, figureSlug, filesDigest, fillSlots, readBoundedBytesAsync } from './checks.mjs';
 import { sha256 } from './core.mjs';
 import { FIGURES_URI, PLAYER_URI, basePath, mountFiles, publish, staticHandler, statOrNull } from './serve.mjs';
 
@@ -268,11 +268,11 @@ function resolveLockFile(root) {
   return statOrNull(candidate)?.isFile() ? candidate : LOCK_FILE;
 }
 
-/** Reads and parses the player lock JSON file under size limits. */
-export function readPlayerLock(lockFile) {
+/** Reads and parses the player lock JSON under a byte limit and the async reader's deadline. */
+export async function readPlayerLock(lockFile, timeoutMs) {
   let data;
   try {
-    const bytes = readBoundedBytes(lockFile, MAX_ARCHIVE_BYTES);
+    const bytes = await readBoundedBytesAsync(lockFile, MAX_ARCHIVE_BYTES, timeoutMs);
     data = JSON.parse(UTF8.decode(bytes));
   } catch (error) {
     if (error instanceof CheckError) throw error;
@@ -468,12 +468,15 @@ export function extractPlayerArchive(raw) {
 }
 
 /** Fetches, verifies, and mounts the locked release player bundle. */
-function resolveLockedPlayer(mounts, lockFile, logger, download = downloadPlayerArchive) {
-  if (!statOrNull(lockFile)?.isFile()) {
+async function resolveLockedPlayer(mounts, lockFile, logger, download = downloadPlayerArchive) {
+  let lock;
+  try {
+    lock = await readPlayerLock(lockFile);
+  } catch (error) {
+    if (!['ENOENT', 'ENOTDIR'].includes(error.cause?.code)) throw error;
     logger?.warn(svgFallbackWarning(`unknown (${basename(lockFile)} is missing; praetorctl adopt writes it)`));
     return null;
   }
-  const lock = readPlayerLock(lockFile);
   const release = String(lock.release ?? '').trim();
   if (!release) {
     // Log unreleased pins at INFO so strict builds do not fail on a warning.
