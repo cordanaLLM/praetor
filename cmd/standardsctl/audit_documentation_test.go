@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -111,13 +112,9 @@ func TestAuditDocumentationGateNegative(t *testing.T) {
 				"!/.workingdir/\n!/.workingdir/**\n!/.workingdir2/\n!/.workingdir2/**\n")
 		},
 		"missing required context": func(t *testing.T, root string) {
-			path := filepath.Join(root, ".github", "rulesets", "main.json")
-			data, err := os.ReadFile(path)
-			if err != nil {
+			if err := synthesizeRuleset(root, "main", config.DefaultPolicy().BranchProtection, nil); err != nil {
 				t.Fatal(err)
 			}
-			writeFixtureFile(t, root, ".github/rulesets/main.json",
-				strings.Replace(string(data), adopt.DocumentationStatusContext, "Different Context", 1))
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -594,8 +591,11 @@ func TestAuditDocumentationGateUsesTheEffectiveBranchProtection(t *testing.T) {
 	manifest := &config.Manifest{Facets: []string{"docs:seo-portal"}}
 	joined := config.DefaultPolicy().BranchProtection
 	joined.RequireSignedCommits, joined.RequiredApprovingReviewers = true, 2
-	// Negative: a ruleset rendered from the defaults does not satisfy the joined policy.
-	if err := auditDocumentationGate(t.Context(), manifest, root, joined); err == nil {
+	// General policy drift belongs to the later branch protection audit.
+	if err := auditDocumentationGate(t.Context(), manifest, root, joined); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adopt.AuditBranchProtectionWithPolicy(t.Context(), manifest, root, &config.ResolvedPolicy{BranchProtection: joined}); err == nil {
 		t.Fatal("ruleset rendered from the defaults satisfied a stricter effective policy")
 	}
 	// Positive: the ruleset adopt renders from the joined policy passes.
@@ -608,7 +608,10 @@ func TestAuditDocumentationGateUsesTheEffectiveBranchProtection(t *testing.T) {
 		t.Fatalf("ruleset rendered from the effective policy failed: %v", err)
 	}
 	// Boundary: the defaults no longer match once the ruleset follows the joined policy.
-	if err := docGate(t.Context(), manifest, root); err == nil {
+	if err := docGate(t.Context(), manifest, root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adopt.AuditBranchProtectionWithPolicy(t.Context(), manifest, root, config.DefaultPolicy()); err == nil {
 		t.Fatal("defaults matched a ruleset rendered from a stricter policy")
 	}
 }
@@ -887,5 +890,88 @@ func TestAuditDocumentationGateNodeVersionLockedEarlierEngine(t *testing.T) {
 	writeFixtureFile(t, root, adopt.DocumentationWorkflowFile, string(prior))
 	if err := docGate(t.Context(), enabled, root); err != nil {
 		t.Fatalf("locked earlier text without the file: %v", err)
+	}
+}
+
+// TestAuditDocumentationHostedRulesetDriftClassification labels documentation-only drift as a
+// documentation failure and a new non-documentation workflow as general ruleset drift.
+func TestAuditDocumentationHostedRulesetDriftClassification(t *testing.T) {
+	for _, required := range []bool{true, false} {
+		t.Run(fmt.Sprintf("new workflow, general audit required=%t", required), func(t *testing.T) {
+			root, protection := hostedDriftFixture(t, required, false)
+			err := auditDocumentationHostedWiring(t.Context(), &config.Manifest{}, protection, root, false)
+			if required {
+				if err != nil {
+					t.Fatalf("general drift reported twice: %v", err)
+				}
+				_, err = adopt.AuditBranchProtectionWithPolicy(t.Context(), &config.Manifest{}, root, &config.ResolvedPolicy{BranchProtection: protection})
+			}
+			assertHostedDrift(t, err, "New Check", ".github/workflows/new-ci.yml")
+			if strings.Contains(err.Error(), "Documentation") {
+				t.Errorf("new workflow mislabeled: %v", err)
+			}
+		})
+	}
+	t.Run("documentation keeps label", func(t *testing.T) {
+		root, protection := hostedDriftFixture(t, true, true)
+		err := auditDocumentationHostedWiring(t.Context(), &config.Manifest{}, protection, root, false)
+		assertHostedDrift(t, err, adopt.DocumentationStatusContext, adopt.DocumentationWorkflowFile)
+		if !strings.Contains(err.Error(), "[FAIL] Documentation required status context is not reconciled in the branch ruleset:") {
+			t.Errorf("documentation label changed: %v", err)
+		}
+	})
+}
+
+// hostedDriftFixture writes a documentation workflow and returns its root and branch policy.
+func hostedDriftFixture(t *testing.T, required, docs bool) (string, config.BranchProtectionPolicy) {
+	t.Helper()
+	root := t.TempDir()
+	writeFixtureFile(t, root, adopt.DocumentationWorkflowFile, adopt.DocumentationWorkflow())
+	protection := config.DefaultPolicy().BranchProtection
+	protection.EnforceLinearHistory, protection.RequireSignedCommits = required, required
+	contexts := []string{adopt.DocumentationStatusContext}
+	if docs {
+		contexts = nil
+	} else {
+		writeFixtureFile(t, root, ".github/workflows/new-ci.yml", "name: New CI\non: pull_request\njobs:\n  check:\n    name: New Check\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n")
+	}
+	data, err := forge.RenderRepositoryRuleset("main", protection, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, root, forge.RepositoryRulesetPath, string(data))
+	return root, protection
+}
+
+// assertHostedDrift requires a drift error naming the context and its workflow.
+func assertHostedDrift(t *testing.T, err error, context, workflow string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("drift accepted")
+	}
+	for _, want := range []string{context, workflow} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q in %v", want, err)
+		}
+	}
+}
+
+// TestAuditDocumentationMixedDriftUsesGeneralAudit leaves mixed drift to the general audit.
+func TestAuditDocumentationMixedDriftUsesGeneralAudit(t *testing.T) {
+	root, protection := hostedDriftFixture(t, true, false)
+	data, err := forge.RenderRepositoryRuleset("main", protection, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, root, forge.RepositoryRulesetPath, string(data))
+	if err := auditDocumentationHostedWiring(t.Context(), &config.Manifest{}, protection, root, false); err != nil {
+		t.Fatalf("mixed drift reported twice: %v", err)
+	}
+	_, err = adopt.AuditBranchProtectionWithPolicy(t.Context(), &config.Manifest{}, root, &config.ResolvedPolicy{BranchProtection: protection})
+	assertHostedDrift(t, err, "New Check", ".github/workflows/new-ci.yml")
+	for _, want := range []string{"[FAIL] Branch ruleset status context drift", adopt.DocumentationStatusContext, adopt.DocumentationWorkflowFile} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q in %v", want, err)
+		}
 	}
 }

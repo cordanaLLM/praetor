@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -714,10 +715,51 @@ func auditDocumentationHostedWiring(
 	if err != nil {
 		return fmt.Errorf("[FAIL] Documentation branch ruleset audit failed: %w", err)
 	}
-	if err := forge.ValidateRepositoryRuleset(ruleset, defaultBranch, protection, contexts); err != nil {
-		return fmt.Errorf("[FAIL] Documentation required status context is not reconciled in the branch ruleset: %w", err)
+	if err := forge.ValidateRepositoryRulesetIn(ctx, rootDir, ruleset, defaultBranch, protection, contexts); err != nil {
+		return documentationRulesetFailure(err, protection, families)
 	}
 	return nil
+}
+
+// documentationRulesetFailure leaves general drift to the branch protection audit
+// when policy enables it. Documentation-only context drift keeps its existing label.
+func documentationRulesetFailure(err error, protection config.BranchProtectionPolicy, families []managedasset.Family) error {
+	var drift *forge.RulesetDrift
+	if !errors.As(err, &drift) {
+		return fmt.Errorf("[FAIL] Branch ruleset validation failed: %w", err)
+	}
+	if documentationOnlyRulesetDrift(drift, families) {
+		return fmt.Errorf("[FAIL] Documentation required status context is not reconciled in the branch ruleset: %w", err)
+	}
+	if adopt.RulesetRequired(protection) {
+		return nil
+	}
+	if len(drift.MissingContexts)+len(drift.ExtraContexts) > 0 {
+		return fmt.Errorf("[FAIL] Branch ruleset status context drift: %w", err)
+	}
+	return fmt.Errorf("[FAIL] Branch ruleset policy drift: %w", err)
+}
+
+// documentationOnlyRulesetDrift reports whether the drift is only missing or extra
+// documentation status contexts, so the documentation audit keeps its own label.
+func documentationOnlyRulesetDrift(drift *forge.RulesetDrift, families []managedasset.Family) bool {
+	if len(drift.DifferingKeys) != 0 || len(drift.MissingContexts)+len(drift.ExtraContexts) == 0 {
+		return false
+	}
+	documentation := make(map[string]bool, len(families))
+	for i := 0; i < len(families) && i < managedasset.MaxFamilies; i++ {
+		if families[i].StatusContext != "" {
+			documentation[families[i].StatusContext] = true
+		}
+	}
+	for _, contexts := range [][]string{drift.MissingContexts, drift.ExtraContexts} {
+		for _, name := range contexts {
+			if !documentation[name] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // hostedDocumentationContexts returns the required contexts the documentation gate compares. The

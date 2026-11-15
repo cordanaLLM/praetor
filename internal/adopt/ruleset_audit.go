@@ -90,9 +90,13 @@ func auditRulesetContent(ctx context.Context, manifest *config.Manifest, rootDir
 	if err := auditMergeQueueContexts(ctx, rootDir, data, policy); err != nil {
 		return err
 	}
-	if err := forge.ValidateRepositoryRuleset(data, branch, policy, contexts); err != nil {
-		return fmt.Errorf("[FAIL] Branch protection ruleset %s does not match the declared policy: %w; "+
-			"'praetorctl sync' writes the declared ruleset when the file is absent", rulesetFile, err)
+	if err := forge.ValidateRepositoryRulesetIn(ctx, rootDir, data, branch, policy, contexts); err != nil {
+		failure := fmt.Sprintf("Branch protection ruleset %s does not match the declared policy", rulesetFile)
+		var drift *forge.RulesetDrift
+		if errors.As(err, &drift) && len(drift.MissingContexts)+len(drift.ExtraContexts) > 0 {
+			failure = fmt.Sprintf("Branch ruleset status context drift in %s", rulesetFile)
+		}
+		return fmt.Errorf("[FAIL] %s: %w; 'praetorctl sync' writes the declared ruleset when the file is absent", failure, err)
 	}
 	return nil
 }
