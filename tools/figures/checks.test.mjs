@@ -983,6 +983,10 @@ test('readBoundedBytes returns exact bytes at limit, refuses limit + 1 and refus
 }));
 
 test('readBoundedBytes refuses a FIFO without blocking', { timeout: 5000 }, (t) => withTempDir((dir) => {
+  if (process.platform === 'win32') {
+    t.skip('Windows has no kernel FIFO: the Git Bash mkfifo writes a file that Node reads as a regular file');
+    return;
+  }
   const fifo = join(dir, 'lock.fifo');
   const made = spawnSync('mkfifo', [fifo], { timeout: 2000 });
   if (made.error?.code === 'ENOENT') {
