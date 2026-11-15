@@ -16,6 +16,9 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 const require = createRequire(import.meta.url);
 const eslintRequire = createRequire(require.resolve('eslint'));
+const svelteEslintRequire = createRequire(require.resolve('eslint-plugin-svelte'));
+const postcssConfigRequire = createRequire(svelteEslintRequire.resolve('postcss-load-config'));
+const yaml = postcssConfigRequire('yaml');
 const typescriptRequire = createRequire(require.resolve('typescript-eslint'));
 const parserRequire = createRequire(typescriptRequire.resolve('@typescript-eslint/parser'));
 const estreeEntry = parserRequire.resolve('@typescript-eslint/typescript-estree');
@@ -89,10 +92,13 @@ test.each([
 	['eslint', require.resolve('eslint')],
 	['@eslint/config-array', eslintRequire.resolve('@eslint/config-array')],
 	['@typescript-eslint/typescript-estree', estreeEntry]
-])('%s resolves a minimatch version patched for GHSA-g3hv-75wg-m249', (_, entry) => {
+])('%s resolves a minimatch version patched for GHSA-g3hv-75wg-m249', async (_, entry) => {
 	const parentRequire = createRequire(entry);
 	const { version } = parentRequire('minimatch/package.json');
-	const minimatchOverride = require('../package.json').pnpm.overrides.minimatch;
+	const workspace = yaml.parse(
+		await fixtureIO.readFile(path.join(import.meta.dirname, '../pnpm-workspace.yaml'))
+	);
+	const minimatchOverride = workspace.overrides.minimatch;
 	const semver = createRequire(estreeEntry)('semver');
 	expect(version).toBe(minimatchOverride);
 	expect(semver.gte(version, '11.0.1')).toBe(true);
