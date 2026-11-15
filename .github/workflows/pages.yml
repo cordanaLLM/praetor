@@ -29,7 +29,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: pages-${{ github.ref }}
+  group: >-
+    ${{ github.workflow }}-${{ github.event.pull_request.number ||
+    github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Only the deploy job may write. The workflow also runs on pull_request, and a workflow-level

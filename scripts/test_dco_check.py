@@ -487,8 +487,8 @@ class ComplianceWiringTests(unittest.TestCase):
     PROTECTED_BRANCHES = ("- main", "- 'lts-*'")
     #: A pull request run shares one group per pull request, so its next push supersedes it.
     #: A push run's group is its own run id, so no later push cancels or replaces it.
-    EXPECTED_GROUP = ("${{ github.workflow }}-${{ github.event_name == 'pull_request'"
-                      " && github.ref || github.run_id }}")
+    EXPECTED_GROUP = (">-\n    ${{ github.workflow }}-"
+                      "${{ github.event.pull_request.number ||\n    github.run_id }}")
     #: An `if:` is never the step's first key, so an unanchored search would only ever find
     #: one written above `env:`. Every line of the step is a candidate.
     STEP_CONDITION = re.compile(r"^\s+if:", re.MULTILINE)
@@ -555,7 +555,8 @@ class ComplianceWiringTests(unittest.TestCase):
 
     def test_a_pull_request_run_is_still_superseded_by_its_next_push(self) -> None:
         """Only the pull request leg shares a group, and there a newer head supersedes."""
-        self.assertIn("  cancel-in-progress: true\n", self.concurrency())
+        self.assertIn("  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+                      self.concurrency())
 
     def test_no_second_concurrency_key_regroups_the_gate(self) -> None:
         """A job-level group shared across pushes would reintroduce the skip under it."""

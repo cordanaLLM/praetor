@@ -114,6 +114,8 @@ jobs:
 // every digest from it. internal/managedasset/testdata/shipped/markdown.sha256 records every
 // text ever shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
+	"854dde1037c7065c232e7bb318322d1565eab78f79c84e283d2ee1c9c343834c": WorkflowFile, // before review events shared the PR concurrency group
+	"64d422947ee8e3ec474fd2f9b11597cfe5d27aed5c826fdb0b92308bea49d09f": WorkflowFile, // before review events shared the PR concurrency group
 	// Emitted sources before complete docstring coverage and explained suppressions.
 	"73e9ab35cc5c4807c2bdb791602237e7312bc0b9fe0f1cc8633f07bd09f9f979": Directory + "/verify.mjs",
 	"fb31a8195e6d0527fb908ec3a259e0171dba40fd237bf59197f739c6079763fb": Directory + "/no-private-scratch-links.mjs",

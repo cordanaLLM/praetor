@@ -67,11 +67,16 @@ const (
 	// HostedGateConcurrency groups pull request runs by workflow and pull request number, so a
 	// newer run replaces an older one. Every other event gets its unique run id and cannot cancel
 	// or replace another push, merge-group, schedule, or dispatch run.
-	HostedGateConcurrency = "concurrency:\n  group: " + HostedGateConcurrencyGroup +
+	HostedGateConcurrency = "concurrency:\n  group: >-\n    " + hostedGateConcurrencyGroupPR +
+		"\n    " + hostedGateConcurrencyGroupRun +
 		"\n  cancel-in-progress: " + HostedGateConcurrencyCancel + "\n"
-	// HostedGateConcurrencyGroup is the group expression: the pull request number on pull
-	// request events, the run id on every other event.
-	HostedGateConcurrencyGroup = "${{ github.workflow }}-${{ github.event.number || github.run_id }}"
+	// The two group fragments keep the rendered YAML within 80 columns; folding restores
+	// the single space between the OR operator and its fallback.
+	hostedGateConcurrencyGroupPR  = "${{ github.workflow }}-${{ github.event.pull_request.number ||"
+	hostedGateConcurrencyGroupRun = "github.run_id }}"
+	// HostedGateConcurrencyGroup reads the nested pull request number shared by pull_request,
+	// pull_request_review and pull_request_review_comment payloads; other events use the run id.
+	HostedGateConcurrencyGroup = hostedGateConcurrencyGroupPR + " " + hostedGateConcurrencyGroupRun
 	// HostedGateConcurrencyCancel cancels an in-progress run only on pull request events.
 	HostedGateConcurrencyCancel = "${{ github.event_name == 'pull_request' }}"
 	// CheckoutActionPrefix starts the uses: value of every actions/checkout step.

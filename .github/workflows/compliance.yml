@@ -23,8 +23,10 @@ on:
 # pull request, and a newer head supersedes the run for the old one, which inspects the whole
 # pull request range anyway. scripts/test_dco_check.py pins this group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: true
+  group: >-
+    ${{ github.workflow }}-${{ github.event.pull_request.number ||
+    github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
