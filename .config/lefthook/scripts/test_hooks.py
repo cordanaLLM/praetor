@@ -434,6 +434,278 @@ def skip_without_race_detector(test):
         test.skipTest(f"race detector unavailable ({reason}); CI runs these legs on Linux with cgo")
 
 
+# Disposable fixture signer; calls the engine writer, never the workstation key loader.
+RECEIPT_SIGNER = '''package main
+import (
+    "crypto/ed25519"
+    "encoding/hex"
+    "fmt"
+    "os"
+    "github.com/cordanaLLM/praetor/internal/lockdown"
+    "github.com/cordanaLLM/praetor/internal/util"
+)
+func main() {
+    seed := make([]byte, ed25519.SeedSize)
+    if len(os.Args) > 3 && os.Args[3] == "foreign" { seed[0] = 1 }
+    key := ed25519.NewKeyFromSeed(seed)
+    if len(os.Args) == 1 {
+        fmt.Println(hex.EncodeToString(key[ed25519.SeedSize:]))
+        return
+    }
+    command := util.GateReceiptCommand
+    if os.Args[3] != "gate" && os.Args[3] != "foreign" { command = "another command" }
+    output := lockdown.GateOutputVersion + "\\n" + lockdown.WorktreeCleanLine(os.Args[4] == "clean") + "\\n"
+    if len(os.Args) == 6 {
+        packages, err := util.ParseRacePackages(os.Args[5])
+        if err != nil { panic(err) }
+        output += lockdown.RacePackagesLine(packages) + "\\n"
+        status, reason := "passed", lockdown.RacePackagesReason(packages)
+        if len(packages) == 0 { status, reason = "not_applicable", lockdown.NoAffectedGoPackage }
+        output += "stage\\t" + lockdown.RaceStageName + "\\t" + status + "\\t" + reason + "\\n"
+    }
+    receipt, err := lockdown.CreateReceipt(command, 0, []byte(output), os.Args[2], "fixture/repo", key)
+    if err != nil { panic(err) }
+    err = lockdown.SaveReceiptFile(os.Args[1], &lockdown.ReceiptFile{ExecutionReceipt: *receipt, GateOutput: output}, 0o600)
+    if err != nil { panic(err) }
+}
+'''
+
+
+class PushedReceipt(unittest.TestCase):
+    """Exercise signed receipt reuse without hooks or workstation signing keys."""
+
+    @classmethod
+    def setUpClass(cls):
+        """Build the engine CLI and a fixture signer once; the signer holds a disposable test key only."""
+        scratch = ROOT / ".tmp"
+        scratch.mkdir(exist_ok=True)
+        cls.build = tempfile.TemporaryDirectory(prefix="receipt-build-", dir=scratch)
+        cls.addClassCleanup(cls.build.cleanup)
+        root = Path(cls.build.name)
+        cls.binary = root / Path(PRAETORCTL).name
+        cls.signer = root / ("signer.exe" if os.name == "nt" else "signer")
+        source = root / "main.go"
+        # Only fixture material: no LoadSigningKey or workstation credential lookup.
+        source.write_text(RECEIPT_SIGNER, encoding="utf-8")
+        for output, target in ((cls.binary, "./cmd/standardsctl"), (cls.signer, str(source))):
+            subprocess.run(["go", "build", "-o", str(output), target], cwd=ROOT,
+                           check=True, timeout=180)
+        cls.public_key = subprocess.check_output([str(cls.signer)], timeout=30).decode().strip()
+
+    def setUp(self):
+        """Create a two-commit fixture repository pinning the fixture signer's public key."""
+        self.temp = tempfile.TemporaryDirectory(prefix="receipt-fixture-")
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name)
+        self.env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+        self.env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.name", "Receipt Fixture")
+        self.git("config", "user.email", "receipt@example.invalid")
+        (self.repo / ".standards.yaml").write_text(
+            f'receipt:\n  public_key: "{self.public_key}"\n', encoding="utf-8")
+        (self.repo / "value.txt").write_text("parent\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "chore: parent fixture")
+        self.parent = self.git("rev-parse", "HEAD").decode().strip()
+        (self.repo / "value.txt").write_text("head\n", encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "chore: head fixture")
+        self.head = self.git("rev-parse", "HEAD").decode().strip()
+        self.receipt = self.repo / ".git/praetor-receipts" / (self.head + ".json")
+        self.receipt.parent.mkdir()
+
+    def git(self, *args):
+        """Run local Git with all inherited Git settings isolated from the fixture."""
+        return subprocess.check_output(["git", *args], cwd=self.repo, env=self.env,
+                                       stderr=subprocess.STDOUT, timeout=30)
+
+    def mint(self, head=None, command="gate", clean="clean", scope=None):
+        """Sign fixture output with the engine's receipt writer and a disposable test key."""
+        args = [str(self.signer), str(self.receipt), head or self.head, command, clean]
+        subprocess.run(args + ([] if scope is None else [scope]), env=self.env, check=True, timeout=30)
+
+    def check_snapshot(self, reused, packages=()):
+        """Keep file and auxiliary checks observable while replacing the expensive gate."""
+        def process(argv, **kwargs):
+            """Route verify-receipt to the freshly built engine; every other command runs as the hook would."""
+            if "forge" in argv and "verify-receipt" in argv:
+                argv = [str(self.binary), *argv[argv.index("forge"):]]
+            return common.run(argv, **kwargs)
+
+        with contextlib.chdir(self.repo), mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch("hooks.run", side_effect=process), \
+                mock.patch("hooks.file_checks") as files, \
+                mock.patch("checks.tool_module_check") as modules, \
+                mock.patch("checks.go_packages", return_value=list(packages)), \
+                mock.patch("checks.source_commands", return_value=[["lint"]]) as source, \
+                mock.patch("checks.governance_commands", return_value=[["go", "run", "cli", "audit"]]), \
+                mock.patch("checks.parallel") as auxiliary, \
+                mock.patch("checks.run", return_value=b""), \
+                mock.patch("checks.run_full_gate", return_value=False) as gate, \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+            hooks.check_pushed_snapshot(self.head, self.parent, "strict", ["value.txt"])
+            files.assert_called_once()
+            modules.assert_called_once()
+            self.assertEqual(auxiliary.call_count, 3 if packages else 2)
+            if packages:
+                source.assert_called_once()
+            self.assertEqual(gate.call_count, 0 if reused else 1)
+            message = (f"receipt verified for {self.head}: gate skipped" if reused else
+                       f"no verified receipt for {self.head}: full gate")
+            self.assertIn(message, output.getvalue())
+
+    def test_pushed_receipt_exact_head_and_tree(self):
+        """A receipt for the exact pushed head skips only the gate, even with a dirty operator checkout."""
+        self.mint()
+        # The operator checkout is dirty; only the exported pushed head is certified.
+        (self.repo / "value.txt").write_text("uncommitted\n", encoding="utf-8")
+        self.check_snapshot(reused=True)
+        self.assertEqual((self.repo / "value.txt").read_text(), "uncommitted\n")
+
+    def test_pushed_receipt_parent_head_runs_full_gate(self):
+        """A receipt minted for the parent commit does not certify the pushed head."""
+        self.mint(head=self.parent)
+        self.check_snapshot(reused=False)
+
+    def test_pushed_receipt_tampered_field_or_signature_runs_full_gate(self):
+        """A tampered field or signature fails verification and leaves the full gate."""
+        for field in ("repository", "signature", "gate_output"):
+            with self.subTest(field=field):
+                self.mint()
+                receipt = json.loads(self.receipt.read_text())
+                if field == "signature":
+                    prefix = "00" if receipt[field][:2] != "00" else "01"
+                    receipt[field] = prefix + receipt[field][2:]
+                else:
+                    receipt[field] = "tampered"
+                self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+                self.check_snapshot(reused=False)
+
+    def test_pushed_receipt_other_command_runs_full_gate(self):
+        """A receipt from another command than the gate is not reused."""
+        self.mint(command="other")
+        self.check_snapshot(reused=False)
+
+    def test_pushed_receipt_unpinned_signer_runs_full_gate(self):
+        """A receipt signed by a key the manifest does not pin is not reused."""
+        self.mint(command="foreign")
+        self.check_snapshot(reused=False)
+
+    def test_pushed_receipt_unavailable_verifier_runs_full_gate(self):
+        """A verifier that cannot start leaves the full gate mandatory."""
+        self.mint()
+        with mock.patch("hooks.praetorctl_path", side_effect=OSError("fixture verifier unavailable")):
+            self.check_snapshot(reused=False)
+
+    def test_pushed_receipt_checkpoint_keeps_checkpoint_checks(self):
+        """Checkpoint pushes keep their own checks and never consult a receipt."""
+        self.mint()
+        with contextlib.chdir(self.repo), mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch("hooks.file_checks") as files, \
+                mock.patch("hooks.checkpoint_checks") as checkpoint, \
+                mock.patch("hooks.verified_pushed_receipt") as receipt:
+            hooks.check_pushed_snapshot(self.head, self.parent, "checkpoint", ["value.txt"])
+            files.assert_called_once()
+            checkpoint.assert_called_once()
+            receipt.assert_not_called()
+
+    def test_pushed_receipt_different_scanned_tree_runs_full_gate(self):
+        """A receipt whose signed clean-tree record is not clean is not reused."""
+        self.mint(clean="dirty")
+        self.check_snapshot(reused=False)
+
+    def test_pushed_receipt_missing_or_malformed_runs_full_gate(self):
+        """No receipt, or an unreadable one, runs the full gate."""
+        self.check_snapshot(reused=False)
+        self.receipt.write_text("{broken", encoding="utf-8")
+        self.check_snapshot(reused=False)
+
+    def test_pushed_receipt_race_scope_must_cover_this_push(self):
+        """The receipt's race scope must be full or equal to this push's affected packages."""
+        for scope, packages, reused in (("none", (), True),
+                                        ("./...", ("example.test/affected",), True),
+                                        ("example.test/affected", ("example.test/affected",), True),
+                                        ("none", ("example.test/affected",), False),
+                                        ("example.test/other", ("example.test/affected",), False)):
+            with self.subTest(scope=scope, packages=packages):
+                self.mint(scope=scope)
+                self.check_snapshot(reused=reused, packages=packages)
+
+    def test_pushed_receipt_snapshot_tree_mismatch_runs_full_gate(self):
+        """A snapshot tree that differs from the pushed tree is not reused."""
+        self.mint()
+        parent_tree = self.git("rev-parse", self.parent + "^{tree}")
+        def wrong_tree(*args, **kwargs):
+            """Report the parent's tree for the pushed head so the snapshot tree check must refuse."""
+            if args == ("--no-replace-objects", "rev-parse", self.head + "^{tree}"):
+                return parent_tree
+            return common.git(*args, **kwargs)
+        with mock.patch("hooks.git", side_effect=wrong_tree):
+            self.check_snapshot(reused=False)
+
+    def test_pushed_receipt_dirty_snapshot_runs_full_gate(self):
+        """A dirty exported snapshot fails the gate's clean-tree precondition."""
+        self.mint()
+        original = hooks.snapshot
+
+        @contextlib.contextmanager
+        def dirty_tree(head):
+            """Yield the exported snapshot with one tracked file changed."""
+            with original(head) as directory:
+                (directory / "value.txt").write_text("different tree\n", encoding="utf-8")
+                yield directory
+
+        with mock.patch("hooks.snapshot", side_effect=dirty_tree):
+            self.check_snapshot(reused=False)
+
+    def test_pushed_receipt_ignored_subtractive_input_runs_full_gate(self):
+        """An ignored subtractive input fails the clean-tree precondition."""
+        self.mint()
+        original = hooks.snapshot
+
+        @contextlib.contextmanager
+        def ignored_input(head):
+            """Yield the exported snapshot with an ignored, untracked subtractive input."""
+            with original(head) as directory:
+                (directory / ".git/info/exclude").write_text("/.gosec.json\n", encoding="utf-8")
+                (directory / ".gosec.json").write_text("{}\n", encoding="utf-8")
+                yield directory
+
+        with mock.patch("hooks.snapshot", side_effect=ignored_input):
+            self.check_snapshot(reused=False)
+
+    def test_pre_push_receipt_keeps_range_checks_and_rejects_hidden_text_defects(self):
+        """Whitespace and conflict markers in any pushed commit fail the push even with a valid tip receipt."""
+        for defect, diagnostic in (("bad trailing space \n", "trailing whitespace"),
+                                   ("<<<<<<< fixture\n", "leftover conflict marker")):
+            with self.subTest(defect=defect):
+                base = self.git("rev-parse", "HEAD").decode().strip()
+                (self.repo / "value.txt").write_text(defect, encoding="utf-8")
+                self.git("commit", "-qam", "chore: plant historical text defect")
+                (self.repo / "value.txt").write_text("clean tip\n", encoding="utf-8")
+                self.git("commit", "-qam", "chore: remove tip defect")
+                head = self.git("rev-parse", "HEAD").decode().strip()
+                self.receipt = self.receipt.parent / (head + ".json")
+                self.mint(head=head)
+                protocol = f"refs/heads/main {head} refs/heads/main {base}\n"
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(contextlib.chdir(self.repo))
+                    stack.enter_context(mock.patch.dict(os.environ, self.env, clear=True))
+                    stack.enter_context(mock.patch("hooks.sys.stdin", io.StringIO(protocol)))
+                    for name in ("guard", "verify_live_state", "check_refactor_range",
+                                 "check_docstring_range", "check_merge_range", "check_signature_range"):
+                        stack.enter_context(mock.patch("hooks." + name))
+                    private = stack.enter_context(mock.patch("hooks.check_private_history"))
+                    messages = stack.enter_context(mock.patch("hooks.check_commit_message_range"))
+                    snapshot_check = stack.enter_context(mock.patch("hooks.check_pushed_snapshot"))
+                    with self.assertRaisesRegex(HookError, diagnostic):
+                        pre_push("origin")
+                    private.assert_called_once_with(head, base)
+                    messages.assert_called_once_with(base, head, remote="origin")
+                    snapshot_check.assert_not_called()
+
+
 class GitHooks(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1349,7 +1621,8 @@ print("fixture hook self-tests passed")
                     mock.patch("hooks.check_docstring_range") as docstrings, \
                     mock.patch("hooks.check_merge_range") as merges:
                 pre_push("origin")
-                self.assertEqual(check.call_args.kwargs, {"base": base})
+                self.assertEqual(check.call_args.kwargs["base"], base)
+                self.assertTrue(callable(check.call_args.kwargs["receipt_check"]))
                 self.assertEqual(check.call_args.args[1], ["README.md"])
                 refactors.assert_called_once_with(base, head)
                 docstrings.assert_called_once_with(base, head)
@@ -1398,7 +1671,8 @@ print("fixture hook self-tests passed")
                         mock.patch("hooks.check_merge_range") as merges:
                     pre_push("origin")
                     merge_base.assert_called_once_with(head, "origin", False)
-                    self.assertEqual(check.call_args.kwargs, {"base": base})
+                    self.assertEqual(check.call_args.kwargs["base"], base)
+                    self.assertTrue(callable(check.call_args.kwargs["receipt_check"]))
                     self.assertEqual(check.call_args.args[1], ["README.md"])
                     refactors.assert_called_once_with(base, head)
                     docstrings.assert_called_once_with(base, head)
