@@ -217,7 +217,7 @@ func TestMCPWriteProjectsPluginAgentsAndSkills(t *testing.T) {
 // writePluginFixture declares the plugin, one persona and one skill under root.
 func writePluginFixture(t *testing.T, root string) {
 	t.Helper()
-	writePathFixture(t, filepath.Join(root, filepath.FromSlash(compiler.PluginManifestRel)), `{"name":"praetor"}`)
+	writePathFixture(t, filepath.Join(root, filepath.FromSlash(compiler.PluginManifestRel)), `{"name":"praetor","version":"0.1.0-dev"}`)
 	writePersona(t, root, "reviewer.md", fixturePersona)
 	writePathFixture(t, filepath.Join(root, filepath.FromSlash(compiler.CanonicalSkillsRel), "brief", compiler.SkillEntryName), fixtureSkill)
 }

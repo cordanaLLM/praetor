@@ -6,6 +6,9 @@ project_name: standards
 
 before:
   hooks:
+    # The tag-derived version also stamps main.version below. Reject a stale development
+    # release line before packaging, and bind the plugin shipped in each archive to it.
+    - go run ./cmd/standardsctl release plugin-version --version={{.Version}}
     - go mod tidy
     # The figure player archive adopters' documentation builds fetch (docs/adr/0021): the one
     # deterministic packer, so the bytes match the digest the engine writes into an adopter's
@@ -102,6 +105,7 @@ archives:
       - LICENSE
       - LICENSES/*
       - THIRD-PARTY-NOTICES.md
+      - .agents/plugins/praetor/**/*
 
 sboms:
   - id: cyclonedx

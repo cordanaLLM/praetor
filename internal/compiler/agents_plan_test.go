@@ -29,7 +29,7 @@ func planPersonaRoot(t *testing.T, content string) string {
 func shipPluginWithSkill(t *testing.T, root, skill string) {
 	t.Helper()
 	for rel, content := range map[string]string{
-		PluginManifestRel:         "{\"name\": \"praetor\"}\n",
+		PluginManifestRel:         "{\"name\": \"praetor\", \"version\": \"0.1.0-dev\"}\n",
 		CanonicalSkillRel("lint"): skill,
 	} {
 		full := filepath.Join(root, filepath.FromSlash(rel))

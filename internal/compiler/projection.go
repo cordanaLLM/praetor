@@ -32,7 +32,7 @@ func (sw *syncWriter) println(args ...any) {
 	_, sw.err = fmt.Fprintln(sw.w, args...)
 }
 
-// ErrAgentSurface marks every persona and skill projection failure VerifyCompiledContext returns,
+// ErrAgentSurface marks every persona, skill or plugin manifest failure VerifyCompiledContext returns,
 // whatever its cause, so a caller tells a persona or skill copy apart from AGENTS.md and the
 // vendor files without matching text (errors.Is): adoption records it on the agent-definitions
 // step, which writes those copies.
@@ -130,7 +130,7 @@ func lintAgentText(ctx context.Context, sw *syncWriter, source, targetDir string
 	return errs
 }
 
-// verifyAgentSurfaces verifies every persona, plugin skill and client skill projection under
+// verifyAgentSurfaces verifies the plugin manifest and every persona and skill projection under
 // targetDir and returns every failure, each marked ErrAgentSurface. It returns the number of
 // persona copies verified.
 func verifyAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string) (int, error) {
@@ -148,7 +148,8 @@ func verifyAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string) 
 	}
 	return verified, errors.Join(markAgentSurface(prefixError("agent persona verification failed", personaErr)),
 		markAgentSurface(prefixError("plugin skill verification failed", skillErr)),
-		markAgentSurface(prefixError("client skill verification failed", clientErr)))
+		markAgentSurface(prefixError("client skill verification failed", clientErr)),
+		markAgentSurface(VerifyPluginVersion(ctx, targetDir, "")))
 }
 
 // prefixError wraps err with prefix, and leaves nil nil so errors.Join drops it.

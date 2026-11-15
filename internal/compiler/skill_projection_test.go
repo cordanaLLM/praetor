@@ -30,7 +30,7 @@ func skillFixture(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(manifest, []byte(`{"name":"praetor"}`), 0o600); err != nil {
+	if err := os.WriteFile(manifest, []byte(`{"name":"praetor","version":"0.1.0-dev"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return root

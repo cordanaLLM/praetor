@@ -1,4 +1,5 @@
 {
   "name": "praetor",
+  "version": "0.1.0-dev",
   "description": "Praetor Autonomous Fleet Governance & Workstation Sentinel Plugin"
 }

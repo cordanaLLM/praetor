@@ -154,7 +154,7 @@ const licenseFixture = "MIT License\n\nCopyright (c) 2026 Fixture Holder\n"
 // the checkout while the copies an agent client or the plugin installs outside it went without.
 func TestSkillLicenseProjection_Positive_TravelsWithTheSkill(t *testing.T) {
 	root := writeClientSkillFixture(t, "")
-	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor"}`)
+	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor","version":"0.1.0-dev"}`)
 	for _, name := range config.RegisterSkillBundle() {
 		writeRegisterFixture(t, root, CanonicalSkillLicenseRel(name), licenseFixture)
 	}
@@ -189,7 +189,7 @@ func TestSkillLicenseProjection_Positive_TravelsWithTheSkill(t *testing.T) {
 func compiledLicenseFixture(t *testing.T) string {
 	t.Helper()
 	root := writeClientSkillFixture(t, "")
-	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor"}`)
+	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor","version":"0.1.0-dev"}`)
 	writeRegisterFixture(t, root, CanonicalSkillLicenseRel("caveman"), licenseFixture)
 	if _, err := VerifyClientSkills(t.Context(), root); err == nil {
 		t.Fatal("a repository whose copies were never compiled verified")
@@ -236,7 +236,7 @@ func TestSkillLicenseProjection_Negative_MissingCopy(t *testing.T) {
 // and CompileAgentSurfaces removes it.
 func TestSkillLicenseProjection_Negative_StaleCopy(t *testing.T) {
 	root := writeClientSkillFixture(t, "")
-	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor"}`)
+	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor","version":"0.1.0-dev"}`)
 	if _, err := CompileAgentSurfaces(t.Context(), io.Discard, root); err != nil {
 		t.Fatal(err)
 	}
