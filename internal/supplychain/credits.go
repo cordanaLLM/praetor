@@ -66,7 +66,7 @@ func checkConsoleCreditVersions(sources UpstreamCreditSources) error {
 	if !slices.ContainsFunc(sources.Credits.Entries, usesConsole) {
 		return nil
 	}
-	manifest, err := nodemanifest.ParseManifest([]byte(sources.PathTexts[consoleManifestFile]))
+	manifest, err := nodemanifest.ParseManifest([]byte(sources.ManifestTexts[consoleManifestFile]))
 	if err != nil {
 		return fmt.Errorf("parse %s for credits: %w", consoleManifestFile, err)
 	}
@@ -84,24 +84,48 @@ func checkConsoleCreditVersions(sources UpstreamCreditSources) error {
 	return nil
 }
 
-// checkConsoleCreditEntry compares every version claim of an entry's own npm packages.
+// checkConsoleCreditEntry compares every version claim of an entry's own npm packages,
+// including each pinned package a scope-only identifier such as npm:@scope covers.
 func checkConsoleCreditEntry(entry CreditEntry, index int, pins map[string]string) error {
 	for _, id := range entry.Packages {
-		name, npm := strings.CutPrefix(id, "npm:")
-		if !npm {
+		if !strings.HasPrefix(id, "npm:") {
 			continue
 		}
-		for _, version := range consoleDetailVersions(entry.Detail, name) {
-			pin, exists := pins[name]
-			if !exists {
-				return fmt.Errorf("%s names %s %s; %s has no pin for that package", entry.label(index), name, version, consoleManifestFile)
-			}
-			if version != pin {
-				return fmt.Errorf("%s names %s %s; %s pins %s", entry.label(index), name, version, consoleManifestFile, pin)
+		for _, name := range consoleCoveredNames(id, pins) {
+			for _, version := range consoleDetailVersions(entry.Detail, name) {
+				pin, exists := pins[name]
+				if !exists {
+					return fmt.Errorf("%s names %s %s; %s has no pin for that package", entry.label(index), name, version, consoleManifestFile)
+				}
+				if version != pin {
+					return fmt.Errorf("%s names %s %s; %s pins %s", entry.label(index), name, version, consoleManifestFile, pin)
+				}
 			}
 		}
 	}
 	return nil
+}
+
+// consoleCoveredNames lists the package names whose claims an npm package identifier answers
+// for: the name itself when the manifest pins it or pins nothing it covers, otherwise every
+// pinned package the identifier covers by CreditEntry.answers (npm:@scope covers @scope/kit).
+func consoleCoveredNames(id string, pins map[string]string) []string {
+	name := strings.TrimPrefix(id, "npm:")
+	if _, exact := pins[name]; exact {
+		return []string{name}
+	}
+	single := CreditEntry{Packages: []string{id}}
+	var covered []string
+	for pinned := range pins {
+		if single.answers(InventoryItem{Kind: inventoryNPM, ID: pinned}) {
+			covered = append(covered, pinned)
+		}
+	}
+	if len(covered) == 0 {
+		return []string{name}
+	}
+	slices.Sort(covered)
+	return covered
 }
 
 // consoleDetailVersions reads full or scope-shortened "<name> <version>" terms and a bare

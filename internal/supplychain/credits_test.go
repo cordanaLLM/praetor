@@ -108,7 +108,32 @@ func consoleCreditsFixture(detail string) UpstreamCreditSources {
 			Name: "SvelteKit", Detail: detail, Paths: []string{"console/package.json"},
 			Packages: []string{"npm:@sveltejs/kit", "npm:@sveltejs/adapter-static"},
 		}}},
-		PathTexts: map[string]string{"console/package.json": `{"devDependencies":{"@sveltejs/kit":"3.1.1","@sveltejs/adapter-static":"4.0.0"}}`},
+		PathTexts:     map[string]string{"console/package.json": `{"devDependencies":{"@sveltejs/kit":"3.1.1","@sveltejs/adapter-static":"4.0.0"}}`},
+		ManifestTexts: map[string]string{"console/package.json": `{"devDependencies":{"@sveltejs/kit":"3.1.1","@sveltejs/adapter-static":"4.0.0"}}`},
+	}
+}
+
+// Negative and positive: a scope-only identifier answers for every pinned package it covers, so
+// a stale claim of one of them is compared with its pin instead of passing unread.
+func TestCreditsScopeIdentifierCoversItsPins(t *testing.T) {
+	for detail, want := range map[string]string{
+		"kit 3.1.0":                       "SvelteKit) names @sveltejs/kit 3.1.0; console/package.json pins 3.1.1",
+		"adapter-static 4.0.1":            "SvelteKit) names @sveltejs/adapter-static 4.0.1; console/package.json pins 4.0.0",
+		"kit 3.1.1, adapter-static 4.0.0": "",
+		"SvelteKit without a version":     "",
+	} {
+		t.Run(detail, func(t *testing.T) {
+			sources := consoleCreditsFixture(detail)
+			sources.Credits.Entries[0].Packages = []string{"npm:@sveltejs"}
+			err := CheckCredits(playerCreditsRow([]string{"react 19.0.0"}), renderFixtureSources(), sources)
+			if want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v; want %q", err, want)
+			}
+		})
 	}
 }
 
@@ -195,6 +220,7 @@ func TestCreditsConsoleManifestBoundaries(t *testing.T) {
 			sources.Credits.Entries[0].Paths = test.paths
 			sources.Credits.Entries[0].Packages = test.packages
 			sources.PathTexts[consoleManifestFile] = test.manifest
+			sources.ManifestTexts[consoleManifestFile] = test.manifest
 			err := CheckCredits(playerCreditsRow([]string{"react 19.0.0"}), renderFixtureSources(), sources)
 			if test.want == "" {
 				if err != nil {
@@ -214,7 +240,7 @@ func TestCreditsNameConsolePackagesAtManifestVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	sources := UpstreamCreditSources{
-		Credits: listed, PathTexts: map[string]string{consoleManifestFile: string(readRepoFile(t, consoleManifestFile))},
+		Credits: listed, ManifestTexts: map[string]string{consoleManifestFile: string(readRepoFile(t, consoleManifestFile))},
 	}
 	if err := CheckCredits(string(readRepoFile(t, AcknowledgementsFile)), checkoutNoticeSources(t), sources); err != nil {
 		t.Fatal(err)

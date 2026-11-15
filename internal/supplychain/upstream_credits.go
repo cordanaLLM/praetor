@@ -58,6 +58,9 @@ type UpstreamCreditSources struct {
 	// PathTexts holds, lower-cased, the text of every file the credits list names; a named path
 	// that is no file in the repository is absent.
 	PathTexts map[string]string
+	// ManifestTexts holds, case kept, the text of each named manifest whose pins the credits
+	// compare exactly (console/package.json when the list names it); PathTexts folds case.
+	ManifestTexts map[string]string
 	// Today is the day exceptions expire against.
 	Today time.Time
 }
@@ -96,13 +99,13 @@ func ReadUpstreamCreditSources(ctx context.Context, root string) (UpstreamCredit
 	if err != nil {
 		return UpstreamCreditSources{}, err
 	}
-	paths, err := readCreditPathTexts(ctx, root, credits)
+	paths, manifests, err := readCreditPathTexts(ctx, root, credits)
 	if err != nil {
 		return UpstreamCreditSources{}, err
 	}
 	return UpstreamCreditSources{
 		Credits: credits, Reuse: string(reuse), Assets: assets, LicenseTexts: texts,
-		Inventory: inventory, Exceptions: exceptions, PathTexts: paths, Today: time.Now(),
+		Inventory: inventory, Exceptions: exceptions, PathTexts: paths, ManifestTexts: manifests, Today: time.Now(),
 	}, nil
 }
 
@@ -138,19 +141,24 @@ func readCreditExceptions(ctx context.Context, root string) ([]config.Exception,
 }
 
 // readCreditPathTexts reads every path the credits list names below root and returns each
-// file's text lower-cased; a path that is no file is left out.
-func readCreditPathTexts(ctx context.Context, root string, credits Credits) (map[string]string, error) {
-	texts := map[string]string{}
+// file's text lower-cased, plus the case-kept text of the console manifest whose pins the
+// credits compare exactly; a path that is no file is left out of both.
+func readCreditPathTexts(ctx context.Context, root string, credits Credits) (map[string]string, map[string]string, error) {
+	texts, manifests := map[string]string{}, map[string]string{}
 	for _, rel := range creditPaths(credits) {
 		data, exists, err := contextopt.ObserveSnapshotIn(ctx, root, rel)
 		if err != nil {
-			return nil, fmt.Errorf("read %s, which %s names: %w", rel, AcknowledgementsList, err)
+			return nil, nil, fmt.Errorf("read %s, which %s names: %w", rel, AcknowledgementsList, err)
 		}
-		if exists {
-			texts[rel] = strings.ToLower(string(data))
+		if !exists {
+			continue
+		}
+		texts[rel] = strings.ToLower(string(data))
+		if rel == consoleManifestFile {
+			manifests[rel] = string(data)
 		}
 	}
-	return texts, nil
+	return texts, manifests, nil
 }
 
 // creditPaths lists, sorted and once each, the paths of every entry, original and download.
