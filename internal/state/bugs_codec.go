@@ -141,7 +141,7 @@ func decodeBugMetadata(suffix string) (*ledgerMetadata, error) {
 // decodeBugRow reads one table row. A v2 row takes its metadata from index,
 // which is nil when the caller has no sidecar.
 func decodeBugRow(line string, index ledgerMetaIndex) (BugEntry, bugRowForm, error) {
-	rawParts := strings.Split(line, "|")
+	rawParts := ledgerTableCells(line)
 	parts := append([]string(nil), rawParts...)
 	if len(parts) != 8 || strings.TrimSpace(parts[0]) != "" {
 		return BugEntry{}, bugRowLegacy, fmt.Errorf("expected exactly six bug columns")

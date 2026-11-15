@@ -17,6 +17,8 @@ type ReplaceOptions struct {
 	Expected []byte
 	Exists   bool
 	Mode     os.FileMode
+	// ExpectedLimit raises only the prior snapshot read bound for a bounded recovery.
+	ExpectedLimit int64
 }
 
 // ReplaceSnapshot publishes bounded UTF-8 text through a pinned parent directory.
@@ -137,6 +139,7 @@ func CreateRootSnapshot(ctx context.Context, root *os.Root, name string, data []
 	return created, SyncDirectory(ctx, root)
 }
 
+// validateReplacement bounds both the new text and the recovery snapshot expectation.
 func validateReplacement(ctx context.Context, data []byte, options ReplaceOptions) error {
 	if ctx == nil {
 		return errors.New("snapshot replacement requires a context")
@@ -144,9 +147,10 @@ func validateReplacement(ctx context.Context, data []byte, options ReplaceOption
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if len(data) > MaxSourceBytes || len(options.Expected) > MaxSourceBytes {
-		return fmt.Errorf("snapshot replacement exceeds %d bytes", MaxSourceBytes)
+	if err := validateReplacementLimits(data, options); err != nil {
+		return err
 	}
+
 	if options.Mode == 0 || options.Mode&^0o644 != 0 {
 		return errors.New("snapshot mode must be nonzero owner read/write and optional group/other read bits")
 	}
@@ -156,6 +160,26 @@ func validateReplacement(ctx context.Context, data []byte, options ReplaceOption
 	return errors.Join(validateText(data), validateText(options.Expected))
 }
 
+// validateReplacementLimits bounds new bytes independently from the prior recovery snapshot.
+func validateReplacementLimits(data []byte, options ReplaceOptions) error {
+	if options.ExpectedLimit < 0 || options.ExpectedLimit > MaxTotalBytes {
+		return fmt.Errorf("snapshot expectation limit must be 0..%d bytes", MaxTotalBytes)
+	}
+	if len(data) > MaxSourceBytes || int64(len(options.Expected)) > replacementReadLimit(options) {
+		return fmt.Errorf("snapshot replacement exceeds %d bytes", MaxSourceBytes)
+	}
+	return nil
+}
+
+// replacementReadLimit preserves the default bound unless a recovery explicitly raises it.
+func replacementReadLimit(options ReplaceOptions) int64 {
+	if options.ExpectedLimit == 0 {
+		return MaxSourceBytes
+	}
+	return options.ExpectedLimit
+}
+
+// verifyReplacement checks identity and expected bytes through the shared snapshot copy.
 func verifyReplacement(ctx context.Context, root *os.Root, name string, options ReplaceOptions) (os.FileMode, error) {
 	info, err := root.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) && !options.Exists {
@@ -167,11 +191,12 @@ func verifyReplacement(ctx context.Context, root *os.Root, name string, options 
 	if !options.Exists {
 		return 0, fmt.Errorf("snapshot already exists: %s", name)
 	}
-	current, err := ReadRootSnapshot(ctx, root, name)
+	var current bytes.Buffer
+	_, err = snapshotRootCopy(ctx, root, name, &current, replacementReadLimit(options))
 	if err != nil {
 		return 0, err
 	}
-	if !bytes.Equal(current, options.Expected) {
+	if !bytes.Equal(current.Bytes(), options.Expected) {
 		return 0, fmt.Errorf("snapshot changed before replacement: %s", name)
 	}
 	return options.Mode & info.Mode().Perm(), nil

@@ -9,6 +9,7 @@ languages:
 go_version: "1.27"
 capabilities:
     required:
+        - telemetry.logging
         - config.toml
         - custom.github_com_santhosh_tekuri_jsonschema_v6
         - config.yaml
@@ -697,6 +698,13 @@ dependencies:
       capability: config.yaml
       status: gap
       notes: YAML parser and serializer (archived upstream 2025-04-01)
+standard_library_imports:
+    - package: log/slog
+      language: go
+      ecosystem: go
+      capability: telemetry.logging
+      status: gap
+      notes: Standard-library structured logging API
 readiness:
     basis: not-configured
     score: 0
