@@ -7,6 +7,7 @@ package ghworkflow
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -167,21 +168,23 @@ func concurrencyPayloadValue(t *testing.T, context map[string]any, path string) 
 // TestEnginePullRequestWorkflowConcurrency pins every engine PR workflow to the shared group
 // and allows cancellation only for the pull request event types that workflow subscribes to.
 func TestEnginePullRequestWorkflowConcurrency(t *testing.T) {
-	paths, err := filepath.Glob(filepath.Join("..", "..", ".github", "workflows", "*.yml"))
-	if err != nil || len(paths) == 0 || len(paths) > 64 {
+	workflows := os.DirFS(filepath.Join("..", "..", ".github", "workflows"))
+	names, err := fs.Glob(workflows, "*.yml")
+	if err != nil || len(names) == 0 || len(names) > 64 {
 		t.Fatalf("find engine workflows: %v", err)
 	}
-	for i := 0; i < len(paths) && i < 64; i++ {
-		t.Run(filepath.Base(paths[i]), func(t *testing.T) {
-			checkEngineWorkflowConcurrency(t, paths[i])
+	for i := 0; i < len(names) && i < 64; i++ {
+		t.Run(names[i], func(t *testing.T) {
+			checkEngineWorkflowConcurrency(t, workflows, names[i])
 		})
 	}
 }
 
-// checkEngineWorkflowConcurrency parses one engine workflow and checks its PR concurrency policy.
-func checkEngineWorkflowConcurrency(t *testing.T, path string) {
+// checkEngineWorkflowConcurrency parses one engine workflow, read through a file system rooted at
+// .github/workflows so no name can leave that folder, and checks its PR concurrency policy.
+func checkEngineWorkflowConcurrency(t *testing.T, workflows fs.FS, name string) {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	data, err := fs.ReadFile(workflows, name)
 	if err != nil {
 		t.Fatal(err)
 	}
