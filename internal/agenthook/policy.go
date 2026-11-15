@@ -313,12 +313,13 @@ func withoutReadOnlyWords(command string) string {
 const shellNestingLimit, shellHereLineLimit = 16, 256
 
 var (
-	shellStatePattern        = regexp.MustCompile(ReadOnlyVeto[strings.Index(ReadOnlyVeto, "(?i:"):])
-	shellBoundaryVetoPattern = regexp.MustCompile(`--%|%[;&|]`)
-	shellHerePattern         = regexp.MustCompile(`^<<(-?)[ \t]*("[^"]*"|'[^']*'|[-A-Za-z0-9_]+)`)
-	shellRedirectPattern     = regexp.MustCompile(`^&?[<>](?:[<>|]|&[0-9-]*)?`)
-	shellUnsupportedPattern  = regexp.MustCompile(`[^\t\x20-\x7e]|[{}^!]`)
-	shellDataOptionPattern   = regexp.MustCompile(`^(--(?:message|file|reuse-message|reedit-message|author|date)(=|$)|-[mFCc])`)
+	shellStatePattern          = regexp.MustCompile(ReadOnlyVeto[strings.Index(ReadOnlyVeto, "(?i:"):])
+	shellBoundaryVetoPattern   = regexp.MustCompile(`--%|%[;&|]`)
+	shellHerePattern           = regexp.MustCompile(`^<<(-?)[ \t]*("[^"]*"|'[^']*'|[-A-Za-z0-9_]+)`)
+	shellRedirectPattern       = regexp.MustCompile(`^&?[<>](?:[<>|]|&[0-9-]*)?`)
+	shellUnsupportedPattern    = regexp.MustCompile(`[^\t\x20-\x7e]|[{}^!]`)
+	shellDataOptionPattern     = regexp.MustCompile(`^(--(?:message|file|reuse-message|reedit-message|author|date)(=|$)|-[mFCc])`)
+	shellArrayExpansionPattern = regexp.MustCompile(`^\$(?:@|\{(?:@|!?[A-Za-z_][A-Za-z0-9_]*\[@\]|![A-Za-z_][A-Za-z0-9_]*@\}))`)
 	// Reuse the short-flag rule's Git option prefilter without requiring its flag tail.
 	shellCommitPattern = regexp.MustCompile(strings.ReplaceAll(
 		shortSkipFlagRule[:strings.Index(shortSkipFlagRule, `(commit\b`)]+`(commit\b|am\b)`, `\s`, pythonSpace))
@@ -625,10 +626,11 @@ func (s *shellSpans) mask(start, end int) {
 	}
 }
 
-// markExpansion distinguishes expansions that can split from those inside double quotes.
+// markExpansion retains splitting for array expansions even inside double quotes.
 func (s *shellSpans) markExpansion() {
 	s.wordExpansion = true
-	s.wordSplitting = s.wordSplitting || len(s.stack) == 0
+	array := s.executionStart < 0 && shellArrayExpansionPattern.MatchString(s.command[s.position:])
+	s.wordSplitting = s.wordSplitting || len(s.stack) == 0 || array
 }
 
 // redirectOrExecution recognises process substitutions before ordinary redirections.

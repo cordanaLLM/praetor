@@ -260,15 +260,45 @@ func evasionRoundSevenCases() []struct {
 	}
 }
 
+// evasionRoundEightCases covers runtime splitting, quoted arrays and scalar masking boundaries.
+func evasionRoundEightCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"runtime splitting message parameter", `git commit -m $msg && git log -n 1`, 2},
+		{"quoted positional array message", `git commit -m "$@" && git log -n 1`, 2},
+		{"quoted braced positional array message", `git commit -m "${@}" && git log -n 1`, 2},
+		{"quoted array message", `git commit -m "${arr[@]}" && git log -n 1`, 2},
+		{"quoted prefix names message", `git commit -m "${!prefix@}" && git log -n 1`, 2},
+		{"quoted array keys message", `git commit -m "${!arr[@]}" && git log -n 1`, 2},
+		{"quoted array slice message", `git commit -m "${arr[@]:1}" && git log -n 1`, 2},
+		{"quoted array shifts message", `git commit -m "${arr[@]}" -m -n`, 2},
+		{"quoted runtime message parameter", `git commit -m "$msg" && git log -n 1`, 0},
+		{"quoted positional star message", `git commit -m "$*" && git log -n 1`, 0},
+		{"quoted braced positional star message", `git commit -m "${*}" && git log -n 1`, 0},
+		{"quoted array star message", `git commit -m "${arr[*]}" && git log -n 1`, 0},
+		{"quoted array length message", `git commit -m "${#arr[@]}" && git log -n 1`, 0},
+		{"quoted prefix star message", `git commit -m "${!prefix*}" && git log -n 1`, 0},
+		{"quoted substitution positional array", `git commit -m "$(printf '%s' "$@")" && git log -n 1`, 0},
+		{"quoted substitution array message", `git commit -m "$(printf '%s' "${arr[@]}")" && git log -n 1`, 0},
+	}
+}
+
 // TestEmittedEvasionCommitSegments keeps skip flags within their shell command.
 func TestEmittedEvasionCommitSegments(t *testing.T) {
 	python, script := emittedInterceptor(t)
 	cases := append(evasionCommitSegmentCases(), evasionRedirectCases()...)
 	cases = append(append(cases, evasionFallbackCases()...), evasionRoundFourCases()...)
 	cases = append(cases, evasionRoundFiveCases()...)
-	for _, tc := range append(cases, evasionRoundSevenCases()...) {
+	cases = append(cases, evasionRoundSevenCases()...)
+	for _, tc := range append(cases, evasionRoundEightCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
+			t.Logf("emitted rc=%d want=%d", got, tc.want)
 			if got != tc.want {
 				t.Errorf("exit %d, want %d", got, tc.want)
 			}

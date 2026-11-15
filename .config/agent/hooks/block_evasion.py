@@ -165,6 +165,9 @@ class CommandSpans:
     data_option_pattern = re.compile(
         r"^(--(?:message|file|reuse-message|reedit-message|author|date)(=|$)|-[mFCc])"
     )
+    array_expansion_pattern = re.compile(
+        r"\$(?:@|\{(?:@|!?[A-Za-z_][A-Za-z0-9_]*\[@\]|![A-Za-z_][A-Za-z0-9_]*@\}))"
+    )
     literal_pattern = re.compile(r'[^"\\$\x60\n]+')
 
     def __init__(self, command, short_pattern):
@@ -320,9 +323,13 @@ class CommandSpans:
         self.judged[start:end] = " " * (end - start)
 
     def mark_expansion(self):
-        """Distinguish splitting expansions from those inside double quotes."""
+        """Retain splitting for array expansions even inside double quotes."""
         self.word_expansion = True
-        self.word_splitting |= not self.stack
+        self.word_splitting |= not self.stack or (
+            self.execution_start < 0
+            and self.array_expansion_pattern.match(self.command, self.position)
+            is not None
+        )
 
     def redirect_or_execution(self):
         """Recognise process substitutions before ordinary redirections."""

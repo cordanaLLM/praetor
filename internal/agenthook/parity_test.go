@@ -642,6 +642,34 @@ func roundSevenSegmentCases() []struct {
 	}
 }
 
+// roundEightSegmentCases covers runtime splitting, quoted arrays and scalar masking boundaries.
+func roundEightSegmentCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"runtime splitting message parameter", `git commit -m $msg && git log -n 1`, 2},
+		{"quoted positional array message", `git commit -m "$@" && git log -n 1`, 2},
+		{"quoted braced positional array message", `git commit -m "${@}" && git log -n 1`, 2},
+		{"quoted array message", `git commit -m "${arr[@]}" && git log -n 1`, 2},
+		{"quoted prefix names message", `git commit -m "${!prefix@}" && git log -n 1`, 2},
+		{"quoted array keys message", `git commit -m "${!arr[@]}" && git log -n 1`, 2},
+		{"quoted array slice message", `git commit -m "${arr[@]:1}" && git log -n 1`, 2},
+		{"quoted array shifts message", `git commit -m "${arr[@]}" -m -n`, 2},
+		{"quoted runtime message parameter", `git commit -m "$msg" && git log -n 1`, 0},
+		{"quoted positional star message", `git commit -m "$*" && git log -n 1`, 0},
+		{"quoted braced positional star message", `git commit -m "${*}" && git log -n 1`, 0},
+		{"quoted array star message", `git commit -m "${arr[*]}" && git log -n 1`, 0},
+		{"quoted array length message", `git commit -m "${#arr[@]}" && git log -n 1`, 0},
+		{"quoted prefix star message", `git commit -m "${!prefix*}" && git log -n 1`, 0},
+		{"quoted substitution positional array", `git commit -m "$(printf '%s' "$@")" && git log -n 1`, 0},
+		{"quoted substitution array message", `git commit -m "$(printf '%s' "${arr[@]}")" && git log -n 1`, 0},
+	}
+}
+
 // TestParityEvasionCommitSegments judges every planted row with both implementations.
 func TestParityEvasionCommitSegments(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
@@ -649,7 +677,8 @@ func TestParityEvasionCommitSegments(t *testing.T) {
 	cases := append(commitSegmentCases(), redirectSegmentCases()...)
 	cases = append(append(cases, fallbackSegmentCases()...), roundFourSegmentCases()...)
 	cases = append(cases, roundFiveSegmentCases()...)
-	for _, tc := range append(cases, roundSevenSegmentCases()...) {
+	cases = append(cases, roundSevenSegmentCases()...)
+	for _, tc := range append(cases, roundEightSegmentCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
 			python := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())

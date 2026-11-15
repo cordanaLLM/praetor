@@ -663,6 +663,9 @@ class CommandSpans:
     data_option_pattern = re.compile(
         r"^(--(?:message|file|reuse-message|reedit-message|author|date)(=|$)|-[mFCc])"
     )
+    array_expansion_pattern = re.compile(
+        r"\$(?:@|\{(?:@|!?[A-Za-z_][A-Za-z0-9_]*\[@\]|![A-Za-z_][A-Za-z0-9_]*@\}))"
+    )
     literal_pattern = re.compile(r'[^"\\$\x60\n]+')
 
     def __init__(self, command, short_pattern):
@@ -818,9 +821,13 @@ class CommandSpans:
         self.judged[start:end] = " " * (end - start)
 
     def mark_expansion(self):
-        """Distinguish splitting expansions from those inside double quotes."""
+        """Retain splitting for array expansions even inside double quotes."""
         self.word_expansion = True
-        self.word_splitting |= not self.stack
+        self.word_splitting |= not self.stack or (
+            self.execution_start < 0
+            and self.array_expansion_pattern.match(self.command, self.position)
+            is not None
+        )
 
     def redirect_or_execution(self):
         """Recognise process substitutions before ordinary redirections."""
@@ -1400,6 +1407,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"48e31ba22b03e31c38f447d2f31bedb0cc7b38e65913a50d4530c9d183ac8c51": "quoted array expansions retain splitting inside data operands",
 	"804a1a23108279ab7651d1e10e0a98190a63b291e3d261c482c19f478fa75ffc": "bounded command spans with redirection, substitution and here-document ownership",
 	"3f2ab8c180c95fc84bcbafa58b563586126b689d2251424bf433f0f0206b6333": "complete emitted function docstrings",
 	"b43f0818ef78cf285434e865abd9f78529e6064ebb9f4e8ab6ce97ed49637a59": "privilege refusal with shared necessary-literal prefilter",
