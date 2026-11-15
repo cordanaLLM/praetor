@@ -428,7 +428,13 @@ func (p *Policy) Command(command string) Verdict {
 
 // CommandIn judges one proposed command line with the hook's working directory workDir, which
 // also serves the steps that inspect a repository checkout (such as git push target resolution).
+// Literal commit SHAs are checked only after the existing command rules allow the command.
 func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict {
+	return judgeLiteralCommitSHAsAfter(ctx, command, workDir, p.commandRulesIn(ctx, command, workDir))
+}
+
+// commandRulesIn evaluates the existing rules before either forge-text or literal SHA checks.
+func (p *Policy) commandRulesIn(ctx context.Context, command, workDir string) Verdict {
 	if p == nil {
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
