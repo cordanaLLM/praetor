@@ -41,6 +41,7 @@ func request(t *testing.T, client *http.Client, method, session string, want int
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
+	//revive:disable-next-line:unsecure-url-scheme -- the transport dials the Unix socket; "engine" is never resolved and no network hop exists to encrypt
 	req, err := http.NewRequestWithContext(ctx, method, "http://engine/containers/json", nil)
 	if err != nil {
 		t.Fatal(err)

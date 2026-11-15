@@ -6,6 +6,8 @@ module github.com/testcontainers/testcontainers-go/praetorfixture
 
 go 1.27
 
+toolchain go1.27.4
+
 require github.com/testcontainers/testcontainers-go v0.44.0
 
 require (
