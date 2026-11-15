@@ -136,9 +136,25 @@ func TestCreditsRejectStaleConsoleVersions(t *testing.T) {
 	}
 }
 
+// Negative: separated comparators remain version claims even when their bound equals the pin.
+func TestCreditsRejectSeparatedConsoleComparators(t *testing.T) {
+	for _, claim := range []string{">= 3.1.0", "<= 3.1.1", "> 3.1.1", "< 3.1.1", "= 3.1.1", "^ 3.1.1", "~ 3.1.1"} {
+		for _, name := range []string{"kit", "@sveltejs/kit"} {
+			t.Run(name+" "+claim, func(t *testing.T) {
+				err := CheckCredits(playerCreditsRow([]string{"react 19.0.0"}), renderFixtureSources(), consoleCreditsFixture(name+" "+claim))
+				want := "SvelteKit) names @sveltejs/kit " + claim + "; console/package.json pins 3.1.1"
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("separated comparator accepted or unnamed: %v; want %q", err, want)
+				}
+			})
+		}
+	}
+}
+
 // Positive and boundary: matching pins, prose without versions, and unrelated terms pass.
 func TestCreditsAcceptMatchingOrUnversionedConsoleDetails(t *testing.T) {
 	for _, detail := range []string{
+		"kit 3.1.1", "kit", "kit ^", "kit >=", "kit >= current", "other-kit >= 3.1.0", "@other/kit ^ 3.1.1",
 		"kit 3.1.1, adapter-static 4.0.0", "@sveltejs/kit 3.1.1; @sveltejs/adapter-static 4.0.0",
 		"`kit` `3.1.1`, (adapter-static 4.0.0)", "", "framework and static adapter",
 		"other-kit 3.1.0, @other/kit 3.1.0, unrelated 1.0.0",

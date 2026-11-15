@@ -105,16 +105,17 @@ func checkConsoleCreditEntry(entry CreditEntry, index int, pins map[string]strin
 }
 
 // consoleDetailVersions reads full or scope-shortened "<name> <version>" terms and a bare
-// version (the entry's packages share that claim). Markdown link destinations never count.
+// version (the entry's packages share that claim). Separated comparators stay in the claim;
+// Markdown link destinations never count.
 func consoleDetailVersions(detail, name string) []string {
 	text := util.MarkdownLinkRe.ReplaceAllString(detail, "$1")
 	text = strings.NewReplacer("`", "", ",", " ", ";", " ", "(", " ", ")", " ").Replace(text)
 	fields := strings.Fields(text)
 	var versions []string
-	for index, field := range fields {
-		field = strings.TrimSuffix(field, ".")
+	for index := range fields {
+		field := consoleVersionClaim(fields, index)
 		_, value := semver.CutOperator(field)
-		value = strings.TrimPrefix(value, "v")
+		value = strings.TrimPrefix(strings.TrimSpace(value), "v")
 		if len(value) == 0 || value[0] < '0' || value[0] > '9' {
 			continue
 		}
@@ -123,6 +124,16 @@ func consoleDetailVersions(detail, name string) []string {
 		}
 	}
 	return versions
+}
+
+// consoleVersionClaim keeps a standalone comparator and its following version together.
+func consoleVersionClaim(fields []string, index int) string {
+	field := strings.TrimSuffix(fields[index], ".")
+	operator, value := semver.CutOperator(field)
+	if operator != "" && value == "" && index+1 < len(fields) {
+		return field + " " + strings.TrimSuffix(fields[index+1], ".")
+	}
+	return field
 }
 
 // creditsPlayerRow returns the one table row of credits that names the committed player.
