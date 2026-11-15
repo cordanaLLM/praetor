@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -79,12 +80,30 @@ func TestPolicyLeaseSHAPlanted(t *testing.T) {
 	} {
 		t.Run(command, func(t *testing.T) {
 			verdict := policy(t).WithWorkDir(dir).Command(command)
-			if verdict.Outcome != Deny || !strings.Contains(verdict.Reason, bad) || !strings.Contains(verdict.Reason, dir) {
-				t.Fatalf("fabricated SHA accepted or diagnostic incomplete: %+v", verdict)
-			}
+			assertLeaseSHARefusal(t, verdict, bad, dir)
 			assertLeaseHook(t, dir, command, false)
 		})
 	}
+}
+
+// assertLeaseSHARefusal requires the denial to name both the commit and its repository.
+func assertLeaseSHARefusal(t *testing.T, verdict Verdict, sha, dir string) {
+	t.Helper()
+	repository := "repository " + strconv.Quote(dir)
+	if verdict.Outcome != Deny || !strings.Contains(verdict.Reason, sha) || !strings.Contains(verdict.Reason, repository) {
+		t.Fatalf("commit resolution refusal missing or diagnostic incomplete: %+v", verdict)
+	}
+}
+
+// TestPolicyLeaseSHAPlantedWindowsPath exercises escaped repository diagnostics on every OS.
+func TestPolicyLeaseSHAPlantedWindowsPath(t *testing.T) {
+	dir := `C:\Users\runner\AppData\Local\Temp\repository`
+	bad := strings.Repeat("a", 40)
+	// Cancellation preserves the real refusal formatter without accessing this synthetic path.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	verdict := policy(t).CommandIn(ctx, "git show "+bad, dir)
+	assertLeaseSHARefusal(t, verdict, bad, dir)
 }
 
 // assertLeaseHook checks the pre-tool protocol as well as the policy's decision.
@@ -157,9 +176,7 @@ func TestPolicyLeaseSHARepositorySelection(t *testing.T) {
 	for _, target := range []string{base, filepath.Join(base, "missing"), "$unknown"} {
 		command := fmt.Sprintf("cd %q && git push --force-with-lease=main:%s", target, sha)
 		verdict := policy(t).CommandIn(t.Context(), command, dir)
-		if verdict.Outcome != Deny || !strings.Contains(verdict.Reason, "repository") || !strings.Contains(verdict.Reason, target) {
-			t.Errorf("unresolvable repository accepted: %+v", verdict)
-		}
+		assertLeaseSHARefusal(t, verdict, sha, target)
 	}
 	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
 	defer cancel()
