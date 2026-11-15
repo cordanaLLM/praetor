@@ -166,6 +166,33 @@ func TestNamesWorktreePath(t *testing.T) {
 	}
 }
 
+// TestArchiveEscapedPipeWorktree retains a live path recorded with an escaped table delimiter.
+func TestArchiveEscapedPipeWorktree(t *testing.T) {
+	for _, wrapper := range []string{"%s", "`%s`", "\"%s\"", "(%s)", "[%s]"} {
+		t.Run(wrapper, func(t *testing.T) {
+			root := t.TempDir()
+			if err := InitWorkingDir(root); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.FromSlash("/repo/a|b")
+			ops := defaultArchiveWorktreeOps()
+			ops.list = func(context.Context, string) ([]worktree.WorktreeInfo, error) {
+				return []worktree.WorktreeInfo{{Path: path}}, nil
+			}
+			ops.inspect = func(_ context.Context, field string) (archivePath, error) {
+				return archivePath{path: field, exists: field == path}, nil
+			}
+			kept := "| DONE | path: " + fmt.Sprintf(wrapper, `/repo/a\|b`) + " |\n"
+			open := filepath.Join(root, WorkingDirName, openLedgerName)
+			writeIntegrityFile(t, open, kept+"- [x] unrelated\n")
+			if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); err != nil || count != 1 {
+				t.Fatalf("escaped-pipe archive = %d, %v", count, err)
+			}
+			assertIntegrityFile(t, open, kept)
+		})
+	}
+}
+
 // TestArchiveStructuralMarkers refuses completion words outside their status position.
 func TestArchiveStructuralMarkers(t *testing.T) {
 	root := t.TempDir()

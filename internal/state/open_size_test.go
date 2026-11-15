@@ -119,7 +119,9 @@ func TestArchiveRecoveryFullBacklog(t *testing.T) {
 		t.Fatal(err)
 	}
 	backlogFile := filepath.Join(root, WorkingDirName, backlogLedgerName)
-	backlog := strings.Repeat("padding\n", maxLedgerBytes/8)
+	const pending = "- [ ] Deferred migration\n"
+	backlog := pending + "```\n- [ ] fenced example\n```\n"
+	backlog += strings.Repeat("padding\n", (maxLedgerBytes-len(backlog))/8)
 	writeIntegrityFile(t, backlogFile, backlog)
 	done := strings.Repeat("- [x] discharged record with padding\n", maxLedgerBytes/35+100)
 	open := filepath.Join(root, WorkingDirName, openLedgerName)
@@ -135,6 +137,7 @@ func TestArchiveRecoveryFullBacklog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertPendingBacklogRecovery(t, root, string(index), pending)
 	before := recoveryHistoryNames(t, root)
 	if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != 0 {
 		t.Fatalf("repeat full BACKLOG recovery = %d, %v", count, err)
@@ -142,6 +145,80 @@ func TestArchiveRecoveryFullBacklog(t *testing.T) {
 	assertIntegrityFile(t, backlogFile, string(index))
 	if after := recoveryHistoryNames(t, root); strings.Join(before, "\n") != strings.Join(after, "\n") {
 		t.Fatalf("repeat recovery created history: %v -> %v", before, after)
+	}
+}
+
+// assertPendingBacklogRecovery checks listing and row placement while excluding archived examples.
+func assertPendingBacklogRecovery(t *testing.T, root, index, pending string) {
+	t.Helper()
+	listed, err := ListBacklogTasksContext(t.Context(), root)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("retained backlog tasks = %+v, %v", listed, err)
+	}
+	if listed[0].Completed || listed[0].Description != "Deferred migration" {
+		t.Errorf("retained backlog task = %+v", listed[0])
+	}
+	if listed[0].Section != "Future Workstreams" {
+		t.Errorf("pending backlog task under wrong heading: %q", listed[0].Section)
+	}
+	if !strings.HasSuffix(index, pending) {
+		t.Fatal("pending backlog row missing after history index")
+	}
+}
+
+// TestArchiveRecoveryBacklogCapacity checks the retained-row index at and just above its byte limit.
+func TestArchiveRecoveryBacklogCapacity(t *testing.T) {
+	for _, extra := range []int{0, 1} {
+		t.Run(fmt.Sprint(extra), func(t *testing.T) { testArchiveRecoveryBacklogCapacity(t, extra) })
+	}
+}
+
+// testArchiveRecoveryBacklogCapacity requires overflow refusal before any ledger or history write.
+func testArchiveRecoveryBacklogCapacity(t *testing.T, extra int) {
+	t.Helper()
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	const header = "\n### Discharged Tasks [2006-01-02 15:04:05 UTC, commit `fixture`]\n"
+	_, index, err := archiveChunkIndex(t.Context(), header, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := maxLedgerBytes - len(index) - len(archivePendingHeading) + extra
+	const row = "- [ ] Deferred migration\n"
+	backlog := strings.Repeat(row, (size-7)/len(row))
+	backlog += "- [ ] " + strings.Repeat("p", size-len(backlog)-7) + "\n"
+	backlogFile := filepath.Join(root, WorkingDirName, backlogLedgerName)
+	writeIntegrityFile(t, backlogFile, backlog)
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	done := strings.Repeat("- [x] done\n", 100)
+	writeIntegrityFile(t, open, done)
+	count, err := ArchiveCompletedTasks(root, "fixture")
+	if extra == 0 {
+		if err != nil || count != 100 {
+			t.Fatalf("exact-fit recovery = %d, %v", count, err)
+		}
+		assertExactBacklogRecovery(t, backlogFile, backlog)
+		assertIntegrityFile(t, open, "")
+		return
+	}
+	if count != 0 || err == nil || !strings.Contains(err.Error(), "archive index") {
+		t.Errorf("retained backlog overflow = %d, %v", count, err)
+	}
+	assertIntegrityFile(t, backlogFile, backlog)
+	assertIntegrityFile(t, open, done)
+	if names := recoveryHistoryNames(t, root); len(names) != 0 {
+		t.Fatalf("history published before retained backlog fit: %v", names)
+	}
+}
+
+// assertExactBacklogRecovery requires a readable ledger exactly at the byte cap with all pending rows.
+func assertExactBacklogRecovery(t *testing.T, path, pending string) {
+	t.Helper()
+	data, err := contextopt.ReadSnapshot(t.Context(), path)
+	if err != nil || len(data) != maxLedgerBytes || !strings.HasSuffix(string(data), pending) {
+		t.Fatalf("exact-fit backlog = %d bytes, %v", len(data), err)
 	}
 }
 

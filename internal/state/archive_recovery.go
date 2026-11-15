@@ -18,6 +18,9 @@ import (
 // maxArchiveRecoveryBytes permits recovery above the ordinary snapshot limit, still bounded.
 const maxArchiveRecoveryBytes = contextopt.MaxTotalBytes
 
+// archivePendingHeading separates retained workstreams from the discharged history index.
+const archivePendingHeading = "\n## Future Workstreams\n"
+
 // readArchiveOpen reuses the confined snapshot reader with the recovery pass's separate bound.
 func readArchiveOpen(ctx context.Context, path string) ([]byte, error) {
 	content, err := contextopt.ReadSnapshotLimit(ctx, path, maxArchiveRecoveryBytes)
@@ -65,7 +68,7 @@ func completedTaskChunks(ctx context.Context, header string, tasks []string) ([]
 }
 
 // archiveCompletedChunks rolls BACKLOG.md and completed rows into bounded history files.
-// The replacement index's size is checked before any history chunk is published.
+// The replacement index retains pending backlog rows and fits before any history is published.
 // A failed later write can duplicate records, but OPEN.md still holds every original row.
 func archiveCompletedChunks(ctx context.Context, rootPath, header string, backlog []byte, tasks []string) (index string, err error) {
 	chunks, err := completedTaskChunks(ctx, header, tasks)
@@ -73,7 +76,7 @@ func archiveCompletedChunks(ctx context.Context, rootPath, header string, backlo
 		return "", err
 	}
 	chunks = append([]string{string(backlog)}, chunks...)
-	names, index, err := archiveChunkIndex(ctx, header, len(chunks))
+	names, index, err := archiveBacklogIndex(ctx, header, backlog, len(chunks))
 	if err != nil {
 		return "", err
 	}
@@ -96,6 +99,40 @@ func archiveCompletedChunks(ctx context.Context, rootPath, header string, backlo
 		}
 	}
 	return index, nil
+}
+
+// archiveBacklogIndex keeps pending rows readable without following history links.
+// The shared ledger parser excludes fenced examples; retained rows count toward the index limit.
+func archiveBacklogIndex(ctx context.Context, header string, backlog []byte, count int) ([]string, string, error) {
+	names, index, err := archiveChunkIndex(ctx, header, count)
+	if err != nil {
+		return nil, "", err
+	}
+	lines := strings.Split(string(backlog), "\n")
+	rows, err := parseLedgerTaskLines(ctx, backlogLedgerName, lines)
+	if err != nil {
+		return nil, "", err
+	}
+	pending := make([]string, 0, len(rows))
+	for i := 0; i < len(rows) && i < maxScannedLines; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
+		if !rows[i].completed {
+			pending = append(pending, lines[rows[i].line])
+		}
+	}
+	if len(pending) > 0 {
+		index += archivePendingHeading
+	}
+	text, err := completedTaskText(ctx, index, pending)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(text) > maxLedgerBytes {
+		return nil, "", fmt.Errorf("archive index with pending BACKLOG.md rows exceeds the %d-byte ledger limit", maxLedgerBytes)
+	}
+	return names, text, nil
 }
 
 // archiveChunkIndex plans every history name and refuses an index beyond the ledger limit.

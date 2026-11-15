@@ -157,8 +157,10 @@ func archiveRowPaths(ctx context.Context, row string) ([]string, error) {
 	return paths, nil
 }
 
-// archivePathField reads a complete native, slash or UNC field without splitting embedded spaces.
+// archivePathField decodes escaped pipes before removing wrappers and cleaning the complete path.
+// Embedded spaces survive; native, slash and UNC path spellings share the same field grammar.
 func archivePathField(field string) string {
+	field = strings.ReplaceAll(field, `\|`, "|")
 	field = strings.TrimSpace(field)
 	start := archivePathStart(field)
 	if start < 0 {
