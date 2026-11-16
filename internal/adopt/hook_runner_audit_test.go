@@ -3,6 +3,7 @@ package adopt
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -77,17 +78,61 @@ func TestAuditInstalledGitHook_Positive_KnownRunners(t *testing.T) {
 			root, hooks := hookRunnerRepo(t, tc.lefthook, tc.preCommit)
 			path := installTestHook(t, hooks, tc.hook, 0o700)
 			line, err := AuditInstalledGitHook(t.Context(), root)
-			if err != nil || !strings.HasPrefix(line, "[PASS] Local Git hooks ("+path) || !strings.HasSuffix(line, tc.want) {
+			if err != nil || line != "[PASS] Local Git hooks ("+path+" "+tc.want || strings.Contains(line, HooksNotInstalledRuleID) {
 				t.Fatalf("line %q, err %v; want suffix %q", line, err, tc.want)
 			}
 		})
 	}
 }
 
+// TestAuditInstalledGitHook_Negative_NotInstalled: absent hooks carry the reader's rule ID,
+// with the path and activation remedies preserved for both supported configurations.
+func TestAuditInstalledGitHook_Negative_NotInstalled(t *testing.T) {
+	reader := regexp.MustCompile(`^(?:Error: )?\[FAIL\]\s+([A-Za-z0-9][A-Za-z0-9_.-]*):\s*\S`)
+	for _, tc := range []struct {
+		name, preCommit string
+		lefthook        bool
+	}{
+		{"lefthook", "", true},
+		{"pre-commit framework", preCommitBothCommands, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, hooks := hookRunnerRepo(t, tc.lefthook, tc.preCommit)
+			_, err := AuditInstalledGitHook(t.Context(), root)
+			want := "[FAIL] " + HooksNotInstalledRuleID + ": Pre-commit hook " + filepath.Join(hooks, preCommitHook) +
+				" is missing or inactive; run 'lefthook install' or 'praetorctl adopt' " +
+				"(or 'pre-commit install' for the pre-commit framework) to activate"
+			if err == nil || err.Error() != want {
+				t.Fatalf("err %v; want %q", err, want)
+			}
+			for _, prefix := range []string{"", "Error: "} {
+				match := reader.FindStringSubmatch(prefix + err.Error())
+				if len(match) != 2 || match[1] != HooksNotInstalledRuleID {
+					t.Fatalf("reader match %q; want rule %q", match, HooksNotInstalledRuleID)
+				}
+			}
+		})
+	}
+}
+
+// TestAuditInstalledGitHook_Boundary_Directory: an existing directory keeps its own refusal.
+func TestAuditInstalledGitHook_Boundary_Directory(t *testing.T) {
+	root, hooks := hookRunnerRepo(t, true, "")
+	path := filepath.Join(hooks, preCommitHook)
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal.
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := AuditInstalledGitHook(t.Context(), root)
+	want := "[FAIL] Pre-commit hook " + path + " is not a regular file, so git does not run it"
+	if err == nil || err.Error() != want || strings.Contains(err.Error(), HooksNotInstalledRuleID) {
+		t.Fatalf("err %v; want %q without rule %q", err, want, HooksNotInstalledRuleID)
+	}
+}
+
 // TestAuditInstalledGitHook_Negative_UnprovenHooks (#175): a placeholder, a framework hook whose
-// configuration omits the audit, a framework configuration with no hook installed, a lefthook
-// hook without lefthook.yml and a framework hook that reads another file all fail, naming the
-// path and what was found.
+// configuration omits the audit, a lefthook hook without lefthook.yml and a framework hook
+// that reads another file all fail, naming the path and what was found.
 func TestAuditInstalledGitHook_Negative_UnprovenHooks(t *testing.T) {
 	for _, tc := range []struct {
 		name, hook, preCommit string
@@ -96,7 +141,6 @@ func TestAuditInstalledGitHook_Negative_UnprovenHooks(t *testing.T) {
 	}{
 		{"placeholder", placeholderHook, "", true, []string{"was not written by a known hook runner", `found a 17-byte file whose first line is "#!/bin/sh"`}},
 		{"framework config omits audit", preCommitHookExcerpt, preCommitContextHook, true, []string{"written by the pre-commit framework, but", "does not run 'praetorctl audit'"}},
-		{"framework config without hook", "", preCommitBothCommands, false, []string{"is missing or inactive", "'pre-commit install'"}},
 		{"lefthook hook without lefthook.yml", lefthookHookExcerpt, preCommitBothCommands, false, []string{"written by lefthook, but lefthook.yml is missing"}},
 		{"framework hook reads another file", strings.Replace(preCommitHookExcerpt, "--config=.pre-commit-config.yaml", "--config=ci/hooks.yaml", 1),
 			preCommitBothCommands, false, []string{`the hook reads "ci/hooks.yaml", not .pre-commit-config.yaml`}},

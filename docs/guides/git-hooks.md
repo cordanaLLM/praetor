@@ -665,6 +665,11 @@ runner installed. Both checks live in `internal/adopt/hook_runner_audit.go`:
   CI, which installs no hooks. In CI the audit prints the runner and the configuration file it
   verified instead.
 
+An absent `pre-commit` hook fails with `[FAIL] hooks-not-installed:`, followed by the
+hook path and activation advice. The id is `HooksNotInstalledRuleID` in
+`internal/adopt/hook_runner_audit.go`; `TestAuditInstalledGitHook_Negative_NotInstalled`
+in `internal/adopt/hook_runner_audit_test.go` verifies that a diagnostic reader extracts it.
+
 Adoption writes `lefthook.yml` and never a pre-commit framework configuration. The hook is the one
 in the managed hooks directory, `<git-common-dir>/hooks`, which every linked worktree shares.
 
