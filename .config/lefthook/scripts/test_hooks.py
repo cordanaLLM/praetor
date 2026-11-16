@@ -82,6 +82,8 @@ from privacy import check_private_history, check_private_index
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = Path(".config/lefthook/scripts/hooks.py")
 GUARD = ROOT / ".config/agent/hooks/block_evasion.py"
+# Bounds fixture setup commands, not timeout behaviour asserted by tests.
+FIXTURE_TIMEOUT_S = 120
 # The scan budget is 5 s of child CPU time (user + system) on POSIX, where host
 # load cannot inflate it. On Windows, where os.times() reports no child times,
 # fall back to wall clock with a stated looser bound (8 s) to tolerate scheduler
@@ -296,13 +298,98 @@ def run_command(repo, args, data, ok):
         env.pop(key, None)
     # A test command without explicit input must see EOF, not inherit the operator's
     # terminal. Lefthook post hooks otherwise wait on a live TTY until this helper's
-    # 120-second timeout; commands that exercise stdin still receive their payload.
+    # fixture timeout; commands that exercise stdin still receive their payload.
     stdin = b"" if data is None else data
-    result = subprocess.run(args, cwd=repo, env=env, input=stdin, capture_output=True,
-                            timeout=120, check=False)
+    result = run_fixture(args, cwd=repo, env=env, input=stdin, capture_output=True,
+                         check=False)
     if ok and result.returncode:
         raise AssertionError(result.stdout.decode() + result.stderr.decode())
     return result
+
+
+def fixture_test_id():
+    """Identify the owning unittest case, including class-level fixture setup."""
+    frame = sys._getframe(1)
+    try:
+        for _ in range(sys.getrecursionlimit()):
+            if frame is None:
+                break
+            test = frame.f_locals.get("self")
+            if isinstance(test, unittest.TestCase):
+                return test.id()
+            cls = frame.f_locals.get("cls")
+            if isinstance(cls, type) and issubclass(cls, unittest.TestCase):
+                return f"{cls.__module__}.{cls.__qualname__}.{frame.f_code.co_name}"
+            frame = frame.f_back
+        return "<fixture outside unittest>"
+    finally:
+        del frame
+
+
+def run_fixture(args, *, check=False, **kwargs):
+    """Run a fixture command under the shared setup bound."""
+    try:
+        return subprocess.run(args, timeout=FIXTURE_TIMEOUT_S, check=check, **kwargs)
+    except subprocess.TimeoutExpired:
+        # repr keeps multiline stub arguments on one marker line.
+        print(f"FIXTURE TIMEOUT: {fixture_test_id()}: {args!r} exceeded {FIXTURE_TIMEOUT_S} s",
+              file=sys.stderr, flush=True)
+        raise
+
+
+class FixtureCommands(unittest.TestCase):
+    """Fixture setup timeouts remain distinguishable from assertion failures."""
+
+    def test_timeout_reports_test_and_argv_then_reraises(self):
+        """A fixture timeout prints the marker naming the test and argv, then re-raises."""
+        args = [sys.executable, "-c", "import time\ntime.sleep(10)"]
+        for helper in (run_fixture, run_command, command):
+            stderr = io.StringIO()
+            with self.subTest(helper=helper.__name__), \
+                    mock.patch.object(sys.modules[__name__], "FIXTURE_TIMEOUT_S", 0.01), \
+                    contextlib.redirect_stderr(stderr), \
+                    self.assertRaises(subprocess.TimeoutExpired) as raised:
+                if helper is run_fixture:
+                    helper(args, cwd=ROOT, capture_output=True, check=False)
+                elif helper is run_command:
+                    helper(ROOT, args, None, True)
+                else:
+                    helper(ROOT, *args)
+            self.assertEqual(raised.exception.cmd, args if helper is not command else tuple(args))
+            self.assertEqual(raised.exception.timeout, 0.01)
+            self.assertEqual(stderr.getvalue().splitlines(), [
+                f"FIXTURE TIMEOUT: {self.id()}: {raised.exception.cmd!r} exceeded 0.01 s",
+            ])
+
+    def test_timeout_keeps_exception_identity_without_retry(self):
+        """The re-raised TimeoutExpired is the original object and the command is not retried."""
+        args = ["fixture", "argument with spaces"]
+        expired = subprocess.TimeoutExpired(args, FIXTURE_TIMEOUT_S)
+        stderr = io.StringIO()
+        with mock.patch.object(subprocess, "run", side_effect=expired) as process, \
+                contextlib.redirect_stderr(stderr), \
+                self.assertRaises(subprocess.TimeoutExpired) as raised:
+            run_fixture(args)
+        self.assertIs(raised.exception, expired)
+        self.assertEqual(process.call_count, 1)
+        self.assertEqual(stderr.getvalue(),
+                         f"FIXTURE TIMEOUT: {self.id()}: {args!r} exceeded {FIXTURE_TIMEOUT_S} s\n")
+
+    def test_success_and_assertion_failure_have_no_timeout_marker(self):
+        """Success and ordinary assertion failures print no fixture timeout marker."""
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            for data in (None, b"fixture input"):
+                result = command(ROOT, sys.executable, "-c",
+                                 "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())",
+                                 data=data)
+                self.assertEqual(result.stdout, b"" if data is None else data)
+                self.assertEqual(result.returncode, 0)
+            args = (sys.executable, "-c", "print('fixture failure'); raise SystemExit(7)")
+            self.assertEqual(command(ROOT, *args, ok=False).returncode, 7)
+            with self.assertRaisesRegex(AssertionError, "fixture failure"):
+                command(ROOT, *args)
+        self.assertEqual(stderr.getvalue(), "")
 
 
 
@@ -5207,19 +5294,20 @@ class HookInterpreter(unittest.TestCase):
             toolchain.describe("codespell", {})
 
     def test_check_exits_nonzero_for_a_required_tool_that_is_unusable(self):
+        """toolchain check exits nonzero when a required tool is present but unusable."""
         runner = [sys.executable, "-B", str(ROOT / ".config/lefthook/scripts/toolchain.py")]
         with tempfile.TemporaryDirectory(prefix="praetor-toolchain-") as empty:
             env = dict(os.environ, PATH=empty)
-            refused = subprocess.run([*runner, "--require", "python,sh"], env=env, cwd=empty,
-                                     capture_output=True, timeout=120, check=False)
+            refused = run_fixture([*runner, "--require", "python,sh"], env=env, cwd=empty,
+                                  capture_output=True, check=False)
             self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
             self.assertIn(b"python: UNUSABLE: missing dependency: a Python 3.10 or newer "
                           b"interpreter. Tried: python3 (not on PATH); python (not on PATH); "
                           b"py -3 (not on PATH)", refused.stdout)
             self.assertIn(b"sh: UNUSABLE: sh is not on PATH", refused.stdout)
             self.assertIn(b"required hook tools unusable: python, sh", refused.stderr)
-            reported = subprocess.run(runner, env=env, cwd=empty, capture_output=True,
-                                      timeout=120, check=False)
+            reported = run_fixture(runner, env=env, cwd=empty, capture_output=True,
+                                   check=False)
             self.assertEqual(reported.returncode, 0, reported.stdout + reported.stderr)
             self.assertIn(b"python: not asserted: missing dependency", reported.stdout)
             self.assertIn(b"make: not asserted: missing dependency: GNU Make", reported.stdout)
