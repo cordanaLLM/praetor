@@ -337,6 +337,8 @@ type shellDocument struct {
 type shellSpan struct {
 	text string
 	veto bool
+	// raw is present only for isolated commands, never a whole-command fallback.
+	raw string
 }
 
 // shellInput distinguishes executable text from expandable here-document data.
@@ -429,7 +431,7 @@ func (s *shellSpans) documentStep() bool {
 // scanCommandSpans masks data operands and refuses unknown commit/am argument lists.
 func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 	if !shellCommitPattern.MatchString(joinLineContinuations(command)) {
-		return []shellSpan{{command, readOnlyVetoPattern.MatchString(command)}}, nil, nil
+		return []shellSpan{{text: command, veto: readOnlyVetoPattern.MatchString(command)}}, nil, nil
 	}
 	s := shellSpans{command: command, judged: []byte(command), wordStart: -1, executionStart: -1,
 		whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command)}
@@ -449,7 +451,7 @@ func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 		return nil, nil, fmt.Errorf("invalid shell command: unterminated here-document")
 	}
 	if s.whole {
-		return []shellSpan{{string(s.judged), true}}, s.nested, nil
+		return []shellSpan{{text: string(s.judged), veto: true}}, s.nested, nil
 	}
 	return s.parts, s.nested, nil
 }
@@ -768,7 +770,8 @@ func (s *shellSpans) split(end, next int) {
 	}
 	part := string(s.judged[s.start:end])
 	s.whole = s.whole || s.uncertain && shellCommitPattern.MatchString(joinLineContinuations(part))
-	s.parts = append(s.parts, shellSpan{part, readOnlyVetoPattern.MatchString(s.command[s.start:end])})
+	raw := s.command[s.start:end]
+	s.parts = append(s.parts, shellSpan{text: part, veto: readOnlyVetoPattern.MatchString(raw), raw: raw})
 	s.start = next
 	s.uncertain = false
 	s.nextData, s.redirectData = false, false
@@ -859,12 +862,36 @@ func (s *shellSpans) documentBody(document shellDocument) bool {
 	return false
 }
 
+// dataOnlyCommandNames is the sole allow-list: printf formats and prints its arguments;
+// echo prints its arguments. Neither shell command executes an argument as a command.
+const dataOnlyCommandNames = `(?:printf|echo)`
+
+var (
+	dataOnlyWordPattern         = regexp.MustCompile(`^[ \t]*` + dataOnlyCommandNames + `(?:[ \t]|$)`)
+	dataOnlyFunctionPattern     = regexp.MustCompile(`(?:\A|[^-A-Za-z0-9_])` + dataOnlyCommandNames + `[ \t]*\([ \t]*\)`)
+	dataOnlySubstitutionPattern = regexp.MustCompile(`\$\(|\x60|[<>]\(`)
+)
+
+// dataCommandNamesUnchanged reuses the read-only state words and also catches name() forms.
+func dataCommandNamesUnchanged(command string) bool {
+	return !shellStatePattern.MatchString(command) && !dataOnlyFunctionPattern.MatchString(command)
+}
+
+// dataOnlyCommand accepts a literal print command only when none of its words executes code.
+func dataOnlyCommand(segment string) bool {
+	return dataOnlyWordPattern.MatchString(segment) && !dataOnlySubstitutionPattern.MatchString(segment)
+}
+
 // matchesCommand applies segmentation only to the built-in short commit/am flag rule.
 func (r denyRule) matchesCommand(text string, segments []shellSpan) bool {
 	if r.source != shortSkipFlagRule || !r.readOnlyExempt {
 		return r.matches(text)
 	}
+	namesUnchanged := dataCommandNamesUnchanged(text)
 	for _, segment := range segments {
+		if namesUnchanged && dataOnlyCommand(segment.raw) {
+			continue
+		}
 		text := segment.text
 		if !segment.veto {
 			text = withoutReadOnlyWords(text)

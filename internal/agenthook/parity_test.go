@@ -741,6 +741,36 @@ func roundTenSegmentCasesControls() []struct {
 	}
 }
 
+// dataOnlySegmentCases plants issue 1982 in both directions: the #46 exemption tests
+// never held a data-only command naming a commit. A format escape and redirection veto
+// the old exemption, letting the wide short-flag regex read printed arguments as a call.
+func dataOnlySegmentCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"data printf redirect", `printf '%s\n' 'refused: git commit -S -F msg.txt | head -n 12' >> notes.txt`, 0},
+		{"data echo redirect", `echo 'git commit -F m -n' >> notes.txt`, 0},
+		{"data printf pipe", `printf '%s\n' "ran git commit -S -F msg.txt -n" | tee -a notes.txt`, 0},
+		{"data echo execution", `echo "$(git commit -n -m x)"`, 2},
+		{"data printf execution", `printf '%s' "$(git commit -n -m x)"`, 2},
+		{"data next commit", `printf x; git commit -n -m x`, 2},
+		{"data echo function", `echo() { git commit "$@"; }; echo -n -m x`, 2},
+		{"data printf function", `function printf { git commit "$@"; }; printf -n -m x`, 2},
+		{"data echo alias", `alias echo='git commit'; echo -n -m x`, 2},
+		{"data eval", `eval 'git commit -n -m x'`, 2},
+		{"data bash", `bash -c 'git commit -n -m x'`, 2},
+		// Baseline gap: xargs receives runtime arguments, outside this segment exemption.
+		{"data xargs", `printf -- -n | xargs git commit -m x`, 0},
+		{"data actual commit", `git commit -S -F msg.txt -n`, 2},
+		// POSIX single quotes delimit data; cmd.exe is not a separate parsing mode.
+		{"data single quote shell model", `git commit -m 'x -n y'`, 0},
+	}
+}
+
 // TestParityEvasionCommitSegments judges every planted row with both implementations.
 func TestParityEvasionCommitSegments(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
@@ -751,6 +781,7 @@ func TestParityEvasionCommitSegments(t *testing.T) {
 	cases = append(cases, roundSevenSegmentCases()...)
 	cases = append(cases, roundEightSegmentCases()...)
 	cases = append(cases, roundNineSegmentCases()...)
+	cases = append(cases, dataOnlySegmentCases()...)
 	for _, tc := range append(cases, roundTenSegmentCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
@@ -894,6 +925,7 @@ func checkSegmentRefusal(t *testing.T, name string, code int, reason string, std
 func splittingSegmentCase(name string) bool {
 	name = strings.TrimPrefix(name, "standalone ")
 	return slices.Contains([]string{
+		"data echo function", "data printf function",
 		"nesting at bound", "own parameter",
 		"am parameter", "own substitution",
 		"positional glob", "positional question glob",

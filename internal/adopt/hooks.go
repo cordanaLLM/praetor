@@ -598,6 +598,28 @@ const evasionCommandSegments = `def commit_command(command, short_pattern):
     return search(domain, join_line_continuations(command))
 
 
+# One allow-list: printf formats and prints arguments; echo prints arguments.
+# Neither shell command executes an argument as a command.
+DATA_ONLY_COMMAND_NAMES = r"(?:printf|echo)"
+DATA_ONLY_WORD = re.compile(r"^[ \t]*" + DATA_ONLY_COMMAND_NAMES + r"(?:[ \t]|$)")
+DATA_ONLY_FUNCTION = re.compile(
+    r"(?:\A|[^-A-Za-z0-9_])" + DATA_ONLY_COMMAND_NAMES + r"[ \t]*\([ \t]*\)"
+)
+DATA_ONLY_SUBSTITUTION = re.compile(r"\$\(|\x60|[<>]\(")
+
+
+def data_command_names_unchanged(command):
+    """Reuse read-only state words and also catch name() definitions."""
+    if re.search(CommandSpans.state_pattern, command):
+        return False
+    return not DATA_ONLY_FUNCTION.search(command)
+
+
+def data_only_command(segment):
+    """Accept literal print commands only when no word executes code."""
+    return DATA_ONLY_WORD.search(segment) and not DATA_ONLY_SUBSTITUTION.search(segment)
+
+
 def command_segments(command, short_pattern):
     """Scan executable message bodies iteratively, with no recursive parser calls."""
     queue, parts = [(command, False)], []
@@ -635,7 +657,7 @@ def scan_shell_input(source, short_pattern):
 def scan_command_spans(command, short_pattern):
     """Mask data operands while collecting executable message substitutions."""
     if not commit_command(command, short_pattern):
-        return [(command, bool(re.search(READ_ONLY_VETO, command)))], []
+        return [(command, bool(re.search(READ_ONLY_VETO, command)), "")], []
     spans = CommandSpans(command, short_pattern)
     for _ in range(len(command)):
         if spans.position >= len(command):
@@ -647,7 +669,7 @@ def scan_command_spans(command, short_pattern):
     if spans.documents:
         raise ValueError("invalid shell command: unterminated here-document")
     if spans.whole:
-        return [("".join(spans.judged), True)], spans.nested
+        return [("".join(spans.judged), True, "")], spans.nested
     return spans.parts, spans.nested
 
 
@@ -959,9 +981,8 @@ class CommandSpans:
         start = self.start
         part = "".join(self.judged[start:end])
         self.whole |= self.uncertain and commit_command(part, self.short_pattern)
-        self.parts.append(
-            (part, bool(re.search(READ_ONLY_VETO, self.command[start:end])))
-        )
+        raw = self.command[start:end]
+        self.parts.append((part, bool(re.search(READ_ONLY_VETO, raw)), raw))
         self.start = next_position
         self.uncertain = False
         self.next_data = self.redirect_data = False
@@ -1049,8 +1070,12 @@ def search_command(pattern, text, segments, short_pattern):
     """Search short commit/am flags after each span's read-only exemption."""
     if pattern != short_pattern:
         return search(pattern, text)
+    names_unchanged = data_command_names_unchanged(text)
     for segment in segments:
-        text, veto = segment
+        raw = segment[2] if len(segment) > 2 else ""
+        if names_unchanged and data_only_command(raw):
+            continue
+        text, veto = segment[:2]
         if not veto:
             text = without_read_only_words(text)
         if "-" in text and search(
@@ -1414,6 +1439,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"5e00224927539739ba4c91e11735944ec8c879534704f89a7b7565f8a94ba49e": "literal printf and echo data excluded with substitution and redefinition guards",
 	"6c6f93592ceb1781566f9862c45fc645c59bf8d232074797c1f27ffd3d67691c": "refuse commit/am argument lists with runtime splitting",
 	"07b82432098bf77cfbaa590d926183831786af235b577a2a8ca9f9d1e68056aa": "splitting Git option values retain uncertainty before the subcommand",
 	"48e31ba22b03e31c38f447d2f31bedb0cc7b38e65913a50d4530c9d183ac8c51": "quoted array expansions retain splitting inside data operands",
