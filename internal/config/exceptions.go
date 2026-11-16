@@ -120,7 +120,7 @@ var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
 	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleReleaseToken, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleMutants,
 	ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks, ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts,
-	ExceptionRuleCodespell, ExceptionRuleGosec, ExceptionRuleUILatencySource,
+	ExceptionRuleCodespell, ExceptionRuleGosec, ExceptionRuleUILatencySource, ExceptionRuleGoTestNetns,
 )
 
 // workflowRuleExamples maps workflow-scoped rules to the example workflow a refusal names.
@@ -400,7 +400,7 @@ func (e Exception) problem(today time.Time) string {
 	if problem := e.rootLicenseTargetProblem(); problem != "" {
 		return problem
 	}
-	if problem := e.apiModuleTargetProblem(); problem != "" {
+	if problem := e.moduleTargetProblem(); problem != "" {
 		return problem
 	}
 	if problem := e.dedupeTargetProblem(); problem != "" {
@@ -416,6 +416,14 @@ func (e Exception) problem(today time.Time) string {
 		return "reason " + problem
 	}
 	return exceptionCategoryExpiryProblem(e, today)
+}
+
+// moduleTargetProblem checks the module-specific target rules in their validation order.
+func (e Exception) moduleTargetProblem() string {
+	if problem := e.apiModuleTargetProblem(); problem != "" {
+		return problem
+	}
+	return e.goTestNetnsTargetProblem()
 }
 
 func exceptionCategoryExpiryProblem(e Exception, today time.Time) string {

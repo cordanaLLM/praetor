@@ -272,6 +272,9 @@ type stageConfig struct {
 	admissionSleep    func(context.Context, time.Duration) error
 	admissionLog      io.Writer
 	admissionPoll     time.Duration
+	// netnsEntries are the manifest's go-test-netns entries, read once (goTestNetnsEntries).
+	netnsEntries []config.Exception
+	netnsLoaded  bool
 }
 
 func (c *stageConfig) scopesAvailableFunc() func(context.Context) (bool, string) {
@@ -828,8 +831,15 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (string, error) {
 
 // runGoTests runs the race detector against HEAD in an isolated worktree. A worktree that
 // cannot be created fails the stage rather than silently testing the dirty tree, and cleanup
-// failures are surfaced instead of dropped (inStageWorktree).
+// failures are surfaced instead of dropped (inStageWorktree). All go-test-netns entries are
+// validated before preparation can skip the race stage or narrow its module selection.
 func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
+	if err := validateNetnsEntries(ctx, cfg); err != nil {
+		if cutErr := cutError(ctx, "creating the isolated test worktree", TestStageTimeout, "", cfg.repoDir, err.Error()); cutErr != nil {
+			return "", cutErr
+		}
+		return "", err
+	}
 	scopeCfg, err := prepareGoRace(ctx, cfg)
 	if err != nil {
 		return "", err

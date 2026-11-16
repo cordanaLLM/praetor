@@ -82,7 +82,7 @@ func (e Exception) apiModuleTargetProblem() string {
 	if e.Rule != ExceptionRuleAPICompatibility {
 		return ""
 	}
-	if e.Path == "" || (e.Path != "go.mod" && !strings.HasSuffix(e.Path, "/go.mod")) {
+	if !goModFilePath(e.Path) {
 		return "rule " + ExceptionRuleAPICompatibility + " must name the go.mod of one module by path, such as hw/udev/go.mod"
 	}
 	if !apiPathSafe(e.Path) {
@@ -92,6 +92,12 @@ func (e Exception) apiModuleTargetProblem() string {
 		return "reason of rule " + ExceptionRuleAPICompatibility + " must not contain \"${{\": the reason is written into a workflow"
 	}
 	return ""
+}
+
+// goModFilePath reports whether path names a module's go.mod: the root go.mod or a go.mod below a
+// directory, the form exception entries name one Go module in.
+func goModFilePath(path string) bool {
+	return path == "go.mod" || strings.HasSuffix(path, "/go.mod")
 }
 
 // apiPathSafe reports whether path is a repository path made only of ASCII letters, digits and
