@@ -224,8 +224,10 @@ var priorDigests = map[string]string{
 	"bef335fc666fcb8561473298eb38e1cf3dbfecf678c503100535a2df41ff8bff": Directory + "/checks.mjs",
 	// checks.mjs before its Codacy path-rule suppression comments.
 	"912d4b111b3e2b9025ef8e365f19bf9adb160f86c2595fe6c5cd9dcba0cc9ea0": Directory + "/checks.mjs",
-	// checks.mjs before keepDeadlinesFatal and nested player state.
-	"0482a435583e816acc9a0a55692042d5fa2180b60b50ed5af2940db6e2d33202": Directory + "/checks.mjs",
+	// checks.mjs before keepDeadlinesFatal and nested player state; fixture: figures-checks-before-deadlines-fatal.mjs.txt.
+	"59acd5716bc87bde4ecacab62fb35a6db31815799f40081530e6744bcd9e8997": Directory + "/checks.mjs",
+	// build.mjs before site checks used the root main was given; fixture: figures-build-before-site-root.mjs.txt.
+	"43e50ee72d570d659588d9f4ee96f7ea2604c23110fd34c6ff48b6a66e9862a8": Directory + "/build.mjs",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md
