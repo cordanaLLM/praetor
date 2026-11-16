@@ -121,6 +121,10 @@ var priorPlayerDigests = map[string]map[string]string{
 // ledger line was appended from the text itself. The registry allows 64 entries per family
 // (managedasset.MaxPriorTexts); the family's declaration states what each kind of change costs.
 var priorDigests = map[string]string{
+	// Figure readers before the player lock used an asynchronous deadline.
+	"a585b81f6f8ac2f3df4053b43e1b1cc34f1f49ce7d4356c0ddb606345dedf7ee": Directory + "/astro.mjs",
+	"655e28131b2984e8ad34ac1c7413af87bd0af686690c6305a2e845aa9da920cf": Directory + "/checks.mjs",
+	"931a9fef46ca205b3720ce087de065ddde26902253cfda245e73d9b5b74f2fe6": Directory + "/build.mjs",
 	// Emitted sources before complete docstring coverage and explained suppressions.
 	"547d4bfe5d1895a907cba6c0aaf4540f3825811838af94c1b6c0e77082acb211": Directory + "/checks.mjs",
 	"8d2a6afce5c8fd2cf0bf0c9457199a19a6fad93868a5f5dd9f9faf32241fe257": Directory + "/astro.mjs",
@@ -211,6 +215,13 @@ var priorDigests = map[string]string{
 	"c98a28d2e3a43ca2963d7cbdbf636ad78ed620cc4639c1102bc1c74ee8286cc9": Directory + "/mkdocs_hook.py",
 	// astro.mjs before the player download validated every redirect.
 	"f9d0f2df2922acbe2abd75bf1437fca1264a35a5c2e118beafd6fc2abdbc2f10": Directory + "/astro.mjs",
+	// astro.mjs and checks.mjs before the player lock read was bounded by bytes read.
+	"71c462a61c396c174422a4b417e4da9ec833e6b2d1d62c3972b04610efaff4da": Directory + "/astro.mjs",
+	"0482a435583e816acc9a0a55692042d5fa2180b60b50ed5af2940db6e2d33202": Directory + "/checks.mjs",
+	// checks.mjs before nonblocking open and descriptor file-type validation.
+	"bef335fc666fcb8561473298eb38e1cf3dbfecf678c503100535a2df41ff8bff": Directory + "/checks.mjs",
+	// checks.mjs before its Codacy path-rule suppression comments.
+	"912d4b111b3e2b9025ef8e365f19bf9adb160f86c2595fe6c5cd9dcba0cc9ea0": Directory + "/checks.mjs",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md

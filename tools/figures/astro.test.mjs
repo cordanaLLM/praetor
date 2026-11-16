@@ -7,14 +7,17 @@
 // and Windows.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, unlinkSync } from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { evaluate, markdownToHtml, mdxToJs } from 'satteri';
 import figures, {
   MAX_NODES, NAME, RESTART_DELAY_MS, addFigurePlugin, extractPlayerArchive, figureBase, figureMounts, figuresDigest,
-  loaderScript, publishFigures, releaseArchiveUrl, remarkFigures, replaceFigures, rootPath, satteriFigures, watchFigures,
+  loaderScript, publishFigures, readPlayerLock, releaseArchiveUrl, remarkFigures, replaceFigures, rootPath, satteriFigures, watchFigures,
 } from './astro.mjs';
 import { PLAYER_DIR } from './bundle.mjs';
 import { ROOT, fillSlots } from './checks.mjs';
@@ -751,6 +754,82 @@ test('an adopted integration with a released player.lock.json injects the loader
     }),
     /SHA-256 mismatch/,
   );
+}));
+
+test('an adopted integration refuses an oversized player.lock.json naming the archive limit', () => withTempDir(async (dir) => {
+  const lockPath = join(dir, 'tools/figures/player.lock.json');
+  write(lockPath, '{\n' + ' '.repeat(4 * 1024 * 1024 + 1) + '"release": "v1.4.0"\n}\n');
+  const adoptedFigures = await adoptedFiguresModule(dir);
+  await assert.rejects(
+    async () => adoptedFigures({ root: dir }).hooks['astro:config:setup']({
+      config: {}, updateConfig: () => {}, injectScript: () => {},
+    }),
+    /player\.lock\.json exceeds 4194304 bytes/,
+  );
+  await assert.rejects(
+    async () => readPlayerLock(lockPath),
+    /player\.lock\.json exceeds 4194304 bytes/,
+  );
+}));
+
+// A FIFO reports size 0 to a size probe and then delivers more bytes than the limit: the shape of a
+// lock that grows between a stat and the read (CodeQL js/file-system-race; planted case from the
+// proven patch of the cordanaLLM/20-watts-was-enough session, alert 77 on the adopted copy). The
+// read now opens without blocking and refuses anything but a regular file before reading, so the
+// FIFO is refused outright; a regular file that grows stays bounded by the bytes actually read.
+test('readPlayerLock refuses a FIFO lock before reading it',
+  { skip: process.platform === 'win32' ? 'mkfifo is not available on Windows' : false, timeout: 30_000 },
+  () => withTempDir(async (dir) => {
+    const lockPath = join(dir, 'player.lock.json');
+    const made = spawnSync('mkfifo', [lockPath], { timeout: 5_000 });
+    assert.equal(made.status, 0, `mkfifo failed: ${made.stderr}`);
+    const writer = spawn(process.execPath,
+      ['--input-type=commonjs', '-e', `try { require('node:fs').writeFileSync(process.argv[1], '{' + ' '.repeat(${4 * 1024 * 1024}) + '}'); } catch {}`, lockPath],
+      { stdio: 'ignore', timeout: 20_000 });
+    const exited = new Promise((resolve) => writer.on('exit', resolve));
+    await assert.rejects(async () => readPlayerLock(lockPath), /player\.lock\.json is not a regular file/);
+    writer.kill();
+    await exited;
+  }));
+
+test('readPlayerLock refuses a stalled regular-file read with TimeoutError', { timeout: 5000 }, (t) => withTempDir(async (dir) => {
+  const lockPath = join(dir, 'player.lock.json');
+  write(lockPath, '{}');
+  const open = fsPromises.open.bind(fsPromises);
+  let signal;
+  let stream;
+  let handle;
+  t.mock.method(fsPromises, 'open', async (...args) => {
+    handle = await open(...args);
+    t.mock.method(handle, 'createReadStream', (options) => {
+      signal = options.signal;
+      stream = new Readable({ read() {}, signal });
+      return stream;
+    });
+    return handle;
+  });
+  await assert.rejects(async () => readPlayerLock(lockPath, 20), (error) => {
+    assert.match(error.message, /player\.lock\.json.*TimeoutError.*20 ms/);
+    assert.equal(error.cause.name, 'TimeoutError');
+    return true;
+  });
+  assert.equal(signal.aborted, true);
+  assert.equal(stream.destroyed, true);
+  await handle.close();
+}));
+
+test('readPlayerLock parses objects and refuses invalid UTF-8, JSON and non-object values', () => withTempDir(async (dir) => {
+  const file = join(dir, 'player.lock.json');
+  write(file, '{"release":"v1.4.0"}');
+  assert.deepEqual(await readPlayerLock(file), { release: 'v1.4.0' });
+  for (const invalid of ['[]', 'null', '42']) {
+    write(file, invalid);
+    await assert.rejects(readPlayerLock(file), /does not hold a JSON object/);
+  }
+  for (const invalid of ['{', Buffer.from([0xff])]) {
+    write(file, invalid);
+    await assert.rejects(readPlayerLock(file), /cannot read/);
+  }
 }));
 
 test('config setup adds the remark plugin and the head loader for the site\'s base', () => withTempDir((dir) => {

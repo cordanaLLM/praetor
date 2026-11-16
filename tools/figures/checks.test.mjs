@@ -5,14 +5,18 @@
 // cases. Every temporary tree is built with node:path, so the tests run on Linux, macOS and Windows.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, readFileSync, symlinkSync, unlinkSync } from 'node:fs';
+import { appendFileSync, cpSync, mkdirSync, readFileSync, symlinkSync, unlinkSync } from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { dirname, join, relative, sep } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import {
   CheckError, EXPECTED_FENCE, MAX_LINES, OUT_DIR, ROOT, STARLIGHT_SUFFIXES, astroKinds, checkSite, configError, declaredFences,
   declaredHooks, enabledKinds, engineHash, excludedPatterns, expand, fenceBlocks, fences, figureSlug, figureSlugs, filesDigest, fillSlots,
   frontmatterSlug, globRegExp, htmlErrors, isExcluded, kindErrors, markdownPages, pageOutput, patternMatches, portable, quoted,
   refreshMarkers, renderedDiagrams, scanPage, siteConfigs, siteFlavor, siteUrl, sizeErrors, sourceSites, sources, starlightOutput, starlightPages,
-  svgSpecError,
+  readBoundedBytes, readBoundedBytesAsync, svgSpecError, withTimeout,
 } from './checks.mjs';
 import { ENGINE_FILES, markup, sha256 } from './core.mjs';
 import { main } from './build.mjs';
@@ -950,6 +954,150 @@ test('sources: an unreadable JSON is a usage failure, not a pass', () => withTem
   write(join(dir, OUT_DIR, 'demo.json'), '{');
   assert.throws(() => sources(dir), /cannot parse/);
 }));
+
+test('readBoundedBytes returns exact bytes at limit, refuses limit + 1 and refuses a missing file', () => withTempDir((dir) => {
+  const exactPath = join(dir, 'exact.txt');
+  const content = 'hello world';
+  write(exactPath, content);
+  const limit = Buffer.byteLength(content);
+
+  const exactBytes = readBoundedBytes(exactPath, limit);
+  assert.equal(exactBytes.toString('utf8'), content);
+  assert.equal(exactBytes.length, limit);
+
+  assert.throws(
+    () => readBoundedBytes(exactPath, limit - 1),
+    (err) => err instanceof CheckError && err.message.includes(`exceeds ${limit - 1} bytes`),
+  );
+
+  const chunked = join(dir, 'chunked.txt');
+  const many = 'x'.repeat(200 * 1024);
+  write(chunked, many);
+  assert.equal(readBoundedBytes(chunked, many.length).length, many.length, 'a file spanning several read chunks is read whole');
+  assert.throws(() => readBoundedBytes(chunked, many.length - 1), /exceeds/);
+
+  assert.throws(
+    () => readBoundedBytes(join(dir, 'missing.txt'), limit),
+    (err) => err instanceof CheckError && err.message.includes('cannot read'),
+  );
+}));
+
+test('readBoundedBytes refuses a FIFO without blocking', { timeout: 5000 }, (t) => withTempDir((dir) => {
+  if (process.platform === 'win32') {
+    t.skip('Windows has no kernel FIFO: the Git Bash mkfifo writes a file that Node reads as a regular file');
+    return;
+  }
+  const fifo = join(dir, 'lock.fifo');
+  const made = spawnSync('mkfifo', [fifo], { timeout: 2000 });
+  if (made.error?.code === 'ENOENT') {
+    t.skip('mkfifo is unavailable on this platform');
+    return;
+  }
+  assert.equal(made.status, 0, made.stderr?.toString());
+  const moduleUrl = pathToFileURL(join(ROOT, 'tools/figures/checks.mjs')).href;
+  const script = `import { CheckError, readBoundedBytes, readBoundedBytesAsync } from ${JSON.stringify(moduleUrl)};
+    for (const reader of [readBoundedBytes, readBoundedBytesAsync]) {
+      try { await reader(process.argv[1], 64); process.exitCode = 1; }
+      catch (error) {
+        if (!(error instanceof CheckError) || !error.message.includes(process.argv[1]) ||
+            !error.message.includes('not a regular file')) process.exitCode = 1;
+      }
+    }`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, fifo], { timeout: 2000 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr?.toString());
+}));
+
+test('async bounded reads accept exact and empty limits and refuse excess, missing and non-regular files', () => withTempDir(async (dir) => {
+  const file = join(dir, 'bytes');
+  write(file, 'x'.repeat(200 * 1024));
+  assert.equal((await readBoundedBytesAsync(file, 200 * 1024)).length, 200 * 1024);
+  await assert.rejects(readBoundedBytesAsync(file, 200 * 1024 - 1), /exceeds/);
+  await assert.rejects(readBoundedBytesAsync(join(dir, 'missing'), 64), /cannot read/);
+  await assert.rejects(readBoundedBytesAsync(dir, 64), CheckError);
+  write(file, '');
+  assert.equal((await readBoundedBytesAsync(file, 0)).length, 0);
+  write(file, 'x');
+  await assert.rejects(readBoundedBytesAsync(file, 0), /exceeds 0 bytes/);
+}));
+
+test('async bounded reads cap a regular file growing after descriptor stat at limit + 1 bytes', (t) => withTempDir(async (dir) => {
+  const file = join(dir, 'growing');
+  write(file, '{}');
+  const open = fsPromises.open.bind(fsPromises);
+  let bytesRead = 0;
+  const opened = t.mock.method(fsPromises, 'open', async (...args) => {
+    const handle = await open(...args);
+    const stat = handle.stat.bind(handle);
+    const create = handle.createReadStream.bind(handle);
+    t.mock.method(handle, 'stat', async () => {
+      const before = await stat();
+      appendFileSync(file, ' '.repeat(1024 * 1024));
+      return before;
+    });
+    t.mock.method(handle, 'createReadStream', (options) => {
+      const stream = create(options);
+      stream.on('data', (chunk) => { bytesRead += chunk.length; });
+      return stream;
+    });
+    return handle;
+  });
+  await assert.rejects(readBoundedBytesAsync(file, 64), /exceeds 64 bytes/);
+  assert.equal(opened.mock.callCount(), 1);
+  assert.equal(bytesRead, 65);
+}));
+
+test('async bounded reads reject a stalled open and close its late descriptor without reading', { timeout: 5000 }, (t) => withTempDir(async (dir) => {
+  const file = join(dir, 'late');
+  write(file, '{}');
+  // nosemgrep: javascript_pathtraversal_rule-non-literal-fs-filename -- the fixture path is inside the test's own temporary directory
+  const handle = await fsPromises.open(file, 'r');
+  const stat = t.mock.method(handle, 'stat');
+  const close = handle.close.bind(handle);
+  let closed;
+  const didClose = new Promise((resolve) => { closed = resolve; });
+  t.mock.method(handle, 'close', async () => { await close(); closed(); });
+  let release;
+  t.mock.method(fsPromises, 'open', () => new Promise((resolve) => { release = resolve; }));
+  try {
+    await assert.rejects(readBoundedBytesAsync(file, 64, 20), (error) => error.cause?.name === 'TimeoutError');
+    release(handle);
+    await withTimeout(didClose, 1000, 'closing the late descriptor');
+    assert.equal(stat.mock.callCount(), 0);
+    assert.equal(handle.fd, -1);
+  } finally {
+    await close();
+  }
+}));
+
+test('withTimeout keeps success and operation failures and rejects pending work with a named deadline', async () => {
+  assert.equal(await withTimeout(Promise.resolve(42), 1000, 'fast'), 42);
+  const failure = new Error('operation failed');
+  await assert.rejects(withTimeout(Promise.reject(failure), 1000, 'failed'), (error) => error === failure);
+  let cancelled;
+  await assert.rejects(withTimeout(new Promise(() => {}), 10, 'stalled', (error) => { cancelled = error; }),
+    (error) => error.name === 'TimeoutError' && /stalled.*10 ms/.test(error.message));
+  assert.equal(cancelled.name, 'TimeoutError');
+});
+
+for (const stage of ['stat', 'close']) {
+  test(`async bounded reads enforce the deadline during descriptor ${stage}`, { timeout: 5000 }, (t) => withTempDir(async (dir) => {
+    const file = join(dir, 'stalled');
+    let release;
+    const handle = {
+      stat: async () => ({ isFile: () => true }),
+      createReadStream: t.mock.fn(() => Readable.from(['{}'])),
+      close: t.mock.fn(async () => {}),
+    };
+    t.mock.method(handle, stage, () => new Promise((resolve) => { release = resolve; }));
+    t.mock.method(fsPromises, 'open', async () => handle);
+    await assert.rejects(readBoundedBytesAsync(file, 64, 20), (error) => error.cause?.name === 'TimeoutError');
+    release({ isFile: () => true });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(handle.createReadStream.mock.callCount(), stage === 'stat' ? 0 : 1);
+    assert.equal(handle.close.mock.callCount(), 1);
+  }));
+}
 
 test('sources: editing the wrapper or the checks keeps the figures current', () => withTempDir((dir) => {
   const repo = figureRepo(dir);
