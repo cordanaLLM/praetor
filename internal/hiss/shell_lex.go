@@ -55,6 +55,8 @@ type shellFrame struct {
 type shellHeredoc struct {
 	delimiter string
 	stripTabs bool
+	quoted    bool
+	data      bool
 }
 
 // shellLexer carries the cross-line state of one script.
@@ -262,12 +264,13 @@ func (l *shellLexer) heredoc(text string, i int) int {
 	for i < len(text) && (text[i] == ' ' || text[i] == '\t') {
 		i++
 	}
-	delimiter, _, width, err := util.ShellHereDocDelimiter(text[i:])
-	if err != nil || len(l.pending) >= maxShellHeredocs {
+	delimiter, quoted, width, err := util.ShellHereDocDelimiter(text[i:])
+	if err != nil || (i+width < len(text) && !strings.ContainsRune(" \t;&|<>)", rune(text[i+width]))) || len(l.pending) >= maxShellHeredocs {
 		l.misread = true
 		return len(text)
 	}
 	h.delimiter = delimiter
+	h.quoted = quoted
 	l.pending = append(l.pending, h)
 	return i + width
 }

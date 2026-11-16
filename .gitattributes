@@ -212,6 +212,11 @@ console/fixtures/* text eol=lf
 # A11Y-CHECK1 test schema bytes and data fixtures remain stable across checkouts.
 internal/flavor/testdata/a11y-matrix/*.json text eol=lf
 
+# The shared heredoc masking fixture is replayed by the Go tests and the Python guard
+# selftest (TestMaskDataHeredocFixtures, TestPolicyHeredocFixtures, block_evasion.py
+# selftest); one byte form keeps both readers on the same input on every platform.
+internal/hiss/testdata/heredoc_mask_cases.json text eol=lf
+
 # BEGIN praetor managed attributes (praetorctl adopt)
 # praetorctl audit hashes these files; keep their checkout bytes the same on every platform.
 .devcontainer/Dockerfile.praetor text eol=lf

@@ -3,13 +3,15 @@
 PreToolUse & Local Git Hook Evasion Blocker
 Enforces HISS by intercepting attempts to bypass Git hooks, linters, or verification gates.
 """
-import sys
+import contextlib
+import io
+import json
 import os
 import re
-import json
-from pathlib import Path
 import shutil
 import subprocess
+import sys
+from pathlib import Path
 
 MAX_INPUT_BYTES = 1 << 20
 MAX_REASON_BYTES = 4096
@@ -91,6 +93,96 @@ def join_line_continuations(command_str: str) -> str:
     return re.sub(r"\\\r?\n", " ", command_str)
 
 
+# These conservative recognizers refuse ambiguous shell syntax rather than hiding it.
+HEREDOC_SHADOW = re.compile(r"(?:^|[^A-Za-z0-9_])(?:alias|function)(?:[^A-Za-z0-9_]|$)|[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)")
+HEREDOC_FD = re.compile(r"(?:^|[^0-9])[0-9]+[ \t]*[<>]|\{[^}]+\}[ \t]*[<>]|>[ \t]*&|/dev/fd/|/proc/self/fd/")
+HEREDOC_OP = re.compile(r"<<(-?)[ \t]*(?:'([^'\"$`\\\n]+)'|\"([^'\"$`\\\n]+)\"|([A-Za-z_0-9.-]+))(?=$|[ \t;&|<>)])")
+HEREDOC_COMMAND = re.compile(r"^(?:(?:env|command|exec|[A-Za-z_][A-Za-z_0-9]*=[A-Za-z_0-9]*)[ \t]+)*(?:cat|tee|/bin/cat|/usr/bin/cat|/bin/tee|/usr/bin/tee)(?:[ \t]|$)")
+
+
+def data_heredoc_header(line):
+    """Find a simple data header, or refuse syntax this recognizer cannot prove safe."""
+    if any(c in line for c in "|`$()\\#") or line.count(";") + line.count("&") >= 1024:
+        return None
+    matches = list(HEREDOC_OP.finditer(line))
+    if not matches or line.count("<<") != len(matches):
+        return None
+    clean = HEREDOC_OP.sub(" ", line)
+    if not re.fullmatch(r"[A-Za-z_0-9 /.;=&>+:-]*", clean):
+        return None
+    parts = re.split(r";|&", HEREDOC_OP.sub(" << ", line))
+    for part in parts:
+        if not part.strip():
+            continue
+        if "<<" not in part or not HEREDOC_COMMAND.match(part.replace("<<", " ").strip()):
+            return None
+    return [(m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), bool(m.group(2) or m.group(3))) for m in matches]
+
+
+def heredoc_pending_header(line):
+    """Recognize all delimiters in a header or reject ambiguous input."""
+    if sum(line.count(mark) for mark in ";&|()") >= 1024:
+        return None
+    if "<<" not in line:
+        return [] if not line.strip() else None
+    headers = list(HEREDOC_OP.finditer(line))
+    if line.count("<<") != len(headers):
+        return None
+    if data_heredoc_header(line) is None:
+        return None
+    return [(m.group(2) or m.group(3) or m.group(4), bool(m.group(1)), bool(m.group(2) or m.group(3)), True) for m in headers]
+
+
+def heredoc_body_line(line, pending):
+    """Process one pending body line and return its mask decision."""
+    delimiter, tabs, quoted, data = pending[0]
+    if (line.lstrip("\t") if tabs else line) == delimiter:
+        pending.pop(0)
+        return False
+    if not quoted and (line.endswith("\\") or any(mark in line for mark in ("`", "$(", "${"))):
+        return None
+    return data
+
+
+def mask_data_heredocs(command):
+    """Mask data bodies only when every command is a recognized data heredoc."""
+    if "\r" in command or HEREDOC_SHADOW.search(command) or HEREDOC_FD.search(command):
+        return command
+    lines = command.split("\n")
+    out = list(lines)
+    pending = []
+    for index, line in enumerate(lines):
+        if pending:
+            decision = heredoc_body_line(line, pending)
+            if decision is None:
+                return command
+            if decision:
+                out[index] = ""
+        else:
+            pending = heredoc_pending_header(line)
+            if pending is None:
+                return command
+    return "\n".join(out)
+
+
+def heredoc_selftest():
+    """Replay the shared fixture without invoking host admission or external commands."""
+    path = Path(__file__).resolve().parents[3] / "internal/hiss/testdata/heredoc_mask_cases.json"
+    cases = json.loads(path.read_text(encoding="utf-8"))
+    failed = False
+    for case in cases:
+        masked = mask_data_heredocs(case["input"])
+        actual = "sudo id" not in masked
+        with contextlib.redirect_stderr(io.StringIO()):
+            denied = not text_rules_allow(case["input"])
+        if actual != case["masked"] or denied == case["masked"]:
+            print(f"FAIL {case['name']}: masked={actual} denied={denied}", file=sys.stderr)
+            failed = True
+    if not failed:
+        print(f"heredoc fixtures: {len(cases)} passed")
+    return not failed
+
+
 # Every match of the privilege rule contains one of these literal program names.
 # BuiltinRule.RequiredAny supplies the same prefilter to Go and the emitted interceptor.
 RULE_PREFILTERS = {BLOCKED_PATTERNS[-1]: ("sudo", "doas", "pkexec", "run0", "su")}
@@ -135,12 +227,21 @@ def search(pattern, text):
 
 
 def audit_command(command_str: str) -> bool:
-    command_str = join_line_continuations(command_str)
+    """Judge one command: the built-in text rules first, then host admission on the joined command."""
+    if not text_rules_allow(command_str):
+        return False
+    return check_admission(join_line_continuations(command_str))
+
+
+def text_rules_allow(command_str: str) -> bool:
+    """The built-in text and topology rules alone (no admission), with plain-data heredoc bodies masked."""
     if not scannable(command_str):
         return False
-    judged = without_read_only_words(command_str)
+    masked = join_line_continuations(mask_data_heredocs(command_str)).replace("${|", "$( ").replace("${", "$(")
+    command_str = join_line_continuations(command_str)
+    judged = without_read_only_words(masked)
     for pattern in BLOCKED_PATTERNS:
-        text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else command_str
+        text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else masked
         if search(pattern, text):
             reason = (
                 f"[BLOCKED BY HISS] verification evasion prohibited; commits, pushes and tool "
@@ -157,7 +258,7 @@ def audit_command(command_str: str) -> bool:
             )
             return False
 
-    return check_admission(command_str)
+    return True
 
 
 # Host admission delegation to Go (`praetorctl admission-check`) when hooks.admission.enforce
@@ -338,6 +439,8 @@ def read_json_command(stream) -> str:
 
 
 def main():
+    if sys.argv[1:] == ["selftest"]:
+        sys.exit(0 if heredoc_selftest() else 1)
     if not audit_environment():
         sys.exit(1)
 

@@ -1,0 +1,350 @@
+[
+  {
+    "name": "plain",
+    "input": "cat <<'EOF'\nsudo id\nEOF",
+    "masked": true,
+    "reason": "plain"
+  },
+  {
+    "name": "function",
+    "input": "cat() { sh; }; cat <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "function"
+  },
+  {
+    "name": "alias",
+    "input": "alias cat=sh; cat <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "alias"
+  },
+  {
+    "name": "fd-dup",
+    "input": "cat <<'EOF' >&3\nsudo id\nEOF",
+    "masked": false,
+    "reason": "fd-dup"
+  },
+  {
+    "name": "fd-open",
+    "input": "exec 3>out; cat <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "fd-open"
+  },
+  {
+    "name": "fd-path",
+    "input": "cat <<'EOF' > /dev/fd/4\nsudo id\nEOF",
+    "masked": false,
+    "reason": "fd-path"
+  },
+  {
+    "name": "pipe",
+    "input": "cat <<'EOF' | sh\nsudo id\nEOF",
+    "masked": false,
+    "reason": "pipe"
+  },
+  {
+    "name": "limit",
+    "input": "cat <<'A';:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;bash <<'B'\nsudo id\nA\nsudo id\nB",
+    "masked": false,
+    "reason": "limit"
+  },
+  {
+    "name": "bash53",
+    "input": "cat <<EOF\n${ sudo id; }\nEOF",
+    "masked": false,
+    "reason": "bash53"
+  },
+  {
+    "name": "bash53-pipe",
+    "input": "cat <<EOF\n${| sudo id; }\nEOF",
+    "masked": false,
+    "reason": "bash53-pipe"
+  },
+  {
+    "name": "compact",
+    "input": "cat<<'EOF'\nsudo id\nEOF",
+    "masked": true,
+    "reason": "compact"
+  },
+  {
+    "name": "compact-shadow",
+    "input": "cat() { sh; }; cat<<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "compact-shadow"
+  },
+  {
+    "name": "later-function",
+    "input": "cat <<'EOF'\nsudo id\nEOF\nfunction cat { sh; }",
+    "masked": false,
+    "reason": "later-function"
+  },
+  {
+    "name": "path",
+    "input": "/usr/bin/tee <<'EOF'\nsudo id\nEOF",
+    "masked": true,
+    "reason": "path"
+  },
+  {
+    "name": "unknown-path",
+    "input": "/tmp/cat <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "unknown-path"
+  },
+  {
+    "name": "bash53-multiline",
+    "input": "cat <<EOF\n${ \nsudo id;\n}\nEOF",
+    "masked": false,
+    "reason": "Bash 5.3 substitution spans lines"
+  },
+  {
+    "name": "escaped-alias",
+    "input": "a\\lias cat=sh; cat <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "escaped alias is ambiguous"
+  },
+  {
+    "name": "quoted-alias",
+    "input": "a'li'as cat=sh; cat <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "quoted alias is ambiguous"
+  },
+  {
+    "name": "unquoted-variable",
+    "input": "cat <<EOF\nsudo id $USER\nEOF",
+    "masked": true,
+    "reason": "ordinary parameter data"
+  },
+  {
+    "name": "substitution-data",
+    "input": "cat <<EOF\nsudo id $(echo ok)\nEOF",
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
+  },
+  {
+    "name": "substitution-command",
+    "input": "cat <<EOF\ntext $(sudo id)\nEOF",
+    "masked": false,
+    "reason": "executable command substitution"
+  },
+  {
+    "name": "compact-tee",
+    "input": "tee<<'EOF'\nsudo id\nEOF",
+    "masked": true,
+    "reason": "compact tee header"
+  },
+  {
+    "name": "fd-proc",
+    "input": "cat <<'EOF' > /proc/self/fd/3\nsudo id\nEOF",
+    "masked": false,
+    "reason": "inherited descriptor path"
+  },
+  {
+    "name": "quoted-paren-substitution",
+    "input": "cat <<EOF\ntext $(echo ')'; sudo id)\nEOF",
+    "masked": false,
+    "reason": "quoted parenthesis cannot terminate substitution"
+  },
+  {
+    "name": "background-mixed",
+    "input": "cat <<'A' & bash <<'B'\nsudo id\nA\nsudo id\nB",
+    "masked": false,
+    "reason": "background separator precedes an executable heredoc"
+  },
+  {
+    "name": "numeric-delimiter",
+    "input": "cat <<'123'\nsudo id\n123",
+    "masked": true,
+    "reason": "quoted numeric delimiter"
+  },
+  {
+    "name": "spaced-delimiter",
+    "input": "cat <<'A B'\nsudo id\nA B",
+    "masked": true,
+    "reason": "quoted delimiter containing a space"
+  },
+  {
+    "name": "nested-substitution",
+    "input": "cat <<EOF\nsudo id $(echo $(printf hi))\nEOF",
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
+  },
+  {
+    "name": "quoted-substitution-data",
+    "input": "cat <<EOF\nsudo id $(printf '%s' hello)\nEOF",
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
+  },
+  {
+    "name": "limit-earlier-line",
+    "input": ":;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:;:\ncat <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "earlier command line exceeds tokenizer limit"
+  },
+  {
+    "name": "double-nested-parity",
+    "input": "cat <<EOF\nsudo id $(echo \"$(printf hi)\")\nEOF",
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
+  },
+  {
+    "name": "multiline-substitution",
+    "input": "cat <<EOF\nsudo id $(echo\nhello)\nEOF",
+    "masked": false,
+    "reason": "multiline substitution is left visible"
+  },
+  {
+    "name": "escaped-substitution",
+    "input": "cat <<EOF\nsudo id \\$(sudo id)\nEOF",
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
+  },
+  {
+    "name": "nested-backtick",
+    "input": "cat <<EOF\nsudo id $(echo `printf hi`)\nEOF",
+    "masked": false,
+    "reason": "unquoted body contains substitution syntax"
+  },
+  {
+    "name": "backtick-parity",
+    "input": "cat <<EOF\nsudo id `echo ok`\nEOF",
+    "masked": false,
+    "reason": "unquoted backtick substitution"
+  },
+  {
+    "name": "arithmetic",
+    "input": "cat <<EOF\nsudo id $((1+1))\nEOF",
+    "masked": false,
+    "reason": "unquoted arithmetic substitution"
+  },
+  {
+    "name": "unquoted-plain",
+    "input": "cat <<EOF\nsudo id\nEOF",
+    "masked": true,
+    "reason": "unquoted plain data"
+  },
+  {
+    "name": "quoted-backtick",
+    "input": "cat <<'EOF'\nsudo id `echo ok`\nEOF",
+    "masked": true,
+    "reason": "quoted body does not expand"
+  },
+  {
+    "name": "multiline-plain-before-substitution",
+    "input": "cat <<EOF\nsudo id\n$(echo ok)\nEOF",
+    "masked": false,
+    "reason": "whole body stays visible"
+  },
+  {
+    "name": "parameter-braces",
+    "input": "cat <<EOF\nsudo id ${USER}\nEOF",
+    "masked": false,
+    "reason": "unquoted parameter expansion"
+  },
+  {
+    "name": "double-quoted-substitution",
+    "input": "cat <<\"EOF\"\nsudo id $(echo ok)\nEOF",
+    "masked": true,
+    "reason": "quoted body does not expand"
+  },
+  {
+    "name": "partial-single",
+    "input": "cat <<'E'OF\nsudo id\nE",
+    "masked": false,
+    "reason": "delimiter is a partial shell word"
+  },
+  {
+    "name": "partial-double",
+    "input": "cat <<\"E\"OF\nsudo id\nE",
+    "masked": false,
+    "reason": "delimiter is a partial shell word"
+  },
+  {
+    "name": "partial-middle",
+    "input": "cat <<E'O'F\nsudo id\nE",
+    "masked": false,
+    "reason": "delimiter is a partial shell word"
+  },
+  {
+    "name": "partial-suffix",
+    "input": "cat <<'EOF'x\nsudo id\nEOF",
+    "masked": false,
+    "reason": "delimiter is a partial shell word"
+  },
+  {
+    "name": "quoted-backslash-after",
+    "input": "cat <<'EOF'\ndata\\\nEOF\nsudo id",
+    "masked": false,
+    "reason": "command after quoted body remains visible"
+  },
+  {
+    "name": "fifo",
+    "input": "mkfifo run/f; bash run/f & cat > run/f <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "named pipe"
+  },
+  {
+    "name": "shared-tee-path",
+    "input": "tee run/f <<'EOF'; sh run/f\nsudo id\nEOF",
+    "masked": false,
+    "reason": "output path used by another command"
+  },
+  {
+    "name": "plain-output",
+    "input": "cat > notes.md <<'EOF'\nsudo id\nEOF",
+    "masked": true,
+    "reason": "ordinary file output"
+  },
+  {
+    "name": "partial-open-paren",
+    "input": "cat <<'EOF'(\nsudo id\nEOF",
+    "masked": false,
+    "reason": "opening parenthesis is not an accepted delimiter boundary"
+  },
+  {
+    "name": "mknod",
+    "input": "mknod run/f p; cat > run/f <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "special file"
+  },
+  {
+    "name": "shared-cat-path",
+    "input": "sh run/f; cat > run/f <<'EOF'\nsudo id\nEOF",
+    "masked": false,
+    "reason": "redirect target used by another command"
+  },
+  {
+    "name": "relative-output-execution",
+    "input": "cat >x.sh <<'EOF'\nsudo id\nEOF\nsh ./x.sh",
+    "masked": false,
+    "reason": "another command executes the output"
+  },
+  {
+    "name": "body-mentions-output",
+    "input": "cat >x.sh <<'EOF'\nsudo id x.sh\nEOF",
+    "masked": true,
+    "reason": "body text is data"
+  },
+  {
+    "name": "consecutive-data",
+    "input": "cat <<'A'\nsudo id\nA\ntee <<'B'\nsudo id\nB",
+    "masked": true,
+    "reason": "only data heredocs"
+  },
+  {
+    "name": "trailing-newline",
+    "input": "cat <<'EOF'\nsudo id\nEOF\n",
+    "masked": true,
+    "reason": "final empty command"
+  },
+  {
+    "name": "blank-between-data",
+    "input": "cat <<'A'\nsudo id\nA\n\ntee <<'B'\nsudo id\nB",
+    "masked": true,
+    "reason": "blank line between data heredocs"
+  },
+  {
+    "name": "chain-extra-command",
+    "input": "true && cat <<'EOF' && true\nsudo id\nEOF",
+    "masked": false,
+    "reason": "other commands in script"
+  }
+]
