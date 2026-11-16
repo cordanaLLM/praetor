@@ -106,6 +106,24 @@ func TestCodeRabbitCIEvidenceEmittedFixture(t *testing.T) {
 }
 
 // TestCodeRabbitCIEvidenceRefusesMalformed checks that unsafe policy never gets replaced.
+// TestCodeRabbitCIEvidenceInstructionLimit counts characters, not bytes: the schema maxLength 20000 is accepted, one more refused.
+func TestCodeRabbitCIEvidenceInstructionLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		count int
+		ok    bool
+	}{{"at limit", maxCodeRabbitInstructions, true}, {"over limit", maxCodeRabbitInstructions + 1, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := strings.Repeat("\u00e4", tc.count)
+			data := []byte("reviews:\n  path_instructions:\n    - path: '**'\n      instructions: " + text + "\n")
+			_, err := mergeCodeRabbit(t.Context(), data)
+			if (err == nil) != tc.ok {
+				t.Fatalf("%d characters: err = %v, want accepted %v", tc.count, err, tc.ok)
+			}
+		})
+	}
+}
+
 func TestCodeRabbitCIEvidenceRefusesMalformed(t *testing.T) {
 	for name, policy := range map[string]string{
 		"scalar": "true", "mapping": "{}", "scalar entry": "[false]",

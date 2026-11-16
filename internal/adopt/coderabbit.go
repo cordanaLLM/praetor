@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -219,13 +220,19 @@ func validateCodeRabbitInstructions(old *yaml.Node) (bool, error) {
 	return global, nil
 }
 
-// codeRabbitInstructionPath validates the schema's required string fields and returns the glob.
+// maxCodeRabbitInstructions is the schema v2 maxLength of reviews.path_instructions[].instructions, in characters.
+const maxCodeRabbitInstructions = 20000
+
+// codeRabbitInstructionPath validates the schema's required string fields and length and returns the glob.
 func codeRabbitInstructionPath(entry *yaml.Node) (string, error) {
 	for _, key := range [2]string{"path", "instructions"} {
 		field := util.YAMLMappingValue(entry, key)
 		if field == nil || field.Kind != yaml.ScalarNode || field.Tag != "!!str" {
 			return "", fmt.Errorf("%s must be a string", key)
 		}
+	}
+	if count := utf8.RuneCountInString(util.YAMLMappingValue(entry, "instructions").Value); count > maxCodeRabbitInstructions {
+		return "", fmt.Errorf("instructions have %d characters; the CodeRabbit schema allows at most %d", count, maxCodeRabbitInstructions)
 	}
 	return util.YAMLMappingValue(entry, "path").Value, nil
 }

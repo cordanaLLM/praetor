@@ -728,9 +728,10 @@ on the pull request head answers a request to run that target only when that ste
 passed (a run that skipped the step is no evidence), and that the turn-end rules in
 `AGENTS.md` and `CLAUDE.md` bind coding agents, not the reviewer. Adoption adds the entry only
 when no existing entry has the path `**`, so a global instruction the repository wrote stays as
-written; every existing entry needs string `path` and `instructions` fields (schema v2), or
-adoption stops and names the entry (`TestCodeRabbitCIEvidenceKeepsUserGlobal`,
-`TestCodeRabbitCIEvidenceRefusesMalformed`).
+written; every existing entry needs string `path` and `instructions` fields with instructions of
+at most 20000 characters (schema v2), or adoption stops and names the entry
+(`TestCodeRabbitCIEvidenceKeepsUserGlobal`, `TestCodeRabbitCIEvidenceRefusesMalformed`,
+`TestCodeRabbitCIEvidenceInstructionLimit`).
 To keep an intentional `drafts: false`, list `coderabbit` under `adoption.decline` in
 `.standards.yaml`; otherwise adoption enforces the managed keys and reports the update
 (`internal/adopt/coderabbit.go`, `TestAdoptCodeRabbitCreatesAndPreserves`,
