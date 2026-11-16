@@ -315,19 +315,99 @@ func TestArchiveEquivalentPaths(t *testing.T) {
 	}
 }
 
-// TestArchivePathFields prevents a longer field from masking the completed live row.
+// TestArchivePathFields prevents a sibling path field from masking the completed live row.
 func TestArchivePathFields(t *testing.T) {
 	root, linked := archiveWorktreeFixture(t)
 	done := fmt.Sprintf("- [x] path: %s | done\n", linked)
-	pending := fmt.Sprintf("- [ ] path: %s extra | pending\n", linked)
+	pending := fmt.Sprintf("- [ ] path: %s-sibling extra | pending\n", linked)
 	open := filepath.Join(root, WorkingDirName, openLedgerName)
 	writeIntegrityFile(t, open, done+pending)
 	if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != 0 {
 		t.Fatalf("path field archive = %d, %v", count, err)
 	}
 	assertIntegrityFile(t, open, done+pending)
-	if namesWorktreePath("path: /repo/topic extra | pending", "/repo/topic") {
-		t.Fatal("prefix matched a longer path field")
+	if namesWorktreePath("path: /repo/topic-extra | pending", "/repo/topic") {
+		t.Fatal("prefix matched a sibling path token")
+	}
+}
+
+// TestArchiveWorktreeProse retains live candidates and archives removed paths with prose.
+func TestArchiveWorktreeProse(t *testing.T) {
+	for _, tc := range []struct {
+		name, format string
+		space, gone  bool
+	}{
+		{"unwrapped", "%s", false, false},
+		{"backticks", "`%s`", false, false},
+		{"double-quotes", "\"%s\"", false, false},
+		{"embedded-space", "%s", true, false},
+		{"backticks-space", "`%s`", true, false},
+		{"double-quotes-space", "\"%s\"", true, false},
+		{"removed", "%s", true, true},
+		{"removed-backticks", "`%s`", true, true},
+		{"removed-double-quotes", "\"%s\"", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testArchiveWorktreeProse(t, tc.format, tc.space, tc.gone)
+		})
+	}
+}
+
+// testArchiveWorktreeProse checks both row readers against a real linked worktree.
+func testArchiveWorktreeProse(t *testing.T, format string, space, gone bool) {
+	t.Helper()
+	root, linked := archiveWorktreeFixture(t)
+	if !space {
+		moved := filepath.Join(filepath.Dir(linked), "linked-worktree")
+		stateFixtureGit(t, root, "worktree", "move", linked, moved)
+		linked = moved
+	}
+	if gone {
+		stateFixtureGit(t, root, "worktree", "remove", linked)
+	}
+	row := "- [x] worktree " + fmt.Sprintf(format, linked) + " detached, merge complete | next: cleanup\n"
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	writeIntegrityFile(t, open, row)
+	count, err := ArchiveCompletedTasks(root, "fixture")
+	want, kept := 0, row
+	if gone {
+		want, kept = 1, ""
+	}
+	if err != nil || count != want {
+		t.Fatalf("archive prose = %d, %v; want %d", count, err, want)
+	}
+	assertIntegrityFile(t, open, kept)
+	if !gone && !namesWorktreePath(row, linked) {
+		t.Fatal("row reader missed the live path candidate")
+	}
+}
+
+// TestArchivePathCandidateCap rejects oversized candidate sets before any inspection.
+func TestArchivePathCandidateCap(t *testing.T) {
+	const cap = 16
+	for _, runs := range []int{cap - 2, cap - 1, cap, cap + 1} {
+		t.Run(fmt.Sprint(runs), func(t *testing.T) {
+			calls := 0
+			ops := archiveWorktreeOps{inspect: func(_ context.Context, name string) (archivePath, error) {
+				calls++
+				return archivePath{path: name}, nil
+			}}
+			row := "- [x] worktree /repo/topic" + strings.Repeat(" \t detail", runs) + " | done"
+			index, err := indexWorktreeRows(t.Context(), []string{row}, ops)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := runs + 1
+			if want > cap {
+				want = 0
+			}
+			if calls != want || len(index) != want {
+				t.Fatalf("whitespace runs = %d; inspections = %d, paths = %d; want %d", runs, calls, len(index), want)
+			}
+			if namesWorktreePath(row, "/repo/topic") != (want > 0) {
+				t.Fatal("row reader disagrees with the candidate cap")
+			}
+		})
 	}
 }
 
@@ -708,8 +788,11 @@ func TestNamesNativeWorktreeFields(t *testing.T) {
 		if !namesWorktreePath("path: `"+path+"` | branch: topic", path) {
 			t.Errorf("native path field missed: %q", path)
 		}
-		if namesWorktreePath("path: "+path+" extra | branch: topic", path) {
-			t.Errorf("native prefix matched longer field: %q", path)
+		if !namesWorktreePath("path: "+path+" extra | branch: topic", path) {
+			t.Errorf("native path candidate missed before prose: %q", path)
+		}
+		if namesWorktreePath("path: "+path+"-sibling extra | branch: topic", path) {
+			t.Errorf("native prefix matched a sibling token: %q", path)
 		}
 	}
 }

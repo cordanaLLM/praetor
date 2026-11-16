@@ -10,17 +10,19 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
-// Archive field limits reject prose masquerading as paths before cleaning or stat.
-// Components use a 255-byte ceiling; the complete field uses a 4096-byte ceiling.
+// Archive candidate limits bound prose interpretation before cleaning or stat.
+// Components use a 255-byte ceiling; each candidate uses a 4096-byte ceiling.
 // These portable grammar bounds avoid filesystem-dependent name-length errors.
 const (
 	maxArchivePathComponentBytes = 255
 	maxArchivePathBytes          = 4096
+	maxArchivePathCandidates     = 16
 )
 
 // archiveWorktreeOps supplies the listing and context-bounded filesystem inspection.
@@ -168,7 +170,7 @@ func archiveTableDone(ctx context.Context, line string, statusColumn int) (bool,
 	return true, ctx.Err()
 }
 
-// archiveRowPaths extracts complete pipe-delimited path fields, preserving embedded spaces.
+// archiveRowPaths extracts bounded candidates from pipe fields, preserving embedded spaces.
 func archiveRowPaths(ctx context.Context, row string) ([]string, error) {
 	fields := archiveTableCells(row)
 	paths := make([]string, 0, len(fields))
@@ -176,27 +178,48 @@ func archiveRowPaths(ctx context.Context, row string) ([]string, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if path := archivePathField(fields[i]); path != "" {
-			paths = append(paths, path)
-		}
+		paths = append(paths, archivePathField(fields[i])...)
 	}
 	return paths, nil
 }
 
-// archivePathField decodes escaped pipes before removing wrappers and cleaning the complete path.
+// archivePathField decodes escaped pipes and cleans bounded whole-path and whitespace prefixes.
 // Embedded spaces survive; native, slash and UNC path spellings share the same field grammar.
-func archivePathField(field string) string {
+func archivePathField(field string) []string {
 	field = strings.ReplaceAll(field, `\|`, "|")
 	field = strings.TrimSpace(field)
 	start := archivePathStart(field)
 	if start < 0 {
-		return ""
+		return nil
 	}
-	path := archiveUnwrapPath(strings.TrimSpace(field[:start]), strings.TrimSpace(field[start:]))
-	if !archivePathWithinBounds(path) {
-		return ""
+	path, wrapped := archiveUnwrapPath(strings.TrimSpace(field[:start]), strings.TrimSpace(field[start:]))
+	paths := []string{path}
+	if !wrapped {
+		paths = archivePathPrefixes(path)
 	}
-	return filepath.Clean(filepath.FromSlash(path))
+	cleaned := make([]string, 0, len(paths))
+	for i := 0; i < len(paths) && i < maxTaskLineBytes; i++ {
+		if archivePathWithinBounds(paths[i]) {
+			cleaned = append(cleaned, filepath.Clean(filepath.FromSlash(paths[i])))
+		}
+	}
+	return cleaned
+}
+
+// archivePathPrefixes includes the whole field; exceeding the cap rejects the entire field.
+func archivePathPrefixes(path string) []string {
+	paths := make([]string, 0, maxArchivePathCandidates)
+	offset := 0
+	for i := 0; i < maxArchivePathCandidates; i++ {
+		end := strings.IndexFunc(path[offset:], unicode.IsSpace)
+		if end < 0 {
+			return append(paths, path)
+		}
+		end += offset
+		paths = append(paths, path[:end])
+		offset = len(path) - len(strings.TrimLeftFunc(path[end:], unicode.IsSpace))
+	}
+	return nil
 }
 
 // archivePathWithinBounds counts bytes and recognizes slash and native separators on every host.
@@ -218,21 +241,39 @@ func archivePathWithinBounds(path string) bool {
 	return true
 }
 
-// archiveUnwrapPath removes only paired wrappers immediately surrounding the whole path.
-func archiveUnwrapPath(prefix, path string) string {
-	// Consume the suffix of opening wrappers from outermost to innermost.
+// archiveUnwrapPath ends a wrapped path at its matching close, before any trailing prose.
+func archiveUnwrapPath(prefix, path string) (string, bool) {
+	// The innermost opener delimits the path, preserving outer wrappers as field syntax.
 	start := len(strings.TrimRight(prefix, "`\"'([ \t"))
-	for i := start; i < len(prefix) && i < maxTaskLineBytes && len(path) > 0; i++ {
+	for i := len(prefix) - 1; i >= start && i >= 0 && i < maxTaskLineBytes; i-- {
 		wrapper := strings.IndexByte("`\"'([", prefix[i])
 		if wrapper < 0 {
 			continue
 		}
-		if path[len(path)-1] != "`\"')]"[wrapper] {
-			break
+		end := archivePathWrapperEnd(path, prefix[i], "`\"')]"[wrapper])
+		if end >= 0 {
+			return strings.TrimSpace(path[:end]), true
 		}
-		path = strings.TrimSpace(path[:len(path)-1])
+		break
 	}
-	return path
+	return path, false
+}
+
+// archivePathWrapperEnd balances bracket wrappers while quotes close at their next match.
+func archivePathWrapperEnd(path string, open, close byte) int {
+	depth := 1
+	for i := 0; i < len(path) && i < maxTaskLineBytes; i++ {
+		switch path[i] {
+		case close:
+			depth--
+			if depth == 0 {
+				return i
+			}
+		case open:
+			depth++
+		}
+	}
+	return -1
 }
 
 // archivePathStart accepts a field boundary before native roots, drive letters and slash paths.
@@ -287,7 +328,7 @@ func (index archiveRowIndex) add(ctx context.Context, row int, paths []string, o
 	return nil
 }
 
-// indexWorktreeRows normalizes each unique field once instead of scanning rows per worktree.
+// indexWorktreeRows normalizes each unique candidate once instead of scanning rows per worktree.
 func indexWorktreeRows(ctx context.Context, rows []string, ops archiveWorktreeOps) (map[string][]int, error) {
 	index := archiveRowIndex{rows: make(map[string][]int), normalized: make(map[string]string)}
 	for i := 0; i < len(rows) && i < maxScannedLines; i++ {
@@ -374,7 +415,7 @@ func retainedWorktreeRow(ctx context.Context, rows []int, archive map[int]bool) 
 	return newest, nil
 }
 
-// namesWorktreePath compares complete cleaned fields; spaces never terminate a path.
+// namesWorktreePath compares the same bounded candidates used by the archive row index.
 func namesWorktreePath(row, path string) bool {
 	paths, err := archiveRowPaths(context.Background(), row)
 	if err != nil {
