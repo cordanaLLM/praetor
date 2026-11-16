@@ -15,6 +15,14 @@ import (
 	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
+// Archive field limits reject prose masquerading as paths before cleaning or stat.
+// Components use a 255-byte ceiling; the complete field uses a 4096-byte ceiling.
+// These portable grammar bounds avoid filesystem-dependent name-length errors.
+const (
+	maxArchivePathComponentBytes = 255
+	maxArchivePathBytes          = 4096
+)
+
 // archiveWorktreeOps supplies the listing and context-bounded filesystem inspection.
 type archiveWorktreeOps struct {
 	list    func(context.Context, string) ([]worktree.WorktreeInfo, error)
@@ -185,7 +193,29 @@ func archivePathField(field string) string {
 		return ""
 	}
 	path := archiveUnwrapPath(strings.TrimSpace(field[:start]), strings.TrimSpace(field[start:]))
+	if !archivePathWithinBounds(path) {
+		return ""
+	}
 	return filepath.Clean(filepath.FromSlash(path))
+}
+
+// archivePathWithinBounds counts bytes and recognizes slash and native separators on every host.
+func archivePathWithinBounds(path string) bool {
+	if len(path) > maxArchivePathBytes {
+		return false
+	}
+	componentBytes := 0
+	for i := 0; i < len(path) && i < maxArchivePathBytes; i++ {
+		if path[i] == '/' || path[i] == '\\' {
+			componentBytes = 0
+			continue
+		}
+		componentBytes++
+		if componentBytes > maxArchivePathComponentBytes {
+			return false
+		}
+	}
+	return true
 }
 
 // archiveUnwrapPath removes only paired wrappers immediately surrounding the whole path.
