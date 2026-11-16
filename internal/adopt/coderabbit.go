@@ -28,8 +28,10 @@ const codeRabbitConfig = "# yaml-language-server: $schema=https://coderabbit.ai/
 	"        Use the CI verification job as evidence for `make verify-all`.\n" +
 	"        Find it in .github/workflows by its step running `make verify-all`.\n" +
 	"        A green run of that job on the pull request head satisfies a request\n" +
-	"        to run that target. AGENTS.md and CLAUDE.md turn-end rules bind\n" +
-	"        coding agents working in this repository, not the CodeRabbit reviewer.\n"
+	"        to run that target only when that step ran and passed; a run in\n" +
+	"        which the step was skipped is no evidence. AGENTS.md and CLAUDE.md\n" +
+	"        turn-end rules bind coding agents working in this repository,\n" +
+	"        not the CodeRabbit reviewer.\n"
 
 // reconcileCodeRabbit enables auto-review and CI evidence guidance while retaining user policy.
 func reconcileCodeRabbit(ctx context.Context, s *adoptSession) error {

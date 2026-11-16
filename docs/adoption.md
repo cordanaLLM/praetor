@@ -724,7 +724,8 @@ YAML language server comment pointing to the CodeRabbit v2 schema. An existing f
 other keys, comments and base-branch patterns; an unchanged rerun leaves its bytes intact.
 The third key, `reviews.path_instructions`, gets one entry with the path `**`. Its
 instructions tell CodeRabbit that a green run of the CI job whose step runs `make verify-all`
-on the pull request head answers a request to run that target, and that the turn-end rules in
+on the pull request head answers a request to run that target only when that step ran and
+passed (a run that skipped the step is no evidence), and that the turn-end rules in
 `AGENTS.md` and `CLAUDE.md` bind coding agents, not the reviewer. Adoption adds the entry only
 when no existing entry has the path `**`, so a global instruction the repository wrote stays as
 written; every existing entry needs string `path` and `instructions` fields (schema v2), or

@@ -48,7 +48,7 @@ func assertCodeRabbitCIEvidence(t *testing.T, text string) {
 		if len([]rune(entry.Instructions)) > 20000 {
 			t.Fatal("review guidance exceeds schema maxLength 20000")
 		}
-		for _, want := range []string{"CI verification job", ".github/workflows", "make verify-all", "green run", "pull request head", "AGENTS.md", "CLAUDE.md", "coding agents", "not the CodeRabbit reviewer"} {
+		for _, want := range []string{"CI verification job", ".github/workflows", "make verify-all", "green run", "pull request head", "AGENTS.md", "CLAUDE.md", "coding agents", "ran and passed", "step was skipped", "not the CodeRabbit reviewer"} {
 			if !strings.Contains(entry.Instructions, want) {
 				t.Errorf("review guidance missing %q: %s", want, entry.Instructions)
 			}
