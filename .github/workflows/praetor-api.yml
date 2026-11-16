@@ -18,7 +18,10 @@ jobs:
   api-compatibility:
     name: Go API Compatibility
     runs-on: ubuntu-26.04
-    timeout-minutes: 60
+    # Twice the slowest adopter's p95 (golusoris/golusoris, 12.3 minutes
+    # over 15 green runs, 2026-11-06), inside every adopter's job-timeout
+    # window (TestAPICompatibilityJobTimeoutFitsEveryAdopter).
+    timeout-minutes: 25
     steps:
       - name: Stop on a draft pull request
         if: github.event.pull_request.draft == true

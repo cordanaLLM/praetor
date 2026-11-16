@@ -21,7 +21,7 @@ and `praetorctl audit` compares them byte for byte, one consistent line-ending s
 | :--- | :--- |
 | `tools/apicompat/gate/main.go` | The gate program. Its `//go:build apicompatgate` constraint keeps the gate itself out of every `./...` pattern, so the repository's own build, tests, linters and API never include it; `go run` builds it because the command names the file. |
 | `tools/apicompat/gate/placeholder.go` | A stand-in for the gate in a build without the tag: a `main` that exits 1 and names the command that runs the gate. It gives the directory one buildable package, which a `./...` pattern of the repository now builds, vets and lints (a `main` that prints one line and exits 1, with no exported API), and so `go vet ./tools/apicompat/gate` and `golangci-lint run ./tools/apicompat/gate`, which a pre-commit hook may run on the directory of a staged file, find a Go file instead of failing on a package whose files the tag excludes. |
-| `.github/workflows/praetor-api.yml` | One job, `Go API Compatibility`, on pushes to the repository's default branch and on every pull request; on a draft it fails by design until the draft is marked ready ([When the workflow runs](#when-the-workflow-runs)). The branch ruleset adoption renders requires it. |
+| `.github/workflows/praetor-api.yml` | One job, `Go API Compatibility`, on pushes to the repository's default branch and on every pull request; on a draft it fails by design until the draft is marked ready ([When the workflow runs](#when-the-workflow-runs)). The branch ruleset adoption renders requires it. The job timeout is twice the slowest adopter's p95 run time (`TestAPICompatibilityJobTimeoutFitsEveryAdopter` in `tools/apicompat/assets_timeout_test.go`). |
 
 Adoption refuses, even with `--force`, to overwrite a file the repository already had at either
 path before the gate was adopted. `adoption.decline` cannot name the `api-compatibility-gate`
@@ -157,7 +157,9 @@ non-empty the rendered workflow gains one step, `Install system packages for the
 before the step that runs the gate: it carries the draft condition of every gate step, a 15 minute
 timeout, and runs `sudo apt-get update` and then `sudo apt-get install -y --no-install-recommends`
 with exactly the declared names, one per line so that no line passes yamllint's 80 columns (`TestRenderWorkflow_Positive_InstallStepRunsBeforeTheChecker` in
-`tools/apicompat/render_test.go`). An absent or empty list renders the workflow byte-identical to
+`tools/apicompat/render_test.go`). The job also reserves those 15 minutes in addition to its
+25-minute comparison budget, giving 40 minutes when installation is configured
+(`TestAPICompatibilityJobTimeoutIncludesSystemPackages`). An absent or empty list renders the workflow byte-identical to
 the text before the key existed (`TestRenderWorkflow_Boundary_EmptySettingsKeepTheBytes`). Nothing
 sets `CGO_ENABLED`: a module is never compared with cgo silently switched off.
 

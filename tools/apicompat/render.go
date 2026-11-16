@@ -25,7 +25,34 @@ const (
 	InstallStepName = "Install system packages for the Go build"
 	// InstallTimeoutMinutes bounds the install step.
 	InstallTimeoutMinutes = 15
+	// installJobTimeoutMarker preserves the comparison budget when installation is configured.
+	// The plain workflow stays within the measured window of adopters without system packages.
+	installJobTimeoutMarker = "    # Add the install step's full budget to the comparison job.\n"
 )
+
+// adjustInstallJobTimeout adds or removes the installation budget, preserving the plain
+// workflow's own comparison timeout, including the timeout of a historical rendering.
+func adjustInstallJobTimeout(text string, add bool) (string, error) {
+	spec, err := ghworkflow.Parse([]byte(text))
+	if err != nil {
+		return "", fmt.Errorf("read the comparison job timeout: %w", err)
+	}
+	minutes, err := strconv.Atoi(spec.Jobs["api-compatibility"].TimeoutMinutes.Value)
+	if err != nil || minutes <= InstallTimeoutMinutes {
+		return "", errors.New("the API compatibility workflow lacks a sufficient literal job timeout")
+	}
+	old := "    timeout-minutes: " + strconv.Itoa(minutes) + "\n"
+	delta, prefix := InstallTimeoutMinutes, installJobTimeoutMarker
+	if !add {
+		old = installJobTimeoutMarker + old
+		delta, prefix = -InstallTimeoutMinutes, ""
+	}
+	if strings.Count(text, old) != 1 {
+		return "", errors.New("the API compatibility workflow lacks a single comparison job timeout")
+	}
+	replacement := prefix + "    timeout-minutes: " + strconv.Itoa(minutes+delta) + "\n"
+	return strings.Replace(text, old, replacement, 1), nil
+}
 
 const (
 	compareStepMarker = "      - name: Compare the API of every Go module"
@@ -88,9 +115,10 @@ func exceptionsLines(entries []ModuleException) (string, error) {
 }
 
 // RenderWorkflow returns plain, a rendering of Workflow for any default branch, with the
-// settings applied: the install step directly before the gate step, and the exceptions in the
-// gate step's environment. Empty settings return plain unchanged, so a repository that declares
-// neither keeps today's bytes. A plain that lacks either insertion point is an error.
+// settings applied: the install step directly before the gate step, its full timeout added to
+// the job budget, and the exceptions in the gate step's environment. Empty settings return
+// plain unchanged, so a repository that declares neither keeps today's bytes. A plain that
+// lacks either insertion point is an error.
 func RenderWorkflow(plain string, settings Settings) (string, error) {
 	if settings.Empty() {
 		return plain, nil
@@ -110,6 +138,11 @@ func RenderWorkflow(plain string, settings Settings) (string, error) {
 		rendered = strings.Replace(rendered, envMarker, envMarker+lines, 1)
 	}
 	if len(settings.SystemPackages) > 0 {
+		var err error
+		rendered, err = adjustInstallJobTimeout(rendered, true)
+		if err != nil {
+			return "", err
+		}
 		rendered = strings.Replace(rendered, compareStepMarker, installStep(settings.SystemPackages)+compareStepMarker, 1)
 	}
 	return rendered, nil
@@ -120,7 +153,23 @@ func RenderWorkflow(plain string, settings Settings) (string, error) {
 // settings it carries. An edited step or line, or any other deviation, returns false, so only
 // Praetor's own output is recognised. Text that carries no settings returns itself with ok.
 func StripSettings(text string) (plain string, ok bool) {
-	return ghworkflow.StripRendering(text, readSettings, RenderWorkflow)
+	if plain, ok = ghworkflow.StripRendering(text, readSettings, RenderWorkflow); ok {
+		return plain, true
+	}
+	return ghworkflow.StripRendering(text, readSettings, renderLegacyWorkflow)
+}
+
+// renderLegacyWorkflow recognises the earlier install rendering whose job budget excluded
+// installation, so adoption can refresh that exact text through the normal prior-text path.
+func renderLegacyWorkflow(plain string, settings Settings) (string, error) {
+	rendered, err := RenderWorkflow(plain, settings)
+	if err != nil {
+		return "", err
+	}
+	if len(settings.SystemPackages) == 0 {
+		return rendered, nil
+	}
+	return adjustInstallJobTimeout(rendered, false)
 }
 
 // readSettings cuts the install step and the exceptions env lines out of text and parses what
@@ -139,6 +188,13 @@ func readSettings(text string) (settings Settings, plain string, ok bool) {
 		}
 		settings.SystemPackages = packages
 		plain = plain[:start] + plain[start+end:]
+		if strings.Contains(plain, installJobTimeoutMarker) {
+			var err error
+			plain, err = adjustInstallJobTimeout(plain, false)
+			if err != nil {
+				return Settings{}, "", false
+			}
+		}
 	}
 	if start := strings.Index(plain, exceptionsComment+exceptionsKey); start >= 0 {
 		rest := plain[start+len(exceptionsComment+exceptionsKey):]
