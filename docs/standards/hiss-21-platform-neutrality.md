@@ -663,4 +663,9 @@ of #1492 cancelled a re-run in its last step. The workflow now uses the hosted g
 (`HostedGateConcurrency` in `internal/ghworkflow`): a pull request run replaces the older run of
 the same pull request, and a push, scheduled or dispatched run is grouped by its run id and runs
 to its end, so every main commit gets a verdict. `ci.yml`, `codeql.yml`, `console.yml` and
-`security.yml` follow the same rule.
+`security.yml` follow the same rule. The group reads the pull request number from
+`github.event.pull_request.number`, which review payloads carry too. Of these workflows, only
+`portability.yml` declares a `pull_request_review` trigger: a review submitted or dismissed
+starts a portability run in that pull request's group and replaces the older run, where the
+earlier `github.event.number` key gave each review run a group of its own (52 queued runs on
+2026-11-15).

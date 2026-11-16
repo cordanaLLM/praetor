@@ -14,6 +14,7 @@ package flavor
 var (
 	// priorGoCIDigests are the earlier texts of go/ci-go.yml.tmpl.
 	priorGoCIDigests = map[string]string{
+		"b98a1667451109dc48eff5f0071bdbbff55f3cd0d48973e48734bd69cf51e4af": "the Go CI job before review runs shared the pull request group",
 		"1ae53e06f9b9495bea73929ef4801ca92b216219c01d1cb6f3ca90d1375f6b8c": "the Go CI job before its concurrency group",
 		"36d5e19301f02efef3788fe3a1a7246fec40ea3a83c0358143d437652aba8cbc": "the Go CI job before its go.mod manifest guard",
 		"cfe4c9e934d122e5588bde13252a1c17cb92c4231bf3528778134c0ec3dbad98": "the first embedded Go CI job, an unquoted 'on' key (#463)",
@@ -21,6 +22,8 @@ var (
 	}
 	// priorRustCIDigests are the earlier texts of rust/ci-rust.yml.tmpl.
 	priorRustCIDigests = map[string]string{
+		"cf0289a07c9b5582a011331843e0fbfad4a5e9690ce6d0028a4b463f0eb35e16": "the Rust CI job before review runs shared the pull request group",
+		"33dad5b393d8a5a5f74a04fdea3094ec7ac95c38d09adcb22135a20a24a8e528": "the Rust library CI job before review runs shared the pull request group",
 		"bfb0f936c69a1f111d346859ffeb77abfbdc0d1d5762e3042ba437bc9ab80681": "the Rust CI job before its concurrency group",
 		"06f6c49b38af50835f7c93678828d94e1a84a7d1a99a3523d576157912c57410": "the Rust CI job before its Cargo.toml manifest guard",
 		"f66a2652591c6a3a1236a581b1d23dc92110d7d8b2f9164e4b8d0846c10357a4": "the first embedded Rust CI job, an unquoted 'on' key (#463)",
@@ -29,6 +32,7 @@ var (
 	}
 	// priorFlutterCIDigests are the earlier texts of flutter/ci-flutter.yml.tmpl.
 	priorFlutterCIDigests = map[string]string{
+		"8107d73687d7a3fc4da7bf790db2462d718cf39a3e4e65776cce5cf2145d6813": "the Flutter CI job before review runs shared the pull request group",
 		"87e594b6db9e298b56ca7558ff81828352d40ed550e0134d6baa6b8371785e7e": "the Flutter CI job before its concurrency group",
 		"13ff5b2a881217b981aef5b8c2a4a732849611253f546afb1abf3c3fb9c661c8": "the Flutter CI job before its pubspec.yaml manifest guard",
 		"047cebc48db2d96f0a7ce8feea7cedbe6b03c36a2fdb11962e22bd6fc3a351c6": "the first embedded Flutter CI job, an unquoted 'on' key (#463)",
@@ -36,6 +40,7 @@ var (
 	}
 	// priorJVMCIDigests are the earlier texts of jvm/ci-jvm.yml.tmpl.
 	priorJVMCIDigests = map[string]string{
+		"041f48c4c85a0db24ba2bef780bc62d1864e9417e09127228fec5f7038b2ed47": "the JVM CI job before review runs shared the pull request group",
 		"f2923e03c20fd2f2736d79d3f8426cd6fe1cc97b0f4dcc3f1a18b0b0cd255525": "the JVM CI job before its concurrency group",
 		"64b84c2ecf75ac611c8802a615ba6026f622ac4f9341c2c8efa764f4d98d1bbd": "the JVM CI job before its Maven or Gradle manifest guard",
 		"93b9e4332cb8a9f9b7cc83e0ac1d52ef62ef5d261a4ad0c022d54b8fc1b602bc": "the first embedded JVM CI job, an unquoted 'on' key (#463)",
@@ -45,6 +50,17 @@ var (
 	// priorNodeCIDigests are the earlier texts of node/ci-node.yml.tmpl: the npm job before the
 	// body branched on the package manager, then one text per manager and Yarn facts.
 	priorNodeCIDigests = map[string]string{
+		"540d89fa2697d87da9111e5acc074aa0ef9b0545f461b0c21b26d4498333c51e": "the yarn CI job before review runs shared the pull request group",
+		"45e7d84134e4822037fcd3c1d8d42b540817ecf44719ca2275df0407a5baaaeb": "the yarn-lint CI job before review runs shared the pull request group",
+		"13d2e5c3eab1caef87df78ff8bd0459ec3c59b8e61ccf8a48c76e65828208c4e": "the yarn-lint-build CI job before review runs shared the pull request group",
+		"9aa155aef866c5a3e1dc020f0b2db8c7cbe640528d0b2933f84249d4947da6bc": "the yarn-build CI job before review runs shared the pull request group",
+		"245caf7b099a9e3cc9039ca8549061377aea05ecc4df8a9d7125ca837bbc7469": "the yarn-berry CI job before review runs shared the pull request group",
+		"c7c1859463e25be7af5b6852a45862960a52478520a7fc335a2c4f8a25b922df": "the yarn-berry-lint CI job before review runs shared the pull request group",
+		"de447af02843eff954da8681888d18ec147ca481f92a4fd3cd0efca1a5466871": "the yarn-berry-lint-build CI job before review runs shared the pull request group",
+		"b79870e73dabe22ce9fd6a1e04a7baed8a34f6270afe3bb04284a46cfdd9da40": "the yarn-berry-build CI job before review runs shared the pull request group",
+		"ea820f20e39e9b7726ad04e627c1fb3898cde0ba967b6257a985a9a5a9984dd0": "the pnpm CI job before review runs shared the pull request group",
+		"21b25c16a47abd31b0e81c160b74322ea4251731f7695807719ff3992b7ce883": "the npm CI job before review runs shared the pull request group",
+		"1c0e0aae6c0c70ba5a648905514639528cd0fddb9b9300d76959f93e9fe3d7da": "the bun CI job before review runs shared the pull request group",
 		"764e890bbfdf3268768101366d33a46c27309ede0a2defa3af68db40491b0ffb": "the Bun CI job before its concurrency group",
 		"0d7d2a21edaf07fa9d0d1ef7123d1d1110a9d4216bb88f33fea45cdfd8d36978": "the npm CI job before its concurrency group",
 		"dbd29da5da17be3ea5bde1cb73b4b7c3a53a9360e43304201923e9800a18df1e": "the pnpm CI job before its concurrency group",

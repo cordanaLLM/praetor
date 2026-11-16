@@ -1023,9 +1023,10 @@ func TestWorkflowTakesNodeFromTheVersionFile(t *testing.T) {
 	}
 }
 
-// Positive: the shipped text reads the file. Negative: every earlier text names its release, so
-// an unedited copy that a locked engine keeps is told apart. Boundary: a copy reading another file
-// is not read as this one.
+// Positive: the shipped text reads the file, and so do the earlier texts released after the file
+// (before-review-concurrency). Negative: every text older than the file names its release, so an
+// unedited copy that a locked engine keeps is told apart. Boundary: a copy reading another file is
+// not read as this one.
 func TestReadsNodeVersionFile(t *testing.T) {
 	if !ReadsNodeVersionFile([]byte(Workflow)) {
 		t.Fatal("the shipped workflow does not read the version file")
@@ -1039,8 +1040,9 @@ func TestReadsNodeVersionFile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ReadsNodeVersionFile(data) {
-			t.Fatalf("%s reads the version file", entry)
+		afterFile := strings.Contains(filepath.Base(entry), "before-review-concurrency")
+		if ReadsNodeVersionFile(data) != afterFile {
+			t.Fatalf("%s: reads the version file = %v, want %v", entry, !afterFile, afterFile)
 		}
 	}
 	other := mutateWorkflow(t, "node-version-file: .node-version", "node-version-file: .nvmrc")

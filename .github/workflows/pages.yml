@@ -29,7 +29,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: pages-${{ github.ref }}
+  group: >-
+    ${{ github.workflow }}-${{ github.event.pull_request.number ||
+    github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Only the deploy job may write. The workflow also runs on pull_request, and a workflow-level
@@ -156,6 +158,9 @@ jobs:
           include-hidden-files: true
 
   deploy:
+    concurrency:
+      group: github-pages-deploy
+      cancel-in-progress: false
     # Engine-only: skipped outside the canonical repository (#189). The literal is the
     # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
     name: Deploy to GitHub Pages (canonical repository only)

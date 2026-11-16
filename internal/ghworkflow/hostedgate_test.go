@@ -5,6 +5,9 @@
 package ghworkflow
 
 import (
+	"encoding/json"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -63,18 +66,144 @@ func TestHostedGateFault_Positive(t *testing.T) {
 }
 
 // Negative: removing the concurrency group, changing its key or cancelling non-PR events fails.
+// TestHostedGateFault_Negative_RequiresConcurrency refuses unsafe cancellation policies.
 func TestHostedGateFault_Negative_RequiresConcurrency(t *testing.T) {
 	without := strings.Replace(hostedGateFixture, HostedGateConcurrency, "", 1)
-	wrongGroup := strings.Replace(hostedGateFixture, "github.event.number || github.run_id", "github.ref", 1)
+	wrongGroup := mutate(t, hostedGateConcurrencyGroupPR, "${{ github.workflow }}-${{ github.ref ||")
 	wrongCancel := strings.Replace(hostedGateFixture, "github.event_name == 'pull_request'", "true", 1)
 	for name, doc := range map[string]string{
 		"missing block": without,
 		"wrong group":   wrongGroup,
 		"wrong cancel":  wrongCancel,
+		"push admitted": mutate(t, HostedGateConcurrencyCancel,
+			"${{ github.event_name == 'pull_request' || github.event_name == 'push' }}"),
+		"merge group admitted": mutate(t, HostedGateConcurrencyCancel,
+			"${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}"),
 	} {
-		if err := hostedGateFault(t, doc, HostedGateDefaultBranch); err == nil {
-			t.Errorf("%s: HostedGateFault accepted the workflow", name)
+		t.Run(name, func(t *testing.T) {
+			if err := hostedGateFault(t, doc, HostedGateDefaultBranch); err == nil {
+				t.Error("HostedGateFault accepted the workflow")
+			}
+		})
+	}
+}
+
+// TestHostedGateConcurrencyPayloads checks shared PR groups across webhook payload shapes,
+// distinct PRs and workflows, and unique run groups for every non-PR trigger.
+func TestHostedGateConcurrencyPayloads(t *testing.T) {
+	cases := []struct{ name, payload, runID, workflow, want string }{
+		{"pull_request", `{"number":42,"pull_request":{"number":42}}`, "1001", "CI", "CI-42"},
+		{"pull_request_review submitted", `{"action":"submitted","pull_request":{"number":42}}`, "1002", "CI", "CI-42"},
+		{"pull_request_review dismissed", `{"action":"dismissed","pull_request":{"number":42}}`, "1003", "CI", "CI-42"},
+		{"pull_request_review_comment", `{"action":"created","pull_request":{"number":42}}`, "1004", "CI", "CI-42"},
+		{"other PR", `{"pull_request":{"number":43}}`, "1005", "CI", "CI-43"},
+		{"other workflow", `{"pull_request":{"number":42}}`, "1006", "Platform", "Platform-42"},
+		{"push", `{"ref":"refs/heads/main"}`, "1007", "CI", "CI-1007"},
+		{"push same branch", `{"ref":"refs/heads/main"}`, "1008", "CI", "CI-1008"},
+		{"merge_group", `{"merge_group":{"head_ref":"refs/heads/gh-readonly-queue/main/pr-42"}}`, "1009", "CI", "CI-1009"},
+		{"workflow_dispatch", `{"inputs":{}}`, "1010", "CI", "CI-1010"},
+		{"schedule", `{"schedule":"0 4 * * *"}`, "1011", "CI", "CI-1011"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := concurrencyPayloadGroup(t, HostedGateConcurrencyGroup, tc.payload, tc.runID, tc.workflow)
+			if got != tc.want {
+				t.Errorf("group = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// concurrencyPayloadGroup evaluates the group's dotted property lookups and OR fallback against
+// JSON webhook fixtures; unknown expression syntax fails instead of silently passing.
+func concurrencyPayloadGroup(t *testing.T, group, payload, runID, workflow string) string {
+	t.Helper()
+	var event map[string]any
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		t.Fatal(err)
+	}
+	context := map[string]any{"github": map[string]any{"event": event, "run_id": runID}}
+	key, found := strings.CutPrefix(group, "${{ github.workflow }}-")
+	if !found {
+		t.Fatalf("unsupported group prefix: %q", group)
+	}
+	expression, closed := UnwrapExpression(key)
+	if !closed {
+		t.Fatalf("unclosed group expression: %q", key)
+	}
+	terms := strings.Split(expression, " || ")
+	for i := 0; i < len(terms) && i < 3; i++ {
+		value := concurrencyPayloadValue(t, context, terms[i])
+		if value != "" && value != "0" {
+			return workflow + "-" + value
 		}
+	}
+	t.Fatalf("group has no truthy operand: %q", expression)
+	return ""
+}
+
+// concurrencyPayloadValue resolves only dotted properties used by the concurrency fixture.
+func concurrencyPayloadValue(t *testing.T, context map[string]any, path string) string {
+	t.Helper()
+	switch path {
+	case "github.event.number", "github.event.pull_request.number", "github.run_id":
+	default:
+		t.Fatalf("unsupported group operand: %q", path)
+	}
+	var value any = context
+	parts := strings.Split(path, ".")
+	for i := 0; i < len(parts) && i < 4; i++ {
+		mapping, ok := value.(map[string]any)
+		if !ok {
+			return ""
+		}
+		value = mapping[parts[i]]
+	}
+	if value == nil {
+		return ""
+	}
+	return fmt.Sprint(value)
+}
+
+// TestEnginePullRequestWorkflowConcurrency pins every engine PR workflow to the shared group
+// and allows cancellation only for the pull request event types that workflow subscribes to.
+func TestEnginePullRequestWorkflowConcurrency(t *testing.T) {
+	workflows := os.DirFS(filepath.Join("..", "..", ".github", "workflows"))
+	names, err := fs.Glob(workflows, "*.yml")
+	if err != nil || len(names) == 0 || len(names) > 64 {
+		t.Fatalf("find engine workflows: %v", err)
+	}
+	for i := 0; i < len(names) && i < 64; i++ {
+		t.Run(names[i], func(t *testing.T) {
+			checkEngineWorkflowConcurrency(t, workflows, names[i])
+		})
+	}
+}
+
+// checkEngineWorkflowConcurrency parses one engine workflow, read through a file system rooted at
+// .github/workflows so no name can leave that folder, and checks its PR concurrency policy.
+func checkEngineWorkflowConcurrency(t *testing.T, workflows fs.FS, name string) {
+	t.Helper()
+	data, err := fs.ReadFile(workflows, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if util.YAMLMappingValue(&spec.On, "pull_request") == nil {
+		return
+	}
+	if got := scalarValue(&spec.Concurrency, "group"); got != HostedGateConcurrencyGroup {
+		t.Errorf("group = %q, want %q", got, HostedGateConcurrencyGroup)
+	}
+	want := HostedGateConcurrencyCancel
+	if util.YAMLMappingValue(&spec.On, "pull_request_review") != nil {
+		want = "${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_review' }}"
+	}
+	if got := scalarValue(&spec.Concurrency, "cancel-in-progress"); got != want {
+		t.Errorf("cancel-in-progress = %q, want %q", got, want)
 	}
 }
 

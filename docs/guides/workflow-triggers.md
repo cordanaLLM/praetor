@@ -116,8 +116,10 @@ no finding:
 - **Superseded runs and checkout credentials.** Every emitted gate (the flavor CI workflows,
   the Go Security Scan, `praetor-api.yml`, `praetor-docs.yml` and `reuse.yml`) carries
   `ghworkflow.HostedGateConcurrency` right after its trigger block: the group is the workflow
-  plus `github.event.number || github.run_id`, and `cancel-in-progress` is true only for
-  `pull_request`. A new push to a pull request cancels that pull request's older run. Every
+  plus `github.event.pull_request.number || github.run_id`, and `cancel-in-progress` is true
+  only for `pull_request`. A new push to a pull request cancels that pull request's older run.
+  Review events carry the number only under `pull_request`, so the key reads it there and a
+  review-triggered run joins its pull request's group instead of a group of its own. Every
   other event gets a group of its own run id, because GitHub replaces the older pending run of
   a group whenever a newer one joins, even without `cancel-in-progress`: a group keyed on the
   branch would drop queued pushes to `main`. Workflows without a `pull_request` trigger
