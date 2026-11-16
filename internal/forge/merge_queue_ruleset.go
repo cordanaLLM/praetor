@@ -61,7 +61,7 @@ func (g *GitHubDriver) ReconcileMergeQueue(ctx context.Context, branch string, p
 	if err != nil {
 		return nil, nil, fmt.Errorf("reconcile merge queue for %s: %w", branch, err)
 	}
-	return g.convergeRuleset(ctx, branch, listPath, MergeQueueRulesetName, desired)
+	return g.convergeRuleset(ctx, branch, listPath, MergeQueueRulesetName, desired, true)
 }
 
 // LiveQueueRuleset is the merge queue ruleset (MergeQueueRulesetName) as GitHub reports it.

@@ -45,6 +45,11 @@ type visibilityReader interface {
 	RepositoryVisibility(ctx context.Context) (string, error)
 }
 
+// codeQLDefaultSetupReader reads the repository default setup state.
+type codeQLDefaultSetupReader interface {
+	CodeQLDefaultSetupState(context.Context) (string, error)
+}
+
 // actionsForge is the live forge reader of one audit or plan run, or why there is none: the
 // Actions reads, the branch protection read and the repository visibility read go through the
 // same driver.
@@ -52,6 +57,7 @@ type actionsForge struct {
 	reader     forge.ActionsReader
 	protection protectionReader
 	visibility visibilityReader
+	codeQL     codeQLDefaultSetupReader
 	notMade    string
 }
 
@@ -75,7 +81,7 @@ func openActionsForge(ctx context.Context, rootDir string, repo config.Repositor
 	}
 	driver := forge.NewGitHubDriver(token, actionsForgeEndpoint)
 	driver.SetRepository(repo.Owner, repo.Name)
-	return actionsForge{reader: driver, protection: driver, visibility: driver}
+	return actionsForge{reader: driver, protection: driver, visibility: driver, codeQL: driver}
 }
 
 // readActionsPermissions compares declared with the live workflow permissions, or returns why
@@ -146,12 +152,39 @@ func auditLiveBranchProtection(ctx context.Context, manifest *config.Manifest, r
 	switch {
 	case errors.As(err, &unread):
 		fmt.Printf("[SKIP] Live branch protection not compared with the forge: %v\n", err)
-		return nil
+		return liveCodeQLDefaultSetupVerdict(ctx, target, live.codeQL)
 	case err != nil:
 		return fmt.Errorf("[FAIL] Live branch protection audit failed: %w", err)
 	}
 	printLines(notes)
-	return errors.Join(liveProtectionVerdict(target, protection, findings), liveMergeQueueVerdict(ctx, rootDir, target, protection))
+	return errors.Join(liveProtectionVerdict(target, protection, findings), liveMergeQueueVerdict(ctx, rootDir, target, protection),
+		liveCodeQLDefaultSetupVerdict(ctx, target, live.codeQL))
+}
+
+// liveCodeQLDefaultSetupVerdict compares the declared policy with GitHub's default setup state.
+func liveCodeQLDefaultSetupVerdict(ctx context.Context, target protectionTarget, reader codeQLDefaultSetupReader) error {
+	if reader == nil {
+		fmt.Println("[SKIP] CodeQL default setup state not read: forge reader unavailable")
+		return nil
+	}
+	state, err := reader.CodeQLDefaultSetupState(ctx)
+	if err != nil {
+		fmt.Printf("[SKIP] CodeQL default setup state not read: %v\n", err)
+		return nil
+	}
+	switch state {
+	case "configured":
+		if !target.policy.CodeQLDefaultSetup {
+			return fmt.Errorf("[FAIL] %s: CodeQL default setup is configured on GitHub but the policy does not declare it; declare overrides.branch_protection.codeql_default_setup: true and run praetorctl sync --remote so the ruleset gates its results", target.branch)
+		}
+	case "not-configured":
+		if target.policy.CodeQLDefaultSetup {
+			return fmt.Errorf("[FAIL] %s: the policy declares codeql_default_setup but GitHub reports default setup not-configured, so the code_scanning rule waits for results no run reports; enable default setup on GitHub or remove overrides.branch_protection.codeql_default_setup", target.branch)
+		}
+	default:
+		return fmt.Errorf("[FAIL] %s: unknown CodeQL default setup state %q", target.branch, state)
+	}
+	return nil
 }
 
 // auditProtectionTarget uses the same declared checks as plan and ruleset apply. The fetched

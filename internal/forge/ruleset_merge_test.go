@@ -64,12 +64,12 @@ func TestMergeRuleset_Boundary_MalformedAndOversizedLiveRulesets(t *testing.T) {
 		"required_status_checks is not an array": `{"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":"CI"}}]}`,
 		"exceeds 256 entries":                    `{"conditions":{"ref_name":{"include":[` + strings.Repeat(`"r",`, maxRulesetRefs) + `"r"]}}}`,
 	} {
-		if _, _, _, err := mergeRuleset(mustJSONObject(t, live), desired); err == nil || !strings.Contains(err.Error(), needle) {
+		if _, _, _, err := mergeRuleset(mustJSONObject(t, live), desired, false); err == nil || !strings.Contains(err.Error(), needle) {
 			t.Errorf("want error containing %q, got %v", needle, err)
 		}
 	}
 	// An empty live ruleset merges to the desired document itself.
-	merged, lowered, kept, err := mergeRuleset(map[string]any{}, desired)
+	merged, lowered, kept, err := mergeRuleset(map[string]any{}, desired, false)
 	if err != nil || len(lowered) != 0 || len(kept) != 0 {
 		t.Fatalf("empty live ruleset: %v, lowered %v, kept %v", err, lowered, kept)
 	}
@@ -88,7 +88,7 @@ func reviewRuleset(t *testing.T, params string) map[string]any {
 // the lowered parameters, and the kept parameters.
 func mergedReviewParameters(t *testing.T, live, desired map[string]any) (map[string]any, []string, []string) {
 	t.Helper()
-	merged, lowered, kept, err := mergeRuleset(live, desired)
+	merged, lowered, kept, err := mergeRuleset(live, desired, false)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestMergeRuleset_Boundary_EqualAbsentAndUnorderedParameters(t *testing.T) {
 	}
 	checks := mustJSONObject(t, `{"rules":[{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[]}}]}`)
 	relaxed := mustJSONObject(t, strings.Replace(convergedWant, `"strict_required_status_checks_policy":true`, `"strict_required_status_checks_policy":false`, 1))
-	merged, checkLowered, _, err := mergeRuleset(checks, relaxed)
+	merged, checkLowered, _, err := mergeRuleset(checks, relaxed, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestMergeAndConvergeRuleset_StatusChecksApp_PositiveAndNegative(t *testing.
 	if err := rulesetConverged(live, desired); err == nil || !strings.Contains(err.Error(), "integration_id") {
 		t.Fatalf("live unpinned check must not converge against desired pinned check, got %v", err)
 	}
-	merged, _, _, err := mergeRuleset(live, desired)
+	merged, _, _, err := mergeRuleset(live, desired, false)
 	if err != nil {
 		t.Fatalf("mergeRuleset: %v", err)
 	}

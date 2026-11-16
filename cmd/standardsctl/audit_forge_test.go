@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -1064,5 +1065,110 @@ func TestAuditRepositoryVisibility_Boundary_ForgeReadErrorSkips(t *testing.T) {
 	mustContain(t, out, "[SKIP] Repository visibility not compared with the forge: ")
 	if strings.Contains(out, "[PASS] Repository visibility") || strings.Contains(out, "[FAIL] Repository visibility") {
 		t.Fatalf("a forge read error reported pass or fail:\n%s", out)
+	}
+}
+
+// TestAuditLiveCodeQLDefaultSetup checks agreement, drift, unknown states and unreadable responses.
+func TestAuditLiveCodeQLDefaultSetup(t *testing.T) {
+	cases := []struct {
+		name, state string
+		status      int
+		declared    bool
+		want        string
+		fail        bool
+	}{
+		{"configured declared", "configured", 200, true, "", false},
+		{"not configured undeclared", "not-configured", 200, false, "", false},
+		{"configured undeclared", "configured", 200, false, "overrides.branch_protection.codeql_default_setup", true},
+		{"not configured declared", "not-configured", 200, true, "not-configured", true},
+		{"unknown", "future-state", 200, true, "future-state", true},
+		{"forbidden", "", 403, true, "[SKIP]", false},
+		{"missing", "", 404, true, "[SKIP]", false},
+		{"unavailable", "", 503, true, "[SKIP]", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(codeQLSetupHandler(t, tc.status, tc.state))
+			defer server.Close()
+			driver := forge.NewGitHubDriver("stub-token", server.URL)
+			driver.SetRepository("acme", "widgets")
+			target := protectionTarget{branch: "main", policy: config.BranchProtectionPolicy{CodeQLDefaultSetup: tc.declared}}
+			out, err := captureStdout(t, func() error { return liveCodeQLDefaultSetupVerdict(t.Context(), target, driver) })
+			if (err != nil) != tc.fail {
+				t.Fatalf("error = %v, output = %s", err, out)
+			}
+			if err != nil {
+				out += err.Error()
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("output %q lacks %q", out, tc.want)
+			}
+		})
+	}
+}
+
+// codeQLSetupHandler serves a default setup response and checks the requested path.
+func codeQLSetupHandler(t *testing.T, status int, state string) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/widgets/code-scanning/default-setup" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		w.WriteHeader(status)
+		if _, err := fmt.Fprintf(w, `{"state":%q}`, state); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	})
+}
+
+// codeQLConfiguredReader supplies an enabled default setup to the branch audit.
+type codeQLConfiguredReader struct{}
+
+// CodeQLDefaultSetupState reports a configured default setup.
+func (codeQLConfiguredReader) CodeQLDefaultSetupState(context.Context) (string, error) {
+	return "configured", nil
+}
+
+// TestAuditLiveCodeQLDefaultSetupWiring proves the branch audit includes the state comparison.
+func TestAuditLiveCodeQLDefaultSetupWiring(t *testing.T) {
+	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
+	f := protectedFixture(t, false, "", stub)
+	manifest, err := config.LoadManifest(f.manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := openActionsForge(t.Context(), f.dir, manifest.Repository, false)
+	live.codeQL = codeQLConfiguredReader{}
+	_, err = captureStdout(t, func() error {
+		return auditLiveBranchProtection(t.Context(), manifest, f.dir, config.DefaultPolicy(), live)
+	})
+	mustErrContain(t, err, "overrides.branch_protection.codeql_default_setup: true")
+	mustErrContain(t, err, "main")
+}
+
+// TestAuditLiveCodeQLDefaultSetupUnreadProtection checks CodeQL despite a failed protection read.
+func TestAuditLiveCodeQLDefaultSetupUnreadProtection(t *testing.T) {
+	f := protectedFixture(t, false, "", &forgeStub{rulesStatus: 403})
+	manifest, err := config.LoadManifest(f.manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	live := openActionsForge(ctx, f.dir, manifest.Repository, false)
+	live.codeQL = codeQLConfiguredReader{}
+	for _, declared := range []bool{false, true} {
+		policy := config.DefaultPolicy()
+		policy.BranchProtection.CodeQLDefaultSetup = declared
+		out, auditErr := captureStdout(t, func() error {
+			return auditLiveBranchProtection(ctx, manifest, f.dir, policy, live)
+		})
+		mustContain(t, out, "[SKIP] Live branch protection not compared with the forge")
+		if declared && auditErr != nil {
+			t.Fatalf("declared: %v", auditErr)
+		}
+		if !declared {
+			mustErrContain(t, auditErr, "[FAIL] main: CodeQL default setup is configured")
+		}
 	}
 }
