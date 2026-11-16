@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -100,8 +99,9 @@ var admissionWrappers = map[string]wrapperSpec{
 		"-P", "--max-procs", "-s", "--max-chars"}},
 }
 
-// admissionPrelude are the shell words that may stand before a command name in one segment.
-var admissionPrelude = []string{"!", "if", "then", "else", "elif", "do", "while", "until"}
+// admissionPrelude precedes command names, including simple coproc commands; a named
+// coproc compound command starts another segment after its opening control operator.
+var admissionPrelude = []string{"!", "if", "then", "else", "elif", "do", "while", "until", "coproc"}
 
 var (
 	assignmentWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
@@ -1202,7 +1202,7 @@ func commandAfter(words []string, i int, spec wrapperSpec) int {
 
 // commandName is the base name of a command word, without a Windows .exe suffix.
 func commandName(word string) string {
-	return strings.TrimSuffix(path.Base(strings.ReplaceAll(word, `\`, "/")), ".exe")
+	return util.CommandName(word)
 }
 
 // stepLabel names the step for `praetorctl admit --label`: the command and the last word of a

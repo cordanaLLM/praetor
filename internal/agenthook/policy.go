@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // denyRule is one compiled pattern with its source and the refusal a match prints ahead of
@@ -356,8 +357,11 @@ func BuiltinRules() []BuiltinRule {
 var builtinMessages = map[string]string{"HISS": evasionMessage, "DEV-01": topologyMessage}
 
 // Policy is the compiled command policy: built-in rules first, operator rules after,
-// followed by two opt-in act checks configured under hooks.*:
+// followed by opt-in act checks configured under hooks.*. Lane holds run first
+// so their refusal names the holding order:
 //
+//   - hooks.holds (holds.go): refuses configured program basenames while their
+//     hold files exist, naming the hold and its launcher.
 //   - hooks.admission.enforce (admission.go): refuses heavy build, test, gate and push
 //     commands outside `praetorctl admit` or an admitted systemd-run scope, and caps -j.
 //   - hooks.worktrees.enforce (worktrees.go): refuses `git [-C <dir>] worktree add
@@ -371,6 +375,8 @@ type Policy struct {
 	admission *admissionCheck
 	// worktrees is the git worktree add location check of hooks.worktrees; nil unless it is enforced.
 	worktrees *worktreeCheck
+	// holds guards configured program basenames while their hold files exist.
+	holds *holdCheck
 	// workDir is the default working directory Command uses when CommandIn is not called directly.
 	workDir string
 }
@@ -406,12 +412,10 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 	return &Policy{rules: rules}, nil
 }
 
-var lineContinuationReplacer = strings.NewReplacer("\\\r\n", " ", "\\\n", " ")
-
-// joinLineContinuations replaces backslash line continuations (a backslash followed by \r\n or
-// \n) with a single space before any rule runs.
+// joinLineContinuations shares comment-aware shell joining for the hold and background guards.
+// A backslash in a physical comment cannot swallow the following command's newline.
 func joinLineContinuations(command string) string {
-	return lineContinuationReplacer.Replace(command)
+	return hiss.JoinShellContinuations(command)
 }
 
 // Command judges one proposed command line using p's default working directory. The first
@@ -439,15 +443,13 @@ func (p *Policy) commandRulesIn(ctx context.Context, command, workDir string) Ve
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
 	command = joinLineContinuations(command)
-	judged := withoutReadOnlyWords(command)
-	for _, rule := range p.rules {
-		text := command
-		if rule.readOnlyExempt {
-			text = judged
+	if p.holds != nil {
+		if verdict := p.holds.judge(ctx, command, workDir); verdict.Outcome != Allow {
+			return verdict
 		}
-		if containsRequiredLiteral(text, rule.requiredAny) && rule.matches(text) {
-			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
-		}
+	}
+	if verdict := p.commandRules(command); verdict.Outcome != Allow {
+		return verdict
 	}
 	verdict := Verdict{Outcome: Allow}
 	if p.admission != nil {
@@ -461,6 +463,21 @@ func (p *Policy) commandRulesIn(ctx context.Context, command, workDir string) Ve
 		}
 	}
 	return verdict
+}
+
+// commandRules returns the first matching rule's refusal, accounting for read-only exemptions.
+func (p *Policy) commandRules(command string) Verdict {
+	judged := withoutReadOnlyWords(command)
+	for _, rule := range p.rules {
+		text := command
+		if rule.readOnlyExempt {
+			text = judged
+		}
+		if containsRequiredLiteral(text, rule.requiredAny) && rule.matches(text) {
+			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
+		}
+	}
+	return Verdict{Outcome: Allow}
 }
 
 // containsRequiredLiteral applies the declared prefilter without interpreting literals as regexes.

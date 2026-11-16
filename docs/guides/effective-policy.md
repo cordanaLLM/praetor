@@ -343,6 +343,7 @@ Every string passes the literal rule shared with the MCP registry
 | `hooks.admission.max_jobs_divisor` | `3` (when `enforce: true`) | integer `>= 1`; caps `-j` / `--jobs` on heavy commands at `floor(cores / divisor)` |
 | `hooks.admission.commands` | `[]` | at most 32 RE2 shapes of up to 512 bytes, compiled at load, added to the built-in ones |
 | `hooks.worktrees.enforce` | `false` | boolean; `true` refuses `git worktree add <path>` outside `<dev root>/worktrees/<repository folder>-<topic>` and `<repository>/.claude/worktrees/<name>` ([worktree locations](agent-hooks.md#worktree-locations)) |
+| `hooks.holds` | `[]` | up to 32 hold entries, each with `file`, `commands` and `via`; while the file exists, direct calls to guarded program basenames are refused ([lane holds](agent-hooks.md#lane-holds)) |
 | `hooks.python` | `[python3, python, [py, -3]]` | up to 8 candidates: a bare command, or a list of a command and up to 8 arguments; an absolute path only in the workstation layer |
 | `update.channel` | `push` | `push`; `release` is reserved until release artifacts ship |
 | `update.source` | `checkout` | `checkout`; `artifact` is reserved |
@@ -477,9 +478,14 @@ fleet, organization, deployment, workstation.
   layer cannot loosen it. The error names
   both layers. A built-in default is not a layer, so the first layer may choose
   either value.
-- `hooks.command_policy.deny`, `hooks.admission.commands` and `permissions.allow`
+- `hooks.command_policy.deny`, `hooks.admission.commands`, `hooks.holds` and `permissions.allow`
   append without duplicates. The bound applies to the merged list, so 40 fleet patterns
   plus 25 new workstation patterns fail.
+- Hold entries append as complete records, deduplicated by equal `file`, `commands`
+  and `via` values. A later empty list does not remove an earlier hold. The merged
+  list may contain at most 32 entries. File paths expand `~`, `$VAR` and `${VAR}`
+  when the hook policy is built; missing variables or unresolved path syntax fail
+  policy construction. Relative paths resolve against the hook working directory.
 - `topology.org_containers` appends the same way, bounded after merging;
   `framework.targets.<lang>.builder_kits` and `forge.reconcile_repos` are replaced
   by a later layer.

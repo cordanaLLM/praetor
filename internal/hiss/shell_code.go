@@ -12,6 +12,17 @@ import "strings"
 // when the lexer could not follow a construct, or when a quote, substitution or here-document
 // is still open at the end; a caller that judges commands treats that as unreadable.
 func ShellCode(script string, maxLines int) (lines []string, ok bool) {
+	return shellLines(script, maxLines, false)
+}
+
+// ShellSource returns validated shell source with here-document bodies removed.
+// Quotes remain intact so callers can judge literal command words and shell payloads.
+func ShellSource(script string, maxLines int) ([]string, bool) {
+	return shellLines(script, maxLines, true)
+}
+
+// shellLines shares syntax validation and heredoc tracking for both shell views.
+func shellLines(script string, maxLines int, source bool) (lines []string, ok bool) {
 	physical := strings.Split(strings.ReplaceAll(script, "\r\n", "\n"), "\n")
 	if len(physical) > maxLines {
 		return nil, false
@@ -19,7 +30,10 @@ func ShellCode(script string, maxLines int) (lines []string, ok bool) {
 	var l shellLexer
 	lines = make([]string, 0, len(physical))
 	for _, text := range physical {
-		code, _ := l.line(text)
+		code, body := l.line(text)
+		if source && !body {
+			code = text
+		}
 		lines = append(lines, code)
 	}
 	if l.misread || l.open() {
