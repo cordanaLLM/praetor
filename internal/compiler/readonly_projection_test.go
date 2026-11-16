@@ -78,6 +78,52 @@ func assertReadOnlyFailures(t *testing.T, err error, lint, drift, missing bool) 
 	}
 }
 
+// Upstream failures end verification before target comparison or lint.
+func TestVerifyReadOnlyContext_Boundary_UpstreamFailure(t *testing.T) {
+	cases := []struct {
+		name, content, prefix string
+		missing               bool
+	}{
+		{name: "missing source", missing: true, prefix: "read source "},
+		{name: "invalid source text", content: "\xff", prefix: "read source "},
+		{name: "empty source", prefix: "compile read-only projection: "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "AGENTS.md")
+			if !tc.missing {
+				writeRegisterFixture(t, root, "AGENTS.md", tc.content)
+			}
+			writeRegisterFixture(t, root, ReadOnlyFile, "drifted\n")
+			err := VerifyReadOnlyContext(t.Context(), source, root)
+			if err == nil || !strings.HasPrefix(err.Error(), tc.prefix) {
+				t.Fatalf("upstream failure = %v; want %q", err, tc.prefix)
+			}
+			if strings.Contains(err.Error(), "target "+ReadOnlyFile) || errors.Is(err, ErrContextProse) {
+				t.Fatalf("comparison or lint after upstream failure: %v", err)
+			}
+			if errors.Is(err, os.ErrNotExist) != tc.missing {
+				t.Errorf("missing-source chain = %v; want %v", err, tc.missing)
+			}
+		})
+	}
+}
+
+// Checkout normalization remains valid at the comparison boundary.
+func TestVerifyReadOnlyContext_Boundary_EquivalentCheckout(t *testing.T) {
+	root := t.TempDir()
+	source := writeRegisterFixture(t, root, "AGENTS.md", "# Policy\n\nRun checks.\n")
+	if err := CompileReadOnlyContext(t.Context(), source, root); err != nil {
+		t.Fatal(err)
+	}
+	content := readFixtureText(t, filepath.Join(root, ReadOnlyFile))
+	writeRegisterFixture(t, root, ReadOnlyFile, "\r\n"+strings.ReplaceAll(content, "\n", "\r\n")+"\r\n")
+	if err := VerifyReadOnlyContext(t.Context(), source, root); err != nil {
+		t.Fatalf("equivalent checkout: %v", err)
+	}
+}
+
 func TestCompileReadOnlyContext_Positive(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "AGENTS.md")

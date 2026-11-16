@@ -7,6 +7,7 @@ package compiler
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -242,6 +243,95 @@ func assertProjectionFailures(t *testing.T, err error, paths ...string) {
 		if !strings.Contains(err.Error(), path) {
 			t.Errorf("missing failure %s: %v", path, err)
 		}
+	}
+}
+
+// Every copy of every persona at the directory cap fails independently.
+func TestVerifyAgentProjections_Boundary_AllCopiesFailAtCap(t *testing.T) {
+	root := t.TempDir()
+	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor"}`)
+	dirs, err := agentProjectionDirs(t.Context(), root)
+	if err != nil || len(dirs) == 0 {
+		t.Fatalf("projection directories = %v, %v", dirs, err)
+	}
+	var paths []string
+	for i := 0; i < maxAgentProjections; i++ {
+		name := fmt.Sprintf("persona-%03d.md", i)
+		writeRegisterFixture(t, root, CanonicalAgentsRel+"/"+name,
+			"---\nname: reviewer\ndescription: Review.\nmodel: pro\n---\n# Reviewer\n")
+		for _, dir := range dirs {
+			paths = append(paths, dir+"/"+name)
+		}
+	}
+	verified, err := VerifyAgentProjections(t.Context(), root)
+	assertMissingProjections(t, verified, err, paths)
+	writeRegisterFixture(t, root, CanonicalAgentsRel+"/over-cap.md", "# Extra\n")
+	verified, err = VerifyAgentProjections(t.Context(), root)
+	if verified != 0 || err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("over cap: verified=%d err=%v", verified, err)
+	}
+}
+
+// Missing-copy aggregation preserves the chain, count and diagnostic for every expected path.
+func assertMissingProjections(t *testing.T, verified int, err error, paths []string) {
+	t.Helper()
+	if verified != 0 || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("all missing: verified=%d err=%v", verified, err)
+	}
+	if got := strings.Count(err.Error(), "missing or unreadable"); got != len(paths) {
+		t.Errorf("failures=%d; want %d", got, len(paths))
+	}
+	for _, path := range paths {
+		if !strings.Contains(err.Error(), "projection "+path+" missing") {
+			t.Errorf("missing failure: %s", path)
+		}
+	}
+}
+
+// Invalid canonical items never compare their copies; later personas still verify.
+func TestVerifyAgentProjections_Boundary_CanonicalFailure(t *testing.T) {
+	cases := []struct{ name, content string }{
+		{"unreadable source", "\xff"},
+		{"invalid model tier", "---\nname: bad\ndescription: Bad.\nmodel: inherit\n---\n# Bad\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeRegisterFixture(t, root, CanonicalAgentsRel+"/a-bad.md", tc.content)
+			writeRegisterFixture(t, root, CanonicalAgentsRel+"/z-good.md",
+				"---\nname: good\ndescription: Good.\nmodel: pro\n---\n# Good\n")
+			verified, err := VerifyAgentProjections(t.Context(), root)
+			if verified != 0 || err == nil || !strings.Contains(err.Error(), CanonicalAgentsRel+"/a-bad.md") {
+				t.Fatalf("canonical failure: verified=%d err=%v", verified, err)
+			}
+			if strings.Contains(err.Error(), "/agents/a-bad.md missing") {
+				t.Errorf("compared invalid canonical persona: %v", err)
+			}
+			if !strings.Contains(err.Error(), "/agents/z-good.md missing") {
+				t.Errorf("later persona never checked: %v", err)
+			}
+		})
+	}
+}
+
+// Positive: a tree without personas verifies nothing, and a compiled tree verifies every projection it wrote.
+func TestVerifyAgentProjections_Positive_EmptyAndMatching(t *testing.T) {
+	for _, populated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("populated=%v", populated), func(t *testing.T) {
+			root := t.TempDir()
+			if populated {
+				writeRegisterFixture(t, root, CanonicalAgentsRel+"/reviewer.md",
+					"---\nname: reviewer\ndescription: Review.\nmodel: pro\n---\n# Reviewer\n")
+			}
+			files, err := CompileAgentSurfaces(t.Context(), io.Discard, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			verified, err := VerifyAgentProjections(t.Context(), root)
+			if err != nil || verified != len(files) || (verified > 0) != populated {
+				t.Fatalf("matching tree: verified=%d files=%d err=%v", verified, len(files), err)
+			}
+		})
 	}
 }
 

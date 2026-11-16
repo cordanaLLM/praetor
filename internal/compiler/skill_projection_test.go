@@ -3,6 +3,7 @@ package compiler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -115,6 +116,176 @@ func TestVerifyClientSkills_IndependentFailures(t *testing.T) {
 	assertProjectionFailures(t, err, missing, drift, license)
 	if !errors.Is(err, os.ErrNotExist) || verified != len(files)-2 {
 		t.Errorf("verified=%d err=%v; want %d and missing target", verified, err, len(files)-2)
+	}
+}
+
+// Entry drift never masks any independent licence branch.
+func TestVerifyPluginSkill_IndependentLicenseFailures(t *testing.T) {
+	cases := []struct {
+		name, canonical, projected, want string
+		missing                          bool
+	}{
+		{name: "drifted licence", canonical: "canonical licence\n", projected: "drifted licence\n", want: SkillLicenseRel(PluginSkillsRel, "hiss-audit")},
+		{name: "missing licence", canonical: "canonical licence\n", missing: true, want: SkillLicenseRel(PluginSkillsRel, "hiss-audit")},
+		{name: "unreadable canonical licence", canonical: "\xff", want: "read canonical skill licence hiss-audit"},
+		{name: "stale licence", projected: "stale licence\n", want: SkillLicenseRel(PluginSkillsRel, "hiss-audit")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := skillFixture(t)
+			entry := SkillEntryRel(PluginSkillsRel, "hiss-audit")
+			writeRegisterFixture(t, root, entry, "drifted entry\n")
+			if tc.canonical != "" {
+				writeRegisterFixture(t, root, CanonicalSkillLicenseRel("hiss-audit"), tc.canonical)
+			}
+			if tc.projected != "" {
+				writeRegisterFixture(t, root, SkillLicenseRel(PluginSkillsRel, "hiss-audit"), tc.projected)
+			}
+			err := verifyPluginSkill(t.Context(), root, "hiss-audit")
+			assertProjectionFailures(t, err, entry, tc.want)
+			if !strings.HasPrefix(err.Error(), ErrAgentProjectionDrift.Error()+": "+entry) {
+				t.Errorf("entry drift must precede licence failure: %v", err)
+			}
+			if errors.Is(err, os.ErrNotExist) != tc.missing {
+				t.Errorf("missing licence chain: %v; want %v", err, tc.missing)
+			}
+		})
+	}
+}
+
+// Positive: a plugin skill identical to its canonical source verifies with and without a licence file.
+func TestVerifyPluginSkill_Positive_WithAndWithoutLicense(t *testing.T) {
+	for _, licensed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("licensed=%v", licensed), func(t *testing.T) {
+			root := skillFixture(t)
+			canonical := readFixtureText(t, filepath.Join(root, filepath.FromSlash(CanonicalSkillRel("hiss-audit"))))
+			writeRegisterFixture(t, root, SkillEntryRel(PluginSkillsRel, "hiss-audit"), canonical)
+			if licensed {
+				writeRegisterFixture(t, root, CanonicalSkillLicenseRel("hiss-audit"), "licence\n")
+				writeRegisterFixture(t, root, SkillLicenseRel(PluginSkillsRel, "hiss-audit"), "licence\n")
+			}
+			if err := verifyPluginSkill(t.Context(), root, "hiss-audit"); err != nil {
+				t.Fatalf("clean skill: %v", err)
+			}
+		})
+	}
+}
+
+// Boundary: an unreadable canonical skill ends the check before any copy is compared.
+func TestVerifyPluginSkill_Boundary_SourceFailure(t *testing.T) {
+	root := skillFixture(t)
+	writeRegisterFixture(t, root, CanonicalSkillRel("hiss-audit"), "\xff")
+	writeRegisterFixture(t, root, SkillEntryRel(PluginSkillsRel, "hiss-audit"), "drifted\n")
+	writeRegisterFixture(t, root, SkillLicenseRel(PluginSkillsRel, "hiss-audit"), "stale\n")
+	err := verifyPluginSkill(t.Context(), root, "hiss-audit")
+	if err == nil || !strings.Contains(err.Error(), "read canonical skill hiss-audit") {
+		t.Fatalf("source failure: %v", err)
+	}
+	if errors.Is(err, ErrAgentProjectionDrift) || strings.Contains(err.Error(), PluginSkillsRel) {
+		t.Fatalf("comparison after source failure: %v", err)
+	}
+}
+
+// Boundary: one unreadable canonical skill is reported and the remaining skills are still compared.
+func TestVerifyPluginSkills_Boundary_CanonicalFailureContinues(t *testing.T) {
+	root := skillFixture(t)
+	writeRegisterFixture(t, root, CanonicalSkillRel("hiss-audit"), "\xff")
+	drift := SkillEntryRel(PluginSkillsRel, "repo-adopt")
+	writeRegisterFixture(t, root, drift, "drifted\n")
+	verified, err := VerifyPluginSkills(t.Context(), root)
+	assertProjectionFailures(t, err, "read canonical skill hiss-audit", drift)
+	if verified != 0 || strings.Contains(err.Error(), SkillEntryRel(PluginSkillsRel, "hiss-audit")) {
+		t.Errorf("invalid source compared: verified=%d err=%v", verified, err)
+	}
+}
+
+// Positive: a skill that verifies after a missing one is still counted.
+func TestVerifyPluginSkills_CountsSuccessAfterFailure(t *testing.T) {
+	root := skillFixture(t)
+	if err := compileFixture(t, root); err != nil {
+		t.Fatal(err)
+	}
+	missing := SkillEntryRel(PluginSkillsRel, "hiss-audit")
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(missing))); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := VerifyPluginSkills(t.Context(), root)
+	if verified != 1 || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("later success: verified=%d err=%v", verified, err)
+	}
+}
+
+// Every declared skill at the cap fails, including the last; overflow fails before comparison.
+func TestVerifyPluginSkills_Boundary_AllSkillsFailAtCap(t *testing.T) {
+	root := t.TempDir()
+	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor"}`)
+	var paths []string
+	for i := 0; i < maxSkillProjections; i++ {
+		name := fmt.Sprintf("skill-%03d", i)
+		writeRegisterFixture(t, root, CanonicalSkillRel(name), "---\nname: "+name+"\n---\n# Skill\n")
+		paths = append(paths, SkillEntryRel(PluginSkillsRel, name))
+	}
+	verified, err := VerifyPluginSkills(t.Context(), root)
+	assertMissingProjections(t, verified, err, paths)
+	writeRegisterFixture(t, root, CanonicalSkillRel("over-cap"), "# Extra\n")
+	verified, err = VerifyPluginSkills(t.Context(), root)
+	if verified != 0 || err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("over cap: verified=%d err=%v", verified, err)
+	}
+}
+
+// Boundary: every missing client copy and licence is named, up to the whole bundle.
+func TestVerifyClientSkills_Boundary_AllCopiesFail(t *testing.T) {
+	root := writeClientSkillFixture(t, "")
+	var paths []string
+	for _, name := range config.RegisterSkillBundle() {
+		writeRegisterFixture(t, root, CanonicalSkillLicenseRel(name), "licence\n")
+		paths = append(paths, SkillEntryRel(".claude/skills", name), SkillLicenseRel(".claude/skills", name))
+	}
+	verified, err := VerifyClientSkills(t.Context(), root)
+	assertMissingProjections(t, verified, err, paths)
+}
+
+// Boundary: an unreadable canonical skill ends the client check before any copy is compared.
+func TestVerifyClientSkills_Boundary_SourceFailure(t *testing.T) {
+	root := writeClientSkillFixture(t, "")
+	writeRegisterFixture(t, root, CanonicalSkillRel("social-text"), "\xff")
+	errPath := SkillEntryRel(".claude/skills", "social-text")
+	writeRegisterFixture(t, root, errPath, "drifted\n")
+	verified, err := VerifyClientSkills(t.Context(), root)
+	if verified != 0 || err == nil || !strings.Contains(err.Error(), "read canonical skill social-text") {
+		t.Fatalf("source failure: verified=%d err=%v", verified, err)
+	}
+	if errors.Is(err, ErrAgentProjectionDrift) || strings.Contains(err.Error(), ".claude/skills") {
+		t.Fatalf("comparison after source failure: %v", err)
+	}
+}
+
+// Positive: an empty tree, a manifest that selects no such client and a matching tree all verify clean.
+func TestVerifyClientSkills_Positive_EmptyUnselectedAndMatching(t *testing.T) {
+	cases := []struct {
+		name, manifest string
+		populated      bool
+	}{
+		{name: "empty"},
+		{name: "unselected", populated: true, manifest: "version: 1\nagent_clients: [codex]\n"},
+		{name: "matching", populated: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.populated {
+				root = writeClientSkillFixture(t, tc.manifest)
+			}
+			files, err := CompileAgentSurfaces(t.Context(), io.Discard, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			verified, err := VerifyClientSkills(t.Context(), root)
+			if err != nil || verified != len(files) {
+				t.Fatalf("matching tree: verified=%d files=%d err=%v", verified, len(files), err)
+			}
+		})
 	}
 }
 
