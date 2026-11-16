@@ -53,6 +53,10 @@ func assertCodeRabbitCIEvidence(t *testing.T, text string) {
 				t.Errorf("review guidance missing %q: %s", want, entry.Instructions)
 			}
 		}
+		contract := "only when that step ran and passed; a run in which the step was skipped is no evidence."
+		if !strings.Contains(strings.Join(strings.Fields(entry.Instructions), " "), contract) {
+			t.Error("review guidance lacks the executed-step condition and skipped-step refusal")
+		}
 		return
 	}
 	t.Fatal("reviews.path_instructions lacks a global CI evidence instruction")
@@ -105,31 +109,45 @@ func TestCodeRabbitCIEvidenceEmittedFixture(t *testing.T) {
 	}
 }
 
-// TestCodeRabbitCIEvidenceRefusesMalformed checks that unsafe policy never gets replaced.
-// TestCodeRabbitCIEvidenceInstructionLimit counts characters, not bytes: the schema maxLength 20000 is accepted, one more refused.
+// TestCodeRabbitCIEvidenceInstructionLimit checks character bounds and byte preservation.
 func TestCodeRabbitCIEvidenceInstructionLimit(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		count int
 		ok    bool
-	}{{"at limit", maxCodeRabbitInstructions, true}, {"over limit", maxCodeRabbitInstructions + 1, false}} {
+	}{{"empty", 0, true}, {"below limit", 19999, true}, {"at limit", 20000, true}, {"over limit", 20001, false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			text := strings.Repeat("\u00e4", tc.count)
-			data := []byte("reviews:\n  path_instructions:\n    - path: '**'\n      instructions: " + text + "\n")
-			_, err := mergeCodeRabbit(t.Context(), data)
+			data := []byte(codeRabbitUserPolicy("instructions: '" + text + "'"))
+			got, err := mergeCodeRabbit(t.Context(), data)
 			if (err == nil) != tc.ok {
 				t.Fatalf("%d characters: err = %v, want accepted %v", tc.count, err, tc.ok)
+			}
+			if tc.ok && string(got) != string(data) {
+				t.Error("kept global instructions changed bytes")
+			}
+			if !tc.ok && !strings.Contains(err.Error(), "instructions have 20001 characters; the CodeRabbit schema allows at most 20000") {
+				t.Errorf("error lacks actual and allowed character counts: %v", err)
 			}
 		})
 	}
 }
 
+// codeRabbitUserPolicy supplies already-managed defaults around user-owned global guidance.
+func codeRabbitUserPolicy(field string) string {
+	return "reviews:\n  auto_review: {drafts: true, base_branches: [.*]}\n  path_instructions:\n    - path: '**'\n      " + field + "\n"
+}
+
+// TestCodeRabbitCIEvidenceRefusesMalformed checks that unsafe policy never gets replaced.
 func TestCodeRabbitCIEvidenceRefusesMalformed(t *testing.T) {
 	for name, policy := range map[string]string{
 		"scalar": "true", "mapping": "{}", "scalar entry": "[false]",
 		"missing instructions":    "[{path: '**'}]",
 		"non-string instructions": "[{path: '**', instructions: false}]",
+		"null instructions":       "[{path: '**', instructions: null}]",
 		"invalid after global":    "[{path: '**', instructions: keep}, {path: 1, instructions: keep}]",
+		"oversized scoped":        "[{path: '*.go', instructions: '" + strings.Repeat("x", 20001) + "'}]",
+		"oversized after global":  "[{path: '**', instructions: keep}, {path: '*.go', instructions: '" + strings.Repeat("x", 20001) + "'}]",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := mergeCodeRabbit(t.Context(), []byte("reviews:\n  path_instructions: "+policy+"\n")); err == nil {
@@ -218,6 +236,7 @@ func adoptCodeRabbitCase(t *testing.T, name, initial string) {
 	}
 	got := mustRead(t, file)
 	assertCodeRabbitDraftKeys(t, got)
+	assertCodeRabbitCIEvidence(t, got)
 	assertCodeRabbitSettings(t, repo, initial, got)
 	if findActionDetail(report.ActionDetails, ".coderabbit.yaml") == "" {
 		t.Fatal("managed keys absent from adoption report")
@@ -365,20 +384,89 @@ func TestCodeRabbitDryRun(t *testing.T) {
 		}
 		assertTreeUnchanged(t, before, snapshotTree(t, repo))
 		assertCodeRabbitDraftKeys(t, string(s.dryRunWrites[codeRabbitFile]))
+		assertCodeRabbitCIEvidence(t, string(s.dryRunWrites[codeRabbitFile]))
 	}
 }
 
-// TestAdoptCodeRabbitDeclined keeps an explicit false when the repository declines management.
-func TestAdoptCodeRabbitDeclined(t *testing.T) {
-	repo := newTestRepo(t, "coderabbit-declined")
-	const initial = "reviews:\n  auto_review:\n    drafts: false # intentional\n"
-	mustWrite(t, filepath.Join(repo, ".coderabbit.yaml"), initial)
-	mustWrite(t, filepath.Join(repo, manifestFile), "version: 1\nprofiles: [app-service]\nfacets: []\nadoption:\n  decline: [coderabbit]\n")
-	_, err := Adopt(t.Context(), AdoptOptions{Path: repo, LockSourceRoot: newAdoptLockSource(t), SkipHookActivation: true})
-	if err != nil {
-		t.Fatalf("declined adoption: %v", err)
+// TestAdoptCodeRabbitInstructionValidation checks apply and dry-run through the public entry point.
+func TestAdoptCodeRabbitInstructionValidation(t *testing.T) {
+	for _, mode := range []struct {
+		name   string
+		dryRun bool
+	}{{"apply", false}, {"dry-run", true}} {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name, field, wantError string
+			}{
+				{"custom", "instructions: 'Keep our CI policy.'", ""},
+				{"empty", "instructions: ''", ""},
+				{"at limit", "instructions: '" + strings.Repeat("\u00e4", 20000) + "'", ""},
+				{"over limit", "instructions: '" + strings.Repeat("\u00e4", 20001) + "'", "instructions have 20001 characters; the CodeRabbit schema allows at most 20000"},
+				{"missing", "# no instructions key", "instructions must be a string"},
+				{"null", "instructions: null", "instructions must be a string"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					assertAdoptCodeRabbitValidation(t, mode.dryRun, tc.field, tc.wantError)
+				})
+			}
+		})
 	}
-	if got := mustRead(t, filepath.Join(repo, ".coderabbit.yaml")); got != initial {
-		t.Fatalf("declined configuration changed: %q", got)
+}
+
+// assertAdoptCodeRabbitValidation checks preserved bytes, reported failures and dry-run isolation.
+func assertAdoptCodeRabbitValidation(t *testing.T, dryRun bool, field, wantError string) {
+	t.Helper()
+	repo := newTestRepo(t, "coderabbit-validation")
+	file := filepath.Join(repo, codeRabbitFile)
+	initial := codeRabbitUserPolicy(field)
+	mustWrite(t, file, initial)
+	before := snapshotTree(t, repo)
+	report, err := Adopt(t.Context(), AdoptOptions{Path: repo, DryRun: dryRun,
+		LockSourceRoot: newAdoptLockSource(t), SkipHookActivation: true})
+	if wantError == "" {
+		if err != nil {
+			t.Fatalf("adopt valid instructions: %v", err)
+		}
+		if stepOutcome(t, report, "coderabbit").Status != StepCompleted {
+			t.Fatal("valid instructions not reported completed")
+		}
+	} else {
+		if err == nil || !strings.Contains(err.Error(), "manage .coderabbit.yaml: reviews.path_instructions entry 0: "+wantError) {
+			t.Fatalf("adopt error = %v, want entry-specific %q", err, wantError)
+		}
+		if len(report.Errors) == 0 || stepOutcome(t, report, "coderabbit").Status != StepFailed {
+			t.Fatal("invalid instructions not reported failed")
+		}
+	}
+	if got := mustRead(t, file); got != initial {
+		t.Fatal("adoption changed user-owned instructions")
+	}
+	if dryRun {
+		assertTreeUnchanged(t, before, snapshotTree(t, repo))
+	}
+}
+
+// TestAdoptCodeRabbitDeclined keeps user policy, including invalid instructions, when declined.
+func TestAdoptCodeRabbitDeclined(t *testing.T) {
+	for name, initial := range map[string]string{
+		"disabled review":      "reviews:\n  auto_review:\n    drafts: false # intentional\n",
+		"oversized guidance":   codeRabbitUserPolicy("instructions: '" + strings.Repeat("ä", 20001) + "'"),
+		"missing instructions": codeRabbitUserPolicy("# intentionally missing instructions"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := newTestRepo(t, "coderabbit-declined")
+			mustWrite(t, filepath.Join(repo, codeRabbitFile), initial)
+			mustWrite(t, filepath.Join(repo, manifestFile), "version: 1\nprofiles: [app-service]\nfacets: []\nadoption:\n  decline: [coderabbit]\n")
+			report, err := Adopt(t.Context(), AdoptOptions{Path: repo, LockSourceRoot: newAdoptLockSource(t), SkipHookActivation: true})
+			if err != nil {
+				t.Fatalf("declined adoption: %v", err)
+			}
+			if got := mustRead(t, filepath.Join(repo, codeRabbitFile)); got != initial {
+				t.Fatal("declined configuration changed")
+			}
+			if stepOutcome(t, report, "coderabbit").Status != StepDeclined {
+				t.Fatal("declined configuration not reported declined")
+			}
+		})
 	}
 }
