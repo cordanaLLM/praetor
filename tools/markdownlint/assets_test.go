@@ -789,6 +789,8 @@ func TestWorkflowFigureStepBoundary(t *testing.T) {
 
 // priorTextDir holds every earlier text a digest in priorDigests names. A file is named after
 // the managed file it once was: praetor-docs.* for WorkflowFile, <asset>.* for an asset.
+// The prior markdownlint 0.42.0 and re2js 2.9.1 texts precede the markdownlint 0.42.1,
+// re2js 2.10.0 and parse5 8.1.1 lock update.
 var priorTextDir = filepath.Join("testdata", "prior")
 
 // priorTextPath maps a testdata/prior file name to the managed path it was shipped at.
