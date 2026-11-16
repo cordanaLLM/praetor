@@ -114,7 +114,7 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	wantDirect := map[string]string{
 		"js-yaml":                   "5.5.0",
 		"jsonc-parser":              "3.3.1",
-		"markdownlint":              "0.42.0",
+		"markdownlint":              "0.42.1",
 		"micromark":                 "4.0.3",
 		"micromark-extension-mdxjs": "3.0.0",
 		"parse5":                    parse5Version,
@@ -123,9 +123,9 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	assertDirectDependencies(t, manifest.Dependencies, wantDirect)
 	// micromark-extension-math, which markdownlint pins, asks for katex ^0.16.0, and every
 	// release in that range carries GHSA-238p-pmpm-9mq7 (fixed in 0.18.2), so the manifest
-	// overrides katex to one exact release (#793). markdownlint 0.42.0 pins re2js 2.8.6, which
-	// carries GHSA-gg6h-894w-4m9c (fixed in 2.8.7), so re2js is overridden the same way.
-	wantOverrides := map[string]string{"katex": "0.19.1", "re2js": "2.9.1"}
+	// overrides katex to one exact release (#793). markdownlint 0.42.1 pins re2js 2.9.1, above
+	// the 2.8.7 fix for GHSA-gg6h-894w-4m9c; the re2js override retains an exact newer release.
+	wantOverrides := map[string]string{"katex": "0.19.1", "re2js": "2.10.0"}
 	if !maps.Equal(manifest.Overrides, wantOverrides) {
 		t.Fatalf("overrides = %v, want %v", manifest.Overrides, wantOverrides)
 	}
@@ -158,8 +158,8 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 			t.Fatalf("%s lacks exact version, source, or integrity", name)
 		}
 	}
-	if lock.Packages["node_modules/markdownlint"].Version != "0.42.0" {
-		t.Fatal("markdownlint is not pinned to 0.42.0")
+	if lock.Packages["node_modules/markdownlint"].Version != "0.42.1" {
+		t.Fatal("markdownlint is not pinned to 0.42.1")
 	}
 	if lock.Packages["node_modules/micromark"].Version != "4.0.3" {
 		t.Fatal("micromark is not pinned to 4.0.3")
@@ -183,7 +183,7 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	// markdownlint-configure-file comments) from the locked install, so all four are direct
 	// dependencies installed at the top level.
 	for name, version := range map[string]string{
-		"js-yaml": "5.5.0", "markdownlint": "0.42.0", "jsonc-parser": "3.3.1", "smol-toml": "1.9.1",
+		"js-yaml": "5.5.0", "markdownlint": "0.42.1", "jsonc-parser": "3.3.1", "smol-toml": "1.9.1",
 	} {
 		if lock.Packages["node_modules/"+name].Version != version {
 			t.Fatalf("%s is not installed at the top level pinned to %s", name, version)

@@ -246,6 +246,10 @@ var priorDigests = map[string]string{
 	// package.json and package-lock.json on katex 0.19.0, before the katex 0.19.1 update (#801).
 	"3a0e0be3e0e217bd4aef508347d5fbe1ed89e65c3668a6da761af256c24bd107": Directory + "/package.json",
 	"ff8d70bc3eda4814a2fd5a90b9e56720068f27a1fcfa082117da7f62d0f2c1b6": Directory + "/package-lock.json",
+	// package.json and package-lock.json on markdownlint 0.42.0 and re2js 2.9.1, before
+	// the markdownlint 0.42.1, re2js 2.10.0 and parse5 8.1.1 lock update.
+	"154815f5ca6f8328f4d73a473ae27717042ea71c0e2faeadb81fe6f4e8aa1624": Directory + "/package.json",
+	"d17327f29300200731db5c52e6b25bf776cd4c5ff618851eb40621fd19fb0cf7": Directory + "/package-lock.json",
 	// verify.mjs before changedPathsSince used git diff -z and kept deleted paths.
 	"9c1f237ab6c0103e9c1ec4825f2dcce5270cb11d1deb603672c3c1da40e7b6cc": Directory + "/verify.mjs",
 	// Outgoing review-round text; fixture: verify.review-round1.mjs.txt.
