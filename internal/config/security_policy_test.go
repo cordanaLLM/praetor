@@ -5,6 +5,7 @@
 package config
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -75,5 +76,137 @@ func TestSecurityPolicy_Boundary_DefaultsAndLengthLimit(t *testing.T) {
 	}
 	if _, err := LoadManifest(writeManifest(t, goVEXManifest("a"+longest))); err == nil {
 		t.Errorf("%d-byte path loaded", len(longest)+1)
+	}
+}
+
+// testValidContacts checks that each valid contact string loads and passes validation.
+func testValidContacts(t *testing.T, contacts []string) {
+	t.Helper()
+	for _, contact := range contacts {
+		body := "version: 1\nsecurity:\n  contact: \"" + contact + "\"\n"
+		m, err := LoadManifest(writeManifest(t, body))
+		if err != nil {
+			t.Errorf("contact %q refused: %v", contact, err)
+		}
+		if got := m.Security.SecurityContact(); got != contact {
+			t.Errorf("contact %q = %q", contact, got)
+		}
+		if !ValidSecurityContact(contact) {
+			t.Errorf("ValidSecurityContact(%q) = false, want true", contact)
+		}
+	}
+}
+
+// testRefusedContacts checks that invalid or boundary contact strings are refused.
+func testRefusedContacts(t *testing.T, contacts []string) {
+	t.Helper()
+	for _, contact := range contacts {
+		body := "version: 1\nsecurity:\n  contact: \"" + contact + "\"\n"
+		if _, err := LoadManifest(writeManifest(t, body)); err == nil || !strings.Contains(err.Error(), "security.contact") {
+			t.Errorf("contact %q loaded: err = %v", contact, err)
+		}
+		if ValidSecurityContact(contact) {
+			t.Errorf("ValidSecurityContact(%q) = true, want false", contact)
+		}
+	}
+}
+
+// TestSecurityPolicy_Contact validates declared security contacts: emails, mailto: URIs,
+// and HTTPS URLs load; invalid forms are refused; nil policies return "".
+func TestSecurityPolicy_Contact(t *testing.T) {
+	var none *SecurityPolicy
+	if none.SecurityContact() != "" {
+		t.Errorf("nil policy contact = %q, want empty", none.SecurityContact())
+	}
+	testValidContacts(t, []string{
+		"security@example.com",
+		"mailto:security@example.com",
+		"https://example.com/security",
+		"https://example.com:8443/security",
+	})
+	testRefusedContacts(t, []string{
+		"not-an-email",
+		"http://insecure.example.com",
+		"contact us privately",
+	})
+	testRefusedContacts(t, []string{
+		"https:///report",
+		"https://",
+		"https:///",
+		"https://:443/report",
+	})
+}
+
+// channelManifest is a manifest declaring repository.forge and a security section body.
+func channelManifest(forge, security string) string {
+	m := "version: 1\n"
+	if forge != "" {
+		m += "repository:\n  forge: \"" + forge + "\"\n"
+	}
+	return m + "security:\n" + security
+}
+
+// Positive: each declarable security.channel loads on the forge it runs on, and contact on any.
+func TestSecurityChannel_Positive_DeclaredChannelsLoad(t *testing.T) {
+	cases := []struct{ forge, security string }{
+		{"github", "  channel: private-reporting\n"},
+		{"gitlab", "  channel: confidential-issues\n"},
+		{"forgejo", "  channel: contact\n  contact: security@example.invalid\n"},
+		{"", "  channel: private-reporting\n"},
+	}
+	for _, tc := range cases {
+		m, err := LoadManifest(writeManifest(t, channelManifest(tc.forge, tc.security)))
+		if err != nil {
+			t.Fatalf("forge %q, %q: %v", tc.forge, tc.security, err)
+		}
+		choice, err := ResolveSecurityChannel(m.Security, m.Repository.Forge)
+		if err != nil || !choice.Declared || choice.Channel != m.Security.Channel {
+			t.Fatalf("ResolveSecurityChannel = %+v, %v", choice, err)
+		}
+	}
+}
+
+// Negative: an unknown channel, contact without security.contact and a forge-native channel on
+// another declared forge fail the manifest load and name the key.
+func TestSecurityChannel_Negative_BadDeclarationsFail(t *testing.T) {
+	cases := []struct{ forge, security, want string }{
+		{"github", "  channel: email\n", `security.channel "email" unsupported`},
+		{"github", "  channel: contact\n", "security.channel contact requires security.contact"},
+		{"gitlab", "  channel: private-reporting\n", "security.channel private-reporting runs on forge github, but repository.forge is gitlab"},
+		{"forgejo", "  channel: confidential-issues\n", "security.channel confidential-issues runs on forge gitlab, but repository.forge is forgejo"},
+	}
+	for _, tc := range cases {
+		_, err := LoadManifest(writeManifest(t, channelManifest(tc.forge, tc.security)))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("forge %q, %q: error %v, want %q", tc.forge, tc.security, err, tc.want)
+		}
+	}
+}
+
+// Boundary: an undeclared channel takes the migration default (contact first, then the forge's
+// native channel) and a forge without one, or none, wraps ErrSecurityChannelUndeclared; a nil
+// section behaves as an empty one.
+func TestSecurityChannel_Boundary_MigrationDefault(t *testing.T) {
+	contact := &SecurityPolicy{Contact: "security@example.invalid"}
+	cases := []struct {
+		policy *SecurityPolicy
+		forge  Forge
+		want   SecurityChannel
+	}{
+		{nil, ForgeGitHub, SecurityChannelPrivateReporting},
+		{&SecurityPolicy{}, ForgeGitLab, SecurityChannelConfidentialIssues},
+		{contact, ForgeGitHub, SecurityChannelContact},
+		{contact, "", SecurityChannelContact},
+	}
+	for _, tc := range cases {
+		choice, err := ResolveSecurityChannel(tc.policy, tc.forge)
+		if err != nil || choice.Declared || choice.Channel != tc.want || choice.Basis == "" {
+			t.Fatalf("ResolveSecurityChannel(%+v, %q) = %+v, %v; want default %s", tc.policy, tc.forge, choice, err, tc.want)
+		}
+	}
+	for _, forge := range []Forge{ForgeForgejo, ""} {
+		if _, err := ResolveSecurityChannel(nil, forge); !errors.Is(err, ErrSecurityChannelUndeclared) {
+			t.Fatalf("forge %q: error %v, want ErrSecurityChannelUndeclared", forge, err)
+		}
 	}
 }

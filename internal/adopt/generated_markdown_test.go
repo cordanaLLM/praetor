@@ -17,7 +17,7 @@ func TestScaffoldedGovernanceDocumentsPassDefaultMarkdownlint(t *testing.T) {
 	documents := map[string]string{
 		contributingFile: buildContributingGuide("acme-widgets"),
 		prTemplateFile:   buildPullRequestTemplate(),
-		securityFile:     buildSecurityPolicy(),
+		securityFile:     buildSecurityPolicy("https://github.com/acme/widgets"),
 		adrIndexFile:     buildADRIndex(),
 		adrTemplateFile:  buildADRTemplate(),
 	}

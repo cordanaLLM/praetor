@@ -142,7 +142,7 @@ var declineContracts = map[string]declineContract{
 	"coderabbit":             {audit: DeclineAuditNone},
 	"contributing":           {audit: DeclineAuditNone},
 	"pull-request-template":  {audit: DeclineAuditNone},
-	"security-policy":        {audit: DeclineAuditNone},
+	"security-policy":        {audit: DeclineAuditSkipped},
 	"adr":                    {audit: DeclineAuditNone},
 	"readme":                 {audit: DeclineAuditSkipped},
 	reuseGateStep:            {audit: DeclineAuditNone},

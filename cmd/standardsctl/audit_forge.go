@@ -23,10 +23,10 @@ const (
 	// the origin remote must name the manifest's repository on it.
 	actionsForgeHost = "github.com"
 	// actionsForgeTimeout bounds every live forge read of one audit or plan run, the Actions
-	// reads and the branch protection read together (HISS-02).
+	// reads, private vulnerability reporting and branch protection together (HISS-02).
 	actionsForgeTimeout = 3 * time.Minute
 	// offlineFlagUsage is the --offline help text of audit and plan.
-	offlineFlagUsage = "Read nothing from the forge: the live Actions permission, workflow run and branch protection checks report as not made"
+	offlineFlagUsage = "Read nothing from the forge: the live Actions permission, workflow run, branch protection and private vulnerability reporting checks report as not made"
 )
 
 var (
@@ -45,13 +45,19 @@ type visibilityReader interface {
 	RepositoryVisibility(ctx context.Context) (string, error)
 }
 
+// vulnerabilityReportingReader reads the repository's private reporting setting.
+type vulnerabilityReportingReader interface {
+	PrivateVulnerabilityReporting(ctx context.Context) (bool, error)
+}
+
 // actionsForge is the live forge reader of one audit or plan run, or why there is none: the
-// Actions reads, the branch protection read and the repository visibility read go through the
-// same driver.
+// Actions, branch protection, visibility and private vulnerability reporting reads share
+// the same driver.
 type actionsForge struct {
 	reader     forge.ActionsReader
 	protection protectionReader
 	visibility visibilityReader
+	reporting  vulnerabilityReportingReader
 	notMade    string
 }
 
@@ -75,7 +81,7 @@ func openActionsForge(ctx context.Context, rootDir string, repo config.Repositor
 	}
 	driver := forge.NewGitHubDriver(token, actionsForgeEndpoint)
 	driver.SetRepository(repo.Owner, repo.Name)
-	return actionsForge{reader: driver, protection: driver, visibility: driver}
+	return actionsForge{reader: driver, protection: driver, visibility: driver, reporting: driver}
 }
 
 // readActionsPermissions compares declared with the live workflow permissions, or returns why
@@ -97,7 +103,9 @@ func readActionsPermissions(ctx context.Context, declared config.ActionsPolicy, 
 // chose read-and-report for them. The repository visibility is compared with repository.visibility
 // and fails the audit on drift (auditRepositoryVisibility). The branch protection the default
 // branch enforces is compared with the declared policy and fails the audit on drift
-// (auditLiveBranchProtection). Every check runs whatever an earlier one found, and the failures
+// (auditLiveBranchProtection). Community health requires an actionable SECURITY.md and compares
+// its private vulnerability reporting channel with the live setting (auditSecurityPolicy).
+// Every check runs whatever an earlier one found, and the failures
 // are joined, so one drift never hides another. A check the forge did not answer is named as not
 // made, never passed. sync --remote reconciles the branch protection and neither Actions setting.
 func auditLiveForge(ctx context.Context, manifest *config.Manifest, rootDir string, policy *config.ResolvedPolicy, offline bool) error {
@@ -106,8 +114,9 @@ func auditLiveForge(ctx context.Context, manifest *config.Manifest, rootDir stri
 	live := openActionsForge(ctx, rootDir, manifest.Repository, offline)
 	permissions := auditActionsPermissions(ctx, manifest.Overrides.Actions, live)
 	visibility := auditRepositoryVisibility(ctx, manifest.Repository, live)
+	security := auditSecurityPolicy(ctx, manifest, rootDir, live)
 	auditWorkflowRuns(ctx, manifest, rootDir, live)
-	return errors.Join(permissions, visibility, auditLiveBranchProtection(ctx, manifest, rootDir, policy, live))
+	return errors.Join(permissions, visibility, security, auditLiveBranchProtection(ctx, manifest, rootDir, policy, live))
 }
 
 // auditLiveBranchProtection compares the branch protection the default branch enforces on the

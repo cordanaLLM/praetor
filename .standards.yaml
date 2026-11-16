@@ -19,6 +19,11 @@ repository:
     - "slsa-level-3"
     - "renovate-presets"
 
+# Private reporting channel SECURITY.md names; audit checks the policy for the channel's
+# report-form link (docs/guides/adoption-verification.md, community health).
+security:
+  channel: "private-reporting"
+
 # Ed25519 Exit-0 receipt trust anchor.
 #
 # `praetorctl gate run` signs .standards-receipt.json with the private key resolved from

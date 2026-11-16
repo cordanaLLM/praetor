@@ -392,14 +392,97 @@ func reconcilePullRequestTemplate(ctx context.Context, s *adoptSession) error {
 	return err
 }
 
+// securityPolicy returns the security section that declares a reporting channel or contact:
+// the existing manifest's, else the effective policy's, or nil when neither declares one.
+func (s *adoptSession) securityPolicy() *config.SecurityPolicy {
+	if s.declared != nil && declaresReporting(s.declared.Security) {
+		return s.declared.Security
+	}
+	if s.policy != nil && s.policy.Manifest != nil && declaresReporting(s.policy.Manifest.Security) {
+		return s.policy.Manifest.Security
+	}
+	return nil
+}
+
+// declaresReporting reports whether p declares security.channel or security.contact.
+func declaresReporting(p *config.SecurityPolicy) bool {
+	return p != nil && (p.Channel != "" || p.Contact != "")
+}
+
+// declaredForge returns repository.forge declared in existing manifest or effective policy.
+func (s *adoptSession) declaredForge() config.Forge {
+	if s.declared != nil && s.declared.Repository.Forge != "" {
+		return s.declared.Repository.Forge
+	}
+	if s.policy != nil && s.policy.Manifest != nil {
+		return s.policy.Manifest.Repository.Forge
+	}
+	return ""
+}
+
+// resolveForge resolves the kind of forge for the repository being adopted: the manifest's
+// repository.forge, else resolved from the origin remote's host (config.RepositoryForge).
+func (s *adoptSession) resolveForge() (config.Forge, error) {
+	return config.RepositoryForge(s.declaredForge(), s.identity.host)
+}
+
+// reconcileSecurityPolicyWithoutChannel handles repositories whose policy adoption cannot render
+// with the channel's artifact: a forge without a native private reporting channel (such as
+// Forgejo), an undeclared forge, or an unresolved repository identity the report-form link needs.
+// An existing security policy is preserved; otherwise a skip naming reason is recorded.
+func reconcileSecurityPolicyWithoutChannel(ctx context.Context, s *adoptSession, reason string) error {
+	full, err := repoFile(s.repoPath, securityFile)
+	if err != nil {
+		return err
+	}
+	_, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return err
+	}
+	if exists {
+		s.report.recordReconciled(securityFile, "Existing security policy verified present")
+		return nil
+	}
+	s.report.recordSkipped(securityFile, reason)
+	return nil
+}
+
+// noChannelReason names why adoption scaffolds no policy and the keys that fix it.
+func noChannelReason(forge config.Forge) string {
+	if forge != "" {
+		return fmt.Sprintf("security policy not scaffolded: forge %q (repository.forge) has no supported private vulnerability reporting channel; declare %s contact with security.contact in %s or decline security-policy", forge, config.SecurityChannelKey, config.ManifestFileName)
+	}
+	return fmt.Sprintf("security policy not scaffolded: undeclared forge has no default private vulnerability reporting channel; declare repository.forge, or %s contact with security.contact, in %s, or decline security-policy", config.SecurityChannelKey, config.ManifestFileName)
+}
+
+// reconcileSecurityPolicy scaffolds SECURITY.md for the channel the audit checks it against
+// (config.ResolveSecurityChannel: security.channel, else the migration default), holding that
+// channel's artifact. Repositories without an actionable private channel preserve an existing
+// policy or record a skip.
 func reconcileSecurityPolicy(ctx context.Context, s *adoptSession) error {
 	if s.declines("security-policy") {
 		return nil
 	}
-	_, err := s.scaffoldFile(ctx, scaffold{
+	forge, err := s.resolveForge()
+	if err != nil && !errors.Is(err, config.ErrForgeUndeclared) {
+		return err
+	}
+	policy := s.securityPolicy()
+	choice, err := config.ResolveSecurityChannel(policy, forge)
+	if errors.Is(err, config.ErrSecurityChannelUndeclared) {
+		return reconcileSecurityPolicyWithoutChannel(ctx, s, noChannelReason(forge))
+	}
+	if err != nil {
+		return err
+	}
+	content, reason := s.securityPolicyContent(choice.Channel, policy)
+	if content == "" {
+		return reconcileSecurityPolicyWithoutChannel(ctx, s, reason)
+	}
+	_, err = s.scaffoldFile(ctx, scaffold{
 		rel:      securityFile,
 		perm:     filePerm,
-		content:  []byte(buildSecurityPolicy()),
+		content:  []byte(content),
 		created:  "Scaffolded security policy and vulnerability disclosure standards",
 		verified: "Existing security policy verified present",
 	})
@@ -612,7 +695,30 @@ func buildPullRequestTemplate() string {
 	)
 }
 
-func buildSecurityPolicy() string {
+// securityPolicyContent renders the policy for channel with the artifact the audit checks, or
+// returns "" and the reason when the repository identity the link needs is unresolved.
+func (s *adoptSession) securityPolicyContent(channel config.SecurityChannel, policy *config.SecurityPolicy) (string, string) {
+	if channel == config.SecurityChannelContact {
+		if policy.SecurityContact() == "" {
+			return "", fmt.Sprintf("security policy not scaffolded: %s contact needs security.contact in %s", config.SecurityChannelKey, config.ManifestFileName)
+		}
+		return buildSecurityContactPolicy(policy.SecurityContact()), ""
+	}
+	if s.identity.host == "" || s.identity.path == "" {
+		return "", fmt.Sprintf("security policy not scaffolded: %s %s links this repository's report form, but no origin remote names its host and path; add the origin remote, or declare %s contact with security.contact in %s, or decline security-policy",
+			config.SecurityChannelKey, channel, config.SecurityChannelKey, config.ManifestFileName)
+	}
+	base := "https://" + s.identity.host + "/" + s.identity.path
+	if channel == config.SecurityChannelConfidentialIssues {
+		return buildGitLabSecurityPolicy(base), ""
+	}
+	return buildSecurityPolicy(base), ""
+}
+
+// buildSecurityPolicy renders GitHub private reporting channel instructions without a
+// response-time promise, linking the report form of the repository at base (its https URL), the
+// artifact the community-health audit checks for security.channel private-reporting.
+func buildSecurityPolicy(base string) string {
 	return markdownDocument(
 		"# Security Policy",
 		"",
@@ -622,9 +728,48 @@ func buildSecurityPolicy() string {
 		"",
 		"## Reporting a Vulnerability",
 		"",
-		"Please report security vulnerabilities privately to the maintainers rather",
-		"than opening a public issue. Reports are investigated promptly under",
-		"responsible disclosure guidelines.",
+		"Use GitHub's private vulnerability reporting: open this repository's Security",
+		"tab and choose Report a vulnerability, or go straight to the",
+		"[report form]("+base+"/security/advisories/new).",
+		"Include the affected version, impact, and steps to reproduce. Do not report",
+		"vulnerabilities in public issues.",
+	)
+}
+
+// buildGitLabSecurityPolicy renders GitLab confidential issue instructions, linking the
+// new-issue form of the repository at base with issue[confidential]=true, the artifact the
+// community-health audit checks for security.channel confidential-issues.
+func buildGitLabSecurityPolicy(base string) string {
+	return markdownDocument(
+		"# Security Policy",
+		"",
+		"## Supported Versions",
+		"",
+		"Only the latest release and current default branch receive security updates.",
+		"",
+		"## Reporting a Vulnerability",
+		"",
+		"Open a confidential issue in this repository through the",
+		"[confidential issue form]("+base+"/-/issues/new?issue[confidential]=true).",
+		"Include the affected version, impact, and steps to reproduce. Do not report",
+		"vulnerabilities in public issues.",
+	)
+}
+
+// buildSecurityContactPolicy renders instructions directing reporters to a configured contact.
+func buildSecurityContactPolicy(contact string) string {
+	return markdownDocument(
+		"# Security Policy",
+		"",
+		"## Supported Versions",
+		"",
+		"Only the latest release and current default branch receive security updates.",
+		"",
+		"## Reporting a Vulnerability",
+		"",
+		"Report vulnerabilities to the security contact: "+contact+". Include the",
+		"affected version, impact, and steps to reproduce. Do not report vulnerabilities",
+		"in public issues.",
 	)
 }
 
