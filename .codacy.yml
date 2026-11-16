@@ -15,3 +15,11 @@
 # Category D, entered 2026-11-08, expires 2027-03-08: review the scope at expiry.
 exclude_paths:
   - ".config/hiss/testdata/**"
+  # Rule: Codacy High, third-party GitHub Action not pinned to a commit SHA.
+  # Reason: Historical Flutter rendering; exact bytes required by priorFlutterCIDigests and adoption refresh tests; fixture never executed as a workflow.
+  # MEL category D; entered 2026-11-16; expires 2027-03-16 (120 days); review at expiry.
+  - "internal/flavor/testdata/ci-prior/flutter/before-review-group-default.yml"
+  # Rule: Codacy High, third-party GitHub Action not pinned to a commit SHA.
+  # Reason: Historical Bun rendering; exact bytes required by priorNodeCIDigests and adoption refresh tests; fixture never executed as a workflow.
+  # MEL category D; entered 2026-11-16; expires 2027-03-16 (120 days); review at expiry.
+  - "internal/flavor/testdata/ci-prior/node/before-review-group-bun.yml"
