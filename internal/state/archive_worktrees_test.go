@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -327,6 +329,161 @@ func TestArchivePathFields(t *testing.T) {
 	if namesWorktreePath("path: /repo/topic extra | pending", "/repo/topic") {
 		t.Fatal("prefix matched a longer path field")
 	}
+}
+
+// TestArchiveLongProseFields keeps prose after a slash while discharging completed rows.
+func TestArchiveLongProseFields(t *testing.T) {
+	prose := "Resolve X (BUG-1): the builder returns ErrA / ErrB per target and the command exits non-zero; " + strings.Repeat("details ", 60)
+	for _, format := range []string{"- [ ] %s\n", "| TODO | %s |\n"} {
+		t.Run(format, func(t *testing.T) {
+			root := t.TempDir()
+			if err := InitWorkingDir(root); err != nil {
+				t.Fatal(err)
+			}
+			kept := fmt.Sprintf(format, prose)
+			done := "- [x] completed one\n- [DONE — fixture] completed two\n"
+			open := filepath.Join(root, WorkingDirName, openLedgerName)
+			writeIntegrityFile(t, open, kept+done)
+			if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != 2 {
+				t.Fatalf("long prose archive = %d, %v; want two removed rows", count, err)
+			}
+			assertIntegrityFile(t, open, kept)
+			backlog, err := contextopt.ReadSnapshot(t.Context(), filepath.Join(root, WorkingDirName, "BACKLOG.md"))
+			if err != nil || !strings.Contains(string(backlog), done) {
+				t.Fatalf("completed rows missing from backlog: %s, %v", backlog, err)
+			}
+		})
+	}
+}
+
+// TestArchivePathFieldLengthBounds pins byte limits before path cleaning or filesystem lookup.
+func TestArchivePathFieldLengthBounds(t *testing.T) {
+	longPath := "/" + strings.Repeat("a/", 2047) + "a"
+	for _, tc := range []struct {
+		name, path string
+		candidate  bool
+	}{
+		{"component-255", "/" + strings.Repeat("a", 255), true},
+		{"component-256", "/" + strings.Repeat("a", 256), false},
+		{"total-4096", longPath, true},
+		{"total-4097", longPath + "a", false},
+		{"native-component-255", `C:\` + strings.Repeat("a", 255), true},
+		{"native-component-256", `C:\` + strings.Repeat("a", 256), false},
+		{"unicode-255-bytes", "/" + strings.Repeat("é", 127) + "a", true},
+		{"unicode-256-bytes", "/" + strings.Repeat("é", 128), false},
+		{"unc-component-256", `\\host\share\` + strings.Repeat("a", 256), false},
+		{"unc-total-4097", strings.ReplaceAll(longPath+"a", "/", `\`), false},
+		{"unclean-component", "/" + strings.Repeat("a", 256) + "/../short", false},
+		{"unclean-total", longPath + "/../short", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) { testArchivePathFieldBoundary(t, tc.path, tc.candidate) })
+	}
+}
+
+// testArchivePathFieldBoundary checks both row readers and observes candidate stat dispatch.
+func testArchivePathFieldBoundary(t *testing.T, path string, candidate bool) {
+	t.Helper()
+	for _, format := range []string{"- [ ] path: `%s`", "| TODO | `%s` |"} {
+		calls := 0
+		ops := archiveWorktreeOps{inspect: func(_ context.Context, name string) (archivePath, error) {
+			calls++
+			return archivePath{path: name}, nil
+		}}
+		index, err := indexWorktreeRows(t.Context(), []string{fmt.Sprintf(format, path)}, ops)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (calls == 1) != candidate || (len(index) == 1) != candidate {
+			t.Fatalf("candidate = %v; inspections = %d, indexed paths = %d", candidate, calls, len(index))
+		}
+	}
+}
+
+// TestArchivePathStatLength distinguishes an absent candidate from a name rejected by stat.
+func TestArchivePathStatLength(t *testing.T) {
+	root := t.TempDir()
+	for _, size := range []int{255, 256} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			path := filepath.Join(root, strings.Repeat("a", size))
+			_, statErr := os.Stat(path)
+			if size == 256 && !errors.Is(statErr, syscall.ENAMETOOLONG) {
+				t.Skipf("filesystem does not report ENAMETOOLONG for a 256-byte component: %v", statErr)
+			}
+			if size == 255 && !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("255-byte absent candidate stat = %v", statErr)
+			}
+			result, err := lookupArchivePath(t.Context(), path)
+			if err != nil || result.exists || result.notDirectory || result.path != filepath.Clean(path) {
+				t.Fatalf("absent archive path = %+v, %v", result, err)
+			}
+		})
+	}
+}
+
+// TestArchiveInvalidPathStatPreservesRows keeps every row on a real invalid-name stat error.
+func TestArchiveInvalidPathStatPreservesRows(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "invalid\x00name")
+	_, statErr := os.Stat(path)
+	if statErr == nil || errors.Is(statErr, os.ErrNotExist) || errors.Is(statErr, syscall.ENAMETOOLONG) {
+		t.Fatalf("invalid-name fixture stat = %v; want another error", statErr)
+	}
+	body := "- [x] path: " + path + " | done\n- [x] unrelated\n"
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	backlog := filepath.Join(root, WorkingDirName, "BACKLOG.md")
+	writeIntegrityFile(t, open, body)
+	writeIntegrityFile(t, backlog, "unchanged backlog\n")
+	ops := defaultArchiveWorktreeOps()
+	ops.list = func(context.Context, string) ([]worktree.WorktreeInfo, error) { return nil, nil }
+	if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); count != 0 || err == nil {
+		t.Fatalf("invalid-name archive = %d, %v; want an error and no discharged rows", count, err)
+	}
+	assertIntegrityFile(t, open, body)
+	assertIntegrityFile(t, backlog, "unchanged backlog\n")
+}
+
+// TestArchivePermissionDeniedStatPreservesRows keeps every row when stat is refused for permission.
+func TestArchivePermissionDeniedStatPreservesRows(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("file modes do not refuse stat on Windows or for root")
+	}
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(root, "locked")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- a directory needs the owner search bit to hold entries; 0o700 is least privilege
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { // let TempDir remove the tree
+		// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- restores the owner search bit so TempDir can remove the tree
+		if err := os.Chmod(locked, 0o700); err != nil {
+			t.Errorf("restore %s: %v", locked, err)
+		}
+	})
+	path := filepath.Join(locked, "worktree")
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrPermission) {
+		t.Fatalf("locked fixture stat = %v; want permission denied", statErr)
+	}
+	body := "- [x] path: " + path + " | done\n- [x] unrelated\n"
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	backlog := filepath.Join(root, WorkingDirName, "BACKLOG.md")
+	writeIntegrityFile(t, open, body)
+	writeIntegrityFile(t, backlog, "unchanged backlog\n")
+	ops := defaultArchiveWorktreeOps()
+	ops.list = func(context.Context, string) ([]worktree.WorktreeInfo, error) { return nil, nil }
+	if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); count != 0 || err == nil {
+		t.Fatalf("permission-denied archive = %d, %v; want an error and no discharged rows", count, err)
+	}
+	assertIntegrityFile(t, open, body)
+	assertIntegrityFile(t, backlog, "unchanged backlog\n")
 }
 
 // TestArchiveCanceledScan preserves the snapshot when the archive context is canceled.
