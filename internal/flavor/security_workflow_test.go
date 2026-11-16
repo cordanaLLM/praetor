@@ -203,34 +203,35 @@ func securityRepo(t *testing.T) string {
 }
 
 func TestSecurityWorkflow_Positive_UneditedPriorIsRefreshed(t *testing.T) {
-	prior := readPriorFixtures(t, securityPriorDir)["1371.yml"]
-	for _, declared := range []bool{false, true} {
-		t.Run(map[bool]string{false: "fallback", true: "tools-module"}[declared], func(t *testing.T) {
-			repo := securityRepo(t)
-			if !declared {
-				if err := os.RemoveAll(filepath.Join(repo, "tools")); err != nil {
+	for name, prior := range readPriorFixtures(t, securityPriorDir) {
+		for _, declared := range []bool{false, true} {
+			t.Run(name+"/"+map[bool]string{false: "fallback", true: "tools-module"}[declared], func(t *testing.T) {
+				repo := securityRepo(t)
+				if !declared {
+					if err := os.RemoveAll(filepath.Join(repo, "tools")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				workflow := filepath.Join(repo, filepath.FromSlash(securityWorkflowPath))
+				if err := os.MkdirAll(filepath.Dir(workflow), 0o700); err != nil {
 					t.Fatal(err)
 				}
-			}
-			workflow := filepath.Join(repo, filepath.FromSlash(securityWorkflowPath))
-			if err := os.MkdirAll(filepath.Dir(workflow), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(workflow, []byte(prior), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			report, err := flavor.ApplyFlavorWith(t.Context(), repo, "go-service", flavor.ApplyOptions{TemplatesOnly: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := os.ReadFile(workflow)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != renderedSecurityWorkflow(t, declared) || !slices.Contains(report.RefreshedTemplates, securityWorkflowPath) {
-				t.Fatalf("unedited prior was not refreshed: refreshed %v\n%s", report.RefreshedTemplates, got)
-			}
-		})
+				if err := os.WriteFile(workflow, []byte(prior), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				report, err := flavor.ApplyFlavorWith(t.Context(), repo, "go-service", flavor.ApplyOptions{TemplatesOnly: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(workflow)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(got) != renderedSecurityWorkflow(t, declared) || !slices.Contains(report.RefreshedTemplates, securityWorkflowPath) {
+					t.Fatalf("unedited prior was not refreshed: refreshed %v\n%s", report.RefreshedTemplates, got)
+				}
+			})
+		}
 	}
 }
 

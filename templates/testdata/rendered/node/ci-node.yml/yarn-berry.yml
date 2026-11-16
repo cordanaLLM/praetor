@@ -33,7 +33,8 @@ jobs:
 
       - name: Checkout source
         if: github.event.pull_request.draft != true
-        uses: actions/checkout@v4
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
@@ -51,7 +52,8 @@ jobs:
         if: >-
           github.event.pull_request.draft != true &&
           steps.manifest.outputs.present == 'true'
-        uses: actions/setup-node@v4
+        # yamllint disable-line rule:line-length
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: lts/*
 

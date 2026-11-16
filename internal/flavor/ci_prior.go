@@ -14,6 +14,7 @@ package flavor
 var (
 	// priorGoCIDigests are the earlier texts of go/ci-go.yml.tmpl.
 	priorGoCIDigests = map[string]string{
+		"f309f998df57a6f5ebb16e2dd1d76ef92cb24cc66b0af49eeef7f58b36bf6313": "the Go CI job before digest-pinned actions (#1409)",
 		"b98a1667451109dc48eff5f0071bdbbff55f3cd0d48973e48734bd69cf51e4af": "the Go CI job before review runs shared the pull request group",
 		"1ae53e06f9b9495bea73929ef4801ca92b216219c01d1cb6f3ca90d1375f6b8c": "the Go CI job before its concurrency group",
 		"36d5e19301f02efef3788fe3a1a7246fec40ea3a83c0358143d437652aba8cbc": "the Go CI job before its go.mod manifest guard",
@@ -22,6 +23,8 @@ var (
 	}
 	// priorRustCIDigests are the earlier texts of rust/ci-rust.yml.tmpl.
 	priorRustCIDigests = map[string]string{
+		"940945bdac05878eea19b71d9195ae65b5f6e50854fb46c12028d3ec6110dff9": "the Rust CI job before digest-pinned actions (#1409)",
+		"ede39f6eba831f60960f6b5dcaea27bf272b11fcc35cfad4a29c068bf9fc8934": "the Rust library CI job before digest-pinned actions (#1409)",
 		"cf0289a07c9b5582a011331843e0fbfad4a5e9690ce6d0028a4b463f0eb35e16": "the Rust CI job before review runs shared the pull request group",
 		"33dad5b393d8a5a5f74a04fdea3094ec7ac95c38d09adcb22135a20a24a8e528": "the Rust library CI job before review runs shared the pull request group",
 		"bfb0f936c69a1f111d346859ffeb77abfbdc0d1d5762e3042ba437bc9ab80681": "the Rust CI job before its concurrency group",
@@ -32,6 +35,7 @@ var (
 	}
 	// priorFlutterCIDigests are the earlier texts of flutter/ci-flutter.yml.tmpl.
 	priorFlutterCIDigests = map[string]string{
+		"2d2e3003b8a84ea3f59d0a19c52e69b3e318833aa01721f02305001aa776a3c4": "the Flutter CI job before digest-pinned actions (#1409)",
 		"8107d73687d7a3fc4da7bf790db2462d718cf39a3e4e65776cce5cf2145d6813": "the Flutter CI job before review runs shared the pull request group",
 		"87e594b6db9e298b56ca7558ff81828352d40ed550e0134d6baa6b8371785e7e": "the Flutter CI job before its concurrency group",
 		"13ff5b2a881217b981aef5b8c2a4a732849611253f546afb1abf3c3fb9c661c8": "the Flutter CI job before its pubspec.yaml manifest guard",
@@ -40,6 +44,7 @@ var (
 	}
 	// priorJVMCIDigests are the earlier texts of jvm/ci-jvm.yml.tmpl.
 	priorJVMCIDigests = map[string]string{
+		"982df4c1df18726c209fa79b53f26814bb38eab4545f05e9f1e7dd8d1da85964": "the JVM CI job before digest-pinned actions (#1409)",
 		"041f48c4c85a0db24ba2bef780bc62d1864e9417e09127228fec5f7038b2ed47": "the JVM CI job before review runs shared the pull request group",
 		"f2923e03c20fd2f2736d79d3f8426cd6fe1cc97b0f4dcc3f1a18b0b0cd255525": "the JVM CI job before its concurrency group",
 		"64b84c2ecf75ac611c8802a615ba6026f622ac4f9341c2c8efa764f4d98d1bbd": "the JVM CI job before its Maven or Gradle manifest guard",
@@ -50,6 +55,17 @@ var (
 	// priorNodeCIDigests are the earlier texts of node/ci-node.yml.tmpl: the npm job before the
 	// body branched on the package manager, then one text per manager and Yarn facts.
 	priorNodeCIDigests = map[string]string{
+		"db74d61766e4703ece410f59f52a20786c846d3509ddc36fb81057a14c0d49f2": "the Node CI job before digest-pinned actions (#1409)",
+		"9bac691320491a7cc5422f931b89a24056fb0d1cb00658323334a6626931c4c4": "the Node CI job before digest-pinned actions (#1409)",
+		"365360fba2746032b041d70aa05d4ad470e82474eb5bd697a1b63925ce69eeb0": "the Node CI job before digest-pinned actions (#1409)",
+		"96a2ef2a672fa1213e2bf54541c4150c7c568caf92efcd080fe521b4d89a39bc": "the Node CI job before digest-pinned actions (#1409)",
+		"b147531c6d8d69bd1fc3fd2b269de2623b1ad9e78f6038fde3de973f4861123a": "the Node CI job before digest-pinned actions (#1409)",
+		"e4e32af75968145b6ce8730651cf118d76b7d7f6db6bed51f8b3c9f37a3f393b": "the Node CI job before digest-pinned actions (#1409)",
+		"85c5f4b5db54a52a8700178d72f3b6718c4934868b44774bb146f4db6de18628": "the Node CI job before digest-pinned actions (#1409)",
+		"08a2c23bd14c7ee37ff527c1c447f09349326bb2ca1ee5254fc6dcf0d3bf4203": "the Node CI job before digest-pinned actions (#1409)",
+		"43dee6bfaaf7e023c1db3e6961987a6c4cec3897421c740e5aca51f12cb32e76": "the Node CI job before digest-pinned actions (#1409)",
+		"cbe1e74df6f47f52b2c67285831d3f1370cdf3acbbc0d07c3e9f94495213b6b0": "the Node CI job before digest-pinned actions (#1409)",
+		"e6d79ceabf9193eb6932279c6851eac04b063e9cf79f6cfafac787df5af85bf8": "the Node CI job before digest-pinned actions (#1409)",
 		"540d89fa2697d87da9111e5acc074aa0ef9b0545f461b0c21b26d4498333c51e": "the yarn CI job before review runs shared the pull request group",
 		"45e7d84134e4822037fcd3c1d8d42b540817ecf44719ca2275df0407a5baaaeb": "the yarn-lint CI job before review runs shared the pull request group",
 		"13d2e5c3eab1caef87df78ff8bd0459ec3c59b8e61ccf8a48c76e65828208c4e": "the yarn-lint-build CI job before review runs shared the pull request group",
