@@ -831,13 +831,17 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (string, error) {
 
 // runGoTests runs the race detector against HEAD in an isolated worktree. A worktree that
 // cannot be created fails the stage rather than silently testing the dirty tree, and cleanup
-// failures are surfaced instead of dropped (inStageWorktree).
+// failures are surfaced instead of dropped (inStageWorktree). All go-test-netns entries are
+// validated before preparation can skip the race stage or narrow its module selection.
 func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
-	scopeCfg, err := prepareGoRace(ctx, cfg)
-	if err != nil {
+	if err := validateNetnsEntries(ctx, cfg); err != nil {
+		if cutErr := cutError(ctx, "creating the isolated test worktree", TestStageTimeout, "", cfg.repoDir, err.Error()); cutErr != nil {
+			return "", cutErr
+		}
 		return "", err
 	}
-	if err := staleNetnsEntries(ctx, cfg); err != nil {
+	scopeCfg, err := prepareGoRace(ctx, cfg)
+	if err != nil {
 		return "", err
 	}
 

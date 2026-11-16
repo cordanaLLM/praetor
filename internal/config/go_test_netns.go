@@ -11,8 +11,10 @@ package config
 // shows the overflow uid there; a test of a production check that requires root ownership, such
 // as the owner of a trusted system binary, cannot pass inside it. While the entry holds, the stage
 // runs that module's test binaries in the gate's own namespaces and names the entry in its
-// message; every other module stays wrapped, and CI runs every module as before. An expired entry
-// fails the stage for its module instead of falling back to either path.
+// message; every other module stays wrapped, and CI runs every module as before. Every expired
+// or stale entry fails the stage before race preparation, including skipped stages and modules
+// outside its selection, instead of falling back to either path. An entry holds through its
+// expires day.
 const ExceptionRuleGoTestNetns = "go-test-netns"
 
 // goTestNetnsTargetProblem requires an entry of ExceptionRuleGoTestNetns to name the go.mod of one

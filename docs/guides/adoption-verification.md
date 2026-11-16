@@ -974,10 +974,12 @@ wrapped. The production check keeps failing closed; only the test binary's names
 The entry names one `go.mod` by path, the module form `api-compatibility` uses, with no glob,
 tool, fingerprint or line range. It requires a category even inside the uncategorized grace
 window, so it always expires with its category's interval. The race stage reads the entries once
-and judges every module against them. An expired entry fails its module before any test binary
-runs, empty modules and wrapper-free hosts included, so neither path stands in for the other; the
-audit fails it as well. An entry that names no tracked Go module fails the race stage before any
-module runs, as a stale `gosec` entry fails the security stage. Where the wrapper does not apply
+and validates every entry before race preparation. An expired entry or one naming no tracked Go
+module fails the race stage even when its module is outside the selected scope or the stage
+would otherwise be skipped (no Go modules, no affected packages, dry run, or an unavailable race
+detector). The failure names the entry before any test binary runs, including on wrapper-free
+hosts; the audit fails expired entries as well. An entry holds through its `expires` day and
+fails from the next day. Where the wrapper does not apply
 (CI, a toolchain container, macOS, Windows) a live entry changes nothing: CI runs every module as
 before and stays the second barrier. `praetorctl go test`, the engine's Makefile seam, does not
 read the entry.

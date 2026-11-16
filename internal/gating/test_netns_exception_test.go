@@ -5,6 +5,7 @@ package gating
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -151,7 +152,7 @@ func TestGoRaceNetnsEntriesReadOncePerStage(t *testing.T) {
 	cfg, _ := newTestConfig(t, root, false)
 	cfg.goos = "linux"
 	cfg.moduleDiscovery = func(context.Context, string) ([]string, error) { return []string{netnsModule}, nil }
-	if err := staleNetnsEntries(t.Context(), cfg); err != nil {
+	if err := validateNetnsEntries(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(root, ".standards.yaml"), netnsManifest(netnsModule, time.Now().AddDate(0, 0, -1)))
@@ -175,5 +176,74 @@ func TestGoRaceStaleDeclarationFails(t *testing.T) {
 	_, err := runGoTests(t.Context(), cfg)
 	if err == nil || !strings.Contains(err.Error(), "gone/go.mod") || !strings.Contains(err.Error(), "no tracked Go module") || len(testInvocations(*recorded)) != 0 {
 		t.Fatalf("stale entry passed: error=%v runs=%+v", err, testInvocations(*recorded))
+	}
+}
+
+// TestGoRaceNetnsInvalidEntriesBeforeSelection refuses every invalid entry before module
+// selection, including expired nested modules outside the root scope and skipped race stages.
+func TestGoRaceNetnsInvalidEntriesBeforeSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		modules  []string
+		packages []string
+		days     int
+		want     string
+		dryRun   bool
+		cgo      string
+	}{
+		{"expired outside root scope", []string{"go.mod", netnsModule}, []string{"./..."}, -1, "expired", false, ""},
+		{"stale without modules", nil, nil, 30, "no tracked Go module", false, ""},
+		{"expired without modules", nil, nil, -1, "expired", false, ""},
+		{"expired empty scope", []string{"go.mod", netnsModule}, []string{}, -1, "expired", false, ""},
+		{"stale empty scope", []string{"go.mod"}, []string{}, 30, "no tracked Go module", false, ""},
+		{"expired dry run", []string{"go.mod", netnsModule}, nil, -1, "expired", true, ""},
+		{"stale dry run", []string{"go.mod"}, nil, 30, "no tracked Go module", true, ""},
+		{"expired unavailable detector", []string{"go.mod", netnsModule}, nil, -1, "expired", false, "0"},
+		{"stale unavailable detector", []string{"go.mod"}, nil, 30, "no tracked Go module", false, "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CGO_ENABLED", tc.cgo)
+			cfg, recorded := netnsStageFixture(t, tc.modules, time.Now().AddDate(0, 0, tc.days))
+			cfg.dryRun = tc.dryRun
+			cfg.racePackages = tc.packages
+			msg, err := runGoTests(t.Context(), cfg)
+			var skip *stageSkip
+			if err == nil || errors.As(err, &skip) || !strings.Contains(err.Error(), netnsModule) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("invalid entry did not fail stage: message=%q error=%v", msg, err)
+			}
+			if runs := testInvocations(*recorded); len(runs) != 0 {
+				t.Fatalf("invalid entry allowed test execution: %+v", runs)
+			}
+		})
+	}
+}
+
+// netnsStageFixture commits the selected module files in an isolated repository and installs
+// one exception; its recording runner executes no real toolchain command.
+func netnsStageFixture(t *testing.T, modules []string, expires time.Time) (*stageConfig, *[]recordedCommand) {
+	t.Helper()
+	root := newHermeticGitRepo(t)
+	for index := 0; index < len(modules); index++ {
+		commitFile(t, root, modules[index], "module example.test/fixture\n")
+	}
+	writeFile(t, filepath.Join(root, ".standards.yaml"), netnsManifest(netnsModule, expires))
+	cfg, recorded := newTestConfig(t, root, false)
+	cfg.moduleDiscovery = func(context.Context, string) ([]string, error) { return modules, nil }
+	return cfg, recorded
+}
+
+// TestGoRaceNetnsLiveEntryBeforeSelection preserves an executing module's unwrapped path
+// both before expiry and on the expires day, through the stage's global validation.
+func TestGoRaceNetnsLiveEntryBeforeSelection(t *testing.T) {
+	t.Setenv("CI", "")
+	t.Setenv("GITHUB_ACTIONS", "")
+	for _, days := range []int{0, 30} {
+		cfg, recorded := netnsStageFixture(t, []string{netnsModule}, time.Now().AddDate(0, 0, days))
+		cfg.goos = "linux"
+		msg, err := runGoTests(t.Context(), cfg)
+		runs := testInvocations(*recorded)
+		if err != nil || len(runs) != 1 || slices.Contains(runs[0].args, "-exec") || !strings.Contains(msg, "exception go-test-netns") {
+			t.Fatalf("live entry days=%d: message=%q runs=%+v error=%v", days, msg, runs, err)
+		}
 	}
 }

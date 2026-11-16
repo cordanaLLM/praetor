@@ -400,10 +400,7 @@ func (e Exception) problem(today time.Time) string {
 	if problem := e.rootLicenseTargetProblem(); problem != "" {
 		return problem
 	}
-	if problem := e.apiModuleTargetProblem(); problem != "" {
-		return problem
-	}
-	if problem := e.goTestNetnsTargetProblem(); problem != "" {
+	if problem := e.moduleTargetProblem(); problem != "" {
 		return problem
 	}
 	if problem := e.dedupeTargetProblem(); problem != "" {
@@ -419,6 +416,14 @@ func (e Exception) problem(today time.Time) string {
 		return "reason " + problem
 	}
 	return exceptionCategoryExpiryProblem(e, today)
+}
+
+// moduleTargetProblem checks the module-specific target rules in their validation order.
+func (e Exception) moduleTargetProblem() string {
+	if problem := e.apiModuleTargetProblem(); problem != "" {
+		return problem
+	}
+	return e.goTestNetnsTargetProblem()
 }
 
 func exceptionCategoryExpiryProblem(e Exception, today time.Time) string {

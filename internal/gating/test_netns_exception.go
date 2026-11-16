@@ -30,8 +30,7 @@ func (c *stageConfig) moduleTestExec(ctx context.Context, module goModule) (stri
 	}
 	live, expired := config.ExceptionFor(entries, module.file, time.Now(), nil)
 	if live == nil && expired != nil {
-		return "", "", fmt.Errorf("exception %s for %s expired %s (category %s): its tests run neither wrapped nor unwrapped until the entry is renewed or removed",
-			config.ExceptionRuleGoTestNetns, module.file, expired.Expires, expired.ExpiryCategory())
+		return "", "", netnsExpiryError(*expired)
 	}
 	if live == nil || execFlag == "" {
 		return execFlag, isolation, nil
@@ -55,10 +54,10 @@ func (c *stageConfig) goTestNetnsEntries(ctx context.Context) ([]config.Exceptio
 	return entries, nil
 }
 
-// staleNetnsEntries fails the race stage before any module runs when a go-test-netns entry names
-// no tracked Go module, as a stale gosec entry fails the security stage: an entry left behind
-// after its module moved or went excuses nothing and would linger unseen until it expires.
-func staleNetnsEntries(ctx context.Context, cfg *stageConfig) error {
+// validateNetnsEntries refuses every expired or stale go-test-netns entry before race
+// preparation can skip the stage or limit its modules. The cached manifest entries and tracked
+// module discovery are shared with module execution; an entry holds through its expires day.
+func validateNetnsEntries(ctx context.Context, cfg *stageConfig) error {
 	modules, err := cfg.goModules(ctx)
 	if err != nil {
 		return err
@@ -67,7 +66,11 @@ func staleNetnsEntries(ctx context.Context, cfg *stageConfig) error {
 	if err != nil {
 		return err
 	}
+	today := time.Now()
 	for index := 0; index < len(entries) && index < config.MaxExceptions; index++ {
+		if entries[index].Expired(today) {
+			return netnsExpiryError(entries[index])
+		}
 		path := entries[index].Path
 		if !slices.ContainsFunc(modules, func(module goModule) bool { return module.file == path }) {
 			return fmt.Errorf("exception %s names %s, which is no tracked Go module: remove the entry or name the module's go.mod",
@@ -75,4 +78,10 @@ func staleNetnsEntries(ctx context.Context, cfg *stageConfig) error {
 		}
 	}
 	return nil
+}
+
+// netnsExpiryError names the expired entry that blocks both wrapped and unwrapped tests.
+func netnsExpiryError(entry config.Exception) error {
+	return fmt.Errorf("exception %s for %s expired %s (category %s): its tests run neither wrapped nor unwrapped until the entry is renewed or removed",
+		config.ExceptionRuleGoTestNetns, entry.Path, entry.Expires, entry.ExpiryCategory())
 }
