@@ -281,11 +281,31 @@ func verifyCheckpointEvaluator(ctx context.Context, script string) error {
 	return nil
 }
 
-// checkpointFailureReason appends bounded stderr to a run error; otherwise it prefers
-// trimmed stderr over the marker error.
+// checkpointFailureReason retains bounded stderr and the evaluator's result error on
+// failure, naming empty diagnostics; otherwise it prefers trimmed stderr over the marker error.
 func checkpointFailureReason(runErr, markerErr error, result util.CommandBytes) string {
 	if runErr != nil {
-		return util.CommandDiagnostic(runErr, result.Stderr).Error()
+		reason := util.CommandDiagnostic(runErr, result.Stderr).Error()
+		line, err := extractMarker(result.Stdout, checkpointResultMarker)
+		var report checkpointReport
+		switch {
+		case err != nil && !strings.Contains(string(result.Stdout), checkpointResultMarker):
+			reason += "; no checkpoint result marker"
+		case err != nil:
+			reason += "; no unique checkpoint result marker"
+		case strings.TrimSpace(line) == "":
+			reason += "; checkpoint result marker empty"
+		case json.Unmarshal([]byte(line), &report) != nil:
+			reason += "; checkpoint result JSON invalid"
+		case report.Error != "":
+			reason += "; checkpoint evaluator: " + util.TruncateExcerpt(report.Error, util.MaxErrorBodyBytes)
+		default:
+			reason += "; checkpoint evaluator error empty"
+		}
+		if strings.TrimSpace(string(result.Stderr)) == "" {
+			reason += "; stderr empty"
+		}
+		return reason
 	}
 	if stderr := strings.TrimSpace(string(result.Stderr)); stderr != "" {
 		return stderr

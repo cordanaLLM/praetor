@@ -2,6 +2,7 @@ package agenthook
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -171,6 +172,8 @@ func TestCheckpointScriptPath(t *testing.T) {
 	}
 }
 
+// TestCheckpointFailureReason pins the reason text for a failed run's stderr shapes, including the
+// named empty parts when neither stderr nor a marker carries text.
 func TestCheckpointFailureReason(t *testing.T) {
 	runErr := errors.New("exit status 1")
 	markerErr := errors.New("missing checkpoint marker")
@@ -181,11 +184,12 @@ func TestCheckpointFailureReason(t *testing.T) {
 		stderr string
 		want   string
 	}{
-		{"failed with stderr", runErr, " \nscript failed\n\t", "exit status 1: script failed"},
-		{"failed without stderr", runErr, "", "exit status 1"},
-		{"failed with blank stderr", runErr, " \n\t", "exit status 1"},
-		{"failed at cap", runErr, exact, "exit status 1: " + exact},
-		{"failed above cap", runErr, " \n" + exact + "x\n", "exit status 1: " + exact + "... [truncated]"},
+		{"failed with stderr", runErr, " \nscript failed\n\t", "exit status 1: script failed; no checkpoint result marker"},
+		// engine-checkpoint-reason-1983-20261116: name both empty diagnostic channels.
+		{"failed without stderr", runErr, "", "exit status 1; no checkpoint result marker; stderr empty"},
+		{"failed with blank stderr", runErr, " \n\t", "exit status 1; no checkpoint result marker; stderr empty"},
+		{"failed at cap", runErr, exact, "exit status 1: " + exact + "; no checkpoint result marker"},
+		{"failed above cap", runErr, " \n" + exact + "x\n", "exit status 1: " + exact + "... [truncated]; no checkpoint result marker"},
 		{"success with stderr", nil, " \nscript warning\n\t", "script warning"},
 		{"success above cap unchanged", nil, exact + "x", exact + "x"},
 		{"success without stderr", nil, "", markerErr.Error()},
@@ -197,5 +201,82 @@ func TestCheckpointFailureReason(t *testing.T) {
 				t.Errorf("reason length=%d want length=%d; prefix=%q", len(got), len(tc.want), got[:min(len(got), 100)])
 			}
 		})
+	}
+}
+
+// TestCheckpointFailureReasonMarker checks that the marker JSON error of a failed run is added to the
+// reason, bounded, and that empty, invalid or duplicate markers are named (#1983).
+func TestCheckpointFailureReasonMarker(t *testing.T) {
+	const reported = `{"error":"state lock busy"}`
+	exact := strings.Repeat("e", util.MaxErrorBodyBytes)
+	for _, tc := range []struct{ name, stdout, stderr, want string }{
+		{"error", checkpointResultMarker + reported, "", "checkpoint evaluator: state lock busy; stderr empty"},
+		{"both", checkpointResultMarker + reported, "warn", "exit status 1: warn; checkpoint evaluator: state lock busy"},
+		{"empty marker", checkpointResultMarker, "", "checkpoint result marker empty; stderr empty"},
+		{"empty error", checkpointResultMarker + `{"error":""}`, "", "checkpoint evaluator error empty; stderr empty"},
+		{"invalid", checkpointResultMarker + `{`, "", "checkpoint result JSON invalid; stderr empty"},
+		{"duplicate", strings.Repeat(checkpointResultMarker+reported+"\n", 2), "", "no unique checkpoint result marker; stderr empty"},
+		{"at cap", checkpointResultMarker + `{"error":"` + exact + `"}`, "", "checkpoint evaluator: " + exact + "; stderr empty"},
+		{"above cap", checkpointResultMarker + `{"error":"` + exact + `x"}`, "warn", "checkpoint evaluator: " + exact + "... [truncated]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := checkpointFailureReason(errors.New("exit status 1"), nil,
+				util.CommandBytes{Stdout: []byte(tc.stdout), Stderr: []byte(tc.stderr)})
+			if !strings.Contains(got, tc.want) || !strings.HasPrefix(got, "exit status 1") {
+				t.Errorf("diagnostic length=%d want length=%d; prefix=%q", len(got), len(tc.want), got[:min(len(got), 100)])
+			}
+			if tc.stderr != "" && !strings.Contains(got, tc.stderr) {
+				t.Error("stderr lost alongside evaluator error")
+			}
+			if tc.name == "above cap" && strings.Contains(got, exact+"x") {
+				t.Error("evaluator error exceeds util.MaxErrorBodyBytes")
+			}
+		})
+	}
+}
+
+// TestCheckpointCommandTimeout checks that common.py's run_bounded names the command and the limit
+// when a command outlives its timeout.
+func TestCheckpointCommandTimeout(t *testing.T) {
+	argv, err := ResolveInterpreter(os.Getenv, [][]string{{"python3"}, {"python"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Plain attribute swaps, no unittest: the gate's toolchain container ships a Python without it.
+	const script = `import sys
+sys.path.insert(0, sys.argv[1])
+import common
+args = [sys.executable, "-c", "import time; time.sleep(10)", "x" * 1000]
+def wait_expired(*_args, **_kwargs):
+    raise common.subprocess.TimeoutExpired(args, 0.001)
+original = common._bounded_output
+for mode in ("native", "threaded", "wait"):
+    target = original
+    if mode == "threaded":
+        target = common._bounded_output_threaded
+    if mode == "wait":
+        target = wait_expired
+    common._bounded_output = target
+    try:
+        common.run_bounded(args, timeout=0.1)
+    except common.HookError as error:
+        print(mode + ": " + str(error))
+    else:
+        raise SystemExit("sleeping command unexpectedly succeeded")
+    finally:
+        common._bounded_output = original
+if common.run_bounded([sys.executable, "-c", "print('ok')"], timeout=10) != b"ok\n":
+    raise SystemExit("successful command changed")
+`
+	output, err := util.RunCommand(t.Context(), "", argv[0], "-B", "-c", script,
+		filepath.Join("..", "..", checkpointScriptDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, "checkpoint command timed out after 0.1 s: "+filepath.Base(argv[0])+" -c") ||
+			len(line) > 310 || strings.Contains(line, filepath.Dir(argv[0])) {
+			t.Errorf("timeout must name bounded command and original limit without full path: %q", line)
+		}
 	}
 }
