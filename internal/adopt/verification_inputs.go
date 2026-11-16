@@ -58,9 +58,18 @@ func loadVerificationInputsWithLimits(ctx context.Context, path string, requeste
 	return result, err
 }
 
+// walkVerificationInputs traverses the tree at path and captures matching verification files within limits.
 func walkVerificationInputs(ctx context.Context, path string, result *verificationInputs, limits VerificationLimits) error {
+	total := 0
+	return walkVerificationTree(ctx, path, limits, func(rel string, entry fs.DirEntry) error {
+		return result.capture(ctx, path, rel, entry, &total, limits)
+	})
+}
+
+// walkVerificationTree walks the directory tree within limits without reading file contents.
+func walkVerificationTree(ctx context.Context, path string, limits VerificationLimits, visit func(rel string, entry fs.DirEntry) error) error {
 	queue := []string{"."}
-	count, total := 0, 0
+	count := 0
 	for i := 0; i < len(queue) && i <= limits.MaxEntries; i++ {
 		entries, err := readVerificationDirectory(ctx, filepath.Join(path, queue[i]), limits.MaxEntries)
 		if err != nil {
@@ -72,12 +81,29 @@ func walkVerificationInputs(ctx context.Context, path string, result *verificati
 		}
 		for _, entry := range entries {
 			rel := filepath.ToSlash(filepath.Join(queue[i], entry.Name()))
-			if err := visitVerificationInput(ctx, path, rel, entry, result, &total, &queue, limits); err != nil {
+			if err := visitVerificationEntry(ctx, rel, entry, &queue, limits, visit); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// countCargoManifests counts Cargo.toml files within the bounded walk under limits, the bounds
+// the later input walk uses, without reading file contents.
+// Order: engine-1689-no-cargo-skip-first-20261102.
+func countCargoManifests(ctx context.Context, path string, limits VerificationLimits) (int, error) {
+	if ctx == nil {
+		return 0, errors.New("context is required")
+	}
+	count := 0
+	err := walkVerificationTree(ctx, path, limits, func(rel string, entry fs.DirEntry) error {
+		if filepath.Base(rel) == "Cargo.toml" {
+			count++
+		}
+		return nil
+	})
+	return count, err
 }
 
 func readVerificationDirectory(ctx context.Context, path string, entryLimit int) (entries []fs.DirEntry, err error) {
@@ -98,7 +124,8 @@ func readVerificationDirectory(ctx context.Context, path string, entryLimit int)
 	return entries, err
 }
 
-func visitVerificationInput(ctx context.Context, root, rel string, entry fs.DirEntry, result *verificationInputs, total *int, queue *[]string, limits VerificationLimits) error {
+// visitVerificationEntry validates directory entry constraints and either enqueues subdirectories or invokes the visitor callback.
+func visitVerificationEntry(ctx context.Context, rel string, entry fs.DirEntry, queue *[]string, limits VerificationLimits, visit func(rel string, entry fs.DirEntry) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -115,10 +142,7 @@ func visitVerificationInput(ctx context.Context, root, rel string, entry fs.DirE
 		*queue = append(*queue, rel)
 		return nil
 	}
-	if err := result.capture(ctx, root, rel, entry, total, limits); err != nil {
-		return err
-	}
-	return nil
+	return visit(rel, entry)
 }
 
 // skipVerificationDirectory reports a directory that holds no verification input of the

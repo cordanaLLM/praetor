@@ -237,3 +237,82 @@ func TestRepositoryChecksCancellationAndEngine(t *testing.T) {
 		t.Log(line)
 	}
 }
+
+// TestRustMSRVSkipBeforeInputBounds pins that repositories without Cargo manifests skip before input size bounds are evaluated.
+// TestRustMSRVSkipWalkUsesDeclaredLimits requires the Cargo.toml count before the skip to walk
+// under the root manifest's declared bounds: a tree past max_entries fails instead of skipping
+// after reading beyond the declared bound, and the exact bound still skips.
+func TestRustMSRVSkipWalkUsesDeclaredLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name, manifest, want string
+	}{
+		{"declared bound exceeded", "verification:\n  max_entries: 1\n", "verification discovery exceeds 1 entries"},
+		{"declared bound exact", "verification:\n  max_entries: 2\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := setupRustMSRVFixture(t, tc.manifest, "")
+			mustWrite(t, filepath.Join(root, "README.md"), "no crate here\n")
+			line, err := AuditRustMSRV(t.Context(), nil, root)
+			if tc.want == "" {
+				if err != nil || line != "[SKIP] rust-msrv: no Cargo.toml found." {
+					t.Fatalf("expected skip, got err=%v line=%q", err, line)
+				}
+				return
+			}
+			if !strings.Contains(fmt.Sprint(err), tc.want) {
+				t.Fatalf("expected %q, got err=%v line=%q", tc.want, err, line)
+			}
+		})
+	}
+}
+
+func TestRustMSRVSkipBeforeInputBounds(t *testing.T) {
+	const oversizedWorkflowBytes = maxVerificationInputBytes + 1
+	oversizedWorkflow := strings.Repeat("#", oversizedWorkflowBytes)
+
+	t.Run("no cargo with oversized workflow skips first", func(t *testing.T) {
+		root := t.TempDir()
+		mustWrite(t, filepath.Join(root, ".github/workflows/ci.yml"), oversizedWorkflow)
+		line, err := AuditRustMSRV(t.Context(), nil, root)
+		if err != nil {
+			t.Fatalf("expected skip without error, got err=%v line=%q", err, line)
+		}
+		if line != "[SKIP] rust-msrv: no Cargo.toml found." {
+			t.Fatalf("expected skip line, got %q", line)
+		}
+	})
+
+	t.Run("cargo with rust-version passes", func(t *testing.T) {
+		root := t.TempDir()
+		mustWrite(t, filepath.Join(root, "Cargo.toml"), msrvCrate)
+		mustWrite(t, filepath.Join(root, "rust-toolchain"), "1.80\n")
+		line, err := AuditRustMSRV(t.Context(), nil, root)
+		checkRepositoryVerdict(t, line, err, false, "rust-msrv")
+		if !strings.HasPrefix(line, "[PASS]") {
+			t.Fatalf("expected pass verdict, got line=%q", line)
+		}
+	})
+
+	t.Run("boundary cargo with exact limit workflow passes", func(t *testing.T) {
+		root := t.TempDir()
+		mustWrite(t, filepath.Join(root, "Cargo.toml"), msrvCrate)
+		mustWrite(t, filepath.Join(root, "rust-toolchain"), "1.80\n")
+		mustWrite(t, filepath.Join(root, ".github/workflows/ci.yml"), strings.Repeat("#", maxVerificationInputBytes))
+		line, err := AuditRustMSRV(t.Context(), nil, root)
+		checkRepositoryVerdict(t, line, err, false, "rust-msrv")
+		if !strings.HasPrefix(line, "[PASS]") {
+			t.Fatalf("expected pass verdict, got line=%q", line)
+		}
+	})
+
+	t.Run("boundary cargo with oversized workflow reports bound", func(t *testing.T) {
+		root := t.TempDir()
+		mustWrite(t, filepath.Join(root, "Cargo.toml"), msrvCrate)
+		mustWrite(t, filepath.Join(root, ".github/workflows/ci.yml"), oversizedWorkflow)
+		line, err := AuditRustMSRV(t.Context(), nil, root)
+		checkRepositoryVerdict(t, line, err, true, "rust-msrv")
+		if !strings.Contains(fmt.Sprint(err), "metadata exceeds byte bounds") {
+			t.Fatalf("expected metadata exceeds byte bounds, got %v (line=%q)", err, line)
+		}
+	})
+}
