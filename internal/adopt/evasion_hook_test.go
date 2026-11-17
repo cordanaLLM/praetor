@@ -501,10 +501,10 @@ func evasionSegmentMutants() []struct {
 
 		{"old span", "for segment in segments:", "for segment in [(text, bool(re.search(READ_ONLY_VETO, text)))]:",
 			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
-		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1)", "segments, None)",
+		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1, exempt)", "segments, None, exempt)",
 			`git commit -m 'message $name' && tail -n 1`, 2},
-		{"redirection veto", `    if not any(ch in command for ch in "{}") and not commit_command(`,
-			"    if re.search(r\"[<>]\", command):\n        return [(command, True)], []\n" + `    if not any(ch in command for ch in "{}") and not commit_command(`,
+		{"redirection veto", `    if not any(ch in command for ch in "{}<") and not commit_command(`,
+			"    if re.search(r\"[<>]\", command):\n        return [(command, True)], []\n" + `    if not any(ch in command for ch in "{}<") and not commit_command(`,
 			`git commit -m x 2>&1 | tail -n 1`, 2},
 		{"positional expansion", "self.uncertain |= self.word_expansion", "self.uncertain |= False",
 			`git commit "$x" && git log -n 1`, 0},
@@ -611,7 +611,6 @@ func TestEmittedEvasionGuardSegments(t *testing.T) {
 	guard := mustRead(t, path)
 	guard = strings.ReplaceAll(guard, "\r\n", "\n")
 	if os.Getenv(updateEmittedFixturesEnv) == "1" {
-		guard = strings.Replace(guard, "import shlex\n", "", 1)
 		marker := "# Every match of the privilege rule"
 		guard = removeGuardSegments(t, guard, marker)
 		guard = strings.Replace(guard, marker, evasionCommandSegments+marker, 1)
@@ -628,17 +627,18 @@ func TestEmittedEvasionGuardSegments(t *testing.T) {
 					"    judged = without_read_only_words(command_str)", 1)
 		}
 		guard = strings.Replace(guard, "        if search(pattern, text):\n            reason = (",
-			"        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0]):\n            reason = (", 1)
+			"        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0], exempt):\n            reason = (", 1)
 		guard = strings.Replace(guard, "sys.stderr.write(str(error) + \"\\n\")",
 			"sys.stderr.write(\""+agenthook.InvalidInputRefusal+"\" + str(error) + \"\\n\")", 1)
 		mustWrite(t, path, guard)
+		TestEmittedHookFixturesMatchTheRendering(t)
 		current := mustRead(t, filepath.Join(priorEvasionFixtures, currentEvasionFixture))
 		if !strings.Contains(current, "def command_segments(") {
 			mustWrite(t, filepath.Join(priorEvasionFixtures, "before-command-segments.block_evasion.py"), current)
 		}
 	}
 	if !strings.Contains(guard, evasionCommandSegments) ||
-		!strings.Contains(guard, "search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0])") {
+		!strings.Contains(guard, "pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0], exempt") {
 		t.Fatal("engine guard segmentation differs; regenerate with PRAETOR_UPDATE_EMITTED_FIXTURES=1")
 	}
 }
@@ -669,6 +669,7 @@ type interceptorModule struct {
 	Exempt     []string            `json:"READ_ONLY_EXEMPT"`
 	Words      string              `json:"READ_ONLY_WORDS"`
 	Veto       string              `json:"READ_ONLY_VETO"`
+	Consumers  map[string]string   `json:"HEREDOC_CONSUMERS"`
 }
 
 // loadInterceptorModule loads the emitted script as a module, without running main.
@@ -677,9 +678,9 @@ func loadInterceptorModule(t *testing.T, python, script string) interceptorModul
 	ctx, cancel := context.WithTimeout(t.Context(), interceptorWallClock)
 	defer cancel()
 	const program = "import json, runpy, sys; module = runpy.run_path(sys.argv[1]); " +
-		`module.setdefault("RULE_PREFILTERS", {}); ` +
+		`module.setdefault("RULE_PREFILTERS", {}); module.setdefault("HEREDOC_CONSUMERS", {}); ` +
 		"print(json.dumps({name: module[name] for name in sys.argv[2:]}))"
-	names := []string{"RULES", "READ_ONLY_EXEMPT", "READ_ONLY_WORDS", "READ_ONLY_VETO", "RULE_PREFILTERS"}
+	names := []string{"RULES", "READ_ONLY_EXEMPT", "READ_ONLY_WORDS", "READ_ONLY_VETO", "RULE_PREFILTERS", "HEREDOC_CONSUMERS"}
 	args := append([]string{"-B", "-c", program, script}, names...)
 	res, err := util.RunCommandBytes(ctx, "", python, util.MaxCommandOutputBytes, args...)
 	if err != nil {
@@ -1331,7 +1332,7 @@ func TestEmittedInterceptorSearchesLikeTheEngineGuard(t *testing.T) {
 	if !strings.Contains(rendered, guard[start:end]) {
 		t.Fatal("the rendered interceptor does not carry the engine guard's option-run search byte for byte")
 	}
-	if !strings.Contains(rendered, "return search(pattern, text)") || strings.Contains(rendered, "        if re.search(pattern, text):\n") {
+	if !strings.Contains(rendered, "if search(pattern, text):") || strings.Contains(rendered, "        if re.search(pattern, text):\n") {
 		t.Fatal("the rendered interceptor does not judge its rules through search")
 	}
 }
@@ -1439,6 +1440,94 @@ func TestEmittedBraceCommandPriorReplay(t *testing.T) {
 			t.Logf("prior rc=%d fixed rc=%d", before, after)
 			if before != 0 || after != tc.want {
 				t.Fatalf("prior rc=%d want=0 fixed rc=%d want=%d", before, after, tc.want)
+			}
+		})
+	}
+}
+
+// evasionHeredocFeedCases reads the acceptance corpus shared with the Go and canonical tests.
+func evasionHeredocFeedCases(t *testing.T) []struct {
+	Name, Command string
+	Want          int
+} {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "agenthook", "testdata", "heredoc-consumers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name, Command string
+		Want          int
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	return cases
+}
+
+// TestEmittedEvasionHeredocFeed replays the shared consumer acceptance corpus.
+func TestEmittedEvasionHeredocFeed(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	for _, tc := range evasionHeredocFeedCases(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.Command)
+			t.Logf("emitted rc=%d want=%d", got, tc.Want)
+			if got != tc.Want {
+				t.Errorf("emitted rc=%d want=%d: %s", got, tc.Want, stderr)
+			}
+		})
+	}
+}
+
+// TestEmittedEvasionHeredocPriorReplay preserves the 22 acceptance verdicts of the prior hook.
+func TestEmittedEvasionHeredocPriorReplay(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	prior := filepath.Join(priorEvasionFixtures, "before-heredoc-consumers.block_evasion.py")
+	for _, tc := range evasionHeredocFeedCases(t)[:22] {
+		t.Run(tc.Name, func(t *testing.T) {
+			wantBefore := tc.Want
+			if tc.Want == 2 && tc.Name != "bash quoted no-verify" {
+				wantBefore = 0
+			}
+			before := runInterceptor(t, python, prior, nil, nil, tc.Command)
+			after := runInterceptor(t, python, fixed, nil, nil, tc.Command)
+			t.Logf("prior rc=%d fixed rc=%d", before, after)
+			if before != wantBefore || after != tc.Want {
+				t.Errorf("prior rc=%d want=%d; fixed rc=%d want=%d", before, wantBefore, after, tc.Want)
+			}
+		})
+	}
+}
+
+// TestEmittedEvasionHeredocConsumers checks the rendered table against Go policy.
+func TestEmittedEvasionHeredocConsumers(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	got := loadInterceptorModule(t, python, script).Consumers
+	if !reflect.DeepEqual(got, agenthook.HeredocConsumers()) {
+		t.Errorf("consumer table differs: %v", got)
+	}
+}
+
+// TestEmittedEvasionHeredocConsumerMutants proves each rendered ownership barrier matters.
+func TestEmittedEvasionHeredocConsumerMutants(t *testing.T) {
+	python, _ := emittedInterceptor(t)
+	source := buildBlockEvasionPY()
+	table := regexp.MustCompile(`(?s)HEREDOC_CONSUMERS = \{.*?\}\n`)
+	for _, tc := range []struct {
+		name, replacement, command string
+		want                       int
+	}{
+		{"empty", "HEREDOC_CONSUMERS = {}\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
+		{"data as shells", `HEREDOC_CONSUMERS = {"*": "shell"}` + "\n", "git commit -F - <<'EOF'\ngit commit -n -m x\nEOF", 2},
+		{"unknown as data", `HEREDOC_CONSUMERS = {"*": "data"}` + "\n", "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := filepath.Join(t.TempDir(), "mutant.py")
+			mustWrite(t, script, table.ReplaceAllLiteralString(source, tc.replacement))
+			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
+			t.Logf("mutant rc=%d want=%d", got, tc.want)
+			if got != tc.want {
+				t.Errorf("mutant rc=%d want=%d: %s", got, tc.want, stderr)
 			}
 		})
 	}

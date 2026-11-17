@@ -1,0 +1,302 @@
+[
+  {
+    "name": "bash quoted",
+    "command": "bash <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "bash unquoted",
+    "command": "bash <<EOF\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "sh -s quoted",
+    "command": "sh -s <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "abs path bash",
+    "command": "/bin/bash <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "env bash",
+    "command": "env bash <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "zsh tab-strip",
+    "command": "zsh <<-EOF\n\tgit commit -n -m x\n\tEOF",
+    "want": 2
+  },
+  {
+    "name": "dash",
+    "command": "dash <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "cat piped to bash",
+    "command": "cat <<'EOF' | bash\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "cat piped to sh -s",
+    "command": "cat <<'EOF' | sh -s\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "unknown consumer python3 -",
+    "command": "python3 - <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "source /dev/stdin",
+    "command": "source /dev/stdin <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "dot /dev/stdin",
+    "command": ". /dev/stdin <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "bash -c substitution",
+    "command": "bash -c \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
+    "want": 2
+  },
+  {
+    "name": "eval substitution",
+    "command": "eval \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
+    "want": 2
+  },
+  {
+    "name": "second command after data doc",
+    "command": "git commit -F - <<'EOF'\nmsg\nEOF\nbash <<'X'\ngit commit -n -m x\nX",
+    "want": 2
+  },
+  {
+    "name": "bash quoted no-verify",
+    "command": "bash <<'EOF'\ngit commit --no-verify -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "commit -F - message data",
+    "command": "git commit -F - <<'EOF'\nsubject -n text\nEOF",
+    "want": 0
+  },
+  {
+    "name": "commit -m cat substitution",
+    "command": "git commit -m \"$(cat <<'EOF'\nmessage -n text\nEOF\n)\" && git log -n 1",
+    "want": 0
+  },
+  {
+    "name": "commit -F - piped to tail",
+    "command": "git commit -F - <<EOF | tail -n 1\nmessage\nEOF",
+    "want": 0
+  },
+  {
+    "name": "cat to file",
+    "command": "cat > notes.txt <<'EOF'\ngit commit -n -m x is forbidden here\nEOF",
+    "want": 0
+  },
+  {
+    "name": "tee to file",
+    "command": "tee notes.txt <<'EOF'\ngit commit -n -m x is forbidden here\nEOF",
+    "want": 0
+  },
+  {
+    "name": "plain git status",
+    "command": "git status",
+    "want": 0
+  },
+  {
+    "name": "ksh",
+    "command": "ksh <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "bash here string",
+    "command": "bash <<< 'git commit -n -m x'",
+    "want": 2
+  },
+  {
+    "name": "sh here string",
+    "command": "/bin/sh -s <<< 'git commit -n -m x'",
+    "want": 2
+  },
+  {
+    "name": "env here string",
+    "command": "env bash <<< 'git commit -n -m x'",
+    "want": 2
+  },
+  {
+    "name": "unknown here string",
+    "command": "python3 - <<< 'git commit -n -m x'",
+    "want": 2
+  },
+  {
+    "name": "pipeline here string",
+    "command": "cat <<< 'git commit -n -m x' | bash",
+    "want": 2
+  },
+  {
+    "name": "commit here string data",
+    "command": "git commit -F - <<< 'git commit -n -m x'",
+    "want": 0
+  },
+  {
+    "name": "cat here string data",
+    "command": "cat > notes.txt <<< 'git commit -n -m x'",
+    "want": 0
+  },
+  {
+    "name": "tee here string data",
+    "command": "tee notes.txt <<< 'git commit -n -m x'",
+    "want": 0
+  },
+  {
+    "name": "commit literal command data",
+    "command": "git commit -F - <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 0
+  },
+  {
+    "name": "commit substitution literal data",
+    "command": "git commit -m \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
+    "want": 0
+  },
+  {
+    "name": "data executable expansion",
+    "command": "cat > notes.txt <<EOF\n$(git commit -n -m x)\nEOF",
+    "want": 2
+  },
+  {
+    "name": "quoted data expansion",
+    "command": "cat > notes.txt <<'EOF'\n$(git commit -n -m x)\nEOF",
+    "want": 0
+  },
+  {
+    "name": "multi hop shell pipeline",
+    "command": "cat <<'EOF' | tee copy.txt | env /bin/bash\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "data pipeline",
+    "command": "cat <<'EOF' | tee notes.txt\ngit commit -n -m x\nEOF",
+    "want": 0
+  },
+  {
+    "name": "quoted shell name",
+    "command": "'/bin/bash' <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "shell env assignment",
+    "command": "VALUE=x env /bin/sh -s <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "bash -c here string substitution",
+    "command": "bash -c \"$(cat <<< 'git commit -n -m x')\"",
+    "want": 2
+  },
+  {
+    "name": "eval here string substitution",
+    "command": "eval \"$(cat <<< 'git commit -n -m x')\"",
+    "want": 2
+  },
+  {
+    "name": "bash -c harmless here string",
+    "command": "bash -c \"$(cat <<< 'echo safe')\"",
+    "want": 0
+  },
+  {
+    "name": "eval harmless here string",
+    "command": "eval \"$(cat <<< 'echo safe')\"",
+    "want": 0
+  },
+  {
+    "name": "commit here string substitution data",
+    "command": "git commit -m \"$(cat <<< 'git commit -n -m x')\"",
+    "want": 0
+  },
+  {
+    "name": "printf message substitution data",
+    "command": "printf %s \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
+    "want": 0
+  },
+  {
+    "name": "echo message substitution data",
+    "command": "echo \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
+    "want": 0
+  },
+  {
+    "name": "group data document",
+    "command": "(cat > notes.txt <<'EOF'\ngit commit -n -m x\nEOF\n)",
+    "want": 0
+  },
+  {
+    "name": "quoted here string data expansion",
+    "command": "cat > notes.txt <<< '$(git commit -n -m x)'",
+    "want": 0
+  },
+  {
+    "name": "empty shell here string",
+    "command": "bash <<< ''",
+    "want": 0
+  },
+  {
+    "name": "harmless shell document",
+    "command": "bash <<'EOF'\necho safe\nEOF",
+    "want": 0
+  },
+  {
+    "name": "harmless unknown document",
+    "command": "python3 - <<'EOF'\nprint(1)\nEOF",
+    "want": 0
+  },
+  {
+    "name": "decoded long skip here string",
+    "command": "bash <<< 'git commit --no-''verify -m x'",
+    "want": 2
+  },
+  {
+    "name": "decoded hook path here string",
+    "command": "bash <<< 'git -c core.hooks''Path=/dev/null commit -m x'",
+    "want": 2
+  },
+  {
+    "name": "decoded skip variable here string",
+    "command": "bash <<< 'SK''IP=all git commit -m x'",
+    "want": 2
+  },
+  {
+    "name": "decoded privilege here string",
+    "command": "bash <<< 's''udo true'",
+    "want": 2
+  },
+  {
+    "name": "decoded topology here string",
+    "command": "bash <<< 'praetorctl ad''opt /srv/dev'",
+    "want": 2
+  },
+  {
+    "name": "env ignore bash substitution",
+    "command": "env -i bash -c \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
+    "want": 2
+  },
+  {
+    "name": "env directory bash substitution",
+    "command": "env -C . bash -c \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
+    "want": 2
+  },
+  {
+    "name": "env split bash substitution",
+    "command": "env -S \"bash -c\" \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
+    "want": 2
+  },
+  {
+    "name": "env data message substitution",
+    "command": "env -i git commit -m \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
+    "want": 0
+  }
+]

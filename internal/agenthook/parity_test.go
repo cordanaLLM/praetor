@@ -3,7 +3,9 @@ package agenthook
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1059,6 +1061,101 @@ func TestParityDelimiterBraceRegression(t *testing.T) {
 			}
 			if got := builtin.Command(tc.command); (got.Outcome == Allow) != (tc.want == 0) {
 				t.Errorf("Go verdict: %+v, want rc=%d", got, tc.want)
+			}
+		})
+	}
+}
+
+// heredocFeedCases loads the shared acceptance rows without executing their commands.
+func heredocFeedCases(t *testing.T) []struct {
+	Name, Command string
+	Want          int
+} {
+	t.Helper()
+	data, err := os.ReadFile("testdata/heredoc-consumers.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name, Command string
+		Want          int
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	return cases
+}
+
+// TestParityEvasionHeredocFeed checks consumer ownership in both policy implementations.
+func TestParityEvasionHeredocFeed(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	for _, tc := range heredocFeedCases(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.Command}})
+			got := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
+			want := tc.Want / 2
+			t.Logf("canonical rc=%d want=%d", got.exit, want)
+			if got.exit != want {
+				t.Errorf("canonical rc=%d want=%d: %s", got.exit, want, got.stderr)
+			}
+		})
+	}
+}
+
+// TestParityEvasionHeredocConsumers compares the canonical literal table with Go policy.
+func TestParityEvasionHeredocConsumers(t *testing.T) {
+	data, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, text, ok := strings.Cut(string(data), "HEREDOC_CONSUMERS = {\n")
+	body, _, closed := strings.Cut(text, "}\n")
+	if !ok || !closed {
+		t.Fatal("consumer table missing")
+	}
+	entries := regexp.MustCompile(`(?m)^    "([^"]+)": "([^"]+)",$`)
+	got := map[string]string{}
+	for _, pair := range entries.FindAllStringSubmatch(body, len(body)) {
+		got[pair[1]] = pair[2]
+	}
+	if !maps.Equal(got, HeredocConsumers()) {
+		t.Errorf("consumer table differs: %v", got)
+	}
+	var quoted []string
+	for _, option := range admissionWrappers["env"].values {
+		quoted = append(quoted, strconv.Quote(option))
+	}
+	if want := "values = (" + strings.Join(quoted, ", ") + ")"; !strings.Contains(string(data), want) {
+		t.Errorf("env value-option arities differ: want %s", want)
+	}
+}
+
+// TestParityEvasionHeredocConsumerMutants proves each canonical ownership barrier matters.
+func TestParityEvasionHeredocConsumerMutants(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	data, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := regexp.MustCompile(`(?s)HEREDOC_CONSUMERS = \{.*?\}\n`)
+	for _, tc := range []struct {
+		name, replacement, command string
+		want                       int
+	}{
+		{"empty", "HEREDOC_CONSUMERS = {}\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
+		{"data as shells", `HEREDOC_CONSUMERS = {"*": "shell"}` + "\n", "git commit -F - <<'EOF'\ngit commit -n -m x\nEOF", 1},
+		{"unknown as data", `HEREDOC_CONSUMERS = {"*": "data"}` + "\n", "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := filepath.Join(t.TempDir(), "mutant.py")
+			if err := os.WriteFile(script, table.ReplaceAllLiteral(data, []byte(tc.replacement)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
+			got := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
+			t.Logf("mutant rc=%d want=%d", got.exit, tc.want)
+			if got.exit != tc.want {
+				t.Errorf("mutant rc=%d want=%d: %s", got.exit, tc.want, got.stderr)
 			}
 		})
 	}

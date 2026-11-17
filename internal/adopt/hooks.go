@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -430,6 +431,7 @@ is deliberately not part of lefthook.yml.
 import json
 import os
 import re
+import shlex
 import sys
 
 MAX_INPUT_BYTES = {{MAX_INPUT_BYTES}}
@@ -515,7 +517,7 @@ def join_line_continuations(command):
     return re.sub(r"\\\r?\n", " ", command)
 
 
-{{COMMAND_SEGMENTS}}# The git rule with an option run (the short skip flag rule) is searched once per run (#1283).
+{{HEREDOC_CONSUMERS}}{{COMMAND_SEGMENTS}}# The git rule with an option run (the short skip flag rule) is searched once per run (#1283).
 # re retries a rule at every git it finds, and a git inside an option token (-git, --x=git,
 # -C dir/git) starts at a boundary of the run an earlier git already walked: each retry walked
 # the rest of that run again, quadratic in the line. A start at a walked boundary reaches the
@@ -569,8 +571,9 @@ def check_command(command):
         raise Blocked(INVALID_INPUT_REFUSAL + str(error)) from error
     judged = without_read_only_words(command)
     for pattern, refusal in RULES:
-        text = judged if pattern in READ_ONLY_EXEMPT else command
-        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_1):
+        exempt = pattern in READ_ONLY_EXEMPT
+        text = judged if exempt else command
+        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_1, exempt):
             reason = (refusal + pattern).encode()[:MAX_REASON_BYTES]
             raise Blocked(reason.decode(errors="ignore"))
 
@@ -607,6 +610,9 @@ def command_segments(command, short_pattern):
         if index >= len(queue):
             break
         spans, nested = scan_shell_input(queue[index], short_pattern)
+        if spans and not queue[index][1]:
+            text, veto = spans[0]
+            spans[0] = (text, veto, queue[index][0])
         parts.extend(spans)
         queue.extend(nested)
         if len(queue) > len(command) + 1:
@@ -631,12 +637,13 @@ def scan_shell_input(source, short_pattern):
     if spans.documents:
         raise ValueError("invalid shell command: unterminated here-document")
     spans.nested.extend((execution, False) for execution in spans.word_executions)
+    spans.feed_inputs()
     return [], spans.nested
 
 
 def scan_command_spans(command, short_pattern):
     """Mask data operands while collecting executable message substitutions."""
-    if not any(ch in command for ch in "{}") and not commit_command(
+    if not any(ch in command for ch in "{}<") and not commit_command(
         command, short_pattern
     ):
         return [(command, bool(re.search(READ_ONLY_VETO, command)))], []
@@ -650,6 +657,8 @@ def scan_command_spans(command, short_pattern):
         raise ValueError("invalid shell command: unbalanced shell stack")
     if spans.documents:
         raise ValueError("invalid shell command: unterminated here-document")
+    spans.consumer_boundary(len(command), len(command), False)
+    spans.feed_inputs()
     if spans.whole:
         return [("".join(spans.judged), True)], spans.nested
     return spans.parts, spans.nested
@@ -701,6 +710,9 @@ class CommandSpans:
         r"\$(?:@|\{(?:@|!?[A-Za-z_][A-Za-z0-9_]*\[@\]|![A-Za-z_][A-Za-z0-9_]*@\}))"
     )
     literal_pattern = re.compile(r'[^"\\$\x60\n]+')
+    consumer_token = re.compile(
+        r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"[^\"\\$\x60]*\"|\\[^\n])+"
+    )
     assignment_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
     def __init__(self, command, short_pattern):
@@ -720,6 +732,9 @@ class CommandSpans:
         self.command_word_seen = False
         self.git_command = ""
         self.word_executions, self.nested = [], []
+        self.consumer_frames = [([[0, 0]], True)]
+        self.feeds, self.here_string = [], None
+        self.document_end = 0
 
     def top(self):
         """Return the innermost quote or substitution terminator."""
@@ -729,6 +744,13 @@ class CommandSpans:
         """Bound simultaneously open lexical frames; fail closed at the limit."""
         if len(self.stack) == self.nesting_limit:
             raise ValueError("invalid shell command: nesting bound exceeded: 16")
+        frame = self.consumer_frames[-1]
+        if closer != '"':
+            stages, data = frame
+            start, end = stages[-1][0], self.position
+            mode = self.consumer_mode(self.command[start:end], False)
+            frame = ([[self.position, self.position]], data and mode != "shell")
+        self.consumer_frames.append(frame)
         self.stack.append(closer)
         return True
 
@@ -814,6 +836,9 @@ class CommandSpans:
             return
         start = self.word_start
         word = self.command[start:end]
+        if self.here_string is not None:
+            self.feeds.append((self.here_string, shlex.split(word)[0], False))
+            self.here_string = None
         self.enter_git_command(word, end)
         data = self.next_data or self.redirect_data
         self.mask_word(word, end)
@@ -895,6 +920,9 @@ class CommandSpans:
 
     def close_frame(self):
         """Retain executable bodies for independent iterative command scans."""
+        if self.top() != '"':
+            self.consumer_boundary(self.position, self.position, False)
+        self.consumer_frames.pop()
         if len(self.stack) == self.execution_depth:
             start, end = self.execution_start, self.position
             self.word_executions.append(self.command[start:end])
@@ -983,13 +1011,95 @@ class CommandSpans:
         return True
 
     def document_data(self, document, start):
-        """Exclude body text while keeping executable expansions available."""
-        position = self.position
-        body = self.command[start:position]
+        """Mask raw bodies and retain them for consumer-aware scanning."""
+        end = self.document_end
+        body = self.command[start:end]
+        self.feeds.append((document, body, document[4]))
         self.mask(start, self.position)
-        if document[4] and any(ch in body for ch in "$\x60"):
-            self.word_expansion = True
-            self.nested.append((body, True))
+
+    def consumer_mode(self, text, unknown=True):
+        """Classify stdin conservatively; only named shells execute argument output."""
+        fallback = HEREDOC_CONSUMERS.get("*", "") if unknown else ""
+        environment = value = False
+        for _ in range(len(text)):
+            text = text.lstrip(" \t")
+            match = self.consumer_token.match(text)
+            if not match:
+                break
+            end = match.end()
+            text = text[end:]
+            word = shlex.split(match[0])[0]
+            if value:
+                value = False
+                continue
+            if environment and word.startswith("-"):
+                value, known = self.consumer_env_option(word)
+                if not known:
+                    return HEREDOC_CONSUMERS.get("*", "")
+                continue
+            if self.assignment_pattern.match(word):
+                continue
+            name = word.rsplit("/", 1)[-1]
+            if name != "env":
+                return HEREDOC_CONSUMERS.get(name, fallback)
+            environment = True
+        return fallback
+
+    def consumer_env_option(self, word):
+        """Mirror admission's env value arities; unknown options fail closed."""
+        if word in ("-", "--", "-i", "--ignore-environment"):
+            return False, True
+        values = ("-u", "--unset", "-C", "--chdir")
+        option, attached, _ = word.partition("=")
+        if option in values:
+            return not attached, True
+        if len(word) > 2 and word[:2] in values:
+            return False, True
+        return False, False
+
+    def consumer_boundary(self, end, next_position, pipeline):
+        """Seal stages while retaining downstream readers for pending feeds."""
+        stages, data = self.consumer_frames[-1]
+        if end < stages[-1][0]:
+            return
+        stages[-1][1] = end
+        if pipeline:
+            stages.append([next_position, next_position])
+        else:
+            self.consumer_frames[-1] = ([[next_position, next_position]], data)
+
+    def feed_document(self):
+        """Bind stdin to its stage before following pipeline readers are known."""
+        frame = self.consumer_frames[-1]
+        return (
+            "",
+            False,
+            len(self.parts),
+            len(self.stack),
+            False,
+            frame,
+            len(frame[0]) - 1,
+        )
+
+    def document_code(self, document):
+        """Follow pipeline readers and enclosing substitution output ownership."""
+        stages, data = document[5]
+        if not data:
+            return True
+        first = document[6]
+        for start, end in stages[first:]:
+            if self.consumer_mode(self.command[start:end]) == "shell":
+                return True
+        return False
+
+    def feed_inputs(self):
+        """Scan shell-fed bodies as commands and data expansions as substitutions."""
+        for document, body, expandable in self.feeds:
+            if self.document_code(document):
+                self.nested.append((body, False))
+            elif expandable and any(ch in body for ch in "$\x60"):
+                self.word_expansion = True
+                self.nested.append((body, True))
 
     def document_step(self):
         """Treat document text as data; parse only executable substitutions."""
@@ -1010,9 +1120,14 @@ class CommandSpans:
         """Distinguish combined-output redirection from command boundaries."""
         if self.command.startswith("&>", self.position):
             return self.redirection()
+        width = 2 if self.command.startswith(("&&", "||", "|&"), self.position) else 1
+        pipeline = self.command[self.position] == "|" and not self.command.startswith(
+            "||", self.position
+        )
+        self.consumer_boundary(self.position, self.position + width, pipeline)
         if not self.stack:
-            self.split(self.position, self.position + 1)
-        self.position += 1
+            self.split(self.position, self.position + width)
+        self.position += width
         return True
 
     def single_quote(self):
@@ -1054,6 +1169,8 @@ class CommandSpans:
             self.finish_word(self.position)
         position = self.position
         rest = self.command[position:]
+        if rest.startswith("<<<"):
+            return self.here_string_feed()
         if rest.startswith("<<"):
             opener = 2 + rest.startswith("<<-")
             opener += len(rest[opener:]) - len(rest[opener:].lstrip(" \t"))
@@ -1070,6 +1187,8 @@ class CommandSpans:
                     len(self.parts),
                     len(self.stack),
                     not quoted,
+                    self.consumer_frames[-1],
+                    len(self.consumer_frames[-1][0]) - 1,
                 )
             )
             self.position += opener + width
@@ -1081,11 +1200,29 @@ class CommandSpans:
         )
         return True
 
+    def here_string_feed(self):
+        """Consume literal stdin words directly, retaining expanded words for scanning."""
+        document = self.feed_document()
+        self.position += 3
+        start = self.position
+        rest = self.command[start:]
+        self.position += len(rest) - len(rest.lstrip(" \t"))
+        start = self.position
+        word = self.consumer_token.match(self.command[start:])
+        if not word:
+            self.here_string, self.redirect_data = document, True
+            return True
+        self.feeds.append((document, shlex.split(word[0])[0], False))
+        self.mask(self.position, self.position + len(word[0]))
+        self.position += len(word[0])
+        return True
+
     def newline(self):
         """Consume bounded document bodies before ending an outer command."""
         depth = len(self.stack)
         has_document = any(doc[3] == depth for doc in self.documents)
         self.uncertain |= depth > 0 and not has_document
+        self.consumer_boundary(self.position, self.position + 1, False)
         self.position += 1
         if depth == 0:
             self.split(self.position - 1, self.position)
@@ -1098,6 +1235,7 @@ class CommandSpans:
             self.document_body(document[0], document[1], document[4])
             self.document_data(document, body_start)
         self.documents = remaining
+        self.consumer_frames[-1][0][-1][:] = [self.position, self.position]
         if depth == 0:
             self.start = self.position
         return True
@@ -1105,6 +1243,7 @@ class CommandSpans:
     def document_body(self, delimiter, tabs, expandable):
         """Consume bounded body lines; refuse unterminated or over-bound input."""
         logical = ""
+        logical_start = self.position
         while self.here_lines < self.here_line_limit:
             if self.position >= len(self.command):
                 break
@@ -1120,8 +1259,10 @@ class CommandSpans:
             if tabs:
                 logical = logical.lstrip("\t")
             if logical == delimiter:
+                self.document_end = logical_start
                 return True
             logical = ""
+            logical_start = self.position
         if self.here_lines == self.here_line_limit:
             raise ValueError(
                 "invalid shell command: here-document body-line bound exceeded: 256"
@@ -1129,17 +1270,32 @@ class CommandSpans:
         raise ValueError("invalid shell command: unterminated here-document")
 
 
-def search_command(pattern, text, segments, short_pattern):
+def search_command(pattern, text, segments, short_pattern, exempt=False):
     """Search short commit/am flags after each span's read-only exemption."""
     if pattern != short_pattern:
-        return search(pattern, text)
+        return search_full_inputs(pattern, text, segments, exempt)
     for segment in segments:
-        text, veto = segment
+        text, veto = segment[:2]
         if not veto:
             text = without_read_only_words(text)
         if "-" in text and search(
             pattern, join_line_continuations(text).replace("\n", " ")
         ):
+            return True
+    return False
+
+
+def search_full_inputs(pattern, text, segments, exempt):
+    """Apply every rule and prefilter to decoded executable stdin as well as raw text."""
+    if search(pattern, text):
+        return True
+    for segment in segments:
+        if len(segment) != 3:
+            continue
+        source = join_line_continuations(segment[2])
+        if exempt:
+            source = without_read_only_words(source)
+        if search(pattern, source):
             return True
     return False
 
@@ -1215,6 +1371,7 @@ func buildBlockEvasionPY() string {
 	}
 	return strings.NewReplacer(
 		"{{COMMAND_SEGMENTS}}", evasionCommandSegments,
+		"{{HEREDOC_CONSUMERS}}", interceptorConsumers(),
 		"{{MAX_INPUT_BYTES}}", strconv.Itoa(agenthook.MaxInputBytes),
 		"{{MAX_SCAN_CHARS}}", strconv.Itoa(agenthook.MaxScanChars),
 		"{{MAX_SCAN_LINE_CHARS}}", strconv.Itoa(agenthook.MaxScanLineChars),
@@ -1498,6 +1655,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"b9d9281e6f839fa81dd86d73935c990ef8026928219b667568e4faf1fbc46867": "stdin consumer ownership for here-documents and here-strings",
 	"e76074f216d1d60d63b0efab43643a1a42441732c36d59b29e4cc88d714c425d": "uncertain command and Git subcommand brace words fail closed",
 	"31c7c15c77717609cbfddb4f18ad5ab5a66166a325113eb740c7e45774ae87f6": "exact heredoc delimiter words, logical body lines and brace argument refusal",
 	"6c6f93592ceb1781566f9862c45fc645c59bf8d232074797c1f27ffd3d67691c": "refuse commit/am argument lists with runtime splitting",
@@ -1698,4 +1856,21 @@ func displayHookPath(repoPath, hookPath string) string {
 		return hookPath
 	}
 	return filepath.ToSlash(rel)
+}
+
+// interceptorConsumers renders the shared fail-closed stdin ownership table deterministically.
+func interceptorConsumers() string {
+	consumers := agenthook.HeredocConsumers()
+	names := make([]string, 0, len(consumers))
+	for name := range consumers {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	var result strings.Builder
+	result.WriteString("HEREDOC_CONSUMERS = {\n")
+	for _, name := range names {
+		result.WriteString("    " + strconv.Quote(name) + ": " + strconv.Quote(consumers[name]) + ",\n")
+	}
+	result.WriteString("}\n\n\n")
+	return result.String()
 }

@@ -3,6 +3,7 @@ package agenthook
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -326,18 +327,109 @@ var (
 	shellCommitPrefixPattern = regexp.MustCompile(`\A` + shellCommitPattern.String())
 )
 
+// heredocConsumers classifies literal stdin readers; the wildcard fails closed.
+var heredocConsumers = map[string]string{
+	"*": "shell", ".": "shell", "source": "shell", "eval": "shell",
+	"bash": "shell", "sh": "shell", "zsh": "shell", "dash": "shell", "ksh": "shell",
+	"git": "data", "cat": "data", "tee": "data", "head": "data", "tail": "data", "wc": "data",
+}
+
+// HeredocConsumers returns the shared stdin consumer table without exposing mutable policy.
+func HeredocConsumers() map[string]string { return maps.Clone(heredocConsumers) }
+
+// shellConsumerToken admits literal words only; expansion leaves the consumer unknown.
+var shellConsumerToken = regexp.MustCompile(`^(?:[^ \t\n'"\\$\x60;&|<>()]+|'[^']*'|"[^"\\$\x60]*"|\\[^\n])+`)
+
+// shellConsumer reads the first executable basename, skipping literal assignments and env.
+func shellConsumer(text string) string {
+	environment, value := false, false
+	for remaining := len(text); remaining > 0; remaining-- {
+		text = strings.TrimLeft(text, " \t")
+		word := shellConsumerToken.FindString(text)
+		if word == "" {
+			return ""
+		}
+		text = text[len(word):]
+		word = unquoteShellWord(word)
+		if value {
+			value = false
+			continue
+		}
+		if environment && strings.HasPrefix(word, "-") {
+			var known bool
+			value, known = shellConsumerEnvOption(word)
+			if !known {
+				return "*"
+			}
+			continue
+		}
+		if assignmentWord.MatchString(word) {
+			continue
+		}
+		name := word[strings.LastIndexByte(word, '/')+1:]
+		if name != "env" {
+			return name
+		}
+		environment = true
+	}
+	return ""
+}
+
+// shellConsumerEnvOption reuses admission's env value arities; unknown options fail closed.
+func shellConsumerEnvOption(word string) (value, known bool) {
+	if slices.Contains([]string{"-", "--", "-i", "--ignore-environment"}, word) {
+		return false, true
+	}
+	option, _, attached := strings.Cut(word, "=")
+	values := admissionWrappers["env"].values
+	if slices.Contains(values, option) {
+		return !attached, true
+	}
+	if len(word) > 2 && slices.Contains(values, word[:2]) {
+		return false, true
+	}
+	return false, false
+}
+
+// shellConsumerMode applies the wildcard rule to unknown literal or expanded consumers.
+func shellConsumerMode(text string) string {
+	if mode, ok := heredocConsumers[shellConsumer(text)]; ok {
+		return mode
+	}
+	return heredocConsumers["*"]
+}
+
+// shellConsumerStage retains mutable pipeline offsets until every reader is known.
+type shellConsumerStage struct{ start, end int }
+
+// shellConsumerFrame retains pipeline stages and whether their output remains data.
+type shellConsumerFrame struct {
+	stages []*shellConsumerStage
+	data   bool
+}
+
+// shellFeed defers stdin classification until the entire pipeline has been read.
+type shellFeed struct {
+	document   shellDocument
+	body       string
+	expandable bool
+}
+
 // shellDocument records a pending delimiter without interpreting its body as shell syntax.
 type shellDocument struct {
 	delimiter    string
 	tabs         bool
 	owner, depth int
 	expandable   bool
+	frame        *shellConsumerFrame
+	stage        int
 }
 
 // shellSpan retains the raw exemption veto after message data has been masked.
 type shellSpan struct {
 	text string
 	veto bool
+	raw  string
 }
 
 // shellInput distinguishes executable text from expandable here-document data.
@@ -367,6 +459,10 @@ type shellSpans struct {
 	executionStart, executionDepth int
 	wordExecutions                 []string
 	nested                         []shellInput
+	consumerFrames                 []*shellConsumerFrame
+	feeds                          []shellFeed
+	hereString                     *shellDocument
+	documentEnd                    int
 }
 
 // commandSegments isolates short-flag scans; uncertain syntax retains the whole-command scan.
@@ -377,6 +473,9 @@ func commandSegments(command string) ([]shellSpan, error) {
 		spans, nested, err := scanShellInput(queue[i])
 		if err != nil {
 			return nil, err
+		}
+		if len(spans) > 0 && !queue[i].document {
+			spans[0].raw = queue[i].text
 		}
 		parts = append(parts, spans...)
 		queue = append(queue, nested...)
@@ -407,6 +506,7 @@ func scanShellInput(input shellInput) ([]shellSpan, []shellInput, error) {
 	for _, execution := range s.wordExecutions {
 		s.nested = append(s.nested, shellInput{text: execution})
 	}
+	s.feedInputs()
 	return nil, s.nested, nil
 }
 
@@ -430,8 +530,8 @@ func (s *shellSpans) documentStep() bool {
 
 // scanCommandSpans masks data operands and refuses unknown commit/am argument lists.
 func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
-	if !strings.ContainsAny(command, "{}") && !shellCommitPattern.MatchString(joinLineContinuations(command)) {
-		return []shellSpan{{command, readOnlyVetoPattern.MatchString(command)}}, nil, nil
+	if !strings.ContainsAny(command, "{}<") && !shellCommitPattern.MatchString(joinLineContinuations(command)) {
+		return []shellSpan{{text: command, veto: readOnlyVetoPattern.MatchString(command)}}, nil, nil
 	}
 	s := shellSpans{command: command, judged: []byte(command), wordStart: -1, executionStart: -1,
 		whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command)}
@@ -450,8 +550,10 @@ func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 	if len(s.documents) > 0 {
 		return nil, nil, fmt.Errorf("invalid shell command: unterminated here-document")
 	}
+	s.consumerBoundary(len(command), len(command), false)
+	s.feedInputs()
 	if s.whole {
-		return []shellSpan{{string(s.judged), true}}, s.nested, nil
+		return []shellSpan{{text: string(s.judged), veto: true}}, s.nested, nil
 	}
 	return s.parts, s.nested, nil
 }
@@ -470,6 +572,13 @@ func (s *shellSpans) push(closer byte) bool {
 		s.err = fmt.Errorf("invalid shell command: nesting bound exceeded: %d", shellNestingLimit)
 		return false
 	}
+	frame := s.consumerFrame()
+	if closer != '"' {
+		stage := frame.stages[len(frame.stages)-1]
+		data := frame.data && heredocConsumers[shellConsumer(s.command[stage.start:s.position])] != "shell"
+		frame = newShellConsumerFrame(s.position, data)
+	}
+	s.consumerFrames = append(s.consumerFrames, frame)
 	s.stack = append(s.stack, closer)
 	return true
 }
@@ -574,6 +683,10 @@ func (s *shellSpans) finishWord(end int) {
 		return
 	}
 	word := s.command[s.wordStart:end]
+	if s.hereString != nil {
+		s.feeds = append(s.feeds, shellFeed{*s.hereString, unquoteShellWord(word), false})
+		s.hereString = nil
+	}
 	s.enterGitCommand(word, end)
 	data := s.nextData || s.redirectData
 	s.maskWord(word, end)
@@ -673,6 +786,10 @@ func (s *shellSpans) openExecution(closer byte, width int) bool {
 
 // closeFrame retains executable bodies for independent, iterative command scanning.
 func (s *shellSpans) closeFrame() {
+	if s.top() != '"' {
+		s.consumerBoundary(s.position, s.position, false)
+	}
+	s.consumerFrames = s.consumerFrames[:len(s.consumerFrames)-1]
 	if len(s.stack) == s.executionDepth {
 		s.wordExecutions = append(s.wordExecutions, s.command[s.executionStart:s.position])
 		s.executionStart, s.executionDepth = -1, 0
@@ -771,13 +888,68 @@ func (s *shellSpans) comment() bool {
 	return true
 }
 
-// documentData excludes body text while keeping executable expansions available to policy.
+// documentData masks raw bodies and retains them for consumer-aware scanning.
 func (s *shellSpans) documentData(document shellDocument, start int) {
-	body := s.command[start:s.position]
+	s.feeds = append(s.feeds, shellFeed{document, s.command[start:s.documentEnd], document.expandable})
 	s.mask(start, s.position)
-	if document.expandable && strings.ContainsAny(body, "$`") {
-		s.wordExpansion = true
-		s.nested = append(s.nested, shellInput{text: body, document: true})
+}
+
+// newShellConsumerFrame starts a pipeline with explicit output ownership.
+func newShellConsumerFrame(start int, data bool) *shellConsumerFrame {
+	return &shellConsumerFrame{[]*shellConsumerStage{{start, start}}, data}
+}
+
+// consumerFrame lazily initializes ownership for callers constructing the scanner directly.
+func (s *shellSpans) consumerFrame() *shellConsumerFrame {
+	if len(s.consumerFrames) == 0 {
+		s.consumerFrames = append(s.consumerFrames, newShellConsumerFrame(0, true))
+	}
+	return s.consumerFrames[len(s.consumerFrames)-1]
+}
+
+// consumerBoundary seals a stage, retaining downstream pipeline references for pending feeds.
+func (s *shellSpans) consumerBoundary(end, next int, pipeline bool) {
+	frame := s.consumerFrame()
+	stage := frame.stages[len(frame.stages)-1]
+	if end < stage.start {
+		return
+	}
+	stage.end = end
+	if pipeline {
+		frame.stages = append(frame.stages, &shellConsumerStage{next, next})
+	} else {
+		s.consumerFrames[len(s.consumerFrames)-1] = newShellConsumerFrame(next, frame.data)
+	}
+}
+
+// feedDocument binds stdin to its current stage before following pipeline readers are known.
+func (s *shellSpans) feedDocument() shellDocument {
+	frame := s.consumerFrame()
+	return shellDocument{frame: frame, stage: len(frame.stages) - 1}
+}
+
+// documentCode follows every downstream reader and the enclosing substitution consumer.
+func (s *shellSpans) documentCode(document shellDocument) bool {
+	if !document.frame.data {
+		return true
+	}
+	for _, stage := range document.frame.stages[document.stage:] {
+		if shellConsumerMode(s.command[stage.start:stage.end]) == "shell" {
+			return true
+		}
+	}
+	return false
+}
+
+// feedInputs scans shell-fed bodies as commands and expandable data as substitutions only.
+func (s *shellSpans) feedInputs() {
+	for _, feed := range s.feeds {
+		if s.documentCode(feed.document) {
+			s.nested = append(s.nested, shellInput{text: feed.body})
+		} else if feed.expandable && strings.ContainsAny(feed.body, "$`") {
+			s.wordExpansion = true
+			s.nested = append(s.nested, shellInput{text: feed.body, document: true})
+		}
 	}
 }
 
@@ -786,10 +958,16 @@ func (s *shellSpans) separator() bool {
 	if strings.HasPrefix(s.command[s.position:], "&>") {
 		return s.redirection()
 	}
-	if len(s.stack) == 0 {
-		s.split(s.position, s.position+1)
+	width := 1
+	if strings.HasPrefix(s.command[s.position:], "&&") || strings.HasPrefix(s.command[s.position:], "||") || strings.HasPrefix(s.command[s.position:], "|&") {
+		width = 2
 	}
-	s.position++
+	pipeline := s.command[s.position] == '|' && !strings.HasPrefix(s.command[s.position:], "||")
+	s.consumerBoundary(s.position, s.position+width, pipeline)
+	if len(s.stack) == 0 {
+		s.split(s.position, s.position+width)
+	}
+	s.position += width
 	return true
 }
 
@@ -814,7 +992,7 @@ func (s *shellSpans) split(end, next int) {
 	}
 	part := string(s.judged[s.start:end])
 	s.whole = s.whole || s.uncertain && shellCommitPattern.MatchString(joinLineContinuations(part))
-	s.parts = append(s.parts, shellSpan{part, readOnlyVetoPattern.MatchString(s.command[s.start:end])})
+	s.parts = append(s.parts, shellSpan{text: part, veto: readOnlyVetoPattern.MatchString(s.command[s.start:end])})
 	s.start = next
 	s.uncertain = false
 	s.nextData, s.redirectData = false, false
@@ -830,6 +1008,9 @@ func (s *shellSpans) redirection() bool {
 		s.finishWord(s.position)
 	}
 	rest := s.command[s.position:]
+	if strings.HasPrefix(rest, "<<<") {
+		return s.hereStringFeed()
+	}
 	if strings.HasPrefix(rest, "<<") {
 		opener := 2
 		tabs := strings.HasPrefix(rest, "<<-")
@@ -847,13 +1028,32 @@ func (s *shellSpans) redirection() bool {
 			s.err = fmt.Errorf("invalid shell command: pending here-document bound exceeded: %d", shellNestingLimit)
 			return false
 		}
-		s.documents = append(s.documents, shellDocument{delimiter, tabs, len(s.parts), len(s.stack), !quoted})
+		document := s.feedDocument()
+		document.delimiter, document.tabs = delimiter, tabs
+		document.owner, document.depth, document.expandable = len(s.parts), len(s.stack), !quoted
+		s.documents = append(s.documents, document)
 		s.position += opener + width
 		return true
 	}
 	redirect := shellRedirectPattern.FindString(rest)
 	s.position += len(redirect)
 	s.redirectData = len(s.stack) == 0 && !strings.ContainsAny(redirect, "0123456789-")
+	return true
+}
+
+// hereStringFeed consumes literal stdin words directly, retaining expanded words for scanning.
+func (s *shellSpans) hereStringFeed() bool {
+	document := s.feedDocument()
+	s.position += 3
+	s.position += len(s.command[s.position:]) - len(strings.TrimLeft(s.command[s.position:], " \t"))
+	word := shellConsumerToken.FindString(s.command[s.position:])
+	if word == "" {
+		s.hereString, s.redirectData = &document, true
+		return true
+	}
+	s.feeds = append(s.feeds, shellFeed{document, unquoteShellWord(word), false})
+	s.mask(s.position, s.position+len(word))
+	s.position += len(word)
 	return true
 }
 
@@ -865,6 +1065,7 @@ func (s *shellSpans) newline() bool {
 		hasDocument = hasDocument || document.depth == depth
 	}
 	s.uncertain = s.uncertain || depth > 0 && !hasDocument
+	s.consumerBoundary(s.position, s.position+1, false)
 	s.position++
 	if depth == 0 {
 		s.split(s.position-1, s.position)
@@ -882,6 +1083,8 @@ func (s *shellSpans) newline() bool {
 		s.documentData(document, bodyStart)
 	}
 	s.documents = remaining
+	frame := s.consumerFrame()
+	frame.stages[len(frame.stages)-1] = &shellConsumerStage{s.position, s.position}
 	if depth == 0 {
 		s.start = s.position
 	}
@@ -891,6 +1094,7 @@ func (s *shellSpans) newline() bool {
 // documentBody consumes at most shellHereLineLimit lines, including closing delimiters.
 func (s *shellSpans) documentBody(document shellDocument) bool {
 	logical := ""
+	logicalStart := s.position
 	for s.hereLines < shellHereLineLimit && s.position < len(s.command) {
 		s.hereLines++
 		line, _, found := strings.Cut(s.command[s.position:], "\n")
@@ -907,9 +1111,11 @@ func (s *shellSpans) documentBody(document shellDocument) bool {
 			logical = strings.TrimLeft(logical, "\t")
 		}
 		if logical == document.delimiter {
+			s.documentEnd = logicalStart
 			return true
 		}
 		logical = ""
+		logicalStart = s.position
 	}
 	s.err = fmt.Errorf("invalid shell command: unterminated here-document")
 	if s.hereLines == shellHereLineLimit {
@@ -927,7 +1133,7 @@ func shellContinuedLine(line string) bool {
 // matchesCommand applies segmentation only to the built-in short commit/am flag rule.
 func (r denyRule) matchesCommand(text string, segments []shellSpan) bool {
 	if r.source != shortSkipFlagRule || !r.readOnlyExempt {
-		return r.matches(text)
+		return r.matchesFullInputs(text, segments)
 	}
 	for _, segment := range segments {
 		text := segment.text
@@ -935,6 +1141,23 @@ func (r denyRule) matchesCommand(text string, segments []shellSpan) bool {
 			text = withoutReadOnlyWords(text)
 		}
 		if strings.Contains(text, "-") && r.matches(strings.ReplaceAll(joinLineContinuations(text), "\n", " ")) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesFullInputs judges decoded executable input with every rule and its own prefilter.
+func (r denyRule) matchesFullInputs(text string, segments []shellSpan) bool {
+	if containsRequiredLiteral(text, r.requiredAny) && r.matches(text) {
+		return true
+	}
+	for _, segment := range segments {
+		input := joinLineContinuations(segment.raw)
+		if r.readOnlyExempt {
+			input = withoutReadOnlyWords(input)
+		}
+		if input != "" && containsRequiredLiteral(input, r.requiredAny) && r.matches(input) {
 			return true
 		}
 	}
@@ -1081,7 +1304,7 @@ func (p *Policy) commandRulesIn(ctx context.Context, command, workDir string) Ve
 		if rule.readOnlyExempt {
 			text = judged
 		}
-		if containsRequiredLiteral(text, rule.requiredAny) && rule.matchesCommand(text, segments) {
+		if rule.matchesCommand(text, segments) {
 			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
 		}
 	}

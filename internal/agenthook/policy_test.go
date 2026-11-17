@@ -278,3 +278,50 @@ func TestPolicyDelimiterBraceRegression(t *testing.T) {
 		})
 	}
 }
+
+// TestPolicyEvasionHeredocFeed checks shell-fed code and data-fed controls.
+func TestPolicyEvasionHeredocFeed(t *testing.T) {
+	builtin := policy(t)
+	for _, tc := range heredocFeedCases(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			got := builtin.Command(tc.Command)
+			rc := 0
+			if got.Outcome != Allow {
+				rc = 2
+			}
+			t.Logf("policy rc=%d want=%d", rc, tc.Want)
+			if rc != tc.Want {
+				t.Errorf("policy rc=%d want=%d: %s", rc, tc.Want, got.Reason)
+			}
+		})
+	}
+}
+
+// TestPolicyEvasionHeredocConsumerMutants proves each Go ownership barrier changes a verdict.
+func TestPolicyEvasionHeredocConsumerMutants(t *testing.T) {
+	original := heredocConsumers
+	t.Cleanup(func() { heredocConsumers = original })
+	for _, tc := range []struct {
+		name    string
+		table   map[string]string
+		command string
+		want    int
+	}{
+		{"empty", map[string]string{}, "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
+		{"data as shells", map[string]string{"*": "shell"}, "git commit -F - <<'EOF'\ngit commit -n -m x\nEOF", 2},
+		{"unknown as data", map[string]string{"*": "data"}, "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			heredocConsumers = tc.table
+			got := policy(t).Command(tc.command)
+			rc := 0
+			if got.Outcome != Allow {
+				rc = 2
+			}
+			t.Logf("mutant rc=%d want=%d", rc, tc.want)
+			if rc != tc.want {
+				t.Errorf("mutant rc=%d want=%d: %s", rc, tc.want, got.Reason)
+			}
+		})
+	}
+}

@@ -892,14 +892,27 @@ with their command, so `git commit -m x 2>&1 | tail -n 1` passes while
 `TestEmittedEvasionCommitSegments`).
 
 Message and file operands (`-m`, `--message`, `-F`, `--file`, `-C`, `-c`, `--author`,
-`--date`, including attached values) and here-document bodies are data, excluded from
-short-option matching. Both `git commit -m 'mention -n here'` and a `git commit -F -`
+`--date`, including attached values) and here-document bodies consumed as data are excluded
+from short-option matching. Both `git commit -m 'mention -n here'` and a `git commit -F -`
 here-document containing `-n` pass. Executable substitutions in those operands are still
 inspected: `git commit -m "$(git commit -n)"` refuses. A word-starting shell comment ends
 at the newline; `git commit -m x # author's note` passes without treating its apostrophe
 as a quote (the same parity tests).
 
-A here-document body counts as data only up to the line the shell itself ends it on. The
+Here-documents and here-strings follow their consumers. Shell input (`bash`, `sh`, `zsh`,
+`dash`, `ksh`, `sh -s`, absolute paths and `env` prefixes), `source` or `.` on `/dev/stdin`,
+and bodies piped through `cat` into a shell receive the full prohibited-flag scan. The same
+rule applies when `bash -c` or `eval` consumes a substitution containing the body. Unknown
+stdin consumers, including `python3 -`, receive the shell rule and fail closed. The shared
+`HeredocConsumers` / `HEREDOC_CONSUMERS` table classifies `git`, `cat`, `tee`, `head`,
+`tail` and `wc` as data readers; a downstream shell or enclosing executable substitution
+changes the body to code. Commit messages read with `-F -`, message substitutions, and
+`cat` or `tee` writing a file remain data; executable expansions in unquoted data still
+receive independent scans (`TestPolicyEvasionHeredocFeed`, `TestParityEvasionHeredocFeed`,
+`TestEmittedEvasionHeredocFeed`). Consumer-table parity and the corresponding
+`HeredocConsumerMutants` tests pin both classifications and the unknown-reader default.
+
+A data here-document ends only at the line the shell itself ends it on. The
 delimiter word is read as the shell reads it (`util.ShellHereDocDelimiter`): quote removal
 keeps literal quotes inside the quoted word, so `cat <<'"EOF"'` ends at a line `"EOF"`, and
 in an unquoted here-document backslash-newline lines are joined before the comparison, so

@@ -1,6 +1,9 @@
 # Default: let git handle text normally.
 * text=auto
 
+# Shared hook-consumer regression corpus keeps identical checkout bytes.
+internal/agenthook/testdata/heredoc-consumers.json text eol=lf
+
 # This policy file carries exact LF-only rules below. Pin its own checkout bytes so
 # those rules remain machine-verifiable when core.autocrlf=true on Windows.
 .gitattributes text eol=lf
