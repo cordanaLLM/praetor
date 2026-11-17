@@ -274,6 +274,7 @@ type forgeStub struct {
 	rulesets        map[int]map[string]any
 	labels          map[string]map[string]any
 	repo            map[string]any
+	runs            map[string]map[string]any
 	legacy          map[string]any
 	legacyStatus    int
 	rulesStatus     int
@@ -283,6 +284,7 @@ type forgeStub struct {
 
 const forgeStubRepo = "/repos/acme/widgets/"
 
+// handler returns an HTTP handler function that routes incoming test requests to stubbed forge endpoints.
 func (s *forgeStub) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
@@ -324,10 +326,21 @@ func (s *forgeStub) handler() http.HandlerFunc {
 			s.serveBranchRules(w, strings.TrimPrefix(resource, "rules/branches/"))
 		case strings.HasPrefix(resource, "branches/") && strings.HasSuffix(resource, "/protection"):
 			s.serveLegacyProtection(w)
+		case strings.HasPrefix(resource, "actions/workflows/") && strings.HasSuffix(resource, "/runs"):
+			s.serveWorkflowRuns(w, strings.TrimSuffix(strings.TrimPrefix(resource, "actions/workflows/"), "/runs"))
 		default:
 			s.serveRuleset(w, r.Method, strings.TrimPrefix(resource, "rulesets"), body)
 		}
 	}
+}
+
+// serveWorkflowRuns serves stubbed GitHub Actions workflow run pages for the given workflow name.
+func (s *forgeStub) serveWorkflowRuns(w http.ResponseWriter, workflow string) {
+	if page, ok := s.runs[workflow]; ok {
+		stubRespond(w, http.StatusOK, page)
+		return
+	}
+	stubRespond(w, http.StatusNotFound, map[string]any{"message": "Not Found"})
 }
 
 // serveBranchRules lists the rules of every stored active ruleset whose ref_name includes

@@ -256,8 +256,19 @@ Nothing is compared, and the audit says why, in four cases:
 | The manifest presence cannot be read, such as `origin/<default branch>` absent from the checkout | `[INFO]` naming the error, and the comparison runs: an unreadable presence never skips it (`TestAuditLiveBranchProtection_Negative_ManifestPresenceErrorDoesNotSkip`). |
 
 The declared status checks come from the checkout's workflows, using the same rendering as
-`plan --remote` and ruleset apply (`auditProtectionTarget`, `liveProtectionTarget`). A new
-required check missing on the forge fails the audit, even before it reaches the default branch
+`plan --remote` and ruleset apply (`auditProtectionTarget`, `liveProtectionTarget`), less any
+declared check that the default branch does not report yet (`forge.UnreportedStatusContexts`).
+With a workflow-run report (`forge.AuditWorkflowRunHealth`), a check whose workflow has no
+completed run on the default branch is not compared yet
+(`TestAuditLiveBranchProtection_UnreportedDefaultBranchChecks`,
+`TestAuditLiveBranchProtection_Boundary_NoOriginMainForgeReadDecides`). A check whose workflow
+the report shows with a completed run on the default branch is compared even when a stale
+`origin/<default branch>` lacks it (`TestAuditLiveBranchProtection_StaleOriginMainReportedChecks`).
+Without a report, `origin/<default branch>` alone decides: a check absent from a workflow that
+removed no existing check is not compared yet (`TestAuditProtectionTarget_CommitOnlyUnreportedChecks`).
+When HEAD shares no ancestor with `origin/<default branch>`, the audit skips rename discovery
+and still compares with the report (`TestAuditLiveBranchProtection_NoCommonAncestorUnreportedChecks`).
+A check that the default branch does report and the live protection lacks fails the audit
 (`TestAuditLiveBranchProtection_Negative_NewCheckWithoutRenameFails`).
 
 One pending context rename may pass while the forge still requires its old name. The fetched

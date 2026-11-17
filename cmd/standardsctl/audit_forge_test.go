@@ -658,17 +658,167 @@ func TestAuditLiveBranchProtection_StaleHeadDoesNotProveRename(t *testing.T) {
 	mustErrContain(t, err, "missing: REUSE lint")
 }
 
-// A newly declared requirement without a renamed predecessor remains a real mismatch.
+// A newly declared requirement on the default branch without a renamed predecessor remains a real mismatch.
 func TestAuditLiveBranchProtection_Negative_NewCheckWithoutRenameFails(t *testing.T) {
 	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
 	f := protectedFixture(t, false, "", stub)
-	f.recordOriginMain(t)
 	f.commitWorkflows(t, map[string]string{"lint.yml": prJobWorkflow("Lint")})
+	f.recordOriginMain(t)
 	out, err := f.audit(t)
 	mustErrContain(t, err, "Required status checks: declared 2, live 1 of 2 required; missing: Lint")
 	if strings.Contains(out, "pending required status check rename") {
 		t.Fatal("an added check was mistaken for a rename")
 	}
+}
+
+const codeqlMatrixWorkflow = "on:\n  push:\n    branches: [main]\n  pull_request:\njobs:\n  analyze:\n    name: analyze (${{ matrix.language }})\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        language: [python, actions]\n    steps:\n      - run: make\n"
+
+// completedMainRunsPage returns a forge API payload containing one completed successful workflow run on main.
+func completedMainRunsPage() map[string]any {
+	return map[string]any{
+		"total_count": 1,
+		"workflow_runs": []any{map[string]any{
+			"run_number": 1, "event": "push", "head_branch": "main",
+			"status": "completed", "conclusion": "success",
+			"created_at": "2026-11-02T05:00:00Z", "html_url": "https://forge.test/r/1",
+		}},
+	}
+}
+
+// TestAuditLiveBranchProtection_UnreportedDefaultBranchChecks excuses workflows absent
+// from the forge default branch, but requires protection for checks already reported there.
+func TestAuditLiveBranchProtection_UnreportedDefaultBranchChecks(t *testing.T) {
+	t.Run("positive state B forge default branch lacks workflow", func(t *testing.T) {
+		stub := &forgeStub{
+			rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+			runs:     map[string]map[string]any{"ci.yml": completedMainRunsPage()},
+		}
+		f := protectedFixture(t, false, "", stub)
+		f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+		f.recordOriginMain(t)
+		out, err := f.audit(t)
+		if err != nil {
+			t.Fatalf("state B failed the audit: %v\n%s", err, out)
+		}
+		mustContain(t, out,
+			"[INFO] Workflow codeql.yml: the forge has no workflow of this file name; it is not on the default branch yet",
+			"[INFO] Live branch protection of main: status checks compared with the ones origin/main (",
+			"[INFO] Live branch protection of main: not compared yet, as origin/main does not report them: analyze (python), analyze (actions). Once they are on main, 'praetorctl sync --remote' requires them.",
+			"[PASS] Live branch protection of main compared with the forge")
+	})
+
+	t.Run("negative reported check missing from ruleset fails", func(t *testing.T) {
+		stub := &forgeStub{
+			rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+			runs: map[string]map[string]any{
+				"ci.yml":     completedMainRunsPage(),
+				"codeql.yml": completedMainRunsPage(),
+			},
+		}
+		f := protectedFixture(t, false, "", stub)
+		f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+		f.recordOriginMain(t)
+		out, err := f.audit(t)
+		mustErrContain(t, err, "Required status checks: declared 3, live 1 of 3 required; missing: analyze (python), analyze (actions)")
+		if strings.Contains(out, "not compared yet") {
+			t.Fatalf("a check reported on main was excused as not compared yet:\n%s", out)
+		}
+	})
+}
+
+// TestAuditLiveBranchProtection_StaleOriginMainReportedChecks pins state A: positive forge
+// runs override a stale origin/main that lacks the workflow, exposing missing protection.
+func TestAuditLiveBranchProtection_StaleOriginMainReportedChecks(t *testing.T) {
+	stub := &forgeStub{
+		rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+		runs: map[string]map[string]any{
+			"ci.yml":     completedMainRunsPage(),
+			"codeql.yml": completedMainRunsPage(),
+		},
+	}
+	f := protectedFixture(t, false, "", stub)
+	f.recordOriginMain(t)
+	f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+	out, err := f.audit(t)
+	mustErrContain(t, err, "Required status checks: declared 3, live 1 of 3 required; missing: analyze (python), analyze (actions)")
+	if strings.Contains(out, "not compared yet") {
+		t.Fatalf("reported checks were excused by stale origin/main:\n%s", out)
+	}
+}
+
+// TestAuditProtectionTarget_CommitOnlyUnreportedChecks preserves commit-only allowances
+// when no forge workflow-run report is available.
+func TestAuditProtectionTarget_CommitOnlyUnreportedChecks(t *testing.T) {
+	f := protectedFixture(t, false, "", &forgeStub{})
+	f.recordOriginMain(t)
+	f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+	manifest, err := config.LoadManifest(f.manifestPath)
+	if err != nil {
+		t.Fatalf("load fixture manifest: %v", err)
+	}
+	target, notes, err := auditProtectionTarget(t.Context(), f.dir, manifest, declaredProtection(false))
+	if err != nil || !slices.Equal(target.contexts, []string{"CI"}) {
+		t.Fatalf("commit-only contexts = %v, %v; want [CI]", target.contexts, err)
+	}
+	mustContain(t, strings.Join(notes, "\n"), "not compared yet, as origin/main does not report them: analyze (python), analyze (actions)")
+}
+
+// TestAuditLiveBranchProtection_NoCommonAncestorUnreportedChecks keeps run evidence when
+// unrelated history prevents rename discovery, while retaining the informational note.
+func TestAuditLiveBranchProtection_NoCommonAncestorUnreportedChecks(t *testing.T) {
+	stub := &forgeStub{
+		rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+		runs:     map[string]map[string]any{"ci.yml": completedMainRunsPage()},
+	}
+	f := protectedFixture(t, false, "", stub)
+	f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+	commit, err := runFixtureGit(t, f.dir, f.gitEnv, "commit-tree", "HEAD^{tree}", "-m", "unrelated default branch")
+	if err != nil {
+		t.Fatalf("create unrelated default branch: %v (%s)", err, commit)
+	}
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "update-ref", "refs/remotes/origin/main", strings.TrimSpace(commit)); err != nil {
+		t.Fatalf("record unrelated origin/main: %v (%s)", err, out)
+	}
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("unreported checks in unrelated checkout failed: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"[INFO] Pending status check renames not evaluated: no common ancestor of HEAD and origin/main",
+		"not compared yet, as origin/main does not report them: analyze (python), analyze (actions)",
+		"[PASS] Live branch protection of main compared with the forge")
+}
+
+// TestAuditLiveBranchProtection_Boundary_NoOriginMainForgeReadDecides pins the boundary where origin/main is missing from the checkout and forge workflow runs decide whether checks are excused.
+func TestAuditLiveBranchProtection_Boundary_NoOriginMainForgeReadDecides(t *testing.T) {
+	unreported := &forgeStub{
+		rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+		runs:     map[string]map[string]any{"ci.yml": completedMainRunsPage()},
+	}
+	f := protectedFixture(t, false, "", unreported)
+	f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("boundary without origin/main and workflow absent on forge failed: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"[INFO] Workflow codeql.yml: the forge has no workflow of this file name; it is not on the default branch yet",
+		"[INFO] Live branch protection of main: origin/main is not in this checkout, so status checks are compared with the ones the forge default branch (main) reports.",
+		"[INFO] Live branch protection of main: not compared yet, as origin/main does not report them: analyze (python), analyze (actions). Once they are on main, 'praetorctl sync --remote' requires them.",
+		"[PASS] Live branch protection of main compared with the forge")
+
+	reported := &forgeStub{
+		rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+		runs: map[string]map[string]any{
+			"ci.yml":     completedMainRunsPage(),
+			"codeql.yml": completedMainRunsPage(),
+		},
+	}
+	f2 := protectedFixture(t, false, "", reported)
+	f2.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+	out, err = f2.audit(t)
+	mustErrContain(t, err, "Required status checks: declared 3, live 1 of 3 required; missing: analyze (python), analyze (actions)")
+	mustContain(t, out, "[INFO] Live branch protection of main: origin/main is not in this checkout, so status checks are compared with the ones the forge default branch (main) reports.")
 }
 
 // A deleted requirement on the fetched base no longer defines the declaration at HEAD.
@@ -854,14 +1004,10 @@ func TestAuditLiveBranchProtection_Boundary_UnpushedDefaultBranchIsNotCompared(t
 	}
 }
 
-// An absent base workflow prevents a rename allowance, without changing declared contexts.
-func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t *testing.T) {
-	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
-	f := protectedFixture(t, false, "", stub)
-	f.commitWorkflows(t, map[string]string{"api.yml": prJobWorkflow("API")})
-	f.recordOriginMain(t)
-	f.commitWorkflows(t, map[string]string{"api.yml": ""})
-	object, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "origin/main:.github/workflows/api.yml")
+// removeOriginMainWorkflowBlob removes a git blob object belonging to an origin/main workflow file to simulate missing git objects.
+func (f *auditFixture) removeOriginMainWorkflowBlob(t *testing.T, name string) {
+	t.Helper()
+	object, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "origin/main:.github/workflows/"+name)
 	if err != nil {
 		t.Fatalf("resolve the workflow object: %v (%s)", err, object)
 	}
@@ -873,6 +1019,32 @@ func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t
 	if err := os.Remove(loose); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// divergeOriginMainWithoutBlob sets up origin/main on a diverged commit that references a missing workflow blob.
+func (f *auditFixture) divergeOriginMainWithoutBlob(t *testing.T, headWorkflows map[string]string) {
+	t.Helper()
+	base, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.commitWorkflows(t, map[string]string{"diverged.yml": prJobWorkflow("Diverged")})
+	f.recordOriginMain(t)
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "reset", "--hard", strings.TrimSpace(base)); err != nil {
+		t.Fatalf("reset to base: %v (%s)", err, out)
+	}
+	f.commitWorkflows(t, headWorkflows)
+	f.removeOriginMainWorkflowBlob(t, "diverged.yml")
+}
+
+// An absent base or tip workflow prevents a rename allowance or unreported check exclusion, without changing declared contexts.
+func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t *testing.T) {
+	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
+	f := protectedFixture(t, false, "", stub)
+	f.commitWorkflows(t, map[string]string{"api.yml": prJobWorkflow("API")})
+	f.recordOriginMain(t)
+	f.commitWorkflows(t, map[string]string{"api.yml": ""})
+	f.removeOriginMainWorkflowBlob(t, "api.yml")
 	out, err := f.audit(t)
 	if err != nil {
 		t.Fatalf("an absent default branch workflow failed the audit: %v\n%s", err, out)
@@ -880,6 +1052,38 @@ func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t
 	mustContain(t, out, "[INFO] Pending status check renames not evaluated: origin/main (workflow api.yml at commit ",
 		"declared checks remain compared.",
 		"[PASS] Live branch protection of main compared with the forge")
+
+	for _, tc := range []struct {
+		name, missing string
+		base, head    map[string]string
+		live          []string
+	}{
+		{"positive rename tip blob absent", "", map[string]string{"licence.yml": prJobWorkflow("REUSE lint")},
+			map[string]string{"licence.yml": prJobWorkflow("Licence / REUSE lint")}, []string{"CI", "Licence / REUSE lint"}},
+		{"negative rename tip blob grants no window", "missing: Licence / REUSE lint", map[string]string{"licence.yml": prJobWorkflow("REUSE lint")},
+			map[string]string{"licence.yml": prJobWorkflow("Licence / REUSE lint")}, []string{"CI", "REUSE lint"}},
+		{"positive unreported tip blob absent", "", nil,
+			map[string]string{"api.yml": prJobWorkflow("API")}, []string{"CI", "API"}},
+		{"negative unreported tip blob keeps check compared", "missing: API", nil,
+			map[string]string{"api.yml": prJobWorkflow("API")}, []string{"CI"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := protectedFixture(t, false, "", &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), tc.live, "active")})
+			if tc.base != nil {
+				fx.commitWorkflows(t, tc.base)
+			}
+			fx.divergeOriginMainWithoutBlob(t, tc.head)
+			out, err := fx.audit(t)
+			mustContain(t, out, "[INFO] Pending status check renames not evaluated: origin/main (workflow diverged.yml at commit ",
+				"declared checks remain compared.")
+			if tc.missing == "" && err != nil {
+				t.Fatalf("absent tip workflow failed the audit: %v\n%s", err, out)
+			}
+			if tc.missing != "" {
+				mustErrContain(t, err, tc.missing)
+			}
+		})
+	}
 }
 
 // withQueueRuleset adds the live merge queue ruleset over includes (id 2) to rulesets.

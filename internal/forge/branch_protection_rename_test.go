@@ -6,6 +6,8 @@ package forge
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -105,5 +107,110 @@ func TestRequiredStatusContextRenames_FileChangeBoundary(t *testing.T) {
 				t.Fatalf("renames = %+v, %v; want %d", got, err, tc.want)
 			}
 		})
+	}
+}
+
+// TestUnreportedStatusContexts pins discovery of unreported status checks from a base commit or workflow run report.
+func TestUnreportedStatusContexts(t *testing.T) {
+	var missing context.Context
+	if _, err := UnreportedStatusContexts(missing, t.TempDir(), "HEAD", "acme/widgets", nil); err == nil {
+		t.Fatal("nil context accepted")
+	}
+	if _, err := UnreportedStatusContexts(t.Context(), t.TempDir(), "HEAD", "invalid", nil); err == nil {
+		t.Fatal("invalid repository accepted")
+	}
+	if got, err := UnreportedStatusContexts(t.Context(), t.TempDir(), "", "acme/widgets", nil); err != nil || len(got) != 0 {
+		t.Fatalf("empty commit and nil report = %v, %v; want empty", got, err)
+	}
+
+	root, base := committedWorkflowRepo(t, map[string]string{".github/workflows/ci.yml": prWorkflow("CI")})
+	writeWorkflowFixture(t, root, "codeql.yml", prWorkflow("analyze (python)"))
+	got, err := UnreportedStatusContexts(t.Context(), root, base, "acme/widgets", nil)
+	if err != nil || !slices.Equal(got, []string{"analyze (python)"}) {
+		t.Fatalf("unreported from commit = %v, %v; want [analyze (python)]", got, err)
+	}
+
+	for _, tc := range []struct {
+		health WorkflowHealth
+		want   []string
+	}{
+		{WorkflowUnknown, []string{"analyze (python)"}},
+		{WorkflowNeverRun, []string{"analyze (python)"}},
+		{WorkflowNoCompletedRun, []string{"analyze (python)"}},
+		{WorkflowHealthy, nil},
+	} {
+		t.Run(string(tc.health), func(t *testing.T) {
+			report := &WorkflowRunReport{Branch: "main", Findings: []WorkflowRunFinding{
+				{Workflow: "ci.yml", Health: WorkflowHealthy},
+				{Workflow: "codeql.yml", Health: tc.health},
+			}}
+			got, err := UnreportedStatusContexts(t.Context(), root, "", "acme/widgets", report)
+			if err != nil || !slices.Equal(got, tc.want) {
+				t.Fatalf("unreported from runs = %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnreportedStatusContexts_RunEvidenceOverridesCommit pins positive run precedence,
+// negative run evidence and absent report findings against a stale fetched commit.
+func TestUnreportedStatusContexts_RunEvidenceOverridesCommit(t *testing.T) {
+	root, base := committedWorkflowRepo(t, map[string]string{".github/workflows/ci.yml": prWorkflow("CI")})
+	writeWorkflowFixture(t, root, "codeql.yml", prWorkflow("analyze (python)"))
+	for _, tc := range []struct {
+		health WorkflowHealth
+		want   []string
+	}{
+		{WorkflowUnknown, []string{"analyze (python)"}},
+		{WorkflowNeverRun, []string{"analyze (python)"}},
+		{WorkflowNoCompletedRun, []string{"analyze (python)"}},
+		{WorkflowHealthy, nil},
+		{WorkflowFailing, nil},
+		{WorkflowUndecided, nil},
+		{WorkflowCalledOnly, nil},
+		{WorkflowSelf, nil},
+		{"absent finding", []string{"analyze (python)"}},
+	} {
+		t.Run(string(tc.health), func(t *testing.T) {
+			report := &WorkflowRunReport{Branch: "main", Findings: []WorkflowRunFinding{
+				{Workflow: "ci.yml", Health: WorkflowHealthy},
+			}}
+			if tc.health != "absent finding" {
+				report.Findings = append(report.Findings, WorkflowRunFinding{Workflow: "codeql.yml", Health: tc.health})
+			}
+			got, err := UnreportedStatusContexts(t.Context(), root, base, "acme/widgets", report)
+			if err != nil || !slices.Equal(got, tc.want) {
+				t.Fatalf("unreported with stale commit = %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnreportedStatusContexts_RemovedCommittedContext denies commit-based allowances
+// when the current workflow removes or replaces a committed required context.
+func TestUnreportedStatusContexts_RemovedCommittedContext(t *testing.T) {
+	for _, tc := range []struct {
+		name, before, after string
+	}{
+		{"removed", prWorkflow("CI") + "  old:\n    name: Old\n", prWorkflow("CI")},
+		{"replaced", prWorkflow("CI"), prWorkflow("Compile")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, base := committedWorkflowRepo(t, map[string]string{".github/workflows/ci.yml": tc.before})
+			writeWorkflowFixture(t, root, "ci.yml", tc.after)
+			got, err := UnreportedStatusContexts(t.Context(), root, base, "acme/widgets", nil)
+			if err != nil || len(got) != 0 {
+				t.Fatalf("removed committed context = %v, %v; want empty", got, err)
+			}
+		})
+	}
+}
+
+// TestUnreportedStatusContexts_AbsentObject pins error handling when a committed workflow git object is absent.
+func TestUnreportedStatusContexts_AbsentObject(t *testing.T) {
+	root, base := committedWorkflowRepo(t, map[string]string{".github/workflows/ci.yml": prWorkflow("CI")})
+	removeLooseObject(t, root, base, ".github/workflows/ci.yml")
+	if got, err := UnreportedStatusContexts(t.Context(), root, base, "acme/widgets", nil); !errors.Is(err, ErrCommittedWorkflowAbsent) || got != nil {
+		t.Fatalf("absent committed workflow = %v, %v; want ErrCommittedWorkflowAbsent", got, err)
 	}
 }
