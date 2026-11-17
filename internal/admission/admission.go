@@ -117,9 +117,11 @@ type Waiter struct {
 const maxPolls = 100000
 
 // Wait reads the host until Judge admits, writing one line per held reading. A failed reading
-// refuses at once (fail closed); a wait past MaxWait refuses with the last reason.
+// refuses at once (fail closed); a wait past MaxWait refuses naming the elapsed wait and the
+// last reason.
 func (w Waiter) Wait(ctx context.Context, label string) (Verdict, error) {
-	deadline := time.Now().Add(w.MaxWait)
+	started := time.Now()
+	deadline := started.Add(w.MaxWait)
 	for i := 0; i < maxPolls; i++ {
 		stats, err := w.Read()
 		if err != nil {
@@ -129,17 +131,28 @@ func (w Waiter) Wait(ctx context.Context, label string) (Verdict, error) {
 		if verdict.Admit {
 			return verdict, nil
 		}
-		if !time.Now().Add(w.Poll).Before(deadline) {
-			return verdict, fmt.Errorf("admission %s: still held after %s (%s), refused", label, w.MaxWait, verdict.Reason)
+		now := time.Now()
+		remaining := deadline.Sub(now)
+		if remaining <= 0 {
+			return verdict, fmt.Errorf("admission %s: still held after %s (%s), refused",
+				label, now.Sub(started).Round(time.Millisecond), verdict.Reason)
 		}
-		if _, err := fmt.Fprintf(w.Log, "%s admission wait %s: %s\n", time.Now().Format("15:04:05"), label, verdict.Reason); err != nil {
+		if _, err := fmt.Fprintf(w.Log, "%s admission wait %s: %s\n", now.Format("15:04:05"), label, verdict.Reason); err != nil {
 			return verdict, err
 		}
-		if err := w.Sleep(ctx, w.Poll); err != nil {
+		if err := w.Sleep(ctx, nextPollSleep(w.Poll, remaining)); err != nil {
 			return verdict, fmt.Errorf("admission %s: %w", label, err)
 		}
 	}
 	return Verdict{}, fmt.Errorf("admission %s: more than %d readings, refused", label, maxPolls)
+}
+
+// nextPollSleep is the next sleep of a held wait: one poll, or what remains of the wait when that is shorter.
+func nextPollSleep(poll, remaining time.Duration) time.Duration {
+	if poll > 0 && poll < remaining {
+		return poll
+	}
+	return remaining
 }
 
 // HostReader reads the live host through internal/sentinel; path names the disk sentinel reads.

@@ -47,9 +47,11 @@ and the admission line in the output shows when the step started.
 | `--timeout` | `6h` | longest the step runs once admitted |
 
 A host exactly at a threshold is admitted. A host that stays under one until `--wait` passes
-refuses the step with `still held after ...`, and the step never starts. A reading that fails
-refuses the step at once, without waiting: the host could not be judged, so the step is not
-admitted.
+refuses the step with `still held after ...`, naming the time actually waited, and the step never
+starts (`internal/admission/admission.go`). Once admitted, a step that runs past `--timeout` is
+killed and prints a reason naming the label, command and deadline (`internal/admission/scope.go`).
+A reading that fails refuses the step at once, without waiting: the host could not be judged, so
+the step is not admitted.
 
 ## Scope limits
 
@@ -202,6 +204,12 @@ manager, a container, macOS, Windows), the step runs without a scope, and a line
 admission verify-all: runs unscoped, <reason>
 ```
 
+Each step starts in its own process group. When standard input is a character device such as a
+controlling terminal, `DefaultStep` replaces it with the null device, and `Run` ignores `SIGTTIN`
+and `SIGTTOU` before launching the step (`internal/admission/scope.go`,
+`internal/admission/tty_unix.go`), so terminal line-editing libraries cannot stop a backgrounded
+step on job-control signals while piped or redirected file input still passes through.
+
 The host readings follow what each platform reports:
 
 | Platform | Memory | Swap | Load |
@@ -220,6 +228,14 @@ cases this guide describes:
 
 - `TestRunAdmit_Negative_UnderThresholdRefused`: a step asked to start under a threshold the host
   cannot meet is held, then refused, and never runs.
+- `TestWait_Negative_HeldWaitReportsElapsed` and `TestRunAdmit_Negative_HeldWaitReportsElapsed`: a
+  held wait refuses within `--wait` plus one poll and names the real elapsed wait.
+- `TestRun_Negative_BlockingStdinKilledAtDeadline` and
+  `TestRunAdmit_Negative_BlockingStdinKilledAtDeadline`: a step blocked on standard input is killed
+  at its deadline naming the label, command and deadline.
+- `TestRun_Negative_ControllingTTYDoesNotStop` and
+  `TestRunAdmit_Negative_ControllingTTYDoesNotStop`: a step started under a controlling terminal
+  detaches terminal input and does not stop on `SIGTTIN` or `SIGTTOU`.
 - `TestWait_Positive_HeldThenAdmitted`: a held step is admitted once the readings clear, with one
   wait line per held reading.
 - `TestRun_Positive_ScopeCarriesTheLimit`: inside its scope the step reads its own `memory.max`

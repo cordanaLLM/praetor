@@ -5,7 +5,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,6 +13,9 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/admission"
 )
+
+// admitHostReader reads the live host for runAdmit; tests stub it for deterministic held runs.
+var admitHostReader = admission.HostReader(".")
 
 // admitUsage is the usage line `admit` prints on a malformed call.
 const admitUsage = "usage: praetorctl admit [--label L] [--memory-high 16G] [--memory-max 24G] [--memory-swap-max 4G] [--min-available-gib 12] " +
@@ -41,10 +43,10 @@ func runAdmit(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := commandContext(opts.wait + opts.timeout)
+	ctx, cancel := commandContext(opts.wait + opts.timeout + time.Minute)
 	defer cancel()
 	waiter := admission.Waiter{Policy: opts.policy, MaxWait: opts.wait, Poll: opts.poll,
-		Read: admission.HostReader("."), Sleep: admission.SleepContext, Log: os.Stderr}
+		Read: admitHostReader, Sleep: admission.SleepContext, Log: os.Stderr}
 	verdict, err := waiter.Wait(ctx, opts.label)
 	if err != nil {
 		return err
@@ -52,9 +54,9 @@ func runAdmit(args []string) error {
 	if _, err := fmt.Fprintf(os.Stderr, "%s admitted %s: %s\n", time.Now().Format("15:04:05"), opts.label, verdict.Reason); err != nil {
 		return err
 	}
-	stepCtx, stepCancel := context.WithTimeout(ctx, opts.timeout)
-	defer stepCancel()
-	return childExitStatus(admission.Run(stepCtx, admission.DefaultStep(opts.label, opts.argv, opts.limits)))
+	step := admission.DefaultStep(opts.label, opts.argv, opts.limits)
+	step.Timeout = opts.timeout
+	return childExitStatus(admission.Run(ctx, step))
 }
 
 // parseAdmit reads the flags and the command after `--`; everything past `--` is the command,

@@ -8,13 +8,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/sentinel"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const hogEnv = "ADMISSION_TEST_HOG"
@@ -224,5 +227,187 @@ func TestRun_Negative_RefusedBeforeStart(t *testing.T) {
 	}
 	if err := Run(context.Background(), Step{Label: "x", Argv: []string{"true"}, Limits: Limits{MemoryHigh: "8", MemoryMax: "12G", MemorySwapMax: "0"}}); err == nil {
 		t.Fatal("unparsable limits ran")
+	}
+}
+
+// parseHeldDuration reads the elapsed wait a held refusal reports after "still held after".
+func parseHeldDuration(t *testing.T, msg string) time.Duration {
+	t.Helper()
+	_, after, ok := strings.Cut(msg, "still held after ")
+	if !ok {
+		t.Fatalf("missing 'still held after' in %q", msg)
+	}
+	raw, _, ok := strings.Cut(after, " (")
+	if !ok {
+		t.Fatalf("missing duration delimiter in %q", msg)
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		t.Fatalf("parse held duration %q in %q: %v", raw, msg, err)
+	}
+	return d
+}
+
+// Negative (planted): a held admission with --wait 2s refuses within 2s plus one poll and names
+// the time actually waited rather than echoing MaxWait.
+func TestWait_Negative_HeldWaitReportsElapsed(t *testing.T) {
+	var log bytes.Buffer
+	const waitBound, poll = 2 * time.Second, 600 * time.Millisecond
+	started := time.Now()
+	w := Waiter{
+		Policy: policy, MaxWait: waitBound, Poll: poll, Sleep: SleepContext, Log: &log,
+		Read: func() (sentinel.HostStats, error) {
+			if time.Since(started) >= waitBound {
+				time.Sleep(150 * time.Millisecond)
+			}
+			return host(4, 50, 10), nil
+		},
+	}
+	_, err := w.Wait(t.Context(), "held-step")
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("always-held waiter admitted")
+	}
+	if elapsed < waitBound || elapsed > waitBound+poll {
+		t.Fatalf("elapsed = %s, want within [%s, %s] (%v)", elapsed, waitBound, waitBound+poll, err)
+	}
+	reported := parseHeldDuration(t, err.Error())
+	if (reported - elapsed).Abs() > 80*time.Millisecond {
+		t.Fatalf("message reported %s, actual elapsed %s: %v", reported, elapsed, err)
+	}
+}
+
+// Negative (planted): a child that blocks reading stdin is killed at its deadline within the
+// deadline plus CommandWaitDelay, naming the deadline, the label and argv[0].
+func TestRun_Negative_BlockingStdinKilledAtDeadline(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skipf("no sh on PATH on %s: %v", runtime.GOOS, err)
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if cerr := w.Close(); cerr != nil {
+			t.Error(cerr)
+		}
+		if cerr := r.Close(); cerr != nil {
+			t.Error(cerr)
+		}
+	})
+	const deadline = 300 * time.Millisecond
+	ctx, cancel := context.WithTimeout(t.Context(), deadline)
+	defer cancel()
+	var errOut bytes.Buffer
+	started := time.Now()
+	runErr := Run(ctx, Step{
+		Label: "stdin-block", Limits: Limits{MemoryHigh: "96M", MemoryMax: "128M", MemorySwapMax: "0"},
+		Stdin: r, Stdout: io.Discard, Stderr: &errOut,
+		Argv: []string{"sh", "-c", "trap 'exit 143' TERM; read line"},
+	})
+	elapsed := time.Since(started)
+	if runErr == nil || elapsed > deadline+util.CommandWaitDelay {
+		t.Fatalf("blocking child err=%v after %s (bound %s)", runErr, elapsed, deadline+util.CommandWaitDelay)
+	}
+	for _, surface := range []string{runErr.Error(), errOut.String()} {
+		for _, want := range []string{"stdin-block", "sh", "deadline", "ms"} {
+			if !strings.Contains(surface, want) {
+				t.Fatalf("surface %q lacks %q", surface, want)
+			}
+		}
+	}
+}
+
+// Positive: a short child (true) passes and a non-zero child's exit status passes through.
+func TestRun_Positive_ShortChildAndExitStatus(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skipf("no sh on PATH on %s: %v", runtime.GOOS, err)
+	}
+	limits := Limits{MemoryHigh: "96M", MemoryMax: "128M", MemorySwapMax: "0"}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	if err := Run(ctx, Step{Label: "short", Limits: limits, Stdout: io.Discard, Stderr: io.Discard, Argv: []string{"sh", "-c", "true"}}); err != nil {
+		t.Fatalf("short child failed: %v", err)
+	}
+	err := Run(ctx, Step{Label: "code", Limits: limits, Stdout: io.Discard, Stderr: io.Discard, Argv: []string{"sh", "-c", "exit 7"}})
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 7 {
+		t.Fatalf("exit 7 came back as %v", err)
+	}
+}
+
+const ptySessionWrapper = `
+import errno, fcntl, os, pty, subprocess, sys, termios
+master, slave = pty.openpty()
+def setup():
+    os.setsid()
+    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+proc = subprocess.Popen(sys.argv[1:], stdin=slave, stdout=slave, stderr=slave, preexec_fn=setup, close_fds=True)
+os.close(slave)
+out = bytearray()
+while True:
+    try:
+        chunk = os.read(master, 4096)
+        if not chunk:
+            break
+        out.extend(chunk)
+    except OSError as exc:
+        if exc.errno == errno.EIO:
+            break
+        raise
+os.close(master)
+rc = proc.wait(timeout=15)
+sys.stdout.buffer.write(out)
+sys.exit(rc)
+`
+
+const ptyChildProbe = `
+import os, sys, termios
+if os.isatty(0):
+    termios.tcsetattr(0, termios.TCSANOW, termios.tcgetattr(0))
+    sys.exit(2)
+if sys.stdin.read() != "":
+    sys.exit(3)
+termios.tcsetattr(1, termios.TCSANOW, termios.tcgetattr(1))
+`
+
+// Negative (planted): inside a controlling PTY (as in an agy lane sandbox), DefaultStep and Run
+// must not let a backgrounded process group stop on SIGTTOU/SIGTTIN when the child initializes
+// terminal line editing (libedit readline in pytest) or touches terminal attributes.
+func TestRun_Negative_ControllingTTYDoesNotStop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX controlling-terminal SIGTTIN/SIGTTOU job control applies only on Unix")
+	}
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skipf("no python3 on PATH: %v", err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ADMISSION_TEST_PTY", "1")
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	out, err := util.RunCommand(ctx, "", py, "-c", ptySessionWrapper, self, "-test.run=^TestAdmissionPTYHelper$")
+	if err != nil {
+		t.Fatalf("step under controlling PTY failed or stalled: %v\n%s", err, out)
+	}
+}
+
+// TestAdmissionPTYHelper is the child process the controlling-terminal case re-executes; it does nothing unless ADMISSION_TEST_PTY is 1.
+func TestAdmissionPTYHelper(t *testing.T) {
+	if os.Getenv("ADMISSION_TEST_PTY") != "1" {
+		return
+	}
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond)
+	defer cancel()
+	step := DefaultStep("pty-step", []string{py, "-c", ptyChildProbe}, Limits{MemoryHigh: "256M", MemoryMax: "512M", MemorySwapMax: "0"})
+	if err := Run(ctx, step); err != nil {
+		t.Fatalf("PTY step failed: %v", err)
 	}
 }
