@@ -6,6 +6,7 @@ package compiler
 import (
 	"encoding/json"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -69,7 +70,7 @@ func TestStampPluginReleaseVersion_PositiveAndBoundary(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(PluginManifestRel)))
+	data, err := fs.ReadFile(os.DirFS(root), PluginManifestRel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +118,7 @@ func TestStampPluginReleaseVersion_Negative(t *testing.T) {
 // The release must consume the same tag-derived .Version as the binary stamp and actually
 // package the stamped plugin. Removing either configuration entry invalidates this contract.
 func TestPluginVersion_ReleaseConfiguration(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yaml"))
+	data, err := fs.ReadFile(os.DirFS(filepath.Join("..", "..")), ".goreleaser.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
