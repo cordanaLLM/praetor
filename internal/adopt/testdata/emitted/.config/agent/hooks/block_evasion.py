@@ -479,14 +479,21 @@ def commit_command(command, short_pattern):
 DATA_ONLY_COMMAND_NAMES = r"(?:printf|echo)"
 DATA_ONLY_WORD = re.compile(r"^[ \t]*" + DATA_ONLY_COMMAND_NAMES + r"(?:[ \t]|$)")
 DATA_ONLY_FUNCTION = re.compile(
-    r"(?:\A|[^-A-Za-z0-9_])" + DATA_ONLY_COMMAND_NAMES + r"[ \t]*\([ \t]*\)"
+    r"(?:\A|[ \t\n;&|])[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)"
 )
 DATA_ONLY_SUBSTITUTION = re.compile(r"\$\(|\x60|[<>]\(")
+DATA_ONLY_CONSUMER = re.compile(r"[ \t]*tee(?:[ \t]|$)")
+DATA_ONLY_STATE = re.compile(
+    r"(?i:(?:\A|[^-A-Za-z0-9_])(?:eval|source|unset|unalias|enable|disable|autoload)"
+    r"(?:[^-A-Za-z0-9_]|$))|(?:\A|[ \t\n;&|])\.(?:[ \t\n]|$)"
+)
+DATA_ONLY_QUOTES = str.maketrans("", "", "\"'\\")
 
 
 def data_command_names_unchanged(command):
-    """Reuse read-only state words and also catch name() definitions."""
-    if re.search(CommandSpans.state_pattern, command):
+    """Refuse state changes, including quote-obscured eval and source."""
+    state = command.translate(DATA_ONLY_QUOTES)
+    if re.search(CommandSpans.state_pattern, state) or DATA_ONLY_STATE.search(state):
         return False
     return not DATA_ONLY_FUNCTION.search(command)
 
@@ -546,6 +553,8 @@ def scan_command_spans(command, short_pattern):
         raise ValueError("invalid shell command: unterminated here-document")
     if spans.whole:
         return [("".join(spans.judged), True, "")], spans.nested
+    if spans.print_unsafe:
+        return [(part, veto, "") for part, veto, _ in spans.parts], spans.nested
     return spans.parts, spans.nested
 
 
@@ -570,6 +579,7 @@ class CommandSpans:
         """Initialize raw offsets, data masking and the shell-state veto."""
         self.command, self.judged = command, list(command)
         self.short_pattern, self.uncertain = short_pattern, False
+        self.print_unsafe = False
         self.parts, self.stack, self.documents = [], [], []
         self.position = self.start = self.here_lines = 0
         self.whole = bool(re.search(self.state_pattern, command))
@@ -831,9 +841,19 @@ class CommandSpans:
         if self.command.startswith("&>", self.position):
             return self.redirection()
         if not self.stack:
+            self.print_unsafe |= not self.data_pipe_safe()
             self.split(self.position, self.position + 1)
         self.position += 1
         return True
+
+    def data_pipe_safe(self):
+        """Permit literal tee consumers; unknown consumers may execute printed input."""
+        position = self.position
+        if self.command[position] != "|" or self.command.startswith("||", position):
+            return True
+        if position > 0 and self.command[position - 1] == "|":
+            return True
+        return bool(DATA_ONLY_CONSUMER.match(self.command, position + 1))
 
     def single_quote(self):
         """Consume literal text; refuse an unmatched quote."""

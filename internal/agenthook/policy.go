@@ -355,6 +355,7 @@ type shellSpans struct {
 	documents                      []shellDocument
 	position, start, hereLines     int
 	whole                          bool
+	printUnsafe                    bool
 	uncertain                      bool
 	err                            error
 	judged                         []byte
@@ -453,7 +454,17 @@ func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 	if s.whole {
 		return []shellSpan{{text: string(s.judged), veto: true}}, s.nested, nil
 	}
-	return s.parts, s.nested, nil
+	return s.commandParts(), s.nested, nil
+}
+
+// commandParts removes print exemptions when an unknown pipeline consumer may execute input.
+func (s *shellSpans) commandParts() []shellSpan {
+	if s.printUnsafe {
+		for index := range s.parts {
+			s.parts[index].raw = ""
+		}
+	}
+	return s.parts
 }
 
 // top returns the innermost quote or substitution terminator, or zero outside constructs.
@@ -743,10 +754,20 @@ func (s *shellSpans) separator() bool {
 		return s.redirection()
 	}
 	if len(s.stack) == 0 {
+		s.printUnsafe = s.printUnsafe || !s.dataPipeSafe()
 		s.split(s.position, s.position+1)
 	}
 	s.position++
 	return true
+}
+
+// dataPipeSafe permits only literal tee consumers; unknown consumers may execute printed input.
+func (s *shellSpans) dataPipeSafe() bool {
+	rest := s.command[s.position:]
+	if rest[0] != '|' || strings.HasPrefix(rest, "||") || s.position > 0 && s.command[s.position-1] == '|' {
+		return true
+	}
+	return dataOnlyConsumerPattern.MatchString(rest[1:])
 }
 
 // singleQuote consumes literal text, refusing an unmatched quote as in the prior renderer.
@@ -868,13 +889,17 @@ const dataOnlyCommandNames = `(?:printf|echo)`
 
 var (
 	dataOnlyWordPattern         = regexp.MustCompile(`^[ \t]*` + dataOnlyCommandNames + `(?:[ \t]|$)`)
-	dataOnlyFunctionPattern     = regexp.MustCompile(`(?:\A|[^-A-Za-z0-9_])` + dataOnlyCommandNames + `[ \t]*\([ \t]*\)`)
+	dataOnlyFunctionPattern     = regexp.MustCompile(`(?:\A|[ \t\n;&|])[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)`)
 	dataOnlySubstitutionPattern = regexp.MustCompile(`\$\(|\x60|[<>]\(`)
+	dataOnlyConsumerPattern     = regexp.MustCompile(`^[ \t]*tee(?:[ \t]|$)`)
+	dataOnlyStatePattern        = regexp.MustCompile(`(?i:(?:\A|[^-A-Za-z0-9_])(?:eval|source|unset|unalias|enable|disable|autoload)(?:[^-A-Za-z0-9_]|$))|(?:\A|[ \t\n;&|])\.(?:[ \t\n]|$)`)
+	dataOnlyQuoteReplacer       = strings.NewReplacer(`'`, "", `"`, "", `\`, "")
 )
 
-// dataCommandNamesUnchanged reuses the read-only state words and also catches name() forms.
+// dataCommandNamesUnchanged refuses state changes, including quote-obscured eval and source.
 func dataCommandNamesUnchanged(command string) bool {
-	return !shellStatePattern.MatchString(command) && !dataOnlyFunctionPattern.MatchString(command)
+	state := dataOnlyQuoteReplacer.Replace(command)
+	return !shellStatePattern.MatchString(state) && !dataOnlyStatePattern.MatchString(state) && !dataOnlyFunctionPattern.MatchString(command)
 }
 
 // dataOnlyCommand accepts a literal print command only when none of its words executes code.

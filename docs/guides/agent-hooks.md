@@ -900,8 +900,14 @@ from the existing segment scanner, never its conservative whole-command fallback
 It requires no command or process substitution (`$(`, a backtick, `<(` or `>(`) anywhere
 in the segment's raw words, including redirection operands, and no redefinition in the
 whole command. The redefinition guard reuses `ReadOnlyVeto`'s state-changing words
-(including `function`, `alias` and PowerShell `Set-Alias`) and also checks `printf()`
-and `echo()` definitions. `echo "$(git commit -n -m x)"` and an actual later
+(including `function`, `alias` and PowerShell `Set-Alias`), checks function definitions,
+and refuses the exemption after `eval`, `source`, `.`, or other shell-state changes.
+Quote removal catches indirect definitions such as `eval 'ec''ho() { "$@"; }'`.
+Pipelines retain the exemption only with literal `tee` consumers; a shell, interpreter,
+`xargs`, `env`, or another unknown consumer may execute the printed input. Thus
+`echo 'git commit -n' | tee notes.txt` passes, while piping the same output into `bash`
+refuses (`TestParityEvasionCommitSegments`, `TestEmittedEvasionCommitSegments`).
+`echo "$(git commit -n -m x)"` and an actual later
 `git commit -n -m x` remain refused. Other rules still inspect the printed text
 (`TestParityEvasionCommitSegments`, `TestReadOnlyExemption_DataOnlyGuards`).
 

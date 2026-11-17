@@ -359,6 +359,37 @@ func evasionRoundTenCasesControls() []struct {
 	}
 }
 
+// evasionPrintedCommandCases pins state changes and executable consumers of printed commands.
+func evasionPrintedCommandCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"data indirect echo definition", `eval 'ec''ho() { "$@"; }'; echo git commit -n -m x`, 2},
+		{"data indirect printf definition", `eval "printf() { \"\$@\"; }"; printf 'git commit -n'`, 2},
+		{"data shell consumer", `echo 'git commit -n -m x' | bash`, 2},
+		{"data xargs shell consumer", `echo 'git commit -n -m x' | xargs sh -c`, 2},
+		{"data sh consumer", `printf 'git push --no-verify' | sh`, 2},
+		{"data xargs consumer", `echo git commit -n | xargs -I{} sh -c {}`, 2},
+		{"data tee consumer", `echo 'git commit -n' | tee notes.txt`, 0},
+		{"data literal redirect", `printf '%s\n' 'git commit -n' > notes.txt`, 0},
+		{"data literal echo", `echo git commit -n`, 0},
+		{"data interpreter consumer", `echo 'git commit -n' | python3`, 2},
+		{"data env consumer", `echo 'git commit -n' | env bash`, 2},
+		{"data tee shell consumer", `echo 'git commit -n' | tee notes.txt | bash`, 2},
+		{"data substitution consumer", `$(echo 'git commit -n')`, 2},
+		{"data quoted shell consumer", `echo 'git commit -n' | 'bash'`, 2},
+		{"data source state", `source setup.sh; echo git commit -n`, 2},
+		{"data dot state", `. setup.sh; echo git commit -n`, 2},
+		{"data unset state", `unset -f echo; echo git commit -n`, 2},
+		{"data quoted eval state", `e'v'al 'ec''ho() { "$@"; }'; echo git commit -n`, 2},
+		{"data literal logical or", `echo git commit -n || tee notes.txt`, 0},
+	}
+}
+
 // TestEmittedEvasionCommitSegments keeps skip flags within their shell command.
 func TestEmittedEvasionCommitSegments(t *testing.T) {
 	python, script := emittedInterceptor(t)
@@ -368,6 +399,7 @@ func TestEmittedEvasionCommitSegments(t *testing.T) {
 	cases = append(cases, evasionRoundSevenCases()...)
 	cases = append(cases, evasionRoundEightCases()...)
 	cases = append(cases, evasionRoundNineCases()...)
+	cases = append(cases, evasionPrintedCommandCases()...)
 	for _, tc := range append(cases, evasionRoundTenCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
@@ -439,7 +471,7 @@ func evasionSegmentRefusal(name string) string {
 		return agenthook.InvalidInputRefusal + "invalid shell command: " + suffix
 	}
 	rule := agenthook.BuiltinRules()[1]
-	if name == "long flag" || name == "am long flag" {
+	if name == "long flag" || name == "am long flag" || name == "data sh consumer" {
 		rule = agenthook.BuiltinRules()[0]
 	}
 	return rule.RefusalPrefix() + rule.Source
@@ -486,6 +518,10 @@ func evasionSegmentMutants() []struct {
 		name, before, after, command string
 		want                         int
 	}{
+		{"printed state", " or DATA_ONLY_STATE.search(state)", "",
+			evasionPrintedCommandCases()[0].command, 0},
+		{"printed consumer", "self.print_unsafe |= not self.data_pipe_safe()", "self.print_unsafe |= False",
+			evasionPrintedCommandCases()[2].command, 0},
 		{"old span", "for segment in segments:", "for segment in [(text, bool(re.search(READ_ONLY_VETO, text)))]:",
 			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
 		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1)", "segments, None)",

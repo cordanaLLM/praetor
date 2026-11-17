@@ -768,6 +768,25 @@ func dataOnlySegmentCases() []struct {
 		{"data actual commit", `git commit -S -F msg.txt -n`, 2},
 		// POSIX single quotes delimit data; cmd.exe is not a separate parsing mode.
 		{"data single quote shell model", `git commit -m 'x -n y'`, 0},
+		{"data indirect echo definition", `eval 'ec''ho() { "$@"; }'; echo git commit -n -m x`, 2},
+		{"data indirect printf definition", `eval "printf() { \"\$@\"; }"; printf 'git commit -n'`, 2},
+		{"data shell consumer", `echo 'git commit -n -m x' | bash`, 2},
+		{"data xargs shell consumer", `echo 'git commit -n -m x' | xargs sh -c`, 2},
+		{"data sh consumer", `printf 'git push --no-verify' | sh`, 2},
+		{"data xargs consumer", `echo git commit -n | xargs -I{} sh -c {}`, 2},
+		{"data tee consumer", `echo 'git commit -n' | tee notes.txt`, 0},
+		{"data literal redirect", `printf '%s\n' 'git commit -n' > notes.txt`, 0},
+		{"data literal echo", `echo git commit -n`, 0},
+		{"data interpreter consumer", `echo 'git commit -n' | python3`, 2},
+		{"data env consumer", `echo 'git commit -n' | env bash`, 2},
+		{"data tee shell consumer", `echo 'git commit -n' | tee notes.txt | bash`, 2},
+		{"data substitution consumer", `$(echo 'git commit -n')`, 2},
+		{"data quoted shell consumer", `echo 'git commit -n' | 'bash'`, 2},
+		{"data source state", `source setup.sh; echo git commit -n`, 2},
+		{"data dot state", `. setup.sh; echo git commit -n`, 2},
+		{"data unset state", `unset -f echo; echo git commit -n`, 2},
+		{"data quoted eval state", `e'v'al 'ec''ho() { "$@"; }'; echo git commit -n`, 2},
+		{"data literal logical or", `echo git commit -n || tee notes.txt`, 0},
 	}
 }
 
@@ -842,7 +861,7 @@ func TestEvasionArgumentUncertaintyMutant(t *testing.T) {
 	}
 }
 
-// TestParityEvasionArgumentUncertaintyMutant proves canonical masking needs splitting state.
+// TestParityEvasionArgumentUncertaintyMutant pins canonical splitting, state and consumer defences.
 func TestParityEvasionArgumentUncertaintyMutant(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
 	source, err := os.ReadFile(pythonGuard)
@@ -850,17 +869,19 @@ func TestParityEvasionArgumentUncertaintyMutant(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name, replacement, command string
+		name, before, after, command string
 	}{
-		{"all argument uncertainty", "False", `git commit -m $(printf '') -m -n`},
-		{"pre-subcommand uncertainty", "bool(self.git_command) and self.word_splitting", roundNineSegmentCases()[0].command},
+		{"all argument uncertainty", "self.arguments_uncertain |= self.command_word_seen and self.word_splitting",
+			"self.arguments_uncertain |= False", `git commit -m $(printf '') -m -n`},
+		{"pre-subcommand uncertainty", "self.arguments_uncertain |= self.command_word_seen and self.word_splitting",
+			"self.arguments_uncertain |= bool(self.git_command) and self.word_splitting", roundNineSegmentCases()[0].command},
+		{"printed state", " or DATA_ONLY_STATE.search(state)", "", dataOnlySegmentCases()[14].command},
+		{"printed consumer", "self.print_unsafe |= not self.data_pipe_safe()", "self.print_unsafe |= False", dataOnlySegmentCases()[16].command},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			mutant := strings.Replace(string(source),
-				"self.arguments_uncertain |= self.command_word_seen and self.word_splitting",
-				"self.arguments_uncertain |= "+tc.replacement, 1)
+			mutant := strings.Replace(string(source), tc.before, tc.after, 1)
 			if mutant == string(source) {
-				t.Fatal("argument uncertainty mutation did not change the guard")
+				t.Fatal("mutation did not change the guard")
 			}
 			script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
 			if err := os.WriteFile(script, []byte(mutant), 0o600); err != nil {
@@ -979,7 +1000,7 @@ func segmentRefusal(name string) string {
 		return InvalidInputRefusal + "invalid shell command: " + suffix
 	}
 	rule := BuiltinRules()[1]
-	if name == "long flag" || name == "am long flag" {
+	if name == "long flag" || name == "am long flag" || name == "data sh consumer" {
 		rule = BuiltinRules()[0]
 	}
 	return rule.RefusalPrefix() + rule.Source
