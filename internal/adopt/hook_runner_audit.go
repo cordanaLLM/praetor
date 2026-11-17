@@ -16,6 +16,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// HooksNotInstalledRuleID identifies an absent pre-commit hook in the installed-hook audit.
+const HooksNotInstalledRuleID = "hooks-not-installed"
+
 // The hook runners the audit accepts and how it recognises each one's pre-commit hook (#175).
 // Every marker below is the one the runner itself uses to recognise its own hook file, read from
 // the runner's source at the version named, so the audit and the runner agree on what is theirs.
@@ -151,7 +154,7 @@ func AuditInstalledGitHook(ctx context.Context, rootDir string) (string, error) 
 func readInstalledHook(hookPath string) (os.FileInfo, []byte, error) {
 	info, err := os.Stat(hookPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil, fmt.Errorf("[FAIL] Pre-commit hook %s is missing or inactive; run 'lefthook install' or 'praetorctl adopt' "+
+		return nil, nil, fmt.Errorf("[FAIL] "+HooksNotInstalledRuleID+": Pre-commit hook %s is missing or inactive; run 'lefthook install' or 'praetorctl adopt' "+
 			"(or 'pre-commit install' for the pre-commit framework) to activate", hookPath)
 	}
 	if err != nil {
