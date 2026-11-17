@@ -85,7 +85,7 @@ func projectionFixture(t *testing.T) string {
 		}
 	}
 	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(".agents/plugins/praetor/plugin.json")),
-		[]byte(`{"name":"praetor"}`), 0o600); err != nil {
+		[]byte(`{"name":"praetor","version":"0.1.0-dev"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return root

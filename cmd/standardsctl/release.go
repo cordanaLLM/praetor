@@ -11,6 +11,9 @@ import (
 )
 
 func runRelease(args []string) error {
+	if len(args) > 0 && args[0] == "plugin-version" {
+		return runPluginReleaseVersion(args[1:])
+	}
 	if len(args) > 0 && args[0] == "smoke" {
 		return runReleaseSmoke(args[1:])
 	}

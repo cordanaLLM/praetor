@@ -688,6 +688,7 @@ existing Codex projection is not a verified native agent-file format.
 - A write runs the same lint after writing and fails on a finding, and before it
   compiles it makes Git ignore the evidence directory (`register.evidence.dir`). Both steps are
   `adopt.CompileAgentContext`, the write the CLI's `compile-context` and `init` run.
+
 - More than 50 files in `.agents/agents` fail both modes instead of being
   truncated.
 - Every file the call writes below `target_dir` (the vendor files,
@@ -719,6 +720,25 @@ existing Codex projection is not a verified native agent-file format.
   `engine build does not match this checkout` instead of rendering its own stale text into
   `AGENTS.md` and the vendor files; `verify_only` is never refused. The rules are in
   [the engine build check](workstation-update.md#engine-build-check).
+
+The shipped Antigravity manifest also requires a SemVer `version`, checked by
+`compiler.VerifyPluginVersion` during `compile-context --verify`. The checkout carries
+the next release line as `0.1.0-dev`; verification uses neither Git tags nor the running
+binary's build identity, so shallow checkouts produce the same result. Non-release
+build identities can be commit hashes and cannot supply a marketplace SemVer version.
+
+For release archives, `.goreleaser.yaml` runs `release plugin-version --version={{.Version}}`
+before packaging the plugin. The release tag supplies both this version and the binaries'
+`main.version`. The stamper accepts the matching `X.Y.Z-dev` declaration or an exact rerun,
+refuses a missing, malformed or different release line before writing, preserves other
+manifest fields and verifies the written version. Advance the development declaration
+when preparing a new release line; a forgotten advance fails the release instead of
+shipping a stale version. This keeps the existing release tag as the source and avoids a
+second version configuration. See `internal/compiler/plugin_version_test.go` and
+`cmd/standardsctl/release_plugin_version_test.go` for negative cases and readback coverage.
+The hook and archive glob use GoReleaser's documented
+[global hooks](https://goreleaser.com/customization/general/hooks/) and
+[archive files](https://goreleaser.com/customization/package/archives/).
 
 Tests: `cmd/standards-mcp/server_projection_test.go`,
 `cmd/standards-mcp/compile_context_engine_test.go`,

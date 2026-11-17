@@ -30,7 +30,7 @@ const pluginSkillCopy = compiler.PluginSkillsRel + "/lint/SKILL.md"
 func newPluginRepo(t *testing.T, name string) string {
 	t.Helper()
 	repoPath := newTestRepo(t, name)
-	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(compiler.PluginManifestRel)), "{\"name\": \"praetor\"}\n")
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(compiler.PluginManifestRel)), "{\"name\": \"praetor\", \"version\": \"0.1.0-dev\"}\n")
 	mustWrite(t, filepath.Join(repoPath, ".agents", "skills", "lint", "SKILL.md"), pluginSkillText)
 	dirs, _, err := compiler.SelectPersonaDirs(t.Context(), repoPath)
 	if err != nil {
@@ -132,7 +132,7 @@ func TestAdopt_Positive_EditedPluginCopyReplacedWithBackup(t *testing.T) {
 // nothing written in the repository or through the link.
 func TestAdopt_Negative_SymlinkedPluginAgentsRefusedBeforeAnyWrite(t *testing.T) {
 	repoPath := newTestRepo(t, "plugin-symlink")
-	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(compiler.PluginManifestRel)), "{\"name\": \"praetor\"}\n")
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(compiler.PluginManifestRel)), "{\"name\": \"praetor\", \"version\": \"0.1.0-dev\"}\n")
 	outside := t.TempDir()
 	if err := os.Symlink(outside, filepath.Join(repoPath, filepath.FromSlash(compiler.PluginAgentsRel))); err != nil {
 		t.Skipf("symlinks unavailable on this host: %v", err)

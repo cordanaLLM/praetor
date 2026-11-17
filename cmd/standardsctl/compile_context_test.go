@@ -23,7 +23,7 @@ func newContextFixture(t *testing.T, withPlugin bool) string {
 	writeFixtureFile(t, dir, "AGENTS.md", fixtureAgentsMD)
 	writeFixtureFile(t, dir, ".agents/agents/praetor-gatekeeper.md", fixturePersona)
 	if withPlugin {
-		writeFixtureFile(t, dir, compiler.PluginManifestRel, `{"name":"praetor"}`+"\n")
+		writeFixtureFile(t, dir, compiler.PluginManifestRel, `{"name":"praetor","version":"0.1.0-dev"}`+"\n")
 	}
 	return dir
 }
