@@ -19,6 +19,10 @@ BUILD_TIMEOUT = 180
 SESSION_TIMEOUT = 12 * 60 * 60
 MAX_SOURCE_FILES = 20_000
 MAX_FILE_BYTES = 32 * 1024 * 1024
+HASH_CHUNK_BYTES = 1024 * 1024
+# The development binary measured 33,562,549 bytes on 2026-11-08 (#1862).
+# Streaming bounds memory; 512 MiB leaves growth room and only catches runaway builds.
+MAX_BINARY_BYTES = 512 * 1024 * 1024
 
 
 def command_output(command, timeout=10):
@@ -53,6 +57,23 @@ def read_bounded(path):
     return data
 
 
+def hash_binary(path):
+    """Hash fixed-size chunks within a separate runaway-build sanity limit."""
+    digest = hashlib.sha256()
+    size = 0
+    max_reads = (MAX_BINARY_BYTES + HASH_CHUNK_BYTES - 1) // HASH_CHUNK_BYTES + 1
+    with path.open("rb") as stream:
+        for _ in range(max_reads):
+            chunk = stream.read(HASH_CHUNK_BYTES)
+            if not chunk:
+                return digest.hexdigest()
+            size += len(chunk)
+            if size > MAX_BINARY_BYTES:
+                break
+            digest.update(chunk)
+    raise RuntimeError(f"Binary exceeds development sanity limit ({MAX_BINARY_BYTES} bytes): {path}")
+
+
 def build_directory():
     """A fresh temporary build directory under this checkout's git-ignored bin/.
 
@@ -78,7 +99,7 @@ def build(directory):
         raise RuntimeError("Go sources changed during build; rerun the preflight")
     metadata = {
         "checkout": str(ROOT), "source_sha256": source,
-        "binary_sha256": hashlib.sha256(read_bounded(binary)).hexdigest(),
+        "binary_sha256": hash_binary(binary),
         "git_head": command_output(["git", "rev-parse", "HEAD"]).decode().strip(),
         "git_dirty": bool(command_output(["git", "status", "--porcelain"])),
         "go_version": command_output(["go", "version"]).decode().strip(),

@@ -1,10 +1,11 @@
 """Development provenance must follow the working tree, including uncommitted code."""
 
+import hashlib
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, mock_open, patch
 
 import dev_mcp
 
@@ -55,6 +56,17 @@ class SourceIdentityTests(unittest.TestCase):
             self.source.write_bytes(b"12345")
             with self.assertRaisesRegex(RuntimeError, "bound"):
                 dev_mcp.read_bounded(self.source)
+
+    def test_source_hash_keeps_the_per_file_read_bound(self):
+        """A source file over the per-file read bound still fails the source hash."""
+        self.source.write_bytes(b"1234")
+        with patch.object(dev_mcp, "MAX_FILE_BYTES", 4), \
+                patch.object(dev_mcp, "command_output", return_value=b"main.go\0"):
+            expected = hashlib.sha256(b"main.go\0" + hashlib.sha256(b"1234").digest()).hexdigest()
+            self.assertEqual(dev_mcp.source_hash(), expected)
+            self.source.write_bytes(b"12345")
+            with self.assertRaisesRegex(RuntimeError, "File exceeds development provenance bound"):
+                dev_mcp.source_hash()
 
     def test_server_identity_mismatch_fails(self):
         class Client:
@@ -112,11 +124,63 @@ class BuildDirectoryTests(unittest.TestCase):
         self.assertEqual(seen[0].parent, self.root / "bin")
 
 
+class BinaryDigestTests(unittest.TestCase):
+    def setUp(self):
+        """Create a temporary folder for the binary under test."""
+        self.temp = tempfile.TemporaryDirectory(prefix="praetor-binary-digest-")
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name)
+        self.binary = self.directory / "praetor-mcp"
+        self.override = patch.multiple(dev_mcp, MAX_FILE_BYTES=4, MAX_BINARY_BYTES=12,
+                                       HASH_CHUNK_BYTES=4)
+        self.override.start()
+        self.addCleanup(self.override.stop)
+
+    def test_build_hashes_binary_larger_than_source_read_bound(self):
+        """A built binary larger than the source read bound is hashed in full."""
+        content = b"123456789"
+        self.binary.write_bytes(content)
+        with patch.object(dev_mcp, "source_hash", return_value="fingerprint"), \
+                patch.object(dev_mcp, "command_output", return_value=b""):
+            _, metadata = dev_mcp.build(self.directory)
+        self.assertEqual(metadata["binary_sha256"], hashlib.sha256(content).hexdigest())
+
+    def test_digest_matches_whole_file_at_chunk_and_size_boundaries(self):
+        """The streamed digest equals the whole-file digest at chunk and size boundaries."""
+        for limit in (11, 12):
+            for size in (0, 1, 4, 5, 8, 9, limit):
+                with self.subTest(limit=limit, size=size), \
+                        patch.object(dev_mcp, "MAX_BINARY_BYTES", limit):
+                    content = bytes(range(size))
+                    self.binary.write_bytes(content)
+                    self.assertEqual(dev_mcp.hash_binary(self.binary),
+                                     hashlib.sha256(content).hexdigest())
+
+    def test_binary_over_sanity_limit_fails_with_its_name(self):
+        """A binary over the sanity limit fails, naming the file."""
+        for limit in (11, 12):
+            with self.subTest(limit=limit), patch.object(dev_mcp, "MAX_BINARY_BYTES", limit):
+                self.binary.write_bytes(b"x" * (limit + 1))
+                with self.assertRaisesRegex(RuntimeError, "Binary exceeds development sanity limit") \
+                        as raised:
+                    dev_mcp.hash_binary(self.binary)
+                self.assertIn(str(self.binary), str(raised.exception))
+
+    def test_binary_reads_fixed_size_chunks(self):
+        """The binary is read in fixed-size chunks, never whole."""
+        opened = mock_open(read_data=b"123456789")
+        with patch.object(Path, "open", opened):
+            self.assertEqual(dev_mcp.hash_binary(self.binary),
+                             hashlib.sha256(b"123456789").hexdigest())
+        self.assertEqual(opened.return_value.read.call_args_list, [call(4)] * 4)
+
+
 class BuildVersionTests(unittest.TestCase):
     """The development build writes its fingerprint into main.version, the variable every
     praetor binary declares and the release config writes (internal/buildid, #666)."""
 
     def build_command(self, fingerprint):
+        """Run the build command with fingerprint and return the recorded calls."""
         calls = []
 
         def fake_output(command, timeout=10):
@@ -125,7 +189,7 @@ class BuildVersionTests(unittest.TestCase):
 
         with patch.object(dev_mcp, "source_hash", return_value=fingerprint), \
                 patch.object(dev_mcp, "command_output", side_effect=fake_output), \
-                patch.object(dev_mcp, "read_bounded", return_value=b"binary"):
+                patch.object(dev_mcp, "hash_binary", return_value=hashlib.sha256(b"binary").hexdigest()):
             _, metadata = dev_mcp.build(Path("out"))
         return calls[0], metadata
 
