@@ -23,3 +23,11 @@ exclude_paths:
   # Reason: Historical Bun rendering; exact bytes required by priorNodeCIDigests and adoption refresh tests; fixture never executed as a workflow.
   # MEL category D; entered 2026-11-16; expires 2027-03-16 (120 days); review at expiry.
   - "internal/flavor/testdata/ci-prior/node/before-review-group-bun.yml"
+  # Rule: Codacy High, third-party GitHub Action not pinned to a commit SHA.
+  # Reason: Historical Flutter rendering from before action digest pins; exact bytes required by priorFlutterCIDigests and adoption refresh tests; fixture never executed as a workflow.
+  # MEL category D; entered 2026-11-17; expires 2027-03-17 (120 days); review at expiry.
+  - "internal/flavor/testdata/ci-prior/flutter/before-action-digests-default.yml"
+  # Rule: Codacy High, third-party GitHub Action not pinned to a commit SHA.
+  # Reason: Historical Bun rendering from before action digest pins; exact bytes required by priorNodeCIDigests and adoption refresh tests; fixture never executed as a workflow.
+  # MEL category D; entered 2026-11-17; expires 2027-03-17 (120 days); review at expiry.
+  - "internal/flavor/testdata/ci-prior/node/before-action-digests-bun.yml"
