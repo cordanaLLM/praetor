@@ -5,16 +5,22 @@
 # The same rule as .config/security/npm-audit-exceptions.json: an advisory with no patched release
 # gets one dated entry per lock, with the reason and an expiry; an expired entry no longer
 # suppresses anything, so the scan fails again and asks for a re-review.
+#
+# expired_at is an exclusive boundary: Trivy reads the date as midnight UTC and drops the entry
+# once that instant has passed (pkg/result/ignore.go, ExpiredAt.Before(now)), while the npm gate
+# keeps an entry through the whole of its "expires" day. So expired_at is the day after the last
+# covered day: an entry reviewed to 2026-11-27 carries 2026-11-28 here and 2026-11-27 there.
 vulnerabilities:
   - id: CVE-2026-112366
     paths:
       - "docs/presets/starlight/package-lock.json"
       - "console/pnpm-lock.yaml"
     statement: >-
-      MEL C (10 days from entry 2026-11-17). picomatch ReDoS through single-branch repeated
-      extglobs (GHSA-fc5q-39xc-vjpf); every picomatch release is affected (range <=4.0.7, 4.0.7
-      newest on npm, no patched version). Both locks are build-time inputs (the documentation
-      preset build and the console build) whose glob patterns come from the repository's own
-      configuration, not from untrusted input. Same review as the npm-audit exception for the
-      starlight lock; update the locks and drop this entry when a patched picomatch ships.
-    expired_at: 2026-11-27
+      MEL C (10 days from entry 2026-11-17, last covered day 2026-11-27). picomatch ReDoS through
+      single-branch repeated extglobs (GHSA-fc5q-39xc-vjpf); every picomatch release is affected
+      (range <=4.0.7, 4.0.7 newest on npm, no patched version). Both locks are build-time inputs
+      (the documentation preset build and the console build) whose glob patterns come from the
+      repository's own configuration, not from untrusted input. Same review as the npm-audit
+      exception for the starlight lock; update the locks and drop this entry when a patched
+      picomatch ships.
+    expired_at: 2026-11-28
