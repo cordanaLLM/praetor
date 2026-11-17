@@ -5,7 +5,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"io"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/admission"
+	"github.com/cordanaLLM/praetor/internal/admission/ptytest"
 	"github.com/cordanaLLM/praetor/internal/sentinel"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -171,52 +171,11 @@ func TestRunAdmit_Negative_BlockingStdinKilledAtDeadline(t *testing.T) {
 	}
 }
 
-const admitPTYLauncher = `
-import errno, fcntl, os, pty, subprocess, sys, termios
-m, s = pty.openpty()
-proc = subprocess.Popen(
-    sys.argv[1:], stdin=s, stdout=s, stderr=s, close_fds=True,
-    preexec_fn=lambda: (os.setsid(), fcntl.ioctl(s, termios.TIOCSCTTY, 0)),
-)
-os.close(s)
-buf = bytearray()
-while True:
-    try:
-        part = os.read(m, 4096)
-        if not part:
-            break
-        buf.extend(part)
-    except OSError as e:
-        if e.errno == errno.EIO:
-            break
-        raise
-os.close(m)
-code = proc.wait(timeout=15)
-sys.stdout.buffer.write(buf)
-sys.exit(code)
-`
-
 // Negative (planted): running praetorctl admit inside a controlling PTY (as in an agy lane)
 // does not stop the child on SIGTTOU/SIGTTIN when the child initializes readline/termios.
 func TestRunAdmit_Negative_ControllingTTYDoesNotStop(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX controlling-terminal SIGTTIN/SIGTTOU job control applies only on Unix")
-	}
-	py, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("no python3 on PATH: %v", err)
-	}
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("PRAETOR_ADMIT_TEST_PTY", "1")
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancel()
-	out, err := util.RunCommand(ctx, "", py, "-c", admitPTYLauncher, self, "-test.run=^TestAdmitPTYHelper$")
-	if err != nil {
-		t.Fatalf("admit under controlling PTY failed or stalled: %v\n%s", err, out)
-	}
+	ptytest.Run(t, "TestAdmitPTYHelper")
 }
 
 // TestAdmitPTYHelper is the child process the controlling-terminal case re-executes; it does nothing unless PRAETOR_ADMIT_TEST_PTY is 1.
@@ -224,16 +183,20 @@ func TestAdmitPTYHelper(t *testing.T) {
 	if os.Getenv("PRAETOR_ADMIT_TEST_PTY") != "1" {
 		return
 	}
-	py, err := exec.LookPath("python3")
+	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	probe := "import os, sys, termios\n" +
-		"if os.isatty(0):\n termios.tcsetattr(0, termios.TCSANOW, termios.tcgetattr(0)); sys.exit(2)\n" +
-		"assert sys.stdin.read() == ''\n" +
-		"termios.tcsetattr(1, termios.TCSANOW, termios.tcgetattr(1))\n"
+	t.Setenv("PRAETOR_ADMIT_TEST_PTY_CHILD", "1")
 	if err := runAdmit([]string{"--label", "pty-cli", "--min-available-gib", "0", "--min-swap-free-gib", "0", "--max-load", "0",
-		"--wait", "5s", "--timeout", "1500ms", "--", py, "-c", probe}); err != nil {
+		"--wait", "5s", "--timeout", "1500ms", "--", self, "-test.run=^TestAdmitPTYChild$"}); err != nil {
 		t.Fatalf("runAdmit under PTY: %v", err)
+	}
+}
+
+// TestAdmitPTYChild re-executes terminal setup in the admitted background process group.
+func TestAdmitPTYChild(t *testing.T) {
+	if os.Getenv("PRAETOR_ADMIT_TEST_PTY_CHILD") == "1" {
+		ptytest.Check(t)
 	}
 }

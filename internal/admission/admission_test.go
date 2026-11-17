@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/admission/ptytest"
 	"github.com/cordanaLLM/praetor/internal/sentinel"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -336,63 +337,12 @@ func TestRun_Positive_ShortChildAndExitStatus(t *testing.T) {
 	}
 }
 
-const ptySessionWrapper = `
-import errno, fcntl, os, pty, subprocess, sys, termios
-master, slave = pty.openpty()
-def setup():
-    os.setsid()
-    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-proc = subprocess.Popen(sys.argv[1:], stdin=slave, stdout=slave, stderr=slave, preexec_fn=setup, close_fds=True)
-os.close(slave)
-out = bytearray()
-while True:
-    try:
-        chunk = os.read(master, 4096)
-        if not chunk:
-            break
-        out.extend(chunk)
-    except OSError as exc:
-        if exc.errno == errno.EIO:
-            break
-        raise
-os.close(master)
-rc = proc.wait(timeout=15)
-sys.stdout.buffer.write(out)
-sys.exit(rc)
-`
-
-const ptyChildProbe = `
-import os, sys, termios
-if os.isatty(0):
-    termios.tcsetattr(0, termios.TCSANOW, termios.tcgetattr(0))
-    sys.exit(2)
-if sys.stdin.read() != "":
-    sys.exit(3)
-termios.tcsetattr(1, termios.TCSANOW, termios.tcgetattr(1))
-`
-
 // Negative (planted): inside a controlling PTY (as in an agy lane sandbox), DefaultStep and Run
 // must not let a backgrounded process group stop on SIGTTOU/SIGTTIN when the child initializes
 // terminal line editing (libedit readline in pytest) or touches terminal attributes.
 func TestRun_Negative_ControllingTTYDoesNotStop(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX controlling-terminal SIGTTIN/SIGTTOU job control applies only on Unix")
-	}
-	py, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skipf("no python3 on PATH: %v", err)
-	}
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("ADMISSION_TEST_PTY", "1")
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancel()
-	out, err := util.RunCommand(ctx, "", py, "-c", ptySessionWrapper, self, "-test.run=^TestAdmissionPTYHelper$")
-	if err != nil {
-		t.Fatalf("step under controlling PTY failed or stalled: %v\n%s", err, out)
-	}
+	ptytest.Run(t, "TestAdmissionPTYHelper")
 }
 
 // TestAdmissionPTYHelper is the child process the controlling-terminal case re-executes; it does nothing unless ADMISSION_TEST_PTY is 1.
@@ -400,14 +350,22 @@ func TestAdmissionPTYHelper(t *testing.T) {
 	if os.Getenv("ADMISSION_TEST_PTY") != "1" {
 		return
 	}
-	py, err := exec.LookPath("python3")
+	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("ADMISSION_TEST_PTY_CHILD", "1")
 	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond)
 	defer cancel()
-	step := DefaultStep("pty-step", []string{py, "-c", ptyChildProbe}, Limits{MemoryHigh: "256M", MemoryMax: "512M", MemorySwapMax: "0"})
+	step := DefaultStep("pty-step", []string{self, "-test.run=^TestAdmissionPTYChild$"}, Limits{MemoryHigh: "256M", MemoryMax: "512M", MemorySwapMax: "0"})
 	if err := Run(ctx, step); err != nil {
 		t.Fatalf("PTY step failed: %v", err)
+	}
+}
+
+// TestAdmissionPTYChild re-executes terminal setup in the admitted background process group.
+func TestAdmissionPTYChild(t *testing.T) {
+	if os.Getenv("ADMISSION_TEST_PTY_CHILD") == "1" {
+		ptytest.Check(t)
 	}
 }
