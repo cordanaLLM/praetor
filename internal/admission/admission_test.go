@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/admission/ptytest"
 	"github.com/cordanaLLM/praetor/internal/sentinel"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -278,12 +280,26 @@ func TestWait_Negative_HeldWaitReportsElapsed(t *testing.T) {
 	}
 }
 
-// Negative (planted): a child that blocks reading stdin is killed at its deadline within the
-// deadline plus CommandWaitDelay, naming the deadline, the label and argv[0].
-func TestRun_Negative_BlockingStdinKilledAtDeadline(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
+// deadlineShell replaces the scope check with a delayed refusal, isolating child execution from host systemd.
+func deadlineShell(t *testing.T) string {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
 		t.Skipf("no sh on PATH on %s: %v", runtime.GOOS, err)
 	}
+	dir := t.TempDir()
+	testsupport.BuildExecutable(t, dir, "systemd-run", `package main
+import ("os"; "time")
+func main() { time.Sleep(500*time.Millisecond); os.Exit(1) }
+`)
+	t.Setenv("PATH", dir)
+	return sh
+}
+
+// blockingDeadlineStep records child readiness before blocking on a private pipe until cancellation.
+func blockingDeadlineStep(t *testing.T) (Step, *bytes.Buffer, string) {
+	t.Helper()
+	sh := deadlineShell(t)
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -296,25 +312,82 @@ func TestRun_Negative_BlockingStdinKilledAtDeadline(t *testing.T) {
 			t.Error(cerr)
 		}
 	})
-	const deadline = 300 * time.Millisecond
-	ctx, cancel := context.WithTimeout(t.Context(), deadline)
-	defer cancel()
-	var errOut bytes.Buffer
-	started := time.Now()
-	runErr := Run(ctx, Step{
+	ready := filepath.Join(t.TempDir(), "ready")
+	errOut := new(bytes.Buffer)
+	return Step{
 		Label: "stdin-block", Limits: Limits{MemoryHigh: "96M", MemoryMax: "128M", MemorySwapMax: "0"},
-		Stdin: r, Stdout: io.Discard, Stderr: &errOut,
-		Argv: []string{"sh", "-c", "trap 'exit 143' TERM; read line"},
-	})
-	elapsed := time.Since(started)
-	if runErr == nil || elapsed > deadline+util.CommandWaitDelay {
-		t.Fatalf("blocking child err=%v after %s (bound %s)", runErr, elapsed, deadline+util.CommandWaitDelay)
+		Stdin: r, Stdout: io.Discard, Stderr: errOut,
+		Argv: []string{sh, "-c", `trap 'exit 143' TERM; printf ready > "$1"; read line`, "deadline-child", ready},
+	}, errOut, ready
+}
+
+// requireDeadlineReport requires a real child start, a deadline error, and the promised diagnostic on both surfaces.
+func requireDeadlineReport(t *testing.T, runErr error, diagnostic, ready string) {
+	t.Helper()
+	if marker, err := os.ReadFile(ready); err != nil || string(marker) != "ready" {
+		t.Fatalf("blocking child never ready: marker=%q err=%v; run=%v", marker, err, runErr)
 	}
-	for _, surface := range []string{runErr.Error(), errOut.String()} {
-		for _, want := range []string{"stdin-block", "sh", "deadline", "ms"} {
+	if !errors.Is(runErr, context.DeadlineExceeded) {
+		t.Fatalf("child deadline error missing: %v", runErr)
+	}
+	for _, surface := range []string{runErr.Error(), diagnostic} {
+		for _, want := range []string{"stdin-block", "sh", "deadline", "exceeded"} {
 			if !strings.Contains(surface, want) {
 				t.Fatalf("surface %q lacks %q", surface, want)
 			}
+		}
+	}
+}
+
+// Negative (planted): the child starts after a slow scope check and is killed by its own execution deadline.
+func TestRun_Negative_BlockingStdinKilledAtDeadline(t *testing.T) {
+	step, errOut, ready := blockingDeadlineStep(t)
+	const deadline = 300 * time.Millisecond
+	step.Timeout = deadline
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	started := time.Now()
+	runErr := Run(ctx, step)
+	elapsed := time.Since(started)
+	requireDeadlineReport(t, runErr, errOut.String(), ready)
+	if elapsed > time.Second+deadline+util.CommandWaitDelay {
+		t.Fatalf("blocking child err=%v after %s", runErr, elapsed)
+	}
+	if !strings.Contains(errOut.String(), "exceeded "+deadline.String()+" deadline") {
+		t.Fatalf("step bound missing: %s", errOut.String())
+	}
+}
+
+// Negative (planted): the caller's earlier deadline determines the reported execution bound after the scope check.
+func TestRun_Negative_EarlierCallerDeadline(t *testing.T) {
+	step, errOut, ready := blockingDeadlineStep(t)
+	step.Timeout = time.Hour
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	runErr := Run(ctx, step)
+	requireDeadlineReport(t, runErr, errOut.String(), ready)
+	for _, surface := range []string{runErr.Error(), errOut.String()} {
+		_, after, _ := strings.Cut(surface, "exceeded ")
+		raw, _, _ := strings.Cut(after, " deadline")
+		bound, err := time.ParseDuration(raw)
+		maxBound := time.Second
+		if runtime.GOOS == "linux" {
+			maxBound = 600 * time.Millisecond
+		}
+		if err != nil || bound <= 0 || bound > maxBound {
+			t.Fatalf("effective bound after scope check = %q: %v", raw, err)
+		}
+	}
+}
+
+// Negative (planted): a background caller and zero Timeout still expose the runner's default deadline to Run.
+func TestRun_Negative_DefaultStepDeadline(t *testing.T) {
+	step, errOut, ready := blockingDeadlineStep(t)
+	runErr := Run(context.Background(), step)
+	requireDeadlineReport(t, runErr, errOut.String(), ready)
+	for _, surface := range []string{runErr.Error(), errOut.String()} {
+		if !strings.Contains(surface, "exceeded "+util.DefaultCommandTimeout.String()+" deadline") {
+			t.Fatalf("default bound missing: %s", surface)
 		}
 	}
 }

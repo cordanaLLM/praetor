@@ -117,11 +117,11 @@ func Run(ctx context.Context, s Step) error {
 	if ok, why := ScopesAvailable(ctx); ok {
 		name, args = "systemd-run", ScopeArgs(unitName(s.Label, time.Now()), s.Limits, s.Argv)
 	} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return reportStepDeadline(s, stepBound(s.Timeout, inherited))
+		return reportStepDeadline(s, inherited)
 	} else if _, err := fmt.Fprintf(s.Stderr, "admission %s: runs unscoped, %s\n", s.Label, why); err != nil {
 		return err
 	}
-	stepCtx, bound, cancel := withStepDeadline(ctx, s.Timeout, inherited)
+	stepCtx, bound, cancel := withStepDeadline(ctx, s.Timeout)
 	defer cancel()
 	ignoreBackgroundTTYSignals()
 	err := util.RunCommandPassthrough(stepCtx, "", name, s.Stdin, s.Stdout, s.Stderr, args...)
@@ -139,21 +139,16 @@ func contextRemaining(ctx context.Context) time.Duration {
 	return util.DefaultCommandTimeout
 }
 
-// stepBound is the deadline a step is held to: its own Timeout when set, else the inherited one.
-func stepBound(timeout, inherited time.Duration) time.Duration {
-	if timeout > 0 {
-		return timeout
+// withStepDeadline installs an execution deadline and reports its effective bound after the scope check.
+func withStepDeadline(ctx context.Context, timeout time.Duration) (context.Context, time.Duration, context.CancelFunc) {
+	if timeout <= 0 {
+		if _, ok := ctx.Deadline(); ok {
+			return ctx, contextRemaining(ctx), func() {}
+		}
+		timeout = util.DefaultCommandTimeout
 	}
-	return inherited
-}
-
-// withStepDeadline derives the step context from Timeout when set, returning that context, its bound and its cancel.
-func withStepDeadline(ctx context.Context, timeout, inherited time.Duration) (context.Context, time.Duration, context.CancelFunc) {
-	if timeout > 0 {
-		stepCtx, cancel := context.WithTimeout(ctx, timeout)
-		return stepCtx, timeout, cancel
-	}
-	return ctx, inherited, func() {}
+	stepCtx, cancel := context.WithTimeout(ctx, timeout)
+	return stepCtx, contextRemaining(stepCtx), cancel
 }
 
 // reportStepDeadline prints and returns the named reason for a step cut at its deadline: label, command and bound.
