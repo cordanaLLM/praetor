@@ -486,6 +486,10 @@ func evasionSegmentMutants() []struct {
 		name, before, after, command string
 		want                         int
 	}{
+		{"brace subcommand uncertainty removed", `self.git_command, self.arguments_uncertain = "unknown", True`, `pass`, evasionDelimiterBraceCases()[16].command, 0},
+		{"partial brace subcommand uncertainty removed", `self.git_command, self.arguments_uncertain = "unknown", True`, `pass`, evasionDelimiterBraceCases()[17].command, 0},
+		{"brace command uncertainty removed", `self.git_command, self.arguments_uncertain = "unknown", True`, `pass`, evasionDelimiterBraceCases()[18].command, 0},
+		{"partial brace command uncertainty removed", `self.git_command, self.arguments_uncertain = "unknown", True`, `pass`, evasionDelimiterBraceCases()[19].command, 0},
 		{"brace uncertainty removed", `glob = ch in "*?[{}"`, `glob = ch in "*?["`, evasionDelimiterBraceCases()[0].command, 0},
 		{"partial delimiter reader removed", "delimiter, quoted, width = shell_here_doc_delimiter(word)",
 			"match = re.match(r\"(\\\"[^\\\"]*\\\"|'[^']*'|[-A-Za-z0-9_]+)\", word)\n            delimiter = match[0].strip(\"\\\"'\")\n            quoted, width = delimiter != match[0], match.end()",
@@ -499,8 +503,8 @@ func evasionSegmentMutants() []struct {
 			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
 		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1)", "segments, None)",
 			`git commit -m 'message $name' && tail -n 1`, 2},
-		{"redirection veto", "    if not commit_command(command, short_pattern):",
-			"    if re.search(r\"[<>]\", command):\n        return [(command, True)], []\n    if not commit_command(command, short_pattern):",
+		{"redirection veto", `    if not any(ch in command for ch in "{}") and not commit_command(`,
+			"    if re.search(r\"[<>]\", command):\n        return [(command, True)], []\n" + `    if not any(ch in command for ch in "{}") and not commit_command(`,
 			`git commit -m x 2>&1 | tail -n 1`, 2},
 		{"positional expansion", "self.uncertain |= self.word_expansion", "self.uncertain |= False",
 			`git commit "$x" && git log -n 1`, 0},
@@ -1357,6 +1361,35 @@ func evasionDelimiterBraceCases() []struct {
 		{"even body escapes", "cat <<true\ntr\\\\\nue\ntrue\ngit commit -m msg", 0},
 		{"continued delimiter data", "git commit -F - <<EOF\ntext\\\nEOF\n-n\nEOF", 0},
 		{"continued delimiter tabs", "git commit -F - <<-EOF\n\tE\\\nOF\ngit commit -n\nEOF", 2},
+		{"brace subcommand", `git {commit,-n} -m msg`, 2},
+		// codespell:ignore-next-line ommit
+		{"partial brace subcommand", `git c{ommit,-n} -m msg`, 2},
+		{"brace command", `{git,commit,-n,-m,msg}`, 2},
+		{"partial brace command", `g{it,} commit -n -m msg`, 2},
+		{"quoted brace subcommand", `git '{commit,-n}' -m msg`, 0},
+		{"quoted brace message", `git commit -m '{a,b}'`, 0},
+		{"non git brace operand", `echo {a,b}`, 0},
+		// codespell:ignore-next-line ommit
+		{"brace subcommand after option", `git -C . c{ommit,-n} -m msg`, 2},
+		{"brace option value", `git -C {.,other} commit -m msg`, 2},
+		{"quoted brace option value", `git -C '{.,other}' commit -m msg`, 0},
+		{"double quoted brace subcommand", `git "{commit,-n}" -m msg`, 0},
+		{"double quoted brace message", `git commit -m "{a,b}"`, 0},
+		{"quoted brace command", `"g{it,}" commit -n -m msg`, 0},
+		{"escaped brace command", `g\{it,\} commit -n -m msg`, 0},
+		{"brace assignment control", `echo '{a,b}'; result=$?; echo done`, 0},
+		{"non git subcommand brace operand", `git status {a,b}`, 0},
+		{"brace group control", `{ echo ready; }`, 0},
+		{"brace group commit control", `{ git commit -m msg; }`, 0},
+		{"brace group skip flag", `{ git commit -n -m msg; }`, 2},
+		{"bare brace subcommand", `git { -m msg`, 2},
+		{"assignment brace data", `VALUE={a,b}`, 0},
+		{"brace command after assignment", `VALUE={a,b} {git,commit,-n,-m,msg}`, 2},
+		{"brace command inside group", `{ {git,commit,-n,-m,msg}; }`, 2},
+		{"brace option hides subcommand", `git -c {x.y=z,commit,-n} -m msg`, 2},
+		{"quoted option hides no subcommand", `git -c '{x.y=z,commit,-n}' -m msg`, 0},
+		{"non git operand names git", `echo git {commit,-n} -m msg`, 0},
+		{"git data operand names git", `git log git {commit,-n} -m msg`, 0},
 	}
 }
 
@@ -1389,6 +1422,23 @@ func TestEmittedDelimiterBracePriorReplay(t *testing.T) {
 			t.Logf("prior rc=%d fixed rc=%d", before, after)
 			if before != wantBefore || after != tc.want {
 				t.Fatalf("prior rc=%d want=%d fixed rc=%d want=%d", before, wantBefore, after, tc.want)
+			}
+		})
+	}
+}
+
+// TestEmittedBraceCommandPriorReplay checks the prior rendering and quoted/data controls.
+func TestEmittedBraceCommandPriorReplay(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	prior := filepath.Join(priorEvasionFixtures, "before-brace-command.block_evasion.py")
+	// Four command regressions followed by their three unchanged controls.
+	for _, tc := range evasionDelimiterBraceCases()[16:23] {
+		t.Run(tc.name, func(t *testing.T) {
+			before := runInterceptor(t, python, prior, nil, nil, tc.command)
+			after := runInterceptor(t, python, fixed, nil, nil, tc.command)
+			t.Logf("prior rc=%d fixed rc=%d", before, after)
+			if before != 0 || after != tc.want {
+				t.Fatalf("prior rc=%d want=0 fixed rc=%d want=%d", before, after, tc.want)
 			}
 		})
 	}

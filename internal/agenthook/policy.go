@@ -323,6 +323,7 @@ var (
 	// Reuse the short-flag rule's Git option prefilter without requiring its flag tail.
 	shellCommitPattern = regexp.MustCompile(strings.ReplaceAll(
 		shortSkipFlagRule[:strings.Index(shortSkipFlagRule, `(commit\b`)]+`(commit\b|am\b)`, `\s`, pythonSpace))
+	shellCommitPrefixPattern = regexp.MustCompile(`\A` + shellCommitPattern.String())
 )
 
 // shellDocument records a pending delimiter without interpreting its body as shell syntax.
@@ -361,6 +362,7 @@ type shellSpans struct {
 	wordExpansion, wordSplitting   bool
 	argumentsUncertain             bool
 	commandWordSeen                bool
+	gitWordStart                   int
 	gitCommand                     string
 	executionStart, executionDepth int
 	wordExecutions                 []string
@@ -428,7 +430,7 @@ func (s *shellSpans) documentStep() bool {
 
 // scanCommandSpans masks data operands and refuses unknown commit/am argument lists.
 func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
-	if !shellCommitPattern.MatchString(joinLineContinuations(command)) {
+	if !strings.ContainsAny(command, "{}") && !shellCommitPattern.MatchString(joinLineContinuations(command)) {
 		return []shellSpan{{command, readOnlyVetoPattern.MatchString(command)}}, nil, nil
 	}
 	s := shellSpans{command: command, judged: []byte(command), wordStart: -1, executionStart: -1,
@@ -575,7 +577,7 @@ func (s *shellSpans) finishWord(end int) {
 	s.enterGitCommand(word, end)
 	data := s.nextData || s.redirectData
 	s.maskWord(word, end)
-	s.commandWordSeen = s.commandWordSeen || !s.redirectData
+	s.commandWord(word)
 	for _, execution := range s.wordExecutions {
 		s.nested = append(s.nested, shellInput{text: execution})
 	}
@@ -585,6 +587,17 @@ func (s *shellSpans) finishWord(end int) {
 	s.wordStart, s.executionStart = -1, -1
 	s.wordExpansion, s.wordSplitting, s.redirectData = false, false, false
 	s.wordExecutions = nil
+}
+
+// commandWord records the first executable word, keeping its Git basename's raw offset.
+func (s *shellSpans) commandWord(word string) {
+	if s.commandWordSeen || s.redirectData || s.commandPrefix(word) {
+		return
+	}
+	s.commandWordSeen, s.gitWordStart = true, -1
+	if strings.HasSuffix(word, "git") && shellCommitPattern.MatchString(word+" commit") {
+		s.gitWordStart = s.wordStart + len(word) - len("git")
+	}
 }
 
 // maskWord excludes data while retaining splitting after the command word, before any subcommand.
@@ -691,7 +704,40 @@ func (s *shellSpans) controlCharacter(ch byte) {
 	glob := strings.ContainsRune("*?[{}", rune(ch))
 	s.wordExpansion = s.wordExpansion || glob
 	s.wordSplitting = s.wordSplitting || glob
+	if strings.ContainsRune("{}", rune(ch)) {
+		s.braceCommand()
+	}
 	s.whole = s.whole || shellUnsupportedPattern.MatchString(s.command[s.position:s.position+1])
+}
+
+// braceCommand reuses the Git option grammar to retain unknown command and subcommand words.
+func (s *shellSpans) braceCommand() {
+	if s.gitCommand != "" || s.wordStart < 0 {
+		return
+	}
+	word := joinLineContinuations(s.command[s.wordStart : s.position+1])
+	if !s.commandWordSeen && s.commandPrefix(word) {
+		return
+	}
+	unknown := !s.commandWordSeen
+	if s.commandWordSeen && s.gitWordStart >= 0 {
+		prefix := joinLineContinuations(s.command[s.gitWordStart:s.wordStart])
+		unknown = shellCommitPrefixPattern.MatchString(prefix+" commit") ||
+			shellCommitPrefixPattern.MatchString(prefix+word+" commit")
+	}
+	if unknown {
+		s.gitCommand, s.argumentsUncertain = "unknown", true
+	}
+}
+
+// commandPrefix keeps leading assignments and standalone grouping braces out of command words.
+func (s *shellSpans) commandPrefix(word string) bool {
+	if assignmentWord.MatchString(word) {
+		return true
+	}
+	end := s.wordStart + 1
+	return len(word) == 1 && strings.ContainsAny(word, "{}") && (end == len(s.command) ||
+		strings.ContainsRune(" \t\n;&|<>", rune(s.command[end])))
 }
 
 // wordBoundary rejects escaped blanks and operators as lexical word boundaries.
@@ -774,6 +820,7 @@ func (s *shellSpans) split(end, next int) {
 	s.nextData, s.redirectData = false, false
 	s.argumentsUncertain = false
 	s.commandWordSeen = false
+	s.gitWordStart = -1
 	s.gitCommand = ""
 }
 

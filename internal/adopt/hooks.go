@@ -591,10 +591,12 @@ if __name__ == "__main__":
 `
 
 // evasionCommandSegments preserves quoted words while bounding the short-flag rule to one command.
-const evasionCommandSegments = `def commit_command(command, short_pattern):
+const evasionCommandSegments = `def commit_command(command, short_pattern, anchored=False):
     """Reuse the short-flag rule's Git option prefilter without its flag tail."""
     head, _, _ = short_pattern.partition(GIT_OPTION_RUN_JOIN)
     domain = head + GIT_OPTION_RUN_JOIN + r"commit\b|am\b)"
+    if anchored:
+        domain = r"\A" + domain
     return search(domain, join_line_continuations(command))
 
 
@@ -634,7 +636,9 @@ def scan_shell_input(source, short_pattern):
 
 def scan_command_spans(command, short_pattern):
     """Mask data operands while collecting executable message substitutions."""
-    if not commit_command(command, short_pattern):
+    if not any(ch in command for ch in "{}") and not commit_command(
+        command, short_pattern
+    ):
         return [(command, bool(re.search(READ_ONLY_VETO, command)))], []
     spans = CommandSpans(command, short_pattern)
     for _ in range(len(command)):
@@ -697,6 +701,7 @@ class CommandSpans:
         r"\$(?:@|\{(?:@|!?[A-Za-z_][A-Za-z0-9_]*\[@\]|![A-Za-z_][A-Za-z0-9_]*@\}))"
     )
     literal_pattern = re.compile(r'[^"\\$\x60\n]+')
+    assignment_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
     def __init__(self, command, short_pattern):
         """Initialize raw offsets, data masking and the shell-state veto."""
@@ -710,6 +715,7 @@ class CommandSpans:
         self.execution_depth = 0
         self.next_data = self.redirect_data = self.word_expansion = False
         self.word_splitting = False
+        self.git_word_start = -1
         self.arguments_uncertain = False
         self.command_word_seen = False
         self.git_command = ""
@@ -811,13 +817,23 @@ class CommandSpans:
         self.enter_git_command(word, end)
         data = self.next_data or self.redirect_data
         self.mask_word(word, end)
-        self.command_word_seen |= not self.redirect_data
+        self.command_word(word)
         self.nested.extend((execution, False) for execution in self.word_executions)
         if data:
             self.next_data = self.next_data and self.redirect_data
         self.word_start = self.execution_start = -1
         self.word_expansion = self.word_splitting = self.redirect_data = False
         self.word_executions = []
+
+    def command_word(self, word):
+        """Record the first executable word and its Git basename's raw offset."""
+        if self.command_word_seen or self.redirect_data or self.command_prefix(word):
+            return
+        self.command_word_seen, self.git_word_start = True, -1
+        if word.endswith("git") and commit_command(
+            word + " commit", self.short_pattern
+        ):
+            self.git_word_start = self.word_start + len(word) - len("git")
 
     def mask_word(self, word, end):
         """Exclude data; retain splitting after the command word, before subcommands."""
@@ -905,8 +921,40 @@ class CommandSpans:
         glob = ch in "*?[{}"
         self.word_expansion |= glob
         self.word_splitting |= glob
+        if ch in "{}":
+            self.brace_command()
         if ch in "{}^!" or ord(ch) > 126 or ord(ch) < 32 and ch != "\t":
             self.whole = True
+
+    def brace_command(self):
+        """Reuse the Git option grammar to retain unknown command words."""
+        if self.git_command or self.word_start < 0:
+            return
+        start, stop = self.word_start, self.position + 1
+        word = self.command[start:stop]
+        if not self.command_word_seen and self.command_prefix(word):
+            return
+        unknown = not self.command_word_seen
+        if self.command_word_seen and self.git_word_start >= 0:
+            git_start, word_start = self.git_word_start, self.word_start
+            prefix = self.command[git_start:word_start]
+            unknown = commit_command(prefix + " commit", self.short_pattern, True)
+            unknown |= commit_command(
+                prefix + word + " commit", self.short_pattern, True
+            )
+        if unknown:
+            self.git_command, self.arguments_uncertain = "unknown", True
+
+    def command_prefix(self, word):
+        """Keep leading assignments and standalone groups out of command words."""
+        if self.assignment_pattern.match(word):
+            return True
+        end = self.word_start + 1
+        return (
+            len(word) == 1
+            and word in "{}"
+            and (end == len(self.command) or self.command[end] in " \t\n;&|<>")
+        )
 
     def word_boundary(self):
         """Reject escaped blanks and operators as lexical word boundaries."""
@@ -997,6 +1045,7 @@ class CommandSpans:
         self.next_data = self.redirect_data = False
         self.arguments_uncertain = False
         self.command_word_seen = False
+        self.git_word_start = -1
         self.git_command = ""
 
     def redirection(self):
@@ -1449,6 +1498,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"e76074f216d1d60d63b0efab43643a1a42441732c36d59b29e4cc88d714c425d": "uncertain command and Git subcommand brace words fail closed",
 	"31c7c15c77717609cbfddb4f18ad5ab5a66166a325113eb740c7e45774ae87f6": "exact heredoc delimiter words, logical body lines and brace argument refusal",
 	"6c6f93592ceb1781566f9862c45fc645c59bf8d232074797c1f27ffd3d67691c": "refuse commit/am argument lists with runtime splitting",
 	"07b82432098bf77cfbaa590d926183831786af235b577a2a8ca9f9d1e68056aa": "splitting Git option values retain uncertainty before the subcommand",
