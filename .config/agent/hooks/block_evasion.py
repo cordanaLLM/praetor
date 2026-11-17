@@ -714,9 +714,8 @@ class CommandSpans:
             return True
         redirect = re.match(self.redirect_pattern, rest)[0]
         self.position += len(redirect)
-        self.redirect_data = not self.stack and not any(
-            ch in redirect for ch in "0123456789-"
-        )
+        plain = not any(ch in redirect for ch in "0123456789-")
+        self.redirect_data = not self.stack and plain
         return True
 
     def here_string_feed(self):

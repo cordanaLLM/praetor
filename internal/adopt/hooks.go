@@ -1195,9 +1195,8 @@ class CommandSpans:
             return True
         redirect = re.match(self.redirect_pattern, rest)[0]
         self.position += len(redirect)
-        self.redirect_data = not self.stack and not any(
-            ch in redirect for ch in "0123456789-"
-        )
+        plain = not any(ch in redirect for ch in "0123456789-")
+        self.redirect_data = not self.stack and plain
         return True
 
     def here_string_feed(self):
@@ -1655,7 +1654,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
-	"b9d9281e6f839fa81dd86d73935c990ef8026928219b667568e4faf1fbc46867": "stdin consumer ownership for here-documents and here-strings",
+	"899552ce7b5253b3f85040dde560beb2e201ca74481f589ae03d92e120a45bc9": "stdin consumer ownership for here-documents and here-strings",
 	"e76074f216d1d60d63b0efab43643a1a42441732c36d59b29e4cc88d714c425d": "uncertain command and Git subcommand brace words fail closed",
 	"31c7c15c77717609cbfddb4f18ad5ab5a66166a325113eb740c7e45774ae87f6": "exact heredoc delimiter words, logical body lines and brace argument refusal",
 	"6c6f93592ceb1781566f9862c45fc645c59bf8d232074797c1f27ffd3d67691c": "refuse commit/am argument lists with runtime splitting",
