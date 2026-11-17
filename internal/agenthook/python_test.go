@@ -265,7 +265,8 @@ for mode in ("native", "threaded", "wait"):
         raise SystemExit("sleeping command unexpectedly succeeded")
     finally:
         common._bounded_output = original
-if common.run_bounded([sys.executable, "-c", "print('ok')"], timeout=10) != b"ok\n":
+# Binary write: print() in text mode ends lines with CRLF on Windows, and run_bounded returns raw bytes.
+if common.run_bounded([sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'ok\\n')"], timeout=10) != b"ok\n":
     raise SystemExit("successful command changed")
 `
 	output, err := util.RunCommand(t.Context(), "", argv[0], "-B", "-c", script,
