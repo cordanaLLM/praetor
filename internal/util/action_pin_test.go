@@ -116,7 +116,7 @@ func TestParsePinnedActionBoundary(t *testing.T) {
 // order, pinned or not, skips comment and run lines, and refuses one line past its bound.
 func TestScanActionUses(t *testing.T) {
 	workflow := "steps:\n  - uses: actions/checkout@" + pinTestSHA + "  # v7.0.1\n" +
-		"  # - uses: actions/cache@v4\n  - run: echo uses: x\n  - uses: ./local\n"
+		"  # - uses: actions/cache@v4\n  - run: \"echo uses: x\"\n  - uses: ./local\n"
 	lines, uses, err := ScanActionUses(workflow, 6)
 	if err != nil || len(lines) != 6 || len(uses) != 2 {
 		t.Fatalf("scan = %d lines, %+v, %v", len(lines), uses, err)
@@ -136,5 +136,76 @@ func TestScanActionUses(t *testing.T) {
 	}
 	if lines, uses, err := ScanActionUses("", 1); err != nil || len(lines) != 1 || len(uses) != 0 {
 		t.Fatalf("empty workflow = %v, %+v, %v", lines, uses, err)
+	}
+}
+
+// TestScanActionUsesStructuralValues separates mapping keys from scalar text and preserves source spans.
+func TestScanActionUsesStructuralValues(t *testing.T) {
+	for _, workflow := range []string{
+		`- {uses: actions/checkout@v4, name: "example, uses: ./local"}`,
+		`- {name: "uses: ./local", "u\u0073es": "actions/checkout@v4"}`,
+		"steps:\n  - name: écho\n    uses: 'actions/checkout@v4'",
+		`- {name: "écho", uses: "actions/checkout@v\u0034"}`,
+		"steps:\n  - run: |\n      uses: ./local\n  - uses: actions/checkout@v4",
+		"steps:\n  - uses: &checkout actions/checkout@v4",
+		"steps:\n  - uses: !!str actions/checkout@v4",
+	} {
+		_, uses, err := ScanActionUses(workflow, 10)
+		if err != nil || len(uses) != 1 || uses[0].Value != "actions/checkout@v4" {
+			t.Fatalf("%q: uses = %+v, %v", workflow, uses, err)
+		}
+		assertActionUseRewrite(t, workflow, uses[0])
+	}
+}
+
+// TestScanActionUsesRefusals rejects invalid documents and never treats quoted scalar content as a comment.
+func TestScanActionUsesRefusals(t *testing.T) {
+	for _, text := range []string{"uses: [", "uses: {}", "uses: [./local]", "uses: *missing", "uses: ./local\n---\nuses: actions/checkout@v4"} {
+		if _, _, err := ScanActionUses(text, 10); err == nil {
+			t.Errorf("unsupported YAML accepted: %q", text)
+		}
+	}
+	text := `uses: "actions/checkout@` + pinTestSHA + `  # v7.0.1"`
+	_, uses, err := ScanActionUses(text, 1)
+	if err != nil || len(uses) != 1 || uses[0].SHAPinned {
+		t.Fatalf("quoted comment = %+v, %v; want no SHA pin", uses, err)
+	}
+}
+
+// TestScanTemplateActionUsesBoundary accepts plain blocks and refuses ambiguous template lines.
+func TestScanTemplateActionUsesBoundary(t *testing.T) {
+	prefix := "{{if .Enabled}}\nsteps:\n"
+	for _, text := range []string{
+		"  - {uses: ./local}", `  - "uses": ./local`, "  - name: uses example",
+		"  - uses: {{ .Action }}", "  - uses: [./local]", "  - uses: ./local\n    uses: [",
+	} {
+		if _, _, err := ScanTemplateActionUses(prefix+text+"\n{{end}}", 10); err == nil || !strings.Contains(err.Error(), "unsupported uses") {
+			t.Errorf("%q: want unsupported uses error, got %v", text, err)
+		}
+	}
+	text := prefix + "  # uses: ignored\n  - uses: actions/checkout@" + pinTestSHA + "  # v7.0.1\n{{end}}"
+	_, uses, err := ScanTemplateActionUses(text, 6)
+	if err != nil || len(uses) != 1 || uses[0].Line != 3 || !uses[0].Pinned {
+		t.Fatalf("template uses = %+v, %v", uses, err)
+	}
+	if _, _, err := ScanTemplateActionUses(text, 4); err == nil {
+		t.Fatal("template over line bound accepted")
+	}
+}
+
+// assertActionUseRewrite checks the source span and retains scalar properties after replacement.
+func assertActionUseRewrite(t *testing.T, workflow string, use ActionUse) {
+	t.Helper()
+	replacement, err := use.Replacement("actions/checkout@v7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := workflow[:use.Start] + replacement + workflow[use.End:]
+	_, after, err := ScanActionUses(rewritten, 10)
+	if err != nil || len(after) != 1 || after[0].Value != "actions/checkout@v7" {
+		t.Fatalf("rewritten %q: uses = %+v, %v", rewritten, after, err)
+	}
+	if use.source.Anchor != after[0].source.Anchor || use.source.Tag != after[0].source.Tag {
+		t.Fatalf("scalar properties changed: %q -> %q", workflow, rewritten)
 	}
 }

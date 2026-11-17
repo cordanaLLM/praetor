@@ -14,6 +14,28 @@ const (
 	pinnedNodeSHA     = "820762786026740c76f36085b0efc47a31fe5020"
 )
 
+// TestPinnedReleaseRewriteSourcePosition changes only uses when sibling scalar text repeats its pin.
+func TestPinnedReleaseRewriteSourcePosition(t *testing.T) {
+	ref := "actions/checkout@" + pinnedCheckoutSHA
+	for name, content := range map[string]string{
+		"flow":              "steps:\n  - {name: \"" + ref + "\", uses: " + ref + "}  # v4.2.2\n",
+		"flow-name-comment": "steps:\n  - {name: \"" + ref + " # v4.2.2\", uses: " + ref + "}  # v4.2.2\n",
+		"block":             "steps:\n  - name: \"" + ref + "\"\n    uses: " + ref + "  # v4.2.2\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := withPinnedReleases(content)
+			if err != nil || !strings.Contains(got, `name: "`+ref) || !strings.Contains(got, "uses: actions/checkout@v4.2.2") {
+				t.Fatalf("rewrite = %q, %v; want name unchanged and uses at v4.2.2", got, err)
+			}
+			repo := writePagesWorkflow(t, content)
+			candidates, deps, err := ScanWorkflowActions(t.Context(), repo)
+			if err != nil || len(candidates) != 1 || candidates[0].CurrentVersion != "v4.2.2" || len(deps) != 1 {
+				t.Fatalf("scan = %+v, %+v, %v; want release and deprecation", candidates, deps, err)
+			}
+		})
+	}
+}
+
 // TestScanWorkflowActionsYAMLKeyForms preserves candidate metadata across equivalent YAML keys.
 func TestScanWorkflowActionsYAMLKeyForms(t *testing.T) {
 	for _, form := range []string{

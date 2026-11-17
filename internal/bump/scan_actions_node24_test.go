@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // node20CorePins are the last Node.js 20 majors of the four core setup actions.
@@ -176,21 +178,9 @@ func TestEngineWorkflowsCarryNoDeprecatedActionPins(t *testing.T) {
 		t.Fatalf("scan engine workflows: %v", err)
 	}
 	for _, rel := range engineWorkflowFiles {
-		content, readErr := os.ReadFile(filepath.Join(root, rel))
-		if readErr != nil {
-			t.Fatalf("read %s: %v", rel, readErr)
-		}
-		released, releaseErr := withPinnedReleases(string(content))
-		if releaseErr != nil {
-			t.Fatalf("read %s: %v", rel, releaseErr)
-		}
-		for _, m := range workflowActionRegex.FindAllStringSubmatch(released, 100) {
-			cand, dep := buildActionCandidate(m[1], m[2], rel)
-			got = append(got, cand)
-			if dep != nil {
-				deps = append(deps, *dep)
-			}
-		}
+		candidates, warnings := engineWorkflowCandidates(t, root, rel)
+		got = append(got, candidates...)
+		deps = append(deps, warnings...)
 	}
 	if len(deps) != 0 {
 		t.Errorf("engine files pin deprecated action runtimes: %+v", deps)
@@ -200,4 +190,31 @@ func TestEngineWorkflowsCarryNoDeprecatedActionPins(t *testing.T) {
 			t.Errorf("%s pins %s@%s but the registry names %s", cand.WorkflowFile, cand.Action, cand.CurrentVersion, cand.LatestVersion)
 		}
 	}
+}
+
+// engineWorkflowCandidates reads engine templates and actions through the shared YAML reader.
+func engineWorkflowCandidates(t *testing.T, root, rel string) ([]ActionCandidate, []DeprecationWarning) {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	_, uses, err := util.ScanTemplateActionUses(string(content), maxWorkflowLines)
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	var candidates []ActionCandidate
+	var warnings []DeprecationWarning
+	for _, use := range uses {
+		action, version, remote := remoteActionUse(use)
+		if !remote {
+			continue
+		}
+		candidate, warning := buildActionCandidate(action, version, rel)
+		candidates = append(candidates, candidate)
+		if warning != nil {
+			warnings = append(warnings, *warning)
+		}
+	}
+	return candidates, warnings
 }

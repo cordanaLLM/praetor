@@ -8,15 +8,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/semver"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
-
-var workflowActionRegex = regexp.MustCompile(`(?:uses|"uses"|'uses')[ \t]*:\s*([a-zA-Z0-9\-_/]+)@([a-zA-Z0-9.\-_+]+)`)
 
 // Known canonical latest versions for standard CI actions: the newest upstream release
 // major, or the exact tag for actions consumed by tag. The deprecation warning names its
@@ -149,31 +146,28 @@ func parseWorkflowFile(ctx context.Context, repoPath, fileName string, seen map[
 	if err != nil {
 		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
 	}
-	lines, pins, err := releasedLines(string(content))
-	if err != nil {
-		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
-	}
-	// A commented-out `uses:` line is an example or a disabled step, not a pin in use.
-	live, err := util.StripHashComments(strings.Join(lines, "\n"))
+	_, uses, err := util.ScanActionUses(string(content), maxWorkflowLines)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
 	}
 	var candidates []ActionCandidate
 	var deprecations []DeprecationWarning
 
-	for _, ref := range liveActionRefs(live) {
-		pin := pins[ref.line]
-		if pin.Action != ref.action {
-			pin = util.PinnedAction{}
+	for i := 0; i < len(uses) && i < maxActionRefsPerWorkflow; i++ {
+		use := uses[i]
+		action, version, remote := remoteActionUse(use)
+		if !remote {
+			continue
 		}
-		key := ref.action + "@" + ref.version + "@" + pin.SHA + ":" + fileName
+		pin := use.Pin
+		key := action + "@" + version + "@" + pin.SHA + ":" + fileName
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
 
-		cand, dep := buildActionCandidate(ref.action, ref.version, fileName)
-		cand.Line = ref.line + 1
+		cand, dep := buildActionCandidate(action, version, fileName)
+		cand.Line = use.Line + 1
 		if pin.SHA != "" {
 			markSHAPin(&cand, pin)
 		}
@@ -191,67 +185,40 @@ const maxWorkflowLines = 100000
 // maxActionRefsPerWorkflow bounds the action references one workflow contributes (HISS-02).
 const maxActionRefsPerWorkflow = 100
 
-// actionRef is one remote action reference on a live workflow line: the zero-based line
-// index, the action and the version it is compared at.
-type actionRef struct {
-	line            int
-	action, version string
-}
-
-// liveActionRefs returns the remote action references of a workflow whose comments are
-// stripped, line by line and at most maxActionRefsPerWorkflow of them. A local action
-// (./...) is not a pin.
-func liveActionRefs(live string) []actionRef {
-	lines := strings.Split(live, "\n")
-	var refs []actionRef
-	for index := 0; index < len(lines) && index < maxWorkflowLines && len(refs) < maxActionRefsPerWorkflow; index++ {
-		for _, m := range workflowActionRegex.FindAllStringSubmatch(lines[index], maxActionRefsPerWorkflow-len(refs)) {
-			if !strings.HasPrefix(m[1], ".") {
-				refs = append(refs, actionRef{line: index, action: m[1], version: m[2]})
-			}
-		}
+// remoteActionUse reads a decoded remote reference at its release when its SHA has one.
+func remoteActionUse(use util.ActionUse) (string, string, bool) {
+	if strings.HasPrefix(use.Value, "./") || strings.HasPrefix(use.Value, "docker://") {
+		return "", "", false
 	}
-	return refs
+	action, version, ok := strings.Cut(use.Value, "@")
+	if !ok || action == "" || version == "" {
+		return "", "", false
+	}
+	if use.Pinned {
+		version = use.Pin.Release
+	}
+	return action, version, true
 }
 
-// withPinnedReleases rewrites every uses: reference pinned by full commit SHA with its
-// release as a trailing comment (util.ParsePinnedAction) to action@release. The comment
-// names the release the SHA stands for, and Renovate and Dependabot keep the two together.
-// Stripping comments first would leave the bare SHA, which no release tag equals, so a
-// current SHA pin would read as drift and a SHA pin of a deprecated major would go unflagged.
-// A commented-out step keeps its leading "#" and is stripped as before.
+// withPinnedReleases replaces SHA-pinned scalar spans with the releases their YAML comments name.
+// Sibling fields and comments retain their source bytes; reverse order keeps later spans stable.
 func withPinnedReleases(content string) (string, error) {
-	lines, _, err := releasedLines(content)
+	_, uses, err := util.ScanActionUses(content, maxWorkflowLines)
 	if err != nil {
 		return "", err
 	}
-	return strings.Join(lines, "\n"), nil
-}
-
-// releasedLines splits content into lines, rewriting each SHA pin with a release comment as
-// withPinnedReleases does, and returns every SHA pin (util.ParseSHAPin) by line index, bare
-// ones included, so the scan can still name the commit a rewritten line runs.
-func releasedLines(content string) ([]string, map[int]util.PinnedAction, error) {
-	lines, uses, err := util.ScanActionUses(content, maxWorkflowLines)
-	if err != nil {
-		return nil, nil, err
-	}
-	pins := make(map[int]util.PinnedAction)
-	for _, use := range uses {
-		if !use.SHAPinned {
+	for i := len(uses) - 1; i >= 0; i-- {
+		use := uses[i]
+		if !use.Pinned {
 			continue
 		}
-		pins[use.Line] = use.Pin
-		if use.Pinned {
-			old := use.Ref
-			// Flow mappings separate the reference and its comment with YAML tokens.
-			if !strings.Contains(lines[use.Line], old) {
-				old = use.Pin.Action + "@" + use.Pin.SHA
-			}
-			lines[use.Line] = strings.Replace(lines[use.Line], old, use.Pin.Action+"@"+use.Pin.Release, 1)
+		replacement, encodeErr := use.Replacement(use.Pin.Action + "@" + use.Pin.Release)
+		if encodeErr != nil {
+			return "", encodeErr
 		}
+		content = content[:use.Start] + replacement + content[use.End:]
 	}
-	return lines, pins, nil
+	return content, nil
 }
 
 // markSHAPin records that cand runs the commit pin names. A pin whose comment names a release

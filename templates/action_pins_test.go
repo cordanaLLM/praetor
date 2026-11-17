@@ -4,14 +4,19 @@
 package templates_test
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/semver"
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -19,6 +24,11 @@ import (
 // Share the workflow reader with supplychain and adopt; enforce the emitted comment style here.
 func actionPinFindings(text string) []string {
 	_, uses, err := util.ScanActionUses(text, 100000)
+	return actionPinUseFindings(uses, err)
+}
+
+// actionPinUseFindings applies pinning and local-action rules to structurally decoded uses values.
+func actionPinUseFindings(uses []util.ActionUse, err error) []string {
 	if err != nil {
 		return []string{err.Error()}
 	}
@@ -44,14 +54,19 @@ func templateActionPinFindings(tree fs.FS) ([]string, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.IsDir() || (!strings.HasSuffix(name, ".yml.tmpl") && !strings.HasPrefix(name, renderedRoot+"/")) {
+		renderedYAML := strings.HasPrefix(name, renderedRoot+"/") && (path.Ext(name) == ".yml" || path.Ext(name) == ".yaml")
+		if entry.IsDir() || (!strings.HasSuffix(name, ".yml.tmpl") && !renderedYAML) {
 			return nil
 		}
 		body, err := fs.ReadFile(tree, name)
 		if err != nil {
 			return err
 		}
-		for _, finding := range actionPinFindings(string(body)) {
+		_, uses, scanErr := util.ScanActionUses(string(body), 100000)
+		if strings.HasSuffix(name, ".tmpl") {
+			_, uses, scanErr = util.ScanTemplateActionUses(string(body), 100000)
+		}
+		for _, finding := range actionPinUseFindings(uses, scanErr) {
 			findings = append(findings, name+":"+finding)
 		}
 		return nil
@@ -132,4 +147,58 @@ func TestTemplateActionPinYAMLKeyForms(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestTemplateActionPinQuotedScalar refuses floating actions beside uses-like scalar content.
+func TestTemplateActionPinQuotedScalar(t *testing.T) {
+	text := "steps:\n  - {uses: actions/checkout@v4, name: \"example, uses: ./local\"}\n"
+	if findings := actionPinFindings(text); len(findings) != 1 {
+		t.Fatalf("findings = %v; want one floating-action finding", findings)
+	}
+}
+
+// TestActionInventoryTemplates keeps the credits caller compatible with the shared structural reader.
+func TestActionInventoryTemplates(t *testing.T) {
+	root := t.TempDir()
+	ctx := actionInventoryFixtureContext(t)
+	if _, err := util.RunGit(ctx, root, "init", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"ci.yml.tmpl":        "<% if .Enabled %>\nsteps:\n  - uses: actions/checkout@v4\n<% end %>\n",
+		"settings.toml.tmpl": "<% /*\nEvery built-in rule; parser refuses an empty list.\n*/ %>\n[settings]\n",
+	} {
+		dir := filepath.Join(root, "templates", "fixture")
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- Private fixture directory requires owner write and traversal.
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := supplychain.ReadCreditInventory(ctx, root)
+	if err != nil || len(items) != 1 || items[0].ID != "actions/checkout" {
+		t.Fatalf("inventory = %+v, %v; want the template's checkout action", items, err)
+	}
+}
+
+// actionInventoryFixtureContext isolates local git with the lane's three permitted barriers.
+func actionInventoryFixtureContext(t *testing.T) context.Context {
+	t.Helper()
+	var environment []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if !strings.HasPrefix(strings.ToUpper(key), "GIT_") {
+			environment = append(environment, entry)
+		}
+	}
+	environment = append(environment, "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	deadline, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	t.Cleanup(cancel)
+	ctx, err := util.WithCommandEnvironment(deadline, environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctx
 }
