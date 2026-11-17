@@ -1,3 +1,11 @@
 {
-  "exceptions": []
+  "exceptions": [
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "locks": ["docs/presets/starlight"],
+      "reason": "MEL C (10 days from entry 2026-11-17). picomatch ReDoS through single-branch repeated extglobs (CVE-2026-112366, high); every picomatch release is affected (range <=4.0.7, 4.0.7 is the newest on npm, no patched version, checked 2026-11-17 19:20 via npm view and the GitHub advisory). In this lock picomatch 4.0.7 comes in through astro and vite of the documentation preset build, a build-time tool whose glob patterns come from the repository's own configuration, not from untrusted input. Re-check for a patched picomatch or an astro release without it before expiry; update the lock and drop this entry when one ships.",
+      "expires": "2026-11-27"
+    }
+  ]
 }
