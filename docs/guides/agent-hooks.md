@@ -75,6 +75,10 @@ What this means in practice:
   timer (`refuse_after`) answers for the adapter at 12 s or 55 s, whatever it is still
   blocked on, such as a child in uninterruptible sleep on a stalled file system. A guard
   then exits 2; `checkpoint.py` blocks a stop and annotates a tool event.
+  When `checkpoint.py` fails, the reason the adapter prints carries its stderr and, when
+  exactly one stdout result marker holds an error, `checkpoint evaluator: <error>`; an
+  absent, empty, invalid or duplicate marker and empty stderr are each named
+  (`checkpointFailureReason` in `internal/agenthook/python.go`).
   `test_every_adapter_answers_before_its_client_gives_up` checks this arithmetic against
   every registration, and
   `test_registered_hooks_fail_closed_before_the_client_timeout_when_git_stalls` runs the

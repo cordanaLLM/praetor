@@ -96,7 +96,9 @@ or its change in the base that pull request names. The pull request state of the
 one repository-wide listing, tried up to three times with a bounded backoff (1 s, then 2 s) inside
 the worktree check budget; a listing that still fails keeps the stop due with one line naming the
 lookup error and the count of pushed branches left unverified, instead of one finding per
-worktree. The rules and the naming forms are in the
+worktree. A Git or forge command that overruns its limit is reported with the limit and at most
+four command words, for example `checkpoint command timed out after 1 s: git -C <path> status`
+(`run_bounded` in `.config/lefthook/scripts/common.py`; no environment is printed). The rules and the naming forms are in the
 [checkpoint cadence guide](checkpoint-cadence.md).
 
 `make verify-all` also runs `make hooks-lint` (`scripts/test_emitted_hook_lint.py`). It lints
