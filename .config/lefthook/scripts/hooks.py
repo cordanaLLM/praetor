@@ -233,6 +233,7 @@ def pre_push(remote):
         check_merge_range(base, head)
         check_commit_message_range(base, head, remote=remote)
         check_signature_range(base, head, remote=remote)
+        check_whitespace_range(base, head)
         if not names:
             continue
         check_pushed_snapshot(head, base, mode, names)
@@ -479,6 +480,13 @@ def check_commit_message_range(base, head, remote=None):
     with_stable_remote_refs(other_push_remotes(remote), check)
 
 
+def check_whitespace_range(base, head):
+    """Check every outgoing diff, accepting CRLF terminators while retaining whitespace errors."""
+    git("-c", "core.whitespace=cr-at-eol", "--no-replace-objects", "log", "--check",
+        "--no-color", "--no-ext-diff", "--no-textconv", "--format=commit %H",
+        f"{base}..{head}" if base else head, "--")
+
+
 def check_commits(base):
     """Re-run the commit checks that need no workstation over every commit of base..HEAD (#61).
 
@@ -492,24 +500,52 @@ def check_commits(base):
     base = git("rev-parse", "--verify", "--end-of-options", base + "^{commit}").decode().strip()
     head = git("rev-parse", "--verify", "HEAD^{commit}").decode().strip()
     check_private_history(head, base)
-    git("--no-replace-objects", "log", "--check", "--no-color", "--no-ext-diff", "--no-textconv",
-        "--format=commit %H", f"{base}..{head}", "--")
+    check_whitespace_range(base, head)
     print(f"Commits: {base[:12]}..{head[:12]} carry no private state, whitespace error or "
           "conflict marker")
 
 
 def check_pushed_snapshot(head, base, mode, names):
+    """Run file and source checks on the exported pushed head; a verified receipt for it skips only the gate run."""
     with snapshot(head) as directory:
         file_checks(directory, names)
         if mode == "checkpoint":
             checkpoint_checks(directory, names)
         else:
-            gated = source_checks(directory, names, base=base)
+            gated = source_checks(directory, names, base=base,
+                                  receipt_check=lambda packages: verified_pushed_receipt(directory, head, packages))
             if gated:
                 preserve_receipt(directory, head)
             if os.environ.get("PRAETOR_HOOK_SANDBOX") == "1":
                 run([sys.executable, ".config/lefthook/scripts/sandbox.py", head], timeout=2400,
                     capture=False)
+
+
+def verified_pushed_receipt(directory, head, packages):
+    """Reuse only the engine-verified gate receipt for this clean pushed-head snapshot.
+
+    The engine binds the pinned signature, gate command, commit, immutable commit tree
+    and race scope. File checks and source checks outside the signed gate still run.
+    Missing, stale, malformed or unverifiable receipts leave the full gate mandatory.
+    """
+    verified = False
+    try:
+        root = Path(git("rev-parse", "--git-path", "praetor-receipts").decode().strip())
+        receipt = (root / (head + ".json")).absolute()
+        if receipt.is_file():
+            tree = git("--no-replace-objects", "rev-parse", head + "^{tree}").decode().strip()
+            run([praetorctl_path(), "forge", "verify-receipt", f"--path={directory}",
+                 f"--receipt={receipt}", f"--head={head}", f"--tree={tree}",
+                 "--race-packages=" + (",".join(packages) or "none")],
+                cwd=directory, env=clean_env(), timeout=60)
+            verified = True
+    except (HookError, OSError) as error:
+        print(f"Receipt reuse unavailable for {head}: {error}")  # caveman:not-applicable untrusted-passthrough
+    if verified:
+        print(f"receipt verified for {head}: gate skipped")
+    else:
+        print(f"no verified receipt for {head}: full gate")
+    return verified
 
 
 def preserve_receipt(directory, head):

@@ -617,7 +617,7 @@ def tool_module_check(directory, names, gate="all"):
         raise HookError("Trivy tool module vulnerability scan failed for " + "\n".join(failed))
 
 
-def source_checks(directory, names, gate="all", base=None):
+def source_checks(directory, names, gate="all", base=None, receipt_check=None):
     """Verify an exported snapshot; governance bootstraps only its absent private ledger."""
     tool_module_check(directory, names, gate=gate)
     packages = go_packages(directory, names, reverse=True)
@@ -633,10 +633,14 @@ def source_checks(directory, names, gate="all", base=None):
         parallel(semgrep_commands(directory, names, base=base), directory)
     if not packages:
         print("Go gates: no affected packages")
-        return run_full_gate(directory, packages) if full_gate else False
-    print("Go scope: " + ", ".join(packages))
-    parallel(source_commands(directory, packages, gate, full_gate), directory)
-    return run_full_gate(directory, packages) if full_gate else False
+    else:
+        print("Go scope: " + ", ".join(packages))
+        parallel(source_commands(directory, packages, gate, full_gate), directory)
+    if full_gate:
+        if receipt_check is not None and receipt_check(packages):
+            return False
+        return run_full_gate(directory, packages)
+    return False
 
 
 def source_commands(directory, packages, gate, full_gate):

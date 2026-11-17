@@ -72,6 +72,16 @@ func treeProblem(ctx context.Context, repoDir string) string {
 	return untrackedInputProblem(ctx, repoDir)
 }
 
+// VerifyCleanTree applies the gate's clean-tree precondition without running any stage.
+// Receipt reuse must reject the same dirty paths, hidden index entries and ignored
+// subtractive inputs that would prevent the gate from certifying this snapshot.
+func VerifyCleanTree(ctx context.Context, repoDir string) error {
+	if problem := treeProblem(ctx, repoDir); problem != "" {
+		return fmt.Errorf("%w: %s", ErrUncleanTree, problem)
+	}
+	return nil
+}
+
 // untrackedInputProblem names a subtractive input the stages would read from somewhere other
 // than HEAD: one that is not a regular file, or one the index does not hold. It runs after the
 // status probe found no change, so an untracked input here is one an ignore rule hides. The

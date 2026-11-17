@@ -304,3 +304,41 @@ func TestRunReceiptStage_Negative_TreeMustStillMatchTheStartingHead(t *testing.T
 		})
 	}
 }
+
+// TestVerifyCleanTree_Positive_CommittedTreeIsClean: receipt reuse accepts the committed
+// snapshot, and an untracked receipt left by the gate does not make it dirty.
+func TestVerifyCleanTree_Positive_CommittedTreeIsClean(t *testing.T) {
+	dir := newHermeticGitRepo(t)
+	commitFile(t, dir, BaselineFile, "{}\n")
+	writeFile(t, filepath.Join(dir, ReceiptFileName), "{}\n")
+	if err := VerifyCleanTree(t.Context(), dir); err != nil {
+		t.Fatalf("a committed tree with an untracked receipt is refused: %v", err)
+	}
+}
+
+// TestVerifyCleanTree_Negative_ModifiedFileIsRefused: a snapshot that differs from HEAD is
+// refused with ErrUncleanTree and the reason names the changed path, as the gate would.
+func TestVerifyCleanTree_Negative_ModifiedFileIsRefused(t *testing.T) {
+	dir := newHermeticGitRepo(t)
+	commitFile(t, dir, BaselineFile, "{}\n")
+	writeFile(t, filepath.Join(dir, BaselineFile), "{\"changed\": true}\n")
+	err := VerifyCleanTree(t.Context(), dir)
+	if !errors.Is(err, ErrUncleanTree) {
+		t.Fatalf("a modified tracked file is not refused as unclean: %v", err)
+	}
+	if !strings.Contains(err.Error(), BaselineFile) {
+		t.Fatalf("the refusal %q does not name %s", err, BaselineFile)
+	}
+}
+
+// TestVerifyCleanTree_Boundary_TrackedInputAnIgnoreRuleMatchesIsClean: an ignore rule that
+// matches a committed input does not make it a hidden one; the snapshot stays reusable.
+func TestVerifyCleanTree_Boundary_TrackedInputAnIgnoreRuleMatchesIsClean(t *testing.T) {
+	dir := newHermeticGitRepo(t)
+	withGlobalIgnore(t, GosecConfigFile+"\n")
+	commitFile(t, dir, BaselineFile, "{}\n")
+	commitFile(t, dir, GosecConfigFile, "{}\n")
+	if err := VerifyCleanTree(t.Context(), dir); err != nil {
+		t.Fatalf("committed inputs an ignore rule matches are refused: %v", err)
+	}
+}

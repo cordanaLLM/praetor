@@ -29,26 +29,45 @@ func RacePackagesReason(packages []string) string {
 
 type raceEvidence struct {
 	selection string
-	line      string
+	status    string
+	reason    string
 	seenStage bool
+	seenRace  bool
 }
 
 // checkRaceOutput validates scoped evidence through the shared pinned and unpinned verifiers.
 // Historical full runs carry no scope header. A not-applicable race stage always needs a reason.
 func checkRaceOutput(output string) error {
-	lines := strings.Split(output, "\n")
-	if len(lines) > 256 {
-		return errors.New("gate output exceeds 256 lines")
-	}
-	var evidence raceEvidence
-	for i := 0; i < len(lines) && i < 256; i++ {
-		if err := evidence.readLine(lines[i]); err != nil {
-			return err
-		}
-	}
-	return checkRaceEvidence(evidence.selection, evidence.line)
+	_, err := readRaceEvidence(output)
+	return err
 }
 
+// ReceiptRaceStageStatus reads validated race evidence; an absent historical stage returns an empty status.
+// This reader does not verify the receipt's signature or require race execution.
+func ReceiptRaceStageStatus(output string) (string, error) {
+	evidence, err := readRaceEvidence(output)
+	if err != nil {
+		return "", err
+	}
+	return evidence.status, nil
+}
+
+// readRaceEvidence shares bounded parsing and validation between receipt verification and reuse.
+func readRaceEvidence(output string) (raceEvidence, error) {
+	var evidence raceEvidence
+	lines := strings.Split(output, "\n")
+	if len(lines) > 256 {
+		return evidence, errors.New("gate output exceeds 256 lines")
+	}
+	for i := 0; i < len(lines) && i < 256; i++ {
+		if err := evidence.readLine(lines[i]); err != nil {
+			return evidence, err
+		}
+	}
+	return evidence, checkRaceEvidence(evidence)
+}
+
+// readLine parses the unique race header and stage while preserving their signed order.
 func (e *raceEvidence) readLine(line string) error {
 	if strings.HasPrefix(line, "race_packages\t") {
 		if e.selection != "" || e.seenStage {
@@ -61,33 +80,37 @@ func (e *raceEvidence) readLine(line string) error {
 	}
 	e.seenStage = e.seenStage || strings.HasPrefix(line, "stage\t")
 	if strings.HasPrefix(line, "stage\t"+RaceStageName+"\t") {
-		if e.line != "" {
+		if e.seenRace {
 			return errors.New("duplicate certified race stage")
 		}
-		e.line = line
+		fields := strings.SplitN(line, "\t", 4)
+		if len(fields) != 4 {
+			return errors.New("malformed certified race stage")
+		}
+		e.status, e.reason, e.seenRace = fields[2], fields[3], true
 	}
 	return nil
 }
 
-func checkRaceEvidence(selection, line string) error {
-	if selection == "" && line == "" {
+// checkRaceEvidence validates scope-specific reasons without requiring that race tests executed.
+func checkRaceEvidence(e raceEvidence) error {
+	if e.selection == "" && !e.seenRace {
 		return nil
 	}
-	fields := strings.SplitN(line, "\t", 4)
-	if len(fields) != 4 {
+	if !e.seenRace {
 		return errors.New("malformed certified race stage")
 	}
-	if selection == "" {
-		return checkUnscopedRaceStage(fields[2], fields[3])
+	if e.selection == "" {
+		return checkUnscopedRaceStage(e.status, e.reason)
 	}
-	if selection == "none" {
-		return checkEmptyRaceStage(fields[2], fields[3])
+	if e.selection == "none" {
+		return checkEmptyRaceStage(e.status, e.reason)
 	}
-	packages, err := util.ParseRacePackages(selection)
+	packages, err := util.ParseRacePackages(e.selection)
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(fields[3], RacePackagesReason(packages)) {
+	if !strings.Contains(e.reason, RacePackagesReason(packages)) {
 		return errors.New("certified race stage reason does not match its explicit package scope")
 	}
 	return nil

@@ -37,6 +37,8 @@ func printForgeUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  sync-wiki [--output=docs/wiki]        Generate git-backed wiki documentation suite")
 	fmt.Println("  validate-pr <pr-body-file>            Verify HISS checklist and the Ed25519 Exit-0 receipt")
+	fmt.Println("  verify-receipt --path=. --receipt=FILE --head=SHA --tree=SHA --race-packages=LIST")
+	fmt.Println("                                        Verify a cached gate receipt for an exact pushed snapshot")
 	fmt.Println("  check-commits --base=<ref> [--head=HEAD] [--exclude=REV] [--first-parent]")
 	fmt.Println("                                        Enforce the commit message policy on a commit range")
 	fmt.Println("  refactor-check --base=<ref> [--head=HEAD] [--run-tests]  Check refactor commits in a range")
@@ -45,6 +47,7 @@ func printForgeUsage() {
 	fmt.Println("                                        Migrate legacy plain claim comments to hashed tags")
 }
 
+// runForge dispatches one forge subcommand, verify-receipt included, under the command context.
 func runForge(args []string) error {
 	if len(args) < 1 {
 		printForgeUsage()
@@ -53,11 +56,7 @@ func runForge(args []string) error {
 
 	sub := args[0]
 	subArgs := args[1:]
-	timeout := 2 * time.Minute
-	if sub == "refactor-check" {
-		timeout = 35 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), forgeTimeout(sub))
 	defer cancel()
 
 	switch sub {
@@ -68,6 +67,8 @@ func runForge(args []string) error {
 		return runForgeSyncWiki(ctx, subArgs)
 	case "validate-pr":
 		return runForgeValidatePR(subArgs)
+	case "verify-receipt":
+		return runForgeVerifyReceipt(ctx, subArgs)
 	case "check-commits":
 		return runForgeCheckCommits(ctx, subArgs)
 	case "refactor-check":
@@ -79,6 +80,14 @@ func runForge(args []string) error {
 	default:
 		return fmt.Errorf("unknown forge subcommand: %s", sub)
 	}
+}
+
+// forgeTimeout preserves the longer test-running budget for refactor-check.
+func forgeTimeout(sub string) time.Duration {
+	if sub == "refactor-check" {
+		return 35 * time.Minute
+	}
+	return 2 * time.Minute
 }
 
 func runForgeSyncWiki(ctx context.Context, args []string) error {
