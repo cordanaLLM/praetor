@@ -393,8 +393,12 @@ func testArchivePathFieldBoundary(t *testing.T, path string, candidate bool) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if (calls == 1) != candidate || (len(index) == 1) != candidate {
-			t.Fatalf("candidate = %v; inspections = %d, indexed paths = %d", candidate, calls, len(index))
+		want := 0
+		if candidate {
+			want = 1
+		}
+		if calls != want || len(index) != want {
+			t.Fatalf("candidate = %v; inspections = %d, indexed paths = %d, want %d each", candidate, calls, len(index), want)
 		}
 	}
 }
