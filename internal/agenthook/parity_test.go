@@ -984,3 +984,53 @@ func redirectSegmentCases() []struct {
 		{"substitution braces", `git commit -m "$(echo ${msg})" && tail -n 1`, 0},
 	}
 }
+
+// delimiterBraceCases covers exact heredoc words, body continuations and unknown brace arguments.
+func delimiterBraceCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"brace continuation", "git commit -m {message,\\\n-n}", 2},
+		{"partial delimiter", "cat <<'true'X\ndata\ntrueX\ngit commit -n -m msg\ntrue", 2},
+		{"literal delimiter quotes", "cat <<\"'true'\"\ndata\n'true'\ngit commit -n -m msg\ntrue", 2},
+		{"body continuation", "cat <<true\ntr\\\nue\ngit commit -n -m msg\ntrue", 2},
+		{"skip control", "git commit -n -m msg", 2},
+		{"message control", "git commit -m msg", 0},
+		{"unsupported delimiter expansion", "cat <<$end\ndata\n$end\ngit commit -m msg", 2},
+		{"unterminated delimiter quote", "cat <<'EOF\ngit commit -m msg", 2},
+		{"unknown brace word", "git commit -m {msg,other}", 2},
+		{"unterminated brace word", "git commit -m {msg,-n", 2},
+		{"quoted brace word", "git commit -m '{msg,-n}'", 0},
+		{"escaped delimiter", "git commit -F - <<\\EOF\n-n\nEOF", 0},
+		{"quoted body continuation", "cat <<'true'\ntr\\\nue\ntrue\ngit commit -m msg", 0},
+		{"even body escapes", "cat <<true\ntr\\\\\nue\ntrue\ngit commit -m msg", 0},
+		{"continued delimiter data", "git commit -F - <<EOF\ntext\\\nEOF\n-n\nEOF", 0},
+		{"continued delimiter tabs", "git commit -F - <<-EOF\n\tE\\\nOF\ngit commit -n\nEOF", 2},
+	}
+}
+
+// TestParityDelimiterBraceRegression checks the repository guard against exact Go verdicts.
+func TestParityDelimiterBraceRegression(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	builtin := policy(t)
+	for _, tc := range delimiterBraceCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
+			python := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
+			want := 0
+			if tc.want != 0 {
+				want = 1
+			}
+			if python.exit != want {
+				t.Errorf("guard rc=%d want=%d: %s", python.exit, want, python.stderr)
+			}
+			if got := builtin.Command(tc.command); (got.Outcome == Allow) != (tc.want == 0) {
+				t.Errorf("Go verdict: %+v, want rc=%d", got, tc.want)
+			}
+		})
+	}
+}

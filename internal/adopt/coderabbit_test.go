@@ -20,6 +20,7 @@ import (
 // TestCodeRabbitCIEvidenceCreated checks the actual scaffold's schema-defined review guidance.
 func TestCodeRabbitCIEvidenceCreated(t *testing.T) {
 	repo := t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".github/workflows/ci.yml"), "jobs:\n  verify:\n    steps:\n      - run: make verify-all\n")
 	s := &adoptSession{repoPath: repo, report: &AdoptReport{}}
 	if err := reconcileCodeRabbit(t.Context(), s); err != nil {
 		t.Fatal(err)
@@ -70,7 +71,7 @@ func TestCodeRabbitCIEvidenceManaged(t *testing.T) {
 	for name, policy := range map[string]string{"missing": "", "custom": custom} {
 		t.Run(name, func(t *testing.T) {
 			initial := prefix + policy + suffix
-			got, err := mergeCodeRabbit(t.Context(), []byte(initial))
+			got, err := mergeCodeRabbit(t.Context(), []byte(initial), true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -78,7 +79,7 @@ func TestCodeRabbitCIEvidenceManaged(t *testing.T) {
 			if !strings.HasPrefix(string(got), prefix+policy) || !strings.HasSuffix(string(got), suffix) {
 				t.Fatalf("user text or comments changed: %s", got)
 			}
-			rerun, err := mergeCodeRabbit(t.Context(), got)
+			rerun, err := mergeCodeRabbit(t.Context(), got, true)
 			if err != nil || string(rerun) != string(got) {
 				t.Fatalf("instruction not idempotent: %s, %v", rerun, err)
 			}
@@ -89,7 +90,7 @@ func TestCodeRabbitCIEvidenceManaged(t *testing.T) {
 // TestCodeRabbitCIEvidenceKeepsUserGlobal checks existing global guidance remains byte-identical.
 func TestCodeRabbitCIEvidenceKeepsUserGlobal(t *testing.T) {
 	const initial = "reviews:\n  auto_review: {drafts: true, base_branches: [.*]}\n  path_instructions:\n    - path: '**' # user-owned global\n      instructions: 'Use our custom CI policy.' # keep wording\n"
-	got, err := mergeCodeRabbit(t.Context(), []byte(initial))
+	got, err := mergeCodeRabbit(t.Context(), []byte(initial), true)
 	if err != nil || string(got) != initial {
 		t.Fatalf("user global instruction changed: %s, %v", got, err)
 	}
@@ -119,7 +120,7 @@ func TestCodeRabbitCIEvidenceInstructionLimit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			text := strings.Repeat("\u00e4", tc.count)
 			data := []byte(codeRabbitUserPolicy("instructions: '" + text + "'"))
-			got, err := mergeCodeRabbit(t.Context(), data)
+			got, err := mergeCodeRabbit(t.Context(), data, true)
 			if (err == nil) != tc.ok {
 				t.Fatalf("%d characters: err = %v, want accepted %v", tc.count, err, tc.ok)
 			}
@@ -150,7 +151,7 @@ func TestCodeRabbitCIEvidenceRefusesMalformed(t *testing.T) {
 		"oversized after global":  "[{path: '**', instructions: keep}, {path: '*.go', instructions: '" + strings.Repeat("x", 20001) + "'}]",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := mergeCodeRabbit(t.Context(), []byte("reviews:\n  path_instructions: "+policy+"\n")); err == nil {
+			if _, err := mergeCodeRabbit(t.Context(), []byte("reviews:\n  path_instructions: "+policy+"\n"), true); err == nil {
 				t.Fatal("accepted malformed path instructions")
 			}
 		})
@@ -170,7 +171,7 @@ func TestCodeRabbitCIEvidenceLayouts(t *testing.T) {
 			if name == "CRLF" {
 				initial = "reviews:\r\n" + policy
 			}
-			got, err := mergeCodeRabbit(t.Context(), []byte(initial))
+			got, err := mergeCodeRabbit(t.Context(), []byte(initial), true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -178,7 +179,7 @@ func TestCodeRabbitCIEvidenceLayouts(t *testing.T) {
 			if !strings.Contains(string(got), "# keep") {
 				t.Fatal("lost policy comment")
 			}
-			rerun, err := mergeCodeRabbit(t.Context(), got)
+			rerun, err := mergeCodeRabbit(t.Context(), got, true)
 			if err != nil || string(rerun) != string(got) {
 				t.Fatalf("layout not idempotent: %s, %v", rerun, err)
 			}
@@ -191,18 +192,18 @@ func TestCodeRabbitCIEvidenceInstructionBounds(t *testing.T) {
 	const prefix = "reviews:\n  auto_review: {drafts: true, base_branches: [.*]}\n  path_instructions:\n"
 	const item = "    - {path: '*.go', instructions: keep}\n"
 	below := prefix + strings.Repeat(item, maxAdoptManifestMappingNodes-1)
-	got, err := mergeCodeRabbit(t.Context(), []byte(below))
+	got, err := mergeCodeRabbit(t.Context(), []byte(below), true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertCodeRabbitCIEvidence(t, string(got))
-	rerun, err := mergeCodeRabbit(t.Context(), got)
+	rerun, err := mergeCodeRabbit(t.Context(), got, true)
 	if err != nil || string(rerun) != string(got) {
 		t.Fatalf("configured list at cap changed: %v", err)
 	}
 	for name, initial := range map[string]string{"full": below + item, "overfull": string(got) + item} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := mergeCodeRabbit(t.Context(), []byte(initial)); err == nil {
+			if _, err := mergeCodeRabbit(t.Context(), []byte(initial), true); err == nil {
 				t.Fatal("accepted instruction list without capacity")
 			}
 		})
@@ -225,6 +226,7 @@ func TestAdoptCodeRabbitCreatesAndPreserves(t *testing.T) {
 func adoptCodeRabbitCase(t *testing.T, name, initial string) {
 	t.Helper()
 	repo := newTestRepo(t, "coderabbit-"+name)
+	mustWrite(t, filepath.Join(repo, ".github/workflows/ci.yml"), "jobs:\n  verify:\n    steps:\n      - run: make verify-all\n")
 	file := filepath.Join(repo, ".coderabbit.yaml")
 	if initial != "" {
 		mustWrite(t, file, initial)
@@ -301,12 +303,12 @@ func TestCodeRabbitBoundaryLayouts(t *testing.T) {
 		"reviews:\n  auto_review:\n    drafts: true\n    base_branches: [.*] # already configured\n",
 	}
 	for i := 0; i < len(cases) && i < 16; i++ {
-		got, err := mergeCodeRabbit(t.Context(), []byte(cases[i]))
+		got, err := mergeCodeRabbit(t.Context(), []byte(cases[i]), true)
 		if err != nil {
 			t.Fatalf("case %d: %v", i, err)
 		}
 		assertCodeRabbitDraftKeys(t, string(got))
-		rerun, err := mergeCodeRabbit(t.Context(), got)
+		rerun, err := mergeCodeRabbit(t.Context(), got, true)
 		if err != nil || string(rerun) != string(got) {
 			t.Fatalf("case %d rerun changed bytes: %q, %v", i, rerun, err)
 		}
@@ -331,13 +333,13 @@ func TestCodeRabbitNegativeRefusesUnsafeYAML(t *testing.T) {
 		"reviews: {}\r\nchat: {}\n",
 	}
 	for i := 0; i < len(cases) && i < 16; i++ {
-		if _, err := mergeCodeRabbit(t.Context(), []byte(cases[i])); err == nil {
+		if _, err := mergeCodeRabbit(t.Context(), []byte(cases[i]), true); err == nil {
 			t.Fatalf("case %d accepted unsafe configuration: %q", i, cases[i])
 		}
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := mergeCodeRabbit(ctx, []byte("reviews: {}\n")); !errors.Is(err, context.Canceled) {
+	if _, err := mergeCodeRabbit(ctx, []byte("reviews: {}\n"), true); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled edit did not return cancellation: %v", err)
 	}
 }
@@ -348,23 +350,23 @@ func TestCodeRabbitBranchesBoundary(t *testing.T) {
 	const item = "      - release\n"
 	below := prefix + strings.Repeat(item, maxAdoptManifestMappingNodes-1)
 	at := below + "      - .*\n"
-	got, err := mergeCodeRabbit(t.Context(), []byte(below))
+	got, err := mergeCodeRabbit(t.Context(), []byte(below), true)
 	if err != nil {
 		t.Fatalf("append at bound: %v", err)
 	}
 	assertCodeRabbitDraftKeys(t, string(got))
-	configured, err := mergeCodeRabbit(t.Context(), []byte(at))
+	configured, err := mergeCodeRabbit(t.Context(), []byte(at), true)
 	if err != nil {
 		t.Fatalf("configure at bound: %v", err)
 	}
 	for _, initial := range [2]string{string(configured), string(got)} {
-		rerun, err := mergeCodeRabbit(t.Context(), []byte(initial))
+		rerun, err := mergeCodeRabbit(t.Context(), []byte(initial), true)
 		if err != nil || string(rerun) != initial {
 			t.Fatalf("configured at-bound list changed on rerun: %v", err)
 		}
 	}
 	for _, initial := range [2]string{below + item, at + item} {
-		if _, err := mergeCodeRabbit(t.Context(), []byte(initial)); err == nil {
+		if _, err := mergeCodeRabbit(t.Context(), []byte(initial), true); err == nil {
 			t.Fatal("list without space or over its bound was accepted")
 		}
 	}
@@ -384,7 +386,9 @@ func TestCodeRabbitDryRun(t *testing.T) {
 		}
 		assertTreeUnchanged(t, before, snapshotTree(t, repo))
 		assertCodeRabbitDraftKeys(t, string(s.dryRunWrites[codeRabbitFile]))
-		assertCodeRabbitCIEvidence(t, string(s.dryRunWrites[codeRabbitFile]))
+		if strings.Contains(string(s.dryRunWrites[codeRabbitFile]), "CI verification job") {
+			t.Fatal("dry-run claims evidence without a workflow step")
+		}
 	}
 }
 
@@ -468,5 +472,58 @@ func TestAdoptCodeRabbitDeclined(t *testing.T) {
 				t.Fatal("declined configuration not reported declined")
 			}
 		})
+	}
+}
+
+// TestCodeRabbitWorkflowEvidence requires a real workflow step before offering CI evidence guidance.
+func TestCodeRabbitWorkflowEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, run string
+		want      bool
+	}{
+		{"step", "make verify-all", true},
+		{"no step", "go test ./...", false},
+		{"no workflows", "", false},
+		{"comment", "echo make verify-all", false},
+		{"quoted command", "echo 'text; make verify-all'", false},
+		{"other target", "make verify-all-extra", false},
+		{"flags", "make -j4 verify-all", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			if tc.run != "" {
+				mustWrite(t, filepath.Join(repo, ".github/workflows/ci.yml"), "jobs:\n  verify:\n    steps:\n      - run: "+tc.run+"\n")
+			}
+			s := &adoptSession{repoPath: repo, report: &AdoptReport{}}
+			if err := reconcileCodeRabbit(t.Context(), s); err != nil {
+				t.Fatal(err)
+			}
+			text := mustRead(t, filepath.Join(repo, codeRabbitFile))
+			if got := strings.Contains(text, "CI verification job"); got != tc.want {
+				t.Fatalf("CI evidence=%v want=%v: %s", got, tc.want, text)
+			}
+		})
+	}
+}
+
+// TestCodeRabbitManagedEvidenceRefresh checks removal and restoration without taking user globals.
+func TestCodeRabbitManagedEvidenceRefresh(t *testing.T) {
+	without, err := mergeCodeRabbit(t.Context(), []byte(codeRabbitConfig), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(without), "CI verification job") {
+		t.Fatal("managed evidence retained without workflow step")
+	}
+	restored, err := mergeCodeRabbit(t.Context(), without, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCodeRabbitCIEvidence(t, string(restored))
+	// The removed-condition mutant always renders the with-step configuration.
+	mutant := codeRabbitConfiguration(true)
+	t.Logf("condition mutant: no-step evidence=%v; fixed evidence=%v", strings.Contains(mutant, "CI verification job"), strings.Contains(string(without), "CI verification job"))
+	if !strings.Contains(mutant, "CI verification job") {
+		t.Fatal("condition mutation lacks planted evidence")
 	}
 }

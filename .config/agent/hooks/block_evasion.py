@@ -153,6 +153,37 @@ def scan_command_spans(command, short_pattern):
     return spans.parts, spans.nested
 
 
+def shell_here_doc_delimiter(text):
+    """Read exactly the delimiter subset accepted by util.ShellHereDocDelimiter."""
+    word_end = " \t;&|<>()"
+    if not text or text[0] in word_end:
+        raise ValueError("invalid shell command: unsupported here-document delimiter")
+    quoted = text[0] in "'\"\\"
+    if text[0] in "'\"":
+        end = text.find(text[0], 1)
+        if end < 0:
+            raise ValueError(
+                "invalid shell command: unsupported here-document delimiter"
+            )
+        width = end + 1
+        delimiter = text[1:end]
+    else:
+        start = int(text[0] == "\\")
+        width = len(text)
+        for index in range(start, len(text)):
+            if text[index] in word_end + "'\"":
+                width = index
+                break
+        delimiter = text[start:width]
+    if (
+        not delimiter
+        or any(ch in delimiter for ch in "$\x60'\"\\")
+        or (width < len(text) and text[width] not in word_end)
+    ):
+        raise ValueError("invalid shell command: unsupported here-document delimiter")
+    return delimiter, quoted, width
+
+
 class CommandSpans:
     """Walk raw shell spans with bounded frames and here-document body lines."""
 
@@ -160,7 +191,6 @@ class CommandSpans:
     here_line_limit = 256
     state_start = READ_ONLY_VETO.index("(?i:")
     state_pattern = READ_ONLY_VETO[state_start:]
-    here_pattern = r"^<<(-?)[ \t]*(\"[^\"]*\"|'[^']*'|[-A-Za-z0-9_]+)"
     redirect_pattern = r"^&?[<>](?:[<>|]|&[0-9-]*)?"
     data_option_pattern = re.compile(
         r"^(--(?:message|file|reuse-message|reedit-message|author|date)(=|$)|-[mFCc])"
@@ -374,7 +404,7 @@ class CommandSpans:
         """Keep unsupported syntax and positional globs conservative."""
         if self.stack:
             return
-        glob = ch in "*?["
+        glob = ch in "*?[{}"
         self.word_expansion |= glob
         self.word_splitting |= glob
         if ch in "{}^!" or ord(ch) > 126 or ord(ch) < 32 and ch != "\t":
@@ -478,26 +508,24 @@ class CommandSpans:
         position = self.position
         rest = self.command[position:]
         if rest.startswith("<<"):
-            match = re.match(self.here_pattern, rest)
-            if match is None:
-                raise ValueError(
-                    "invalid shell command: unsupported here-document delimiter"
-                )
+            opener = 2 + rest.startswith("<<-")
+            opener += len(rest[opener:]) - len(rest[opener:].lstrip(" \t"))
+            word = rest[opener:].partition("\n")[0]
+            delimiter, quoted, width = shell_here_doc_delimiter(word)
             if len(self.documents) == self.nesting_limit:
                 raise ValueError(
                     "invalid shell command: pending here-document bound exceeded: 16"
                 )
-            delimiter = match[2].strip("\"'")
             self.documents.append(
                 (
                     delimiter,
-                    match[1] == "-",
+                    rest.startswith("<<-"),
                     len(self.parts),
                     len(self.stack),
-                    delimiter == match[2],
+                    not quoted,
                 )
             )
-            self.position += match.end()
+            self.position += opener + width
             return True
         redirect = re.match(self.redirect_pattern, rest)[0]
         self.position += len(redirect)
@@ -520,15 +548,16 @@ class CommandSpans:
                 remaining.append(document)
                 continue
             body_start = self.position
-            self.document_body(document[0], document[1])
+            self.document_body(document[0], document[1], document[4])
             self.document_data(document, body_start)
         self.documents = remaining
         if depth == 0:
             self.start = self.position
         return True
 
-    def document_body(self, delimiter, tabs):
+    def document_body(self, delimiter, tabs, expandable):
         """Consume bounded body lines; refuse unterminated or over-bound input."""
+        logical = ""
         while self.here_lines < self.here_line_limit:
             if self.position >= len(self.command):
                 break
@@ -536,10 +565,16 @@ class CommandSpans:
             position = self.position
             line, found, _ = self.command[position:].partition("\n")
             self.position += len(line) + bool(found)
+            logical += line
+            escapes = len(line) - len(line.rstrip("\\"))
+            if expandable and found and escapes % 2:
+                logical = logical[:-1]
+                continue
             if tabs:
-                line = line.lstrip("\t")
-            if line == delimiter:
+                logical = logical.lstrip("\t")
+            if logical == delimiter:
                 return True
+            logical = ""
         if self.here_lines == self.here_line_limit:
             raise ValueError(
                 "invalid shell command: here-document body-line bound exceeded: 256"

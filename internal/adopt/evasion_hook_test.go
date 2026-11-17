@@ -486,6 +486,15 @@ func evasionSegmentMutants() []struct {
 		name, before, after, command string
 		want                         int
 	}{
+		{"brace uncertainty removed", `glob = ch in "*?[{}"`, `glob = ch in "*?["`, evasionDelimiterBraceCases()[0].command, 0},
+		{"partial delimiter reader removed", "delimiter, quoted, width = shell_here_doc_delimiter(word)",
+			"match = re.match(r\"(\\\"[^\\\"]*\\\"|'[^']*'|[-A-Za-z0-9_]+)\", word)\n            delimiter = match[0].strip(\"\\\"'\")\n            quoted, width = delimiter != match[0], match.end()",
+			evasionDelimiterBraceCases()[1].command, 0},
+		{"literal quote reader removed", "delimiter, quoted, width = shell_here_doc_delimiter(word)",
+			"match = re.match(r\"(\\\"[^\\\"]*\\\"|'[^']*'|[-A-Za-z0-9_]+)\", word)\n            delimiter = match[0].strip(\"\\\"'\")\n            quoted, width = delimiter != match[0], match.end()",
+			evasionDelimiterBraceCases()[2].command, 0},
+		{"body continuation removed", "if expandable and found and escapes % 2:", "if False:", evasionDelimiterBraceCases()[3].command, 0},
+
 		{"old span", "for segment in segments:", "for segment in [(text, bool(re.search(READ_ONLY_VETO, text)))]:",
 			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
 		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1)", "segments, None)",
@@ -1320,5 +1329,67 @@ func TestEmittedInterceptorSearchesLikeTheEngineGuard(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "return search(pattern, text)") || strings.Contains(rendered, "        if re.search(pattern, text):\n") {
 		t.Fatal("the rendered interceptor does not judge its rules through search")
+	}
+}
+
+// evasionDelimiterBraceCases covers exact heredoc words, body continuations and unknown brace arguments.
+func evasionDelimiterBraceCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"brace continuation", "git commit -m {message,\\\n-n}", 2},
+		{"partial delimiter", "cat <<'true'X\ndata\ntrueX\ngit commit -n -m msg\ntrue", 2},
+		{"literal delimiter quotes", "cat <<\"'true'\"\ndata\n'true'\ngit commit -n -m msg\ntrue", 2},
+		{"body continuation", "cat <<true\ntr\\\nue\ngit commit -n -m msg\ntrue", 2},
+		{"skip control", "git commit -n -m msg", 2},
+		{"message control", "git commit -m msg", 0},
+		{"unsupported delimiter expansion", "cat <<$end\ndata\n$end\ngit commit -m msg", 2},
+		{"unterminated delimiter quote", "cat <<'EOF\ngit commit -m msg", 2},
+		{"unknown brace word", "git commit -m {msg,other}", 2},
+		{"unterminated brace word", "git commit -m {msg,-n", 2},
+		{"quoted brace word", "git commit -m '{msg,-n}'", 0},
+		{"escaped delimiter", "git commit -F - <<\\EOF\n-n\nEOF", 0},
+		{"quoted body continuation", "cat <<'true'\ntr\\\nue\ntrue\ngit commit -m msg", 0},
+		{"even body escapes", "cat <<true\ntr\\\\\nue\ntrue\ngit commit -m msg", 0},
+		{"continued delimiter data", "git commit -F - <<EOF\ntext\\\nEOF\n-n\nEOF", 0},
+		{"continued delimiter tabs", "git commit -F - <<-EOF\n\tE\\\nOF\ngit commit -n\nEOF", 2},
+	}
+}
+
+// TestEmittedDelimiterBraceRegression replays exact delimiter and brace cases through adoption output.
+func TestEmittedDelimiterBraceRegression(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	for _, tc := range evasionDelimiterBraceCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
+			t.Logf("hook rc=%d want=%d", got, tc.want)
+			if got != tc.want {
+				t.Errorf("rc=%d want=%d: %s", got, tc.want, stderr)
+			}
+		})
+	}
+}
+
+// TestEmittedDelimiterBracePriorReplay records both verdicts of the regression and its two controls.
+func TestEmittedDelimiterBracePriorReplay(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	prior := filepath.Join(priorEvasionFixtures, "before-exact-heredoc-brace.block_evasion.py")
+	for i, tc := range evasionDelimiterBraceCases()[:6] {
+		t.Run(tc.name, func(t *testing.T) {
+			before := runInterceptor(t, python, prior, nil, nil, tc.command)
+			after := runInterceptor(t, python, fixed, nil, nil, tc.command)
+			wantBefore := tc.want
+			if i < 4 {
+				wantBefore = 0
+			}
+			t.Logf("prior rc=%d fixed rc=%d", before, after)
+			if before != wantBefore || after != tc.want {
+				t.Fatalf("prior rc=%d want=%d fixed rc=%d want=%d", before, wantBefore, after, tc.want)
+			}
+		})
 	}
 }

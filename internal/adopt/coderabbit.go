@@ -8,10 +8,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"regexp"
 	"slices"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
@@ -26,27 +31,101 @@ const codeRabbitFile = ".coderabbit.yaml"
 const codeRabbitConfig = "# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json\n" +
 	"---\nreviews:\n  auto_review:\n    drafts: true\n    base_branches:\n      - .*\n" +
 	"  path_instructions:\n    - path: \"**\"\n      instructions: |-\n" +
-	"        Use the CI verification job as evidence for `make verify-all`.\n" +
-	"        Find it in .github/workflows by its step running `make verify-all`.\n" +
-	"        A green run of that job on the pull request head satisfies a request\n" +
-	"        to run that target only when that step ran and passed; a run in\n" +
-	"        which the step was skipped is no evidence. AGENTS.md and CLAUDE.md\n" +
+	codeRabbitEvidence + "AGENTS.md and CLAUDE.md\n" +
 	"        turn-end rules bind coding agents working in this repository,\n" +
 	"        not the CodeRabbit reviewer.\n"
 
+// codeRabbitEvidence is the managed guidance that requires a workflow running the target.
+const codeRabbitEvidence = "        Use the CI verification job as evidence for `make verify-all`.\n" +
+	"        Find it in .github/workflows by its step running `make verify-all`.\n" +
+	"        A green run of that job on the pull request head satisfies a request\n" +
+	"        to run that target only when that step ran and passed; a run in\n" +
+	"        which the step was skipped is no evidence. "
+
+// codeRabbitConfiguration renders evidence guidance only for an observed verification step.
+func codeRabbitConfiguration(evidence bool) string {
+	if evidence {
+		return codeRabbitConfig
+	}
+	return strings.Replace(codeRabbitConfig, codeRabbitEvidence, "        ", 1)
+}
+
+// codeRabbitVerifyStep recognises literal make invocations at shell command boundaries.
+var codeRabbitVerifyStep = regexp.MustCompile(`(?m)(?:^|[;&|])[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+)*make[ \t]+(?:-[^ \t;|&]+[ \t]+)*verify-all(?:[ \t;|&]|$)`)
+
+// codeRabbitWorkflowEvidence reads the existing workflow model and bounds before claiming CI evidence.
+func codeRabbitWorkflowEvidence(ctx context.Context, s *adoptSession) (bool, error) {
+	dir, err := repoFile(s.repoPath, ghworkflow.Dir)
+	if err != nil {
+		return false, err
+	}
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read verification workflows: %w", err)
+	}
+	paths, err := workflowEnginePinPaths(entries)
+	if err != nil {
+		return false, err
+	}
+	found := false
+	for i := 0; i < len(paths) && i < ghworkflow.MaxFiles; i++ {
+		data, _, err := observeAdoptionInput(ctx, s, paths[i])
+		if err != nil {
+			return false, err
+		}
+		match, err := codeRabbitWorkflowStep(data)
+		if err != nil {
+			return false, fmt.Errorf("read %s: %w", paths[i], err)
+		}
+		found = found || match
+	}
+	return found, nil
+}
+
+// codeRabbitWorkflowStep checks parsed run steps rather than workflow comments or job names.
+func codeRabbitWorkflowStep(data []byte) (bool, error) {
+	spec, err := ghworkflow.Parse(data)
+	if err != nil {
+		return false, err
+	}
+	steps, err := ghworkflow.RunSteps(&spec)
+	if err != nil {
+		return false, err
+	}
+	for i := 0; i < len(steps) && i < ghworkflow.MaxJobsPerFile*ghworkflow.MaxStepsPerJob; i++ {
+		if codeRabbitRunVerifyAll(steps[i].Step.Run) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// codeRabbitRunVerifyAll excludes quoted data, comments and document bodies through the shared lexer.
+func codeRabbitRunVerifyAll(script string) bool {
+	lines, ok := hiss.ShellCode(script, ghworkflow.MaxStepsPerJob)
+	return ok && codeRabbitVerifyStep.MatchString(strings.Join(lines, "\n"))
+}
+
 // reconcileCodeRabbit enables auto-review and CI evidence guidance while retaining user policy.
 func reconcileCodeRabbit(ctx context.Context, s *adoptSession) error {
+	evidence, err := codeRabbitWorkflowEvidence(ctx, s)
+	if err != nil {
+		return err
+	}
 	data, exists, err := observeAdoptionInput(ctx, s, codeRabbitFile)
 	if err != nil {
 		return fmt.Errorf("read CodeRabbit configuration: %w", err)
 	}
 	if !exists {
-		_, err := s.scaffoldFile(ctx, scaffold{rel: codeRabbitFile, perm: filePerm, content: []byte(codeRabbitConfig),
+		_, err := s.scaffoldFile(ctx, scaffold{rel: codeRabbitFile, perm: filePerm, content: []byte(codeRabbitConfiguration(evidence)),
 			created:  "Enabled CodeRabbit auto-review of drafts on every base branch and CI evidence guidance",
 			verified: "CodeRabbit auto-review and CI evidence guidance configured"})
 		return err
 	}
-	merged, err := mergeCodeRabbit(ctx, data)
+	merged, err := mergeCodeRabbit(ctx, data, evidence)
 	if err != nil {
 		return fmt.Errorf("manage %s: %w", codeRabbitFile, err)
 	}
@@ -59,14 +138,14 @@ func reconcileCodeRabbit(ctx context.Context, s *adoptSession) error {
 }
 
 // mergeCodeRabbit manages auto-review defaults and adds global guidance only when absent.
-func mergeCodeRabbit(ctx context.Context, data []byte) ([]byte, error) {
+func mergeCodeRabbit(ctx context.Context, data []byte, evidence bool) ([]byte, error) {
 	text, crlf, err := util.NormalizeLineEndingsStrict(string(data))
 	if err != nil {
 		return nil, fmt.Errorf("read CodeRabbit line endings: %w", err)
 	}
 	output := []byte(text)
 	for _, key := range [3]string{"drafts", "base_branches", "path_instructions"} {
-		output, err = setCodeRabbitKey(ctx, output, key)
+		output, err = setCodeRabbitKey(ctx, output, key, evidence)
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +154,7 @@ func mergeCodeRabbit(ctx context.Context, data []byte) ([]byte, error) {
 }
 
 // setCodeRabbitKey preserves correct values byte for byte and patches or encodes one changed key.
-func setCodeRabbitKey(ctx context.Context, data []byte, key string) ([]byte, error) {
+func setCodeRabbitKey(ctx context.Context, data []byte, key string, evidence bool) ([]byte, error) {
 	var document yaml.Node
 	if err := util.DecodeYAMLDocument(data, &document, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
 		return nil, fmt.Errorf("decode CodeRabbit YAML: %w", err)
@@ -89,7 +168,7 @@ func setCodeRabbitKey(ctx context.Context, data []byte, key string) ([]byte, err
 	root := document.Content[0]
 	parent, path := codeRabbitKeyLocation(root, key)
 	old := util.YAMLMappingValue(parent, key)
-	value, changed, err := codeRabbitKeyValue(key, old)
+	value, changed, err := codeRabbitKeyValue(key, old, evidence)
 	if err != nil || !changed {
 		return data, err
 	}
@@ -113,7 +192,7 @@ func setCodeRabbitKey(ctx context.Context, data []byte, key string) ([]byte, err
 }
 
 // codeRabbitKeyValue returns the desired value while retaining all node comments and branches.
-func codeRabbitKeyValue(key string, old *yaml.Node) (*yaml.Node, bool, error) {
+func codeRabbitKeyValue(key string, old *yaml.Node, evidence bool) (*yaml.Node, bool, error) {
 	value := &yaml.Node{}
 	if old != nil {
 		*value = *old
@@ -122,7 +201,7 @@ func codeRabbitKeyValue(key string, old *yaml.Node) (*yaml.Node, bool, error) {
 		return codeRabbitDraftValue(old, value)
 	}
 	if key == "path_instructions" {
-		return codeRabbitInstructionsValue(old, value)
+		return codeRabbitInstructionsValue(old, value, evidence)
 	}
 	return codeRabbitBranchesValue(old, value)
 }
@@ -183,22 +262,52 @@ func codeRabbitKeyLocation(root *yaml.Node, key string) (*yaml.Node, []string) {
 }
 
 // codeRabbitInstructionsValue appends the default unless a user already owns the global path.
-func codeRabbitInstructionsValue(old, value *yaml.Node) (*yaml.Node, bool, error) {
+func codeRabbitInstructionsValue(old, value *yaml.Node, evidence bool) (*yaml.Node, bool, error) {
 	global, err := validateCodeRabbitInstructions(old)
-	if err != nil || global {
+	if err != nil {
 		return value, false, err
+	}
+	if global {
+		return refreshCodeRabbitEvidence(old, value, evidence)
 	}
 	if len(value.Content) == maxAdoptManifestMappingNodes {
 		return nil, false, fmt.Errorf("CodeRabbit path_instructions has no room within %d entries", maxAdoptManifestMappingNodes)
 	}
 	var defaults yaml.Node
-	if err := util.DecodeYAMLDocument([]byte(codeRabbitConfig), &defaults, util.YAMLDocumentOptions{}); err != nil {
+	if err := util.DecodeYAMLDocument([]byte(codeRabbitConfiguration(evidence)), &defaults, util.YAMLDocumentOptions{}); err != nil {
 		return nil, false, fmt.Errorf("decode CodeRabbit default instructions: %w", err)
 	}
 	instructions := util.YAMLMappingValue(util.YAMLMappingValue(defaults.Content[0], "reviews"), "path_instructions")
 	value.Kind, value.Tag, value.Value = yaml.SequenceNode, "!!seq", ""
 	value.Content = append(append([]*yaml.Node(nil), value.Content...), instructions.Content[0])
 	return value, true, nil
+}
+
+// refreshCodeRabbitEvidence updates only the exact managed global instruction, retaining user policy.
+func refreshCodeRabbitEvidence(old, value *yaml.Node, evidence bool) (*yaml.Node, bool, error) {
+	managed := make(map[string]bool, 2)
+	desired := ""
+	for _, hasStep := range [2]bool{false, true} {
+		var defaults yaml.Node
+		if err := util.DecodeYAMLDocument([]byte(codeRabbitConfiguration(hasStep)), &defaults, util.YAMLDocumentOptions{}); err != nil {
+			return nil, false, err
+		}
+		instructions := util.YAMLMappingValue(util.YAMLMappingValue(defaults.Content[0], "reviews"), "path_instructions")
+		text := util.YAMLMappingValue(instructions.Content[0], "instructions").Value
+		managed[text] = true
+		if hasStep == evidence {
+			desired = text
+		}
+	}
+	for i := 0; i < len(old.Content) && i < maxAdoptManifestMappingNodes; i++ {
+		entry := old.Content[i]
+		text := util.YAMLMappingValue(entry, "instructions")
+		if util.YAMLMappingValue(entry, "path").Value == "**" && managed[text.Value] && text.Value != desired {
+			text.Value = desired
+			return value, true, nil
+		}
+	}
+	return value, false, nil
 }
 
 // validateCodeRabbitInstructions checks bounded instruction objects before retaining a global entry.

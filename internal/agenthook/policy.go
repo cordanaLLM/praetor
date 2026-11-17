@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // denyRule is one compiled pattern with its source and the refusal a match prints ahead of
@@ -315,7 +316,6 @@ const shellNestingLimit, shellHereLineLimit = 16, 256
 var (
 	shellStatePattern          = regexp.MustCompile(ReadOnlyVeto[strings.Index(ReadOnlyVeto, "(?i:"):])
 	shellBoundaryVetoPattern   = regexp.MustCompile(`--%|%[;&|]`)
-	shellHerePattern           = regexp.MustCompile(`^<<(-?)[ \t]*("[^"]*"|'[^']*'|[-A-Za-z0-9_]+)`)
 	shellRedirectPattern       = regexp.MustCompile(`^&?[<>](?:[<>|]|&[0-9-]*)?`)
 	shellUnsupportedPattern    = regexp.MustCompile(`[^\t\x20-\x7e]|[{}^!]`)
 	shellDataOptionPattern     = regexp.MustCompile(`^(--(?:message|file|reuse-message|reedit-message|author|date)(=|$)|-[mFCc])`)
@@ -688,7 +688,7 @@ func (s *shellSpans) controlCharacter(ch byte) {
 	if len(s.stack) != 0 {
 		return
 	}
-	glob := strings.ContainsRune("*?[", rune(ch))
+	glob := strings.ContainsRune("*?[{}", rune(ch))
 	s.wordExpansion = s.wordExpansion || glob
 	s.wordSplitting = s.wordSplitting || glob
 	s.whole = s.whole || shellUnsupportedPattern.MatchString(s.command[s.position:s.position+1])
@@ -784,8 +784,15 @@ func (s *shellSpans) redirection() bool {
 	}
 	rest := s.command[s.position:]
 	if strings.HasPrefix(rest, "<<") {
-		match := shellHerePattern.FindStringSubmatch(rest)
-		if match == nil {
+		opener := 2
+		tabs := strings.HasPrefix(rest, "<<-")
+		if tabs {
+			opener++
+		}
+		opener += len(rest[opener:]) - len(strings.TrimLeft(rest[opener:], " \t"))
+		word, _, _ := strings.Cut(rest[opener:], "\n")
+		delimiter, quoted, width, err := util.ShellHereDocDelimiter(word)
+		if err != nil {
 			s.err = fmt.Errorf("invalid shell command: unsupported here-document delimiter")
 			return false
 		}
@@ -793,9 +800,8 @@ func (s *shellSpans) redirection() bool {
 			s.err = fmt.Errorf("invalid shell command: pending here-document bound exceeded: %d", shellNestingLimit)
 			return false
 		}
-		delimiter := strings.Trim(match[2], "\"'")
-		s.documents = append(s.documents, shellDocument{delimiter, match[1] == "-", len(s.parts), len(s.stack), delimiter == match[2]})
-		s.position += len(match[0])
+		s.documents = append(s.documents, shellDocument{delimiter, tabs, len(s.parts), len(s.stack), !quoted})
+		s.position += opener + width
 		return true
 	}
 	redirect := shellRedirectPattern.FindString(rest)
@@ -837,26 +843,38 @@ func (s *shellSpans) newline() bool {
 
 // documentBody consumes at most shellHereLineLimit lines, including closing delimiters.
 func (s *shellSpans) documentBody(document shellDocument) bool {
+	logical := ""
 	for s.hereLines < shellHereLineLimit && s.position < len(s.command) {
 		s.hereLines++
-		rest := s.command[s.position:]
-		line, _, found := strings.Cut(rest, "\n")
+		line, _, found := strings.Cut(s.command[s.position:], "\n")
 		s.position += len(line)
 		if found {
 			s.position++
 		}
-		if document.tabs {
-			line = strings.TrimLeft(line, "\t")
+		logical += line
+		if document.expandable && found && shellContinuedLine(line) {
+			logical = logical[:len(logical)-1]
+			continue
 		}
-		if line == document.delimiter {
+		if document.tabs {
+			logical = strings.TrimLeft(logical, "\t")
+		}
+		if logical == document.delimiter {
 			return true
 		}
+		logical = ""
 	}
 	s.err = fmt.Errorf("invalid shell command: unterminated here-document")
 	if s.hereLines == shellHereLineLimit {
 		s.err = fmt.Errorf("invalid shell command: here-document body-line bound exceeded: %d", shellHereLineLimit)
 	}
 	return false
+}
+
+// shellContinuedLine reports an unescaped trailing backslash before a physical newline.
+func shellContinuedLine(line string) bool {
+	escapes := len(line) - len(strings.TrimRight(line, "\\"))
+	return escapes%2 == 1
 }
 
 // matchesCommand applies segmentation only to the built-in short commit/am flag rule.

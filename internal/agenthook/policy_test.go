@@ -266,3 +266,15 @@ func TestEnvironmentRefusals(t *testing.T) {
 		t.Errorf("LEFTHOOK=False does not disable Lefthook: %+v", verdict)
 	}
 }
+
+// TestPolicyDelimiterBraceRegression refuses ambiguous delimiter and argument words.
+func TestPolicyDelimiterBraceRegression(t *testing.T) {
+	builtin := policy(t)
+	for _, tc := range delimiterBraceCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := builtin.Command(tc.command); (got.Outcome == Allow) != (tc.want == 0) {
+				t.Errorf("verdict: %+v, want rc=%d", got, tc.want)
+			}
+		})
+	}
+}
