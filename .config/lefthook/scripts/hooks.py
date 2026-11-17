@@ -233,8 +233,7 @@ def pre_push(remote):
         check_merge_range(base, head)
         check_commit_message_range(base, head, remote=remote)
         check_signature_range(base, head, remote=remote)
-        git("--no-replace-objects", "log", "--check", "--no-color", "--no-ext-diff", "--no-textconv",
-            "--format=commit %H", f"{base}..{head}" if base else head, "--")
+        check_whitespace_range(base, head)
         if not names:
             continue
         check_pushed_snapshot(head, base, mode, names)
@@ -481,6 +480,13 @@ def check_commit_message_range(base, head, remote=None):
     with_stable_remote_refs(other_push_remotes(remote), check)
 
 
+def check_whitespace_range(base, head):
+    """Check every outgoing diff, accepting CRLF terminators while retaining whitespace errors."""
+    git("-c", "core.whitespace=cr-at-eol", "--no-replace-objects", "log", "--check",
+        "--no-color", "--no-ext-diff", "--no-textconv", "--format=commit %H",
+        f"{base}..{head}" if base else head, "--")
+
+
 def check_commits(base):
     """Re-run the commit checks that need no workstation over every commit of base..HEAD (#61).
 
@@ -494,8 +500,7 @@ def check_commits(base):
     base = git("rev-parse", "--verify", "--end-of-options", base + "^{commit}").decode().strip()
     head = git("rev-parse", "--verify", "HEAD^{commit}").decode().strip()
     check_private_history(head, base)
-    git("--no-replace-objects", "log", "--check", "--no-color", "--no-ext-diff", "--no-textconv",
-        "--format=commit %H", f"{base}..{head}", "--")
+    check_whitespace_range(base, head)
     print(f"Commits: {base[:12]}..{head[:12]} carry no private state, whitespace error or "
           "conflict marker")
 

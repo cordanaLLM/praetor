@@ -728,6 +728,35 @@ class PushedReceipt(unittest.TestCase):
         with mock.patch("hooks.snapshot", side_effect=ignored_input):
             self.check_snapshot(reused=False)
 
+    def test_pre_push_whitespace_preserves_crlf_and_refuses_trailing_spaces(self):
+        """Raw CRLF passes; a space before either LF or CRLF fails before snapshot checks."""
+        for content, refused in ((b"clean CRLF\r\n", False),
+                                 (b"trailing space \n", True),
+                                 (b"trailing space \r\n", True)):
+            with self.subTest(content=content):
+                base = self.git("rev-parse", "HEAD").decode().strip()
+                (self.repo / "value.txt").write_bytes(content)
+                self.git("commit", "-qam", "chore: plant line ending fixture")
+                head = self.git("rev-parse", "HEAD").decode().strip()
+                self.assertEqual(self.git("show", head + ":value.txt"), content)
+                protocol = f"refs/heads/main {head} refs/heads/main {base}\n"
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(contextlib.chdir(self.repo))
+                    stack.enter_context(mock.patch.dict(os.environ, self.env, clear=True))
+                    stack.enter_context(mock.patch("hooks.sys.stdin", io.StringIO(protocol)))
+                    for name in ("guard", "verify_live_state", "check_private_history",
+                                 "check_refactor_range", "check_docstring_range", "check_merge_range",
+                                 "check_commit_message_range", "check_signature_range"):
+                        stack.enter_context(mock.patch("hooks." + name))
+                    snapshot_check = stack.enter_context(mock.patch("hooks.check_pushed_snapshot"))
+                    if refused:
+                        with self.assertRaisesRegex(HookError, "trailing whitespace"):
+                            pre_push("origin")
+                        snapshot_check.assert_not_called()
+                    else:
+                        pre_push("origin")
+                        snapshot_check.assert_called_once()
+
     def test_pre_push_receipt_keeps_range_checks_and_rejects_hidden_text_defects(self):
         """Whitespace and conflict markers in any pushed commit fail the push even with a valid tip receipt."""
         for defect, diagnostic in (("bad trailing space \n", "trailing whitespace"),
@@ -5857,6 +5886,19 @@ class CommitRange(unittest.TestCase):
         self.commit("data.json", '{"ok": true}\n', "feat: add data")
         self.assertIn("carry no private state, whitespace error or conflict marker",
                       self.check(self.base))
+
+    def test_commit_whitespace_matches_pre_push_for_lf_and_crlf(self):
+        """CI accepts raw CRLF and rejects spaces before LF or CRLF with the shared check."""
+        for data, refused in (("clean CRLF\r\n", False), ("trailing space \n", True),
+                              ("trailing space \r\n", True)):
+            with self.subTest(data=data):
+                base = self.rev("HEAD")
+                self.commit("line-endings.txt", data, "docs: plant line ending fixture")
+                if refused:
+                    with self.assertRaisesRegex(HookError, "trailing whitespace"):
+                        self.check(base)
+                else:
+                    self.check(base)
 
     def test_every_commit_is_checked_not_only_the_head(self):
         # The head tree is clean: only the commit in the middle introduced each defect, so a check
