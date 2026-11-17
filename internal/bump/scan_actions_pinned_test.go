@@ -4,6 +4,7 @@
 package bump
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -12,6 +13,45 @@ const (
 	pinnedCheckoutSHA = "3d3c42e5aac5ba805825da76410c181273ba90b1"
 	pinnedNodeSHA     = "820762786026740c76f36085b0efc47a31fe5020"
 )
+
+// TestScanWorkflowActionsYAMLKeyForms preserves candidate metadata across equivalent YAML keys.
+func TestScanWorkflowActionsYAMLKeyForms(t *testing.T) {
+	for _, form := range []string{
+		`- "uses": %s`, "- 'uses': %s", "- {uses: %s}",
+		`- {"uses": %s}`, "- {'uses': %s}",
+		`- "uses" : %s`, "- { uses : %s }",
+		"- {name: Checkout, uses: %s}", "- {uses: %s, name: Checkout}",
+	} {
+		for _, pinned := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/pinned=%t", form, pinned), func(t *testing.T) {
+				assertYAMLActionCandidate(t, form, pinned)
+			})
+		}
+	}
+}
+
+// assertYAMLActionCandidate checks the reference, source location and optional SHA metadata.
+func assertYAMLActionCandidate(t *testing.T, form string, pinned bool) {
+	t.Helper()
+	ref, comment := "actions/checkout@v4", ""
+	want := ActionCandidate{Action: "actions/checkout", Line: 5, Deprecated: true, CurrentVersion: "v4"}
+	if pinned {
+		ref, comment = "actions/checkout@"+pinnedCheckoutSHA, "  # v4.2.2"
+		want.PinnedSHA, want.CurrentVersion, want.Pin = pinnedCheckoutSHA, "v4.2.2", PinUnverified
+	}
+	repo := writePagesWorkflow(t, "name: CI\njobs:\n  test:\n    steps:\n      "+fmt.Sprintf(form, ref)+comment+"\n")
+	got, deps, err := ScanWorkflowActions(t.Context(), repo)
+	if err != nil || len(got) != 1 || len(deps) != 1 {
+		t.Fatalf("scan = %+v, %+v, %v", got, deps, err)
+	}
+	metadata := ActionCandidate{
+		Action: got[0].Action, Line: got[0].Line, Deprecated: got[0].Deprecated,
+		PinnedSHA: got[0].PinnedSHA, CurrentVersion: got[0].CurrentVersion, Pin: got[0].Pin,
+	}
+	if metadata != want {
+		t.Errorf("candidate metadata = %+v; want %+v", metadata, want)
+	}
+}
 
 // Positive: an action pinned by full commit SHA with its release as a trailing comment is
 // read at that release, whatever whitespace precedes the "#" (#610). A current release is

@@ -56,6 +56,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: lts/*
+          package-manager-cache: false
 
       # Corepack provisions the pnpm packageManager pins; Node 25 and later
       # ship without Corepack.

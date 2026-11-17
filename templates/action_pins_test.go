@@ -101,3 +101,35 @@ func TestTemplateActionPinFixtures(t *testing.T) {
 		}
 	}
 }
+
+// TestTemplateActionPinYAMLKeyForms enforces the same pins for quoted keys and flow mappings.
+func TestTemplateActionPinYAMLKeyForms(t *testing.T) {
+	const digest = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+	for _, name := range []string{"fixture/ci.yml.tmpl", renderedRoot + "/fixture/ci/default.yml"} {
+		for _, form := range []string{
+			`- "uses": %s`, "- 'uses': %s", "- {uses: %s}",
+			`- {"uses": %s}`, "- {'uses': %s}",
+			`- "uses" : %s`, "- { uses : %s }",
+			"- {name: Checkout, uses: %s}", "- {uses: %s, name: Checkout}",
+		} {
+			for _, tc := range []struct {
+				ref, comment string
+				want         int
+			}{
+				{"actions/checkout@v4", "", 1},
+				{"actions/checkout@" + digest, "  # v7.0.1", 0},
+				{"actions/checkout@" + digest, "", 1},
+				{"actions/checkout@" + digest[:39], "  # v7.0.1", 1},
+			} {
+				t.Run(name+"/"+form+"/"+tc.ref+tc.comment, func(t *testing.T) {
+					step := fmt.Sprintf(form, tc.ref) + tc.comment
+					tree := fstest.MapFS{name: {Data: []byte("steps:\n  " + step + "\n")}}
+					got, err := templateActionPinFindings(tree)
+					if err != nil || len(got) != tc.want {
+						t.Fatalf("findings = %v, err = %v; want %d", got, err, tc.want)
+					}
+				})
+			}
+		}
+	}
+}

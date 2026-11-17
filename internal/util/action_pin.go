@@ -12,7 +12,11 @@ import (
 var (
 	// actionUsesLine captures the value of a workflow step's uses: key, trailing comment
 	// included. A line that starts with "#" is a comment, never a step.
-	actionUsesLine = regexp.MustCompile(`^\s*(?:-\s+)?uses:\s*(.*?)\s*$`)
+	actionUsesLine = regexp.MustCompile(`^\s*(?:-\s+)?(?:uses|"uses"|'uses')[ \t]*:\s*(.*?)\s*$`)
+	// flowActionUsesLine reads the same key in a single-line flow mapping, including
+	// sibling entries. Keep the comment outside the closing brace and its spacing.
+	// Line patterns also work on unrendered templates, which are not YAML documents.
+	flowActionUsesLine = regexp.MustCompile(`^\s*(?:-\s+)?\{[ \t]*(?:.*,[ \t]*)?(?:uses|"uses"|'uses')[ \t]*:\s*([^,}]*)(?:,.*)?\}([ \t]*(?:#.*)?)$`)
 	// shaPinnedActionRef is a remote action pinned by full commit SHA, with or without a
 	// trailing comment. Any run of spaces or tabs may separate the comment from the SHA:
 	// Renovate's github-actions manager and pinact write one space, yamllint's default
@@ -39,10 +43,13 @@ type PinnedAction struct {
 // any trailing comment, and whether the line declares one.
 func ActionUsesValue(line string) (string, bool) {
 	match := actionUsesLine.FindStringSubmatch(line)
-	if match == nil {
-		return "", false
+	if match != nil {
+		return match[1], true
 	}
-	return match[1], true
+	if flow := flowActionUsesLine.FindStringSubmatch(strings.TrimRight(line, " \t\r")); flow != nil {
+		return strings.TrimSpace(flow[1]) + flow[2], true
+	}
+	return "", false
 }
 
 // ParseSHAPin splits a uses: value (ActionUsesValue) pinned by full commit SHA, of the form

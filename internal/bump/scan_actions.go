@@ -16,7 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-var workflowActionRegex = regexp.MustCompile(`uses:\s*([a-zA-Z0-9\-_/]+)@([a-zA-Z0-9.\-_+]+)`)
+var workflowActionRegex = regexp.MustCompile(`(?:uses|"uses"|'uses')[ \t]*:\s*([a-zA-Z0-9\-_/]+)@([a-zA-Z0-9.\-_+]+)`)
 
 // Known canonical latest versions for standard CI actions: the newest upstream release
 // major, or the exact tag for actions consumed by tag. The deprecation warning names its
@@ -243,7 +243,12 @@ func releasedLines(content string) ([]string, map[int]util.PinnedAction, error) 
 		}
 		pins[use.Line] = use.Pin
 		if use.Pinned {
-			lines[use.Line] = strings.Replace(lines[use.Line], use.Ref, use.Pin.Action+"@"+use.Pin.Release, 1)
+			old := use.Ref
+			// Flow mappings separate the reference and its comment with YAML tokens.
+			if !strings.Contains(lines[use.Line], old) {
+				old = use.Pin.Action + "@" + use.Pin.SHA
+			}
+			lines[use.Line] = strings.Replace(lines[use.Line], old, use.Pin.Action+"@"+use.Pin.Release, 1)
 		}
 	}
 	return lines, pins, nil

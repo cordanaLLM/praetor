@@ -25,6 +25,53 @@ import (
 
 const nodeCIPath = ".github/workflows/ci.yml"
 
+// TestNodeCINonNpmManagersDisableImplicitCache covers conflicting npm devEngines metadata.
+func TestNodeCINonNpmManagersDisableImplicitCache(t *testing.T) {
+	for _, manager := range []string{"pnpm", "bun"} {
+		t.Run(manager, func(t *testing.T) {
+			files := map[string]string{
+				"package.json": `{"packageManager":"` + manager + `@1.0.0","devEngines":{"packageManager":{"name":"npm"}},"scripts":{"test":"vitest"}}`,
+			}
+			if manager == "pnpm" {
+				files["pnpm-lock.yaml"] = pnpmLock
+			} else {
+				files["bun.lock"] = bunLock
+			}
+			repo := gitRepoWithFiles(t, files)
+			report, err := flavor.ApplyFlavor(t.Context(), repo, "typescript-node", false)
+			if err != nil || len(report.Errors) > 0 {
+				t.Fatalf("apply: %v, errors %v", err, report)
+			}
+			body, err := os.ReadFile(filepath.Join(repo, nodeCIPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertNodeCIImplicitCacheDisabled(t, body)
+		})
+	}
+}
+
+// assertNodeCIImplicitCacheDisabled requires setup-node to opt out of automatic caching.
+func assertNodeCIImplicitCacheDisabled(t *testing.T, body []byte) {
+	t.Helper()
+	var workflow nodeWorkflow
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, step := range workflow.Jobs["test"].Steps {
+		if strings.HasPrefix(step.Uses, "actions/setup-node@") {
+			found = true
+			if step.With["package-manager-cache"] != "false" {
+				t.Errorf("setup-node permits implicit npm caching: %v", step.With)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no setup-node step")
+	}
+}
+
 // npmLock is a package-lock.json npm ci accepts for a package with no dependencies.
 const npmLock = `{"name": "widget", "lockfileVersion": 3, "requires": true, "packages": {"": {"name": "widget"}}}` + "\n"
 
