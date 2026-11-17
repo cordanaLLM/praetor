@@ -401,7 +401,10 @@ func testArchivePathFieldBoundary(t *testing.T, path string, candidate bool) {
 
 // TestArchivePathStatLength distinguishes an absent candidate from a name rejected by stat.
 func TestArchivePathStatLength(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, size := range []int{255, 256} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			path := filepath.Join(root, strings.Repeat("a", size))
