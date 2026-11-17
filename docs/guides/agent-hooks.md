@@ -899,6 +899,19 @@ inspected: `git commit -m "$(git commit -n)"` refuses. A word-starting shell com
 at the newline; `git commit -m x # author's note` passes without treating its apostrophe
 as a quote (the same parity tests).
 
+A here-document body counts as data only up to the line the shell itself ends it on. The
+delimiter word is read as the shell reads it (`util.ShellHereDocDelimiter`): quote removal
+keeps literal quotes inside the quoted word, so `cat <<'"EOF"'` ends at a line `"EOF"`, and
+in an unquoted here-document backslash-newline lines are joined before the comparison, so
+`E\` followed by `OF` ends it. A command after that line is judged as a command. A delimiter
+word that is partly quoted, holds an expansion or is missing is refused, because the guard
+cannot tell where the body ends. An unquoted brace word up to and including the git
+subcommand, as in `git {commit,-n} -m x` or `{git,commit,-n,-m,x}`, can expand to a skip
+flag, so it is refused; quoted braces and braces in data operands pass
+(`TestPolicyDelimiterBraceRegression`, `TestParityDelimiterBraceRegression`,
+`TestEmittedDelimiterBraceRegression`; the earlier renderings replay in
+`TestEmittedDelimiterBracePriorReplay` and `TestEmittedBraceCommandPriorReplay`).
+
 When an expansion can supply an option or pathspec in the commit or `am` command itself,
 the short-flag scan conservatively retains the whole command. This includes quoted or
 unquoted variables and substitutions, unquoted `*`, `?` and `[` globs, and expandable
