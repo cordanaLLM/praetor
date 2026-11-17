@@ -390,6 +390,40 @@ func evasionPrintedCommandCases() []struct {
 	}
 }
 
+// evasionPrintedAllowListCases covers whole-line print eligibility and trailing-LF parity.
+func evasionPrintedAllowListCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"data bare tee", `echo 'git commit -n' | tee`, 2},
+		{"data bare tee LF", "echo 'git commit -n' | tee\n", 2},
+		{"data redirected script bash", `printf '%s\n' 'git commit -n -m x' > run.sh; bash run.sh`, 2},
+		{"data tee process substitution", `echo 'git commit -n' | tee >(bash)`, 2},
+		{"data redirected script sh", `echo 'git commit -n' > a; sh a`, 2},
+		{"data tee sh chain", `printf 'git commit -n' | tee x | sh`, 2},
+		{"data cat bash chain", `echo 'git commit -n' | cat | bash`, 2},
+		{"data tee file LF", "echo 'git commit -n' | tee notes.txt\n", 0},
+		{"data cat sink", `echo 'git commit -n' | cat`, 0},
+		{"data true sequence", `true; echo 'git commit -n'`, 0},
+		{"data printer sequence", `echo 'git commit -n'; printf x`, 0},
+		{"data unknown before", `unknown; echo 'git commit -n'`, 2},
+		{"data unknown after", `echo 'git commit -n'; unknown`, 2},
+		{"data sink parameter", `echo 'git commit -n' | tee "$file"`, 2},
+		{"data sink glob", `echo 'git commit -n' | tee *`, 2},
+		{"data sink redirect execution", `echo 'git commit -n' | cat >"$(bash)"`, 2},
+		{"data eval after", `echo 'git commit -n'; eval x`, 2},
+		{"data eval quoted after", `echo 'git commit -n'; e'v'al x`, 2},
+		{"data file input sink", `echo 'git commit -n'; cat < notes.txt`, 0},
+		{"data logical and", `echo 'git commit -n' && true`, 0},
+		{"data newline sequence", "echo 'git commit -n'\ntrue", 0},
+		{"data plain redirect parameter", `echo 'git commit -n' > "$file"`, 2},
+	}
+}
+
 // TestEmittedEvasionCommitSegments keeps skip flags within their shell command.
 func TestEmittedEvasionCommitSegments(t *testing.T) {
 	python, script := emittedInterceptor(t)
@@ -400,6 +434,7 @@ func TestEmittedEvasionCommitSegments(t *testing.T) {
 	cases = append(cases, evasionRoundEightCases()...)
 	cases = append(cases, evasionRoundNineCases()...)
 	cases = append(cases, evasionPrintedCommandCases()...)
+	cases = append(cases, evasionPrintedAllowListCases()...)
 	for _, tc := range append(cases, evasionRoundTenCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
@@ -518,10 +553,10 @@ func evasionSegmentMutants() []struct {
 		name, before, after, command string
 		want                         int
 	}{
-		{"printed state", " or DATA_ONLY_STATE.search(state)", "",
-			evasionPrintedCommandCases()[0].command, 0},
-		{"printed consumer", "self.print_unsafe |= not self.data_pipe_safe()", "self.print_unsafe |= False",
-			evasionPrintedCommandCases()[2].command, 0},
+		{"any printed command", "command = re.escape(name)", `command = r"[-A-Za-z0-9_./]+"`,
+			evasionPrintedAllowListCases()[2].command, 0},
+		{"printed final LF", `command.removesuffix("\n")`, "command",
+			evasionPrintedAllowListCases()[7].command, 2},
 		{"old span", "for segment in segments:", "for segment in [(text, bool(re.search(READ_ONLY_VETO, text)))]:",
 			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
 		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1)", "segments, None)",
@@ -1356,5 +1391,24 @@ func TestEmittedInterceptorSearchesLikeTheEngineGuard(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "return search(pattern, text)") || strings.Contains(rendered, "        if re.search(pattern, text):\n") {
 		t.Fatal("the rendered interceptor does not judge its rules through search")
+	}
+}
+
+// TestBuildBlockEvasionPY_PrintedAllowList pins the emitted table and replayable renderings.
+func TestBuildBlockEvasionPY_PrintedAllowList(t *testing.T) {
+	canonical := mustRead(t, filepath.Join("..", "..", evasionHookFile))
+	pattern := regexp.MustCompile(`(?m)^DATA_ONLY_COMMAND_NAMES = r"([^"]+)"$`)
+	want := pattern.FindStringSubmatch(canonical)
+	got := pattern.FindStringSubmatch(buildBlockEvasionPY())
+	if len(want) != 2 || len(got) != 2 || want[1] != got[1] {
+		t.Fatalf("print allow-list drift: canonical %q; emitted %q", want, got)
+	}
+	for _, path := range []string{
+		filepath.Join(priorEvasionFixtures, currentEvasionFixture),
+		filepath.Join("testdata", "emitted", evasionHookFile),
+	} {
+		if actual := mustRead(t, path); actual != buildBlockEvasionPY() {
+			t.Errorf("%s differs from the emitted rendering", path)
+		}
 	}
 }

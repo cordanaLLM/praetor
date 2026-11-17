@@ -598,33 +598,59 @@ const evasionCommandSegments = `def commit_command(command, short_pattern):
     return search(domain, join_line_continuations(command))
 
 
-# One allow-list: printf formats and prints arguments; echo prints arguments.
-# Neither shell command executes an argument as a command.
-DATA_ONLY_COMMAND_NAMES = r"(?:printf|echo)"
-DATA_ONLY_WORD = re.compile(r"^[ \t]*" + DATA_ONLY_COMMAND_NAMES + r"(?:[ \t]|$)")
-DATA_ONLY_FUNCTION = re.compile(
-    r"(?:\A|[ \t\n;&|])[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)"
+# One allow-list shared with the Go policy; parity tests pin every name.
+DATA_ONLY_COMMAND_NAMES = r"echo|printf|cat|tee|true"
+DATA_ONLY_FILE_WORD = (
+    r"(?:[-A-Za-z0-9_./:=@,%+~]+|'[-A-Za-z0-9_./:=@,%+~ ]*'|"
+    r'"[-A-Za-z0-9_./:=@,%+~ ]*")'
+)
+DATA_ONLY_PRINT_WORD = (
+    r"(?:[-A-Za-z0-9_./:=@,%+~]|'[^'\r\n]*'|" r'"(?:[^"\\$\x60\r\n]|\\[^\r\n])*")+'
 )
 DATA_ONLY_SUBSTITUTION = re.compile(r"\$\(|\x60|[<>]\(")
-DATA_ONLY_CONSUMER = re.compile(r"[ \t]*tee(?:[ \t]|$)")
-DATA_ONLY_STATE = re.compile(
-    r"(?i:(?:\A|[^-A-Za-z0-9_])(?:eval|source|unset|unalias|enable|disable|autoload)"
-    r"(?:[^-A-Za-z0-9_]|$))|(?:\A|[ \t\n;&|])\.(?:[ \t\n]|$)"
-)
-DATA_ONLY_QUOTES = str.maketrans("", "", "\"'\\")
+
+
+def data_only_line_source():
+    """Admit literal words, plain file redirects and listed commands only."""
+    commands = []
+    for name in DATA_ONLY_COMMAND_NAMES.split("|"):
+        word = (
+            DATA_ONLY_PRINT_WORD if name in ("echo", "printf") else DATA_ONLY_FILE_WORD
+        )
+        command = re.escape(name)
+        if name == "tee":
+            command += r"[ \t]+" + DATA_ONLY_FILE_WORD
+        command += (
+            r"(?:[ \t]+"
+            + word
+            + r"|[ \t]*(?:>>?|<)[ \t]*"
+            + DATA_ONLY_FILE_WORD
+            + r")*"
+        )
+        commands.append(command)
+    simple = r"(?:" + "|".join(commands) + r")"
+    return (
+        r"\A[ \t]*"
+        + simple
+        + r"(?:[ \t]*(?:;|&&|\|\||\||\n)[ \t]*"
+        + simple
+        + r")*[ \t]*\Z"
+    )
+
+
+DATA_ONLY_LINE = re.compile(data_only_line_source())
 
 
 def data_command_names_unchanged(command):
-    """Refuse state changes, including quote-obscured eval and source."""
-    state = command.translate(DATA_ONLY_QUOTES)
-    if re.search(CommandSpans.state_pattern, state) or DATA_ONLY_STATE.search(state):
-        return False
-    return not DATA_ONLY_FUNCTION.search(command)
+    """Grant exemptions only to a whole literal allow-listed line."""
+    return data_only_command(command)
 
 
-def data_only_command(segment):
-    """Accept literal print commands only when no word executes code."""
-    return DATA_ONLY_WORD.search(segment) and not DATA_ONLY_SUBSTITUTION.search(segment)
+def data_only_command(command):
+    """Strip exactly one final LF before matching the complete allow-list grammar."""
+    return bool(DATA_ONLY_LINE.search(command.removesuffix("\n"))) and not (
+        DATA_ONLY_SUBSTITUTION.search(command)
+    )
 
 
 def command_segments(command, short_pattern):
@@ -677,8 +703,6 @@ def scan_command_spans(command, short_pattern):
         raise ValueError("invalid shell command: unterminated here-document")
     if spans.whole:
         return [("".join(spans.judged), True, "")], spans.nested
-    if spans.print_unsafe:
-        return [(part, veto, "") for part, veto, _ in spans.parts], spans.nested
     return spans.parts, spans.nested
 
 
@@ -703,7 +727,6 @@ class CommandSpans:
         """Initialize raw offsets, data masking and the shell-state veto."""
         self.command, self.judged = command, list(command)
         self.short_pattern, self.uncertain = short_pattern, False
-        self.print_unsafe = False
         self.parts, self.stack, self.documents = [], [], []
         self.position = self.start = self.here_lines = 0
         self.whole = bool(re.search(self.state_pattern, command))
@@ -965,19 +988,9 @@ class CommandSpans:
         if self.command.startswith("&>", self.position):
             return self.redirection()
         if not self.stack:
-            self.print_unsafe |= not self.data_pipe_safe()
             self.split(self.position, self.position + 1)
         self.position += 1
         return True
-
-    def data_pipe_safe(self):
-        """Permit literal tee consumers; unknown consumers may execute printed input."""
-        position = self.position
-        if self.command[position] != "|" or self.command.startswith("||", position):
-            return True
-        if position > 0 and self.command[position - 1] == "|":
-            return True
-        return bool(DATA_ONLY_CONSUMER.match(self.command, position + 1))
 
     def single_quote(self):
         """Consume literal text; refuse an unmatched quote."""
@@ -1459,6 +1472,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"1a55fead97754551b198df9025fcd36d14ce563c5867aedcef0763f6be2eba15": "whole-line printer and literal text-sink allow-list",
 	"f5fdc772bcb15947b6fcfe6afccb718c09f868b38c8cc579a5572631e9f39471": "printed commands lose exemption after state changes and before executable consumers",
 	"5e00224927539739ba4c91e11735944ec8c879534704f89a7b7565f8a94ba49e": "literal printf and echo data excluded with substitution and redefinition guards",
 	"6c6f93592ceb1781566f9862c45fc645c59bf8d232074797c1f27ffd3d67691c": "refuse commit/am argument lists with runtime splitting",

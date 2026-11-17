@@ -891,25 +891,23 @@ with their command, so `git commit -m x 2>&1 | tail -n 1` passes while
 `git commit -m x 2>&1 -n` refuses (`TestParityEvasionCommitSegments`,
 `TestEmittedEvasionCommitSegments`).
 
-A segment starting with the literal command word `printf` or `echo` also treats its
-arguments as data: `printf` formats and prints its arguments, and `echo` prints them;
-neither executes an argument as a command. Thus
-`printf '%s\n' 'refused: git commit -S -F msg.txt | head -n 12' >> notes.txt`
-passes the short skip flag rule. This allow-list applies only to an isolated command
-from the existing segment scanner, never its conservative whole-command fallback.
-It requires no command or process substitution (`$(`, a backtick, `<(` or `>(`) anywhere
-in the segment's raw words, including redirection operands, and no redefinition in the
-whole command. The redefinition guard reuses `ReadOnlyVeto`'s state-changing words
-(including `function`, `alias` and PowerShell `Set-Alias`), checks function definitions,
-and refuses the exemption after `eval`, `source`, `.`, or other shell-state changes.
-Quote removal catches indirect definitions such as `eval 'ec''ho() { "$@"; }'`.
-Pipelines retain the exemption only with literal `tee` consumers; a shell, interpreter,
-`xargs`, `env`, or another unknown consumer may execute the printed input. Thus
-`echo 'git commit -n' | tee notes.txt` passes, while piping the same output into `bash`
-refuses (`TestParityEvasionCommitSegments`, `TestEmittedEvasionCommitSegments`).
-`echo "$(git commit -n -m x)"` and an actual later
-`git commit -n -m x` remain refused. Other rules still inspect the printed text
-(`TestParityEvasionCommitSegments`, `TestReadOnlyExemption_DataOnlyGuards`).
+The printed-command exemption requires the whole command line to contain only literal
+`echo`, `printf`, `cat`, `tee` and `true` commands. Commands may be joined by pipes,
+`;`, `&&`, `||` or newlines, with plain file redirections. `echo` and `printf` accept
+literal text arguments; sinks accept only plain file words, and `tee` requires a file
+operand. Thus `echo 'git commit -n' | cat`, `echo 'git commit -n' | tee notes.txt` and
+`printf '%s\n' 'git commit -n' > notes.txt` pass the short skip flag rule. Exactly one
+trailing LF is removed before matching in Go and both Python implementations; a bare
+`tee` with or without that LF retains the full scan.
+
+Any other command or syntax removes this exemption from every segment: state changes,
+unknown commands, command or process substitutions, dynamic file operands and later
+execution of a redirected file retain prohibited-flag scanning. For example,
+`echo 'git commit -n' > a; sh a` and `echo 'git commit -n' | tee >(bash)` refuse.
+The whole-line allow-list never exempts the segment scanner's conservative fallback.
+Other rules still inspect printed text. Replay evidence:
+`TestParityEvasionCommitSegments`, `TestEmittedEvasionCommitSegments`,
+`TestParityEvasionPrintedAllowList` and `TestBuildBlockEvasionPY_PrintedAllowList`.
 
 Message and file operands (`-m`, `--message`, `-F`, `--file`, `-C`, `-c`, `--author`,
 `--date`, including attached values) and here-document bodies are data, excluded from

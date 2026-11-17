@@ -355,7 +355,6 @@ type shellSpans struct {
 	documents                      []shellDocument
 	position, start, hereLines     int
 	whole                          bool
-	printUnsafe                    bool
 	uncertain                      bool
 	err                            error
 	judged                         []byte
@@ -454,17 +453,7 @@ func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 	if s.whole {
 		return []shellSpan{{text: string(s.judged), veto: true}}, s.nested, nil
 	}
-	return s.commandParts(), s.nested, nil
-}
-
-// commandParts removes print exemptions when an unknown pipeline consumer may execute input.
-func (s *shellSpans) commandParts() []shellSpan {
-	if s.printUnsafe {
-		for index := range s.parts {
-			s.parts[index].raw = ""
-		}
-	}
-	return s.parts
+	return s.parts, s.nested, nil
 }
 
 // top returns the innermost quote or substitution terminator, or zero outside constructs.
@@ -754,20 +743,10 @@ func (s *shellSpans) separator() bool {
 		return s.redirection()
 	}
 	if len(s.stack) == 0 {
-		s.printUnsafe = s.printUnsafe || !s.dataPipeSafe()
 		s.split(s.position, s.position+1)
 	}
 	s.position++
 	return true
-}
-
-// dataPipeSafe permits only literal tee consumers; unknown consumers may execute printed input.
-func (s *shellSpans) dataPipeSafe() bool {
-	rest := s.command[s.position:]
-	if rest[0] != '|' || strings.HasPrefix(rest, "||") || s.position > 0 && s.command[s.position-1] == '|' {
-		return true
-	}
-	return dataOnlyConsumerPattern.MatchString(rest[1:])
 }
 
 // singleQuote consumes literal text, refusing an unmatched quote as in the prior renderer.
@@ -883,28 +862,46 @@ func (s *shellSpans) documentBody(document shellDocument) bool {
 	return false
 }
 
-// dataOnlyCommandNames is the sole allow-list: printf formats and prints its arguments;
-// echo prints its arguments. Neither shell command executes an argument as a command.
-const dataOnlyCommandNames = `(?:printf|echo)`
+// dataOnlyCommandNames is the shared printer and literal text-sink allow-list.
+const dataOnlyCommandNames = `echo|printf|cat|tee|true`
 
-var (
-	dataOnlyWordPattern         = regexp.MustCompile(`^[ \t]*` + dataOnlyCommandNames + `(?:[ \t]|$)`)
-	dataOnlyFunctionPattern     = regexp.MustCompile(`(?:\A|[ \t\n;&|])[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)`)
-	dataOnlySubstitutionPattern = regexp.MustCompile(`\$\(|\x60|[<>]\(`)
-	dataOnlyConsumerPattern     = regexp.MustCompile(`^[ \t]*tee(?:[ \t]|$)`)
-	dataOnlyStatePattern        = regexp.MustCompile(`(?i:(?:\A|[^-A-Za-z0-9_])(?:eval|source|unset|unalias|enable|disable|autoload)(?:[^-A-Za-z0-9_]|$))|(?:\A|[ \t\n;&|])\.(?:[ \t\n]|$)`)
-	dataOnlyQuoteReplacer       = strings.NewReplacer(`'`, "", `"`, "", `\`, "")
+const (
+	dataOnlyFileWord  = `(?:[-A-Za-z0-9_./:=@,%+~]+|'[-A-Za-z0-9_./:=@,%+~ ]*'|"[-A-Za-z0-9_./:=@,%+~ ]*")`
+	dataOnlyPrintWord = `(?:[-A-Za-z0-9_./:=@,%+~]|'[^'\r\n]*'|"(?:[^"\\$\x60\r\n]|\\[^\r\n])*")+`
 )
 
-// dataCommandNamesUnchanged refuses state changes, including quote-obscured eval and source.
-func dataCommandNamesUnchanged(command string) bool {
-	state := dataOnlyQuoteReplacer.Replace(command)
-	return !shellStatePattern.MatchString(state) && !dataOnlyStatePattern.MatchString(state) && !dataOnlyFunctionPattern.MatchString(command)
+var (
+	dataOnlyLinePattern         = regexp.MustCompile(dataOnlyLineSource())
+	dataOnlySubstitutionPattern = regexp.MustCompile(`\$\(|\x60|[<>]\(`)
+)
+
+// dataOnlyLineSource admits literal words, plain file redirects and listed commands only.
+func dataOnlyLineSource() string {
+	var commands []string
+	for _, name := range strings.Split(dataOnlyCommandNames, "|") {
+		word := dataOnlyFileWord
+		if name == "echo" || name == "printf" {
+			word = dataOnlyPrintWord
+		}
+		command := regexp.QuoteMeta(name)
+		if name == "tee" {
+			command += `[ \t]+` + dataOnlyFileWord
+		}
+		command += `(?:[ \t]+` + word + `|[ \t]*(?:>>?|<)[ \t]*` + dataOnlyFileWord + `)*`
+		commands = append(commands, command)
+	}
+	simple := `(?:` + strings.Join(commands, "|") + `)`
+	return `\A[ \t]*` + simple + `(?:[ \t]*(?:;|&&|\|\||\||\n)[ \t]*` + simple + `)*[ \t]*\z`
 }
 
-// dataOnlyCommand accepts a literal print command only when none of its words executes code.
-func dataOnlyCommand(segment string) bool {
-	return dataOnlyWordPattern.MatchString(segment) && !dataOnlySubstitutionPattern.MatchString(segment)
+// dataCommandNamesUnchanged grants exemptions only to a whole literal allow-listed line.
+func dataCommandNamesUnchanged(command string) bool {
+	return dataOnlyCommand(command)
+}
+
+// dataOnlyCommand strips exactly one final LF before matching the complete allow-list grammar.
+func dataOnlyCommand(command string) bool {
+	return dataOnlyLinePattern.MatchString(strings.TrimSuffix(command, "\n")) && !dataOnlySubstitutionPattern.MatchString(command)
 }
 
 // matchesCommand applies segmentation only to the built-in short commit/am flag rule.
