@@ -17,6 +17,9 @@ const ExceptionRuleGosec = "gosec"
 const MaxGosecExceptionRules = 1000
 
 func (e Exception) scannerExceptionProblem() string {
+	if problem := e.nodeAuditProblem(); problem != "" {
+		return problem
+	}
 	if problem := e.codespellProblem(); problem != "" {
 		return problem
 	}

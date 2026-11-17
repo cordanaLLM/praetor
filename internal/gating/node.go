@@ -255,7 +255,10 @@ func isNetworkFailure(out string, err error) bool {
 }
 
 type npmAuditReport struct {
-	Metadata struct {
+	Advisories      map[string]nodeAuditAdvisory      `json:"advisories"`
+	Vulnerabilities map[string]nodeAuditVulnerability `json:"vulnerabilities"`
+	Error           json.RawMessage                   `json:"error"`
+	Metadata        struct {
 		Vulnerabilities struct {
 			High     int `json:"high"`
 			Critical int `json:"critical"`
@@ -362,13 +365,31 @@ func runNodeSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	defer cancel()
 	what := manager + " " + strings.Join(args, " ")
 	out, runErr := cfg.run(aCtx, cfg.repoDir, manager, args...)
-	if runErr != nil {
-		return "", handleAuditError(ctx, aCtx, manager, what, out, runErr)
-	}
-	if summary, hasFindings := checkAuditOutputFindings(manager, out); hasFindings {
-		return "", fmt.Errorf("%s found vulnerabilities: %s", what, summary)
+	if err := judgeNodeAudit(ctx, aCtx, cfg.repoDir, manager, what, out, runErr); err != nil {
+		return "", err
 	}
 	return manager + " audit passed", nil
+}
+
+// judgeNodeAudit preserves command failures while allowing covered, structured advisory findings.
+func judgeNodeAudit(ctx, aCtx context.Context, root, manager, what, out string, runErr error) error {
+	if runErr != nil && (aCtx.Err() != nil || isNetworkFailure(out, runErr)) {
+		return handleAuditError(ctx, aCtx, manager, what, out, runErr)
+	}
+	covered, err := judgeNodeAdvisories(aCtx, root, manager, out)
+	if err != nil {
+		return fmt.Errorf("%s found vulnerabilities: %w", what, err)
+	}
+	if covered {
+		return nil
+	}
+	if runErr != nil {
+		return handleAuditError(ctx, aCtx, manager, what, out, runErr)
+	}
+	if summary, hasFindings := checkAuditOutputFindings(manager, out); hasFindings {
+		return fmt.Errorf("%s found vulnerabilities: %s", what, summary)
+	}
+	return nil
 }
 
 func parseNodeManifest(repoDir string) (nodemanifest.Manifest, error) {

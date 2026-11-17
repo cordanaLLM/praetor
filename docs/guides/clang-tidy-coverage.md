@@ -111,6 +111,9 @@ The Security stage reads `gosec` entries with one exact `path`, a `gosec_rules` 
 `reason`, explicit `category`, `entered` and `expires`. It removes matching live findings before
 the ratchet, reports a count per entry, and rejects stale entries; expired entries excuse
 nothing ([gosec guide](gosec.md)).
+The Node Security stage reads `node-audit` entries keyed by `ghsa`, with `path: package.json`
+and the same category and date validation. Listed high or critical advisories and configured
+package-manager ignores require live entries; see [Node advisory exceptions](#node-advisory-exceptions).
 For a HISS rule decided by the invariant scanner, a live entry removes only matching findings
 from the touched-file and new-finding ratchet checks. The audit prints each excused finding
 with its reason and expiry. Expired entries excuse nothing, and an entry matching no finding in
@@ -121,6 +124,7 @@ its file and function is stale and fails the audit (`applyHISSExceptions` in
 | :--- | :--- |
 | `rule` | A rule some gate reads from the list: the HISS registry IDs `HISS-01` through `HISS-21` (`hisscatalog.RuleIDs()`), `clang-tidy-coverage`, `credits` (`config.ExceptionRuleCredits`), `test-timeout` for a workflow, or the root `Makefile`, that sets a test timeout above the 30-minute per-package bound (`forge.AuditTestTimeouts`, #1381; a `test-timeout` entry may name `Makefile`, every other workflow-scoped rule names a workflow file), `job-timeout` for a workflow job missing timeout-minutes or exceeding measured/static bounds (`forge.AuditJobTimeouts`), `root-license-notice` for the [root licence check](licensing-gates.md#one-root-licence), `reuse-annotation-order` for a `REUSE.toml` too large for the [annotation order check](licensing-gates.md#annotation-order), `api-compatibility` (`config.ExceptionRuleAPICompatibility`) for a Go module the API compatibility gate cannot build ([A module that cannot be built even so](api-compatibility.md#a-module-that-cannot-be-built-even-so)), `declared-linters` (`config.ExceptionRuleDeclaredLinters`) for a declared linter no workflow runs yet ([Declared linters](effective-policy.md#declared-linters)), `mutants` for a tracked mutation-tool config that excludes mutants, `codespell` (`config.ExceptionRuleCodespell`) for an adopter's codespell skip of one engine-emitted file ([Codespell skips for emitted files](documentation-governance.md#codespell-skips-for-emitted-files)), `backlog.caps.*` for a backlog category over its cap ([Exceptions for backlog caps](effective-policy.md#exceptions-for-backlog-caps)), `ui-latency-source` (`config.ExceptionRuleUILatencySource`) for a missing `ui.input_latency_source` while measurement evidence publication is pending ([Shared screen and accessibility matrix](adoption-verification.md#shared-screen-and-accessibility-matrix)), or `go-test-netns` (`config.ExceptionRuleGoTestNetns`) for a Go module, named by its `go.mod`, whose test binaries the race stage runs without the loopback wrapper ([Modules whose tests need host ownership](adoption-verification.md#modules-whose-tests-need-host-ownership)). HISS-11 names a release workflow with a supply-chain gap ([Declaring a gap](releasing.md#declaring-a-gap)); HISS-10 names a workflow with build lanes that cannot use warnings as errors ([Build-warnings gate](build-warnings.md#exceptions)); HISS-18 names a workflow that must run on every branch push or draft pull request ([Workflow trigger audit](workflow-triggers.md#declaring-a-workflow-that-must-run-everywhere)); HISS-12 names one file and one gitleaks rule id (`tool`), optionally pinned by a fingerprint, for the history secret scan (`internal/secretscan`); HISS-19 names one repository file with duplicate function blocks ([HISS-19: Reuse Before Writing](../standards/hiss-spec.md#hiss-19-reuse-before-writing)). |
 | `gosec_rules` | For `rule: gosec`, a nonempty list of distinct IDs matching `G` plus three digits; invalid on other rules. |
+| `ghsa` | For `rule: node-audit`, one exact `GHSA-xxxx-xxxx-xxxx` identifier; invalid on other rules. Requires `path: package.json`, explicit `category`, `entered`, `reason` and `expires`. |
 | `path` or `glob` | Exactly one, except for `declared-linters`, the backlog cap rules, and `ui-latency-source` (which may omit `path` or set `.standards.yaml`). HISS scanner exceptions and `HISS-11` entries use one `path`; no glob. A `HISS-11` entry names the release workflow whose declared supply chain falls short, or the file holding a container image reference without a digest pin (a Dockerfile, a compose or Kubernetes file, a workflow, a source file). `path` names one clean repository-relative file without glob characters. Other glob entries follow the `docs_surfaces` glob rules: `*` stays inside one segment and a `**` segment spans any number. |
 | `function` | Optional for a HISS scanner rule. Matches the scanner finding's function symbol and narrows that file's exception; omitted means the entry covers matching findings anywhere in that file. |
 | `fingerprint` | For `HISS-19`, an optional 8–64 hexadecimal character prefix of the clone group's reported hash, matched case-insensitively. For `HISS-12`, the existing optional finding fingerprint. |
@@ -223,6 +227,43 @@ or renew the debt before the owning gate fails upon expiry:
 ```text
 [WARN] Exceptions: the exceptions entry (rule HISS-11, .github/workflows/rel.yml) expires on 2026-10-24 (14 days left): Level 2 builder
 ```
+
+### Node advisory exceptions
+
+The engine's Node audit stage reads this same exception list, using one entry per GHSA:
+
+```yaml
+exceptions:
+  - rule: node-audit
+    path: package.json
+    ghsa: GHSA-fc5q-39xc-vjpf
+    reason: Await the dependency fix
+    category: C
+    entered: 2026-11-17
+    expires: 2026-11-27
+```
+
+Category B permits up to 3 days from `entered`, C permits 10, D permits 120, and A permits
+the stated interval up to 90 days. Category, entry date, reason and expiry are required.
+The exception remains valid on its expiry day; the next day the stage fails, naming the
+GHSA, expiry and `.standards.yaml`. These are the shared rules implemented by
+`internal/config/node_audit_exceptions.go` and `internal/config/exceptions.go`.
+
+The stage evaluates pnpm's `advisories` map and npm 7+'s `vulnerabilities` map, including npm's
+transitive `via` references. A listed high or critical advisory needs its own live exception.
+Lower severities do not fail this stage. For older reports without either map, metadata
+high and critical counts retain their previous behavior and cannot be waived by GHSA.
+The stage compares metadata counts against listed findings to detect suppressed findings;
+an unexplained gap fails rather than treating an empty advisory map as a clean audit.
+
+For pnpm 12, declare ignores in `pnpm-workspace.yaml`, using `auditConfig.ignoreGhsas`
+or its newer replacement `audit.ignore`; the latter takes precedence, including an empty
+list. The engine also reads the legacy `pnpm.auditConfig.ignoreGhsas` in `package.json`
+when no workspace file exists. Every configured ignored GHSA requires a live exception,
+even if the report's summary already excludes ignored findings. The engine reads only
+repository files and never queries package-manager user configuration. An ignore alone
+cannot waive a finding. See [pnpm audit configuration](https://pnpm.io/cli/audit#configuration)
+and the frozen report tests in `internal/gating/node_audit_exceptions_test.go`.
 
 ## Data paths
 
