@@ -231,6 +231,49 @@ func TestRunStopFailedScriptIncludesStderr(t *testing.T) {
 	}
 }
 
+// TestEvaluateCheckpointFailureMarker checks that a failed checkpoint run's marker error reaches the stop
+// and tool reasons, and that a run exiting 0 with a not-due marker allows with no reason (#1983).
+func TestEvaluateCheckpointFailureMarker(t *testing.T) {
+	root := t.TempDir()
+	_, getenv := buildStub(t, "python3")
+	in := checkpointInvocation(t, "stop", root, getenv, nil)
+	for _, tc := range []struct {
+		event Event
+		want  Outcome
+	}{{EventStop, Deny}, {EventPostTool, Skip}} {
+		for _, stderr := range []string{"", "warn"} {
+			t.Run(string(tc.event)+"/"+stderr, func(t *testing.T) {
+				t.Setenv("PRAETOR_STUB_EXIT", "1")
+				t.Setenv("PRAETOR_STUB_STDERR", stderr)
+				stubStdout(t, checkpointResultMarker+`{"schema_version":1,"error":"state lock busy"}`)
+				got := evaluateCheckpointEvent(t, tc.event, root, in)
+				if got.Outcome != tc.want || !strings.Contains(got.Reason, "state lock busy") ||
+					!strings.Contains(got.Reason, stderr) {
+					t.Errorf("failed evaluator lost diagnostic: %+v", got)
+				}
+			})
+		}
+		t.Run(string(tc.event)+"/not due", func(t *testing.T) {
+			t.Setenv("PRAETOR_STUB_EXIT", "0")
+			t.Setenv("PRAETOR_STUB_STDERR", "")
+			stubStdout(t, cleanReport)
+			if got := evaluateCheckpointEvent(t, tc.event, root, in); got.Outcome != Allow || got.Reason != "" {
+				t.Errorf("not-due evaluator must allow silently: %+v", got)
+			}
+		})
+	}
+}
+
+// evaluateCheckpointEvent returns the verdict of the post-tool evaluator for EventPostTool and of the
+// stop checkpoint evaluator for every other event, run in root with an empty Canonical.
+func evaluateCheckpointEvent(t *testing.T, event Event, root string, in Invocation) Verdict {
+	t.Helper()
+	if event == EventPostTool {
+		return evaluatePostTool(t.Context(), Canonical{}, root, in)
+	}
+	return evaluateStopCheckpoint(t.Context(), root, Canonical{}, in)
+}
+
 func TestRunStopDueCheckpointBlocksOnce(t *testing.T) {
 	root := syncedRepository(t)
 	_, getenv := buildStub(t, "python3")
