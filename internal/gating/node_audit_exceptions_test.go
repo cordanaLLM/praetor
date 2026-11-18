@@ -154,29 +154,45 @@ func TestNodeAuditExceptions(t *testing.T) {
 		{"npm listed expired", "npm", "npm-listed.json", nodeAuditStandards(t, -1), "", "GHSA-fc5q-39xc-vjpf exception in .standards.yaml expired on ", true},
 		{"npm second advisory missing", "npm", "npm-two-advisories.json", nodeAuditStandards(t, 1), "", "GHSA-42xw-2xvc-qx8m has no unexpired exception", true},
 		{"npm both advisories live", "npm", "npm-two-advisories.json", both, "", "", true},
+		{"shared live", "npm", "npm-shared.json", nodeAuditStandards(t, 1), "", "", true},
+		{"shared missing", "npm", "npm-shared.json", "version: 1\n", "", "GHSA-fc5q-39xc-vjpf", true},
+		{"shared second advisory missing", "npm", "npm-shared-two.json", nodeAuditStandards(t, 1), "", "GHSA-42xw-2xvc-qx8m", true},
+		{"cycle one live", "npm", "npm-cycle-one.json", nodeAuditStandards(t, 1), "", "", true},
+		{"cycle shared live", "npm", "npm-cycle-shared.json", nodeAuditStandards(t, 1), "", "", true},
+		{"second start missing reference", "npm", "npm-shared-missing.json", nodeAuditStandards(t, 1), "", "missing package missing-second", true},
 		{"listed expired", "pnpm", "pnpm-listed.json", nodeAuditStandards(t, -1), "", "expired on", true},
 		{"f legacy", "pnpm", "legacy.json", "version: 1\n", "", "found 1 high and 0 critical vulnerabilities", false},
 		{"legacy exception cannot hide counts", "pnpm", "legacy.json", nodeAuditStandards(t, 1), "", "found 1 high and 0 critical vulnerabilities", false},
 		{"expiry day", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 0), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "", false},
 	}
-	for _, tc := range cases {
+	for i := 0; i < len(cases) && i < 32; i++ {
+		tc := cases[i]
 		t.Run(tc.name, func(t *testing.T) {
 			err := runNodeAuditFixture(t, tc.manager, nodeAuditFixture(t, tc.report), tc.standards, tc.workspace, tc.failed)
-			if tc.want == "" {
-				if err != nil {
-					t.Fatal(err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("want %q; got %v", tc.want, err)
-			}
-			if tc.report == "npm-two-advisories.json" && strings.Contains(err.Error(), "GHSA-fc5q-39xc-vjpf") {
-				t.Fatalf("excepted advisory reported: %v", err)
-			}
-			t.Log(err)
+			checkNodeAuditExceptionError(t, tc.report, tc.want, err)
 		})
 	}
+}
+
+// checkNodeAuditExceptionError checks verdicts, advisory deduplication and exception filtering.
+func checkNodeAuditExceptionError(t *testing.T, report, want string, err error) {
+	t.Helper()
+	if want == "" {
+		if err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("want %q; got %v", want, err)
+	}
+	if (report == "npm-two-advisories.json" || report == "npm-shared-two.json") && strings.Contains(err.Error(), "GHSA-fc5q-39xc-vjpf") {
+		t.Fatalf("excepted advisory reported: %v", err)
+	}
+	if report == "npm-shared.json" && strings.Count(err.Error(), want) != 1 {
+		t.Fatalf("shared advisory must be named once: %v", err)
+	}
+	t.Log(err)
 }
 
 // TestNodeAuditIgnoreConfiguration covers pnpm policy locations, precedence and fail-closed gaps.
@@ -220,6 +236,9 @@ func TestNodeAuditAdvisorySeverities(t *testing.T) {
 		{"npm transitive", "npm", `{"vulnerabilities":{"parent":{"severity":"high","via":["child"]},"child":{"severity":"high","via":[{"severity":"high","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"}]}}}`, "GHSA-fc5q-39xc-vjpf"},
 		{"npm missing reference", "npm", `{"vulnerabilities":{"parent":{"severity":"high","via":["child"]}}}`, "missing package child"},
 		{"npm cycle", "npm", `{"vulnerabilities":{"parent":{"severity":"high","via":["parent"]}}}`, "no bounded GHSA"},
+		{"npm shared high", "npm", nodeAuditFixture(t, "npm-shared.json"), "GHSA-fc5q-39xc-vjpf"},
+		{"npm shared cycle", "npm", nodeAuditFixture(t, "npm-cycle-shared.json"), "GHSA-fc5q-39xc-vjpf"},
+		{"npm shared unresolved", "npm", nodeAuditFixture(t, "npm-shared-missing.json"), "missing package missing-second"},
 		{"npm unknown GHSA", "npm", `{"vulnerabilities":{"x":{"severity":"high","via":[{"severity":"high"}]}}}`, "unknown GHSA"},
 		{"duplicate report", "pnpm", `{"advisories":{},"advisories":{}}`, "parse Node audit"},
 		{"malformed map", "pnpm", `{"advisories":[]}`, "parse Node audit"},
@@ -227,7 +246,8 @@ func TestNodeAuditAdvisorySeverities(t *testing.T) {
 		{"negative counts", "pnpm", `{"advisories":{},"metadata":{"vulnerabilities":{"high":-1}}}`, "negative vulnerability counts"},
 		{"command error", "pnpm", `{"advisories":{},"error":{"code":"EAUDIT"}}`, "contains a command error"},
 	}
-	for _, tc := range cases {
+	for i := 0; i < len(cases) && i < 32; i++ {
+		tc := cases[i]
 		t.Run(tc.name, func(t *testing.T) {
 			err := runNodeAuditFixture(t, tc.manager, tc.report, "version: 1\n", "", false)
 			if tc.want == "" {
@@ -257,7 +277,7 @@ func TestNodeAuditLimits(t *testing.T) {
 	}
 	packages := map[string]nodeAuditVulnerability{"parent": {Severity: "high", Via: []json.RawMessage{json.RawMessage(`"parent"`)}}}
 	budget := 0
-	if _, err := npmPackageAdvisories(packages, "parent", &budget); err == nil {
+	if _, err := npmPackageAdvisories(packages, "parent", &budget, make(map[string][]string)); err == nil {
 		t.Fatal("exhausted traversal budget accepted")
 	}
 	budget = 0
@@ -266,5 +286,34 @@ func TestNodeAuditLimits(t *testing.T) {
 	}
 	if _, _, err := npmViaEntry(json.RawMessage(`[]`)); err == nil {
 		t.Fatal("invalid via entry accepted")
+	}
+}
+
+// TestNodeAuditSharedBudget counts each package and via entry once across starting packages.
+func TestNodeAuditSharedBudget(t *testing.T) {
+	cases := []struct {
+		name  string
+		extra int
+		want  string
+	}{
+		{"at traversal budget", 0, ""},
+		{"one over traversal budget", 1, "npm audit via exceeds"},
+	}
+	for i := 0; i < len(cases) && i < 2; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			// Five packages, four references and one high advisory cost ten steps.
+			report := strings.ReplaceAll(nodeAuditFixture(t, "npm-shared-budget.json"), `"EXTRA_VIA"`, strings.TrimPrefix(strings.Repeat(",{}", maxNodeAdvisories-10+tc.extra), ","))
+			err := runNodeAuditFixture(t, "npm", report, nodeAuditStandards(t, 1), "", true)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %q; got %v", tc.want, err)
+			}
+		})
 	}
 }

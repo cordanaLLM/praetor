@@ -97,15 +97,19 @@ func listedNpmFindings(packages map[string]nodeAuditVulnerability) (nodeAuditFin
 	var findings nodeAuditFindings
 	keys := util.SortedKeys(packages)
 	budget := maxNodeAdvisories
+	memo := make(map[string][]string)
 	for i := 0; i < len(keys) && i < maxNodeAdvisories; i++ {
 		if !findings.add(packages[keys[i]].Severity) {
 			continue
 		}
-		ids, err := npmPackageAdvisories(packages, keys[i], &budget)
+		ids, err := npmPackageAdvisories(packages, keys[i], &budget, memo)
 		if err != nil {
 			return findings, err
 		}
-		findings.ids = append(findings.ids, ids...)
+		if len(ids) == 0 {
+			return findings, fmt.Errorf("npm audit high or critical package %s has no bounded GHSA advisory", keys[i])
+		}
+		findings.ids = npmAdvisoryUnion(findings.ids, ids)
 		if len(findings.ids) > maxNodeAdvisories {
 			return findings, fmt.Errorf("node audit exceeds %d advisory references", maxNodeAdvisories)
 		}
@@ -113,34 +117,121 @@ func listedNpmFindings(packages map[string]nodeAuditVulnerability) (nodeAuditFin
 	return findings, nil
 }
 
-// npmPackageAdvisories follows npm's via references iteratively, including transitive packages.
-func npmPackageAdvisories(packages map[string]nodeAuditVulnerability, name string, budget *int) ([]string, error) {
-	queue := []string{name}
-	seen := make(map[string]bool)
-	var ids []string
-	for i := 0; i < len(queue) && i < maxNodeAdvisories; i++ {
-		*budget -= 1
-		if *budget < 0 {
-			return nil, fmt.Errorf("npm audit traversal exceeds %d steps", maxNodeAdvisories)
-		}
-		if seen[queue[i]] {
+// npmAdvisoryFrame holds one package's iterative depth-first traversal state.
+type npmAdvisoryFrame struct {
+	name                   string
+	ids, dependencies      []string
+	index, low, base, next int
+}
+
+// npmAdvisoryWalk shares completed advisory sets and a single report budget.
+type npmAdvisoryWalk struct {
+	packages map[string]nodeAuditVulnerability
+	memo     map[string][]string
+	budget   *int
+	nodes    map[string]*npmAdvisoryFrame
+	path     []*npmAdvisoryFrame
+	active   []*npmAdvisoryFrame
+}
+
+// npmPackageAdvisories memoizes transitive advisory sets, including complete dependency cycles.
+func npmPackageAdvisories(packages map[string]nodeAuditVulnerability, name string, budget *int, memo map[string][]string) ([]string, error) {
+	if ids, ok := memo[name]; ok {
+		return ids, nil
+	}
+	walk := npmAdvisoryWalk{packages: packages, memo: memo, budget: budget, nodes: make(map[string]*npmAdvisoryFrame)}
+	if err := walk.push(name); err != nil {
+		return nil, err
+	}
+	for step := 0; len(walk.path) > 0 && step < maxNodeAdvisories; step++ {
+		frame := walk.path[len(walk.path)-1]
+		if frame.next < len(frame.dependencies) {
+			dependency := frame.dependencies[frame.next]
+			frame.next++
+			if err := walk.follow(frame, dependency); err != nil {
+				return nil, err
+			}
 			continue
 		}
-		seen[queue[i]] = true
-		item, ok := packages[queue[i]]
-		if !ok {
-			return nil, fmt.Errorf("npm audit via references missing package %s", queue[i])
-		}
-		var err error
-		ids, queue, err = npmViaAdvisories(item.Via, ids, queue, budget)
-		if err != nil {
-			return nil, err
-		}
+		walk.finish(frame)
 	}
-	if len(queue) > maxNodeAdvisories || len(ids) == 0 {
-		return nil, fmt.Errorf("npm audit high or critical package %s has no bounded GHSA advisory", name)
+	if len(walk.path) > 0 {
+		return nil, fmt.Errorf("npm audit traversal exceeds %d steps", maxNodeAdvisories)
 	}
-	return ids, nil
+	return memo[name], nil
+}
+
+// push parses and charges each previously unresolved package and its via entries once.
+func (w *npmAdvisoryWalk) push(name string) error {
+	*w.budget -= 1
+	if *w.budget < 0 {
+		return fmt.Errorf("npm audit traversal exceeds %d steps", maxNodeAdvisories)
+	}
+	item, ok := w.packages[name]
+	if !ok {
+		return fmt.Errorf("npm audit via references missing package %s", name)
+	}
+	ids, dependencies, err := npmViaAdvisories(item.Via, nil, nil, w.budget)
+	if err != nil {
+		return err
+	}
+	index := len(w.nodes)
+	frame := &npmAdvisoryFrame{name: name, ids: ids, dependencies: dependencies, index: index, low: index, base: len(w.active)}
+	w.nodes[name] = frame
+	w.path = append(w.path, frame)
+	w.active = append(w.active, frame)
+	return nil
+}
+
+// follow reuses completed sets and records back edges without revisiting active packages.
+func (w *npmAdvisoryWalk) follow(frame *npmAdvisoryFrame, dependency string) error {
+	if ids, ok := w.memo[dependency]; ok {
+		frame.ids = npmAdvisoryUnion(frame.ids, ids)
+		return nil
+	}
+	if child, ok := w.nodes[dependency]; ok {
+		frame.low = min(frame.low, child.index)
+		return nil
+	}
+	return w.push(dependency)
+}
+
+// finish completes a package or cycle before propagating its advisory set to its parent.
+func (w *npmAdvisoryWalk) finish(frame *npmAdvisoryFrame) {
+	w.path = w.path[:len(w.path)-1]
+	if frame.low == frame.index {
+		w.complete(frame)
+	}
+	if len(w.path) > 0 {
+		parent := w.path[len(w.path)-1]
+		parent.low = min(parent.low, frame.low)
+		parent.ids = npmAdvisoryUnion(parent.ids, frame.ids)
+	}
+}
+
+// complete gives every member of a strongly connected component the same complete advisory set.
+func (w *npmAdvisoryWalk) complete(frame *npmAdvisoryFrame) {
+	var ids []string
+	for i := frame.base; i < len(w.active) && i < maxNodeAdvisories; i++ {
+		ids = npmAdvisoryUnion(ids, w.active[i].ids)
+	}
+	for i := frame.base; i < len(w.active) && i < maxNodeAdvisories; i++ {
+		w.memo[w.active[i].name] = ids
+	}
+	frame.ids = ids
+	w.active = w.active[:frame.base]
+}
+
+// npmAdvisoryUnion deduplicates advisory sets without mutating slices shared by memo entries.
+func npmAdvisoryUnion(left, right []string) []string {
+	ids := make(map[string]bool, len(left)+len(right))
+	for i := 0; i < len(left) && i < maxNodeAdvisories; i++ {
+		ids[left[i]] = true
+	}
+	for i := 0; i < len(right) && i < maxNodeAdvisories; i++ {
+		ids[right[i]] = true
+	}
+	return util.SortedKeys(ids)
 }
 
 // npmViaAdvisories collects direct advisory objects and schedules dependency-name references.
