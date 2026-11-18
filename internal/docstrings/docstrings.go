@@ -24,6 +24,7 @@ import (
 const (
 	maxSourceBytes       = 16 << 20
 	maxAttributeLines    = 32
+	maxLineAttributes    = 16
 	maxCommentBlockLines = 256
 	maxPythonHeaderLines = 32
 	maxPythonScanLines   = 256
@@ -399,8 +400,7 @@ func stepAttributeGroup(lines []string, idx, remaining int, language string) (in
 			return -1, 0, false
 		}
 		if isAttributeOrDecorator(trimmed) {
-			text := strings.TrimSpace(strings.Join(lines[idx-step:idx+1], "\n"))
-			if standaloneAttribute(text, language) {
+			if standaloneAttribute(lines[idx-step:idx+1], language) {
 				return idx - step - 1, step + 1, true
 			}
 			return -1, 0, false
@@ -423,34 +423,73 @@ func isCommentBoundary(trimmed string) bool {
 // attributeName matches a decorator's dotted identifier or a native attribute introducer.
 var attributeName = regexp.MustCompile(`^(?:@[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*|__attribute__|#)`)
 
-// standaloneAttribute requires balanced delimiters followed only by whitespace or comments.
-// Bare named decorators have no delimiter; all other annotations require one.
-func standaloneAttribute(text, language string) bool {
-	name := attributeName.FindString(text)
-	body := strings.TrimSpace(strings.TrimPrefix(text, name))
-	if strings.HasPrefix(name, "@") && attributeTriviaOnly(body) {
-		return true
-	}
-	if body == "" || !strings.ContainsRune("([", rune(body[0])) {
+// standaloneAttribute strips literals and comments via the HISS scanner and verifies
+// that lines hold only complete annotations within the per-line scalar bound.
+func standaloneAttribute(lines []string, language string) bool {
+	stripped, ok := hiss.StripLiterals(lines, language)
+	if !ok {
 		return false
 	}
-	end, ok := attributeDelimiterEnd(body, language)
-	return ok && attributeTriviaOnly(body[end:])
+	return standaloneAttributeText(strings.Join(stripped, "\n"))
 }
 
-// attributeDelimiterEnd finds the first balanced closing delimiter outside literals and comments.
-// Its stack and byte walk are bounded by the caller's at-most-32-line source slice.
-func attributeDelimiterEnd(text, language string) (int, bool) {
-	stack := make([]byte, 0, len(text))
-	for i := 0; i < len(text); {
-		end, ok := attributeTokenEnd(text, i, language)
+// standaloneAttributeText reports whether stripped text consists of 1..maxLineAttributes
+// complete annotations with balanced delimiters, separated and followed only by whitespace.
+func standaloneAttributeText(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	for count := 0; count < maxLineAttributes; count++ {
+		rest, ok := consumeOneAttribute(text)
 		if !ok {
-			return 0, false
+			return false
 		}
-		if end != i {
-			i = end
-			continue
+		text = strings.TrimSpace(rest)
+		if text == "" {
+			return true
 		}
+	}
+	return false
+}
+
+// consumeOneAttribute consumes one complete annotation from the start of stripped text.
+// Bare named decorators have no delimiter; all other annotations require a balanced one.
+func consumeOneAttribute(text string) (string, bool) {
+	name := attributeName.FindString(text)
+	body := strings.TrimSpace(strings.TrimPrefix(text, name))
+	if strings.HasPrefix(name, "@") && !strings.HasPrefix(body, "(") {
+		return body, true
+	}
+	if !opensAttributeBody(name, body) {
+		return "", false
+	}
+	end, ok := attributeDelimiterEnd(body)
+	if !ok {
+		return "", false
+	}
+	return body[end:], true
+}
+
+// opensAttributeBody reports whether name and body open a delimited attribute or decorator.
+func opensAttributeBody(name, body string) bool {
+	switch {
+	case name == "" && strings.HasPrefix(body, "[["):
+		return true
+	case name == "#" && strings.HasPrefix(body, "["):
+		return true
+	case (name == "__attribute__" || strings.HasPrefix(name, "@")) && strings.HasPrefix(body, "("):
+		return true
+	default:
+		return false
+	}
+}
+
+// attributeDelimiterEnd finds the first balanced closing delimiter in stripped text.
+// Its stack and byte walk are bounded by the caller's at-most-32-line source slice.
+func attributeDelimiterEnd(text string) (int, bool) {
+	stack := make([]byte, 0, len(text))
+	for i := 0; i < len(text); i++ {
 		ch := text[i]
 		switch {
 		case strings.ContainsRune("([{", rune(ch)):
@@ -464,7 +503,6 @@ func attributeDelimiterEnd(text, language string) (int, bool) {
 				return i + 1, true
 			}
 		}
-		i++
 	}
 	return 0, false
 }
@@ -472,51 +510,6 @@ func attributeDelimiterEnd(text, language string) (int, bool) {
 // matchingAttributeDelimiter reports whether open and close are a matching bracket pair.
 func matchingAttributeDelimiter(open, close byte) bool {
 	return strings.IndexByte("([{", open) == strings.IndexByte(")]}", close)
-}
-
-// attributeTokenEnd consumes shared HISS quoted literals or a comment at i.
-func attributeTokenEnd(text string, i int, language string) (int, bool) {
-	end, ok := hiss.QuotedLiteralEnd(text, i, language)
-	if !ok || end != i {
-		return end, ok
-	}
-	end = attributeCommentEnd(text, i)
-	return end, end >= 0
-}
-
-// attributeCommentEnd returns the end of a comment, i for code, or -1 for an unclosed block.
-func attributeCommentEnd(text string, i int) int {
-	if strings.HasPrefix(text[i:], "//") {
-		if end := strings.IndexByte(text[i:], '\n'); end >= 0 {
-			return i + end + 1
-		}
-		return len(text)
-	}
-	if strings.HasPrefix(text[i:], "/*") {
-		if end := strings.Index(text[i+2:], "*/"); end >= 0 {
-			return i + 2 + end + 2
-		}
-		return -1
-	}
-	return i
-}
-
-// attributeTriviaOnly accepts only whitespace and complete comments after an annotation.
-// A trailing doc comment is trivia, never documentation for the following function.
-func attributeTriviaOnly(text string) bool {
-	limit := len(text)
-	for step := 0; step < limit; step++ {
-		text = strings.TrimSpace(text)
-		if text == "" {
-			return true
-		}
-		end := attributeCommentEnd(text, 0)
-		if end <= 0 {
-			return false
-		}
-		text = text[end:]
-	}
-	return strings.TrimSpace(text) == ""
 }
 
 // isAttributeOrDecorator reports whether a trimmed line is an attribute or decorator annotation.

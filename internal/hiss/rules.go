@@ -221,6 +221,8 @@ type literalStripper struct {
 	// substitutions holds, per open ${...} of a template literal, the depth of the braces the
 	// substitution's own code opened, so its closing brace is told apart from theirs.
 	substitutions []int
+	// unclosed reports a single-line quoted literal that ended without its closing quote.
+	unclosed bool
 }
 
 // open reports whether a multi-line span is still open: a comment, a string or a template
@@ -272,6 +274,9 @@ func (s *literalStripper) consumeFence(line string, i int) int {
 	}
 	end, closed, carried := scanQuoted(line, i, s.fence)
 	if closed || (len(s.fence) == 1 && !carried) {
+		if !closed {
+			s.unclosed = true
+		}
 		s.fence = ""
 	}
 	return end
@@ -355,8 +360,11 @@ func (s *literalStripper) skipQuoted(line string, i int) int {
 	if carried {
 		s.fence = line[i : i+1]
 	}
-	if !closed && !carried && s.syn.quotesEndWithLine {
-		return i + 1
+	if !closed && !carried {
+		s.unclosed = true
+		if s.syn.quotesEndWithLine {
+			return i + 1
+		}
 	}
 	return end
 }
@@ -1205,14 +1213,10 @@ func (syn literalSyntax) quoteAt(text string, i int) (string, int) {
 	return text[i : i+1], 1
 }
 
-// QuotedLiteralEnd returns the end and completeness of a quoted literal at start.
-// A nonliteral (including a Rust lifetime) returns start and true; invalid offsets
-// return start and false. Callers bound text; escapes and characters share the
-// scanner's quoteAt, scanQuoted and charLiteralWidth implementations.
-func QuotedLiteralEnd(text string, start int, language string) (int, bool) {
-	if start < 0 || start >= len(text) {
-		return start, false
-	}
+// StripLiterals returns lines with string, character, template and regular-expression
+// literals and comments removed by the scanner's per-language literalStripper, and
+// reports whether every literal and comment closed within lines.
+func StripLiterals(lines []string, language string) ([]string, bool) {
 	syn := cLikeSyntax
 	switch language {
 	case "python":
@@ -1220,10 +1224,10 @@ func QuotedLiteralEnd(text string, start int, language string) (int, bool) {
 	case "javascript", "typescript", "svelte":
 		syn = scriptSyntax
 	}
-	fence, width := syn.quoteAt(text, start)
-	if fence == "" {
-		return start + width, true
+	s := literalStripper{syn: syn}
+	out := make([]string, len(lines))
+	for i := 0; i < len(lines); i++ {
+		out[i] = s.strip(lines[i])
 	}
-	end, closed, _ := scanQuoted(text, start+width, fence)
-	return end, closed
+	return out, !s.open() && !s.unclosed
 }

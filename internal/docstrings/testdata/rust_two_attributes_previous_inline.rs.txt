@@ -1,0 +1,5 @@
+/// Previous operation.
+#[inline] #[must_use] fn previous() {}
+pub fn next(
+    x: u32,
+) -> u32 { x }

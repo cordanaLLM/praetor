@@ -1,0 +1,6 @@
+class C {
+  // Run the operation.
+  @tag(`first ]
+  second`)
+  run() {}
+}
