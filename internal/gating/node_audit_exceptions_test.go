@@ -68,6 +68,7 @@ func runNodeAuditFixture(t *testing.T, manager, report, standards, workspace str
 
 // TestNodeAuditExceptions covers ignored, listed, expired and legacy reports through the stage.
 func TestNodeAuditExceptions(t *testing.T) {
+	both := nodeAuditStandards(t, 1) + strings.TrimPrefix(strings.ReplaceAll(nodeAuditStandards(t, 1), "GHSA-fc5q-39xc-vjpf", "GHSA-42xw-2xvc-qx8m"), "version: 1\nexceptions:\n")
 	cases := []struct {
 		name, manager, report, standards, workspace, want string
 		failed                                            bool
@@ -79,6 +80,9 @@ func TestNodeAuditExceptions(t *testing.T) {
 		{"e listed live", "pnpm", "pnpm-listed.json", nodeAuditStandards(t, 1), "", "", true},
 		{"e npm listed live", "npm", "npm-listed.json", nodeAuditStandards(t, 1), "", "", true},
 		{"d npm listed missing", "npm", "npm-listed.json", "version: 1\n", "", "GHSA-fc5q-39xc-vjpf", true},
+		{"npm listed expired", "npm", "npm-listed.json", nodeAuditStandards(t, -1), "", "GHSA-fc5q-39xc-vjpf exception in .standards.yaml expired on ", true},
+		{"npm second advisory missing", "npm", "npm-two-advisories.json", nodeAuditStandards(t, 1), "", "GHSA-42xw-2xvc-qx8m has no unexpired exception", true},
+		{"npm both advisories live", "npm", "npm-two-advisories.json", both, "", "", true},
 		{"listed expired", "pnpm", "pnpm-listed.json", nodeAuditStandards(t, -1), "", "expired on", true},
 		{"f legacy", "pnpm", "legacy.json", "version: 1\n", "", "found 1 high and 0 critical vulnerabilities", false},
 		{"legacy exception cannot hide counts", "pnpm", "legacy.json", nodeAuditStandards(t, 1), "", "found 1 high and 0 critical vulnerabilities", false},
@@ -95,6 +99,9 @@ func TestNodeAuditExceptions(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("want %q; got %v", tc.want, err)
+			}
+			if tc.report == "npm-two-advisories.json" && strings.Contains(err.Error(), "GHSA-fc5q-39xc-vjpf") {
+				t.Fatalf("excepted advisory reported: %v", err)
 			}
 			t.Log(err)
 		})

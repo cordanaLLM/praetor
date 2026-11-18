@@ -1,0 +1,39 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "picomatch": {
+      "name": "picomatch",
+      "severity": "high",
+      "via": [
+        {
+          "source": 111,
+          "name": "picomatch",
+          "severity": "high",
+          "url": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf"
+        }
+      ]
+    },
+    "wrapper": {
+      "name": "wrapper",
+      "severity": "high",
+      "via": [
+        "picomatch",
+        {
+          "source": 222,
+          "name": "wrapper",
+          "severity": "high",
+          "url": "https://github.com/advisories/GHSA-42xw-2xvc-qx8m"
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 2,
+      "critical": 0
+    }
+  }
+}
