@@ -491,15 +491,54 @@ type docstringFixtureCase struct {
 	uncoveredLine int
 }
 
+// readDocstringFixture reads data bytes and verifies the source suffix matches the reader's target language.
+func readDocstringFixture(t *testing.T, fixture, targetPath string) string {
+	t.Helper()
+	sourceName := strings.TrimSuffix(fixture, ".txt")
+	if util.SourceLanguage(sourceName) != util.SourceLanguage(targetPath) {
+		t.Fatalf("fixture %s and target %s select different languages", fixture, targetPath)
+	}
+	raw, err := os.ReadFile(filepath.Join("testdata", fixture))
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", fixture, err)
+	}
+	return string(raw)
+}
+
+// TestCheck_FixtureDataNotSource verifies that no corpus file has a suffix the docstring reader inspects.
+func TestCheck_FixtureDataNotSource(t *testing.T) {
+	entries, err := os.ReadDir("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected a nonempty fixture corpus")
+	}
+	dir := newDocstringTestRepo(t, map[string]string{"pkg/seed.go": "package pkg\n"})
+	for i := 0; i < len(entries); i++ {
+		name := entries[i].Name()
+		raw := readDocstringFixture(t, name, strings.TrimSuffix(name, ".txt"))
+		writeTestFile(t, dir, filepath.Join("testdata", name), raw)
+	}
+	writeTestFile(t, dir, "pkg/covered.go", "package pkg\n\n// Covered provides a counted control.\nfunc Covered() {}\n")
+	runGitCmd(t, dir, "add", ".")
+	restore := docstrings.SetTargetFileReaderForTest(func(ctx context.Context, repoDir, headRef, rel string) ([]byte, bool, error) {
+		if strings.HasPrefix(rel, "testdata/") {
+			return nil, false, errors.New("fixture carries a source extension: " + rel)
+		}
+		return docstrings.ReadTargetFileDefault(ctx, repoDir, headRef, rel)
+	})
+	defer restore()
+	rep, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
+	assertDocstringReport(t, "fixture data excluded; documented control counted", rep, err, true, 1, 1)
+}
+
 // runDocstringFixtureCase evaluates one fixture file in a fresh git repository and checks the report.
 func runDocstringFixtureCase(t *testing.T, tc docstringFixtureCase) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("testdata", tc.fixture))
-	if err != nil {
-		t.Fatalf("read fixture %s: %v", tc.fixture, err)
-	}
+	raw := readDocstringFixture(t, tc.fixture, tc.targetPath)
 	dir := newDocstringTestRepo(t, map[string]string{"pkg/seed.go": "package pkg\n"})
-	writeTestFile(t, dir, tc.targetPath, string(raw))
+	writeTestFile(t, dir, tc.targetPath, raw)
 	runGitCmd(t, dir, "add", ".")
 	rep, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
 	assertDocstringReport(t, tc.name, rep, err, tc.passed, tc.counted, tc.covered)
@@ -514,14 +553,14 @@ func runDocstringFixtureCase(t *testing.T, tc docstringFixtureCase) {
 // docstring detection for Rust wrapped signatures, where clauses, and multi-line attributes.
 func TestCheck_RustMultilineSignaturesAndAttributes_3D(t *testing.T) {
 	cases := []docstringFixtureCase{
-		{"a_two_functions", "rust_a_two_functions.rs", "src/lib.rs", true, 2, 2, "", 0},
-		{"b_multiline_attr_oneline_fn", "rust_b_multiline_attr_oneline_fn.rs", "src/lib.rs", true, 1, 1, "", 0},
-		{"c_multiline_attr_wrapped_fn", "rust_c_multiline_attr_wrapped_fn.rs", "src/lib.rs", true, 1, 1, "", 0},
-		{"d_wrapped_where_clause", "rust_d_wrapped_where_clause.rs", "src/lib.rs", true, 1, 1, "", 0},
-		{"e1_wrapped_no_comment", "rust_e1_wrapped_no_comment.rs", "src/lib.rs", false, 1, 0, "wrapped_undoc", 1},
-		{"e2_wrapped_blank_line_separated", "rust_e2_wrapped_blank_line_separated.rs", "src/lib.rs", false, 2, 1, "wrapped_after_blank", 7},
-		{"e3_wrapped_param_comment_only", "rust_e3_wrapped_param_comment_only.rs", "src/lib.rs", false, 1, 0, "wrapped_param_comment", 1},
-		{"f_unclosed_attr_bound", "rust_f_unclosed_attr_bound.rs", "src/lib.rs", false, 2, 0, "unclosed_attr", 3},
+		{"a_two_functions", "rust_a_two_functions.rs.txt", "src/lib.rs", true, 2, 2, "", 0},
+		{"b_multiline_attr_oneline_fn", "rust_b_multiline_attr_oneline_fn.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"c_multiline_attr_wrapped_fn", "rust_c_multiline_attr_wrapped_fn.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"d_wrapped_where_clause", "rust_d_wrapped_where_clause.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"e1_wrapped_no_comment", "rust_e1_wrapped_no_comment.rs.txt", "src/lib.rs", false, 1, 0, "wrapped_undoc", 1},
+		{"e2_wrapped_blank_line_separated", "rust_e2_wrapped_blank_line_separated.rs.txt", "src/lib.rs", false, 2, 1, "wrapped_after_blank", 7},
+		{"e3_wrapped_param_comment_only", "rust_e3_wrapped_param_comment_only.rs.txt", "src/lib.rs", false, 1, 0, "wrapped_param_comment", 1},
+		{"f_unclosed_attr_bound", "rust_f_unclosed_attr_bound.rs.txt", "src/lib.rs", false, 2, 0, "unclosed_attr", 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -534,14 +573,14 @@ func TestCheck_RustMultilineSignaturesAndAttributes_3D(t *testing.T) {
 // Python (with a multi-line decorator), TypeScript, and C (with the brace on its own line).
 func TestCheck_WrappedSignaturesAcrossLanguages_3D(t *testing.T) {
 	cases := []docstringFixtureCase{
-		{"go_positive", "go_wrapped_pos.go", "pkg/wrapped.go", true, 1, 1, "", 0},
-		{"go_negative", "go_wrapped_neg.go", "pkg/wrapped.go", false, 1, 0, "CombineUndoc", 3},
-		{"python_positive", "python_wrapped_pos.py", "app/wrapped.py", true, 1, 1, "", 0},
-		{"python_negative", "python_wrapped_neg.py", "app/wrapped.py", false, 1, 0, "combine_undoc", 5},
-		{"typescript_positive", "ts_wrapped_pos.ts", "web/wrapped.ts", true, 1, 1, "", 0},
-		{"typescript_negative", "ts_wrapped_neg.ts", "web/wrapped.ts", false, 1, 0, "combineUndoc", 1},
-		{"c_positive", "c_wrapped_pos.c", "src/wrapped.c", true, 1, 1, "", 0},
-		{"c_negative", "c_wrapped_neg.c", "src/wrapped.c", false, 1, 0, "combine_undoc", 1},
+		{"go_positive", "go_wrapped_pos.go.txt", "pkg/wrapped.go", true, 1, 1, "", 0},
+		{"go_negative", "go_wrapped_neg.go.txt", "pkg/wrapped.go", false, 1, 0, "CombineUndoc", 3},
+		{"python_positive", "python_wrapped_pos.py.txt", "app/wrapped.py", true, 1, 1, "", 0},
+		{"python_negative", "python_wrapped_neg.py.txt", "app/wrapped.py", false, 1, 0, "combine_undoc", 5},
+		{"typescript_positive", "ts_wrapped_pos.ts.txt", "web/wrapped.ts", true, 1, 1, "", 0},
+		{"typescript_negative", "ts_wrapped_neg.ts.txt", "web/wrapped.ts", false, 1, 0, "combineUndoc", 1},
+		{"c_positive", "c_wrapped_pos.c.txt", "src/wrapped.c", true, 1, 1, "", 0},
+		{"c_negative", "c_wrapped_neg.c.txt", "src/wrapped.c", false, 1, 0, "combine_undoc", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
