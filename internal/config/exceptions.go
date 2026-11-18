@@ -120,7 +120,7 @@ var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
 	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleReleaseToken, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleMutants,
 	ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks, ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts,
-	ExceptionRuleCodespell, ExceptionRuleGosec, ExceptionRuleUILatencySource, ExceptionRuleGoTestNetns,
+	ExceptionRuleCodespell, ExceptionRuleGosec, ExceptionRuleNodeAudit, ExceptionRuleUILatencySource, ExceptionRuleGoTestNetns,
 )
 
 // workflowRuleExamples maps workflow-scoped rules to the example workflow a refusal names.
@@ -166,6 +166,7 @@ const globCharacters = "*?[]\\"
 type Exception struct {
 	Rule        string   `yaml:"rule"`
 	GosecRules  []string `yaml:"gosec_rules,omitempty"`
+	GHSA        string   `yaml:"ghsa,omitempty"`
 	Path        string   `yaml:"path,omitempty"`
 	Glob        string   `yaml:"glob,omitempty"`
 	Function    string   `yaml:"function,omitempty"`
@@ -371,13 +372,13 @@ func ValidateExceptions(entries []Exception, today time.Time) error {
 	if len(entries) > MaxExceptions {
 		return fmt.Errorf("exceptions has %d entries; maximum is %d", len(entries), MaxExceptions)
 	}
-	seen := make(map[[7]string]int, len(entries))
+	seen := make(map[[8]string]int, len(entries))
 	for index := 0; index < len(entries) && index < MaxExceptions; index++ {
 		entry := entries[index]
 		if problem := entry.problem(today); problem != "" {
 			return fmt.Errorf("exceptions[%d] %s", index, problem)
 		}
-		key := [7]string{entry.Rule, entry.Path, entry.Glob, entry.Function, entry.Tool, entry.Fingerprint, entry.Lines}
+		key := [8]string{entry.Rule, entry.Path, entry.Glob, entry.Function, entry.Tool, entry.Fingerprint, entry.Lines, entry.GHSA}
 		if first, repeated := seen[key]; repeated {
 			return fmt.Errorf("exceptions[%d] repeats exceptions[%d] (rule %s, %s)", index, first, entry.Rule, entry.Target())
 		}

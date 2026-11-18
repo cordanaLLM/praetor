@@ -1,0 +1,27 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "a": {
+      "severity": "high",
+      "via": [
+        "cycle-a"
+      ]
+    },
+    "cycle-a": {
+      "severity": "high",
+      "via": [
+        "cycle-b"
+      ]
+    },
+    "cycle-b": {
+      "severity": "high",
+      "via": [
+        "cycle-a",
+        {
+          "severity": "high",
+          "url": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf"
+        }
+      ]
+    }
+  }
+}

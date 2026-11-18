@@ -1,0 +1,18 @@
+{
+  "advisories": {
+    "111": {
+      "github_advisory_id": "GHSA-fc5q-39xc-vjpf",
+      "severity": "high",
+      "url": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf"
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 2,
+      "high": 1,
+      "critical": 0
+    }
+  }
+}

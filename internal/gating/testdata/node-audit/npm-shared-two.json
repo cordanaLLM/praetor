@@ -1,0 +1,36 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "a": {
+      "severity": "high",
+      "via": [
+        "shared"
+      ]
+    },
+    "b": {
+      "severity": "high",
+      "via": [
+        "shared"
+      ]
+    },
+    "shared": {
+      "severity": "high",
+      "via": [
+        {
+          "severity": "high",
+          "url": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf"
+        },
+        "leaf"
+      ]
+    },
+    "leaf": {
+      "severity": "critical",
+      "via": [
+        {
+          "severity": "critical",
+          "url": "https://github.com/advisories/GHSA-42xw-2xvc-qx8m"
+        }
+      ]
+    }
+  }
+}

@@ -26,6 +26,7 @@ type Manifest struct {
 	DevDependencies      map[string]string `json:"devDependencies"`
 	PeerDependencies     map[string]string `json:"peerDependencies"`
 	OptionalDependencies map[string]string `json:"optionalDependencies"`
+	Pnpm                 json.RawMessage   `json:"pnpm,omitempty"`
 }
 
 // ParseManifest decodes one package.json. It is the one package.json dependency reader: the
