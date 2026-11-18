@@ -9,11 +9,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // TestNodeAuditUnidentifiedGaps bounds omitted advisories by configured ignores absent from the report.
@@ -37,6 +40,8 @@ func TestNodeAuditUnidentifiedGaps(t *testing.T) {
 		{"critical gap equals unlisted ignores", `{}`, "GHSA-fc5q-39xc-vjpf", "", 0, 1},
 		{"combined gap above unlisted ignores", `{}`, "GHSA-fc5q-39xc-vjpf", "2 high or critical findings counted but not named; 1 configured ignores can explain unidentified advisories", 1, 1},
 		{"moderate listed ignore never counts", strings.ReplaceAll(listed, "high", "moderate"), "GHSA-fc5q-39xc-vjpf", "1 high or critical findings counted but not named; 0 configured ignores can explain unidentified advisories", 1, 0},
+		{"overflowing severity gaps refused", listed, "GHSA-fc5q-39xc-vjpf", "high or critical findings counted but not named; 0 configured ignores can explain unidentified advisories", math.MaxInt, 2},
+		{"pnpm vulnerabilities map listed ignore never counts", `"NPM_VULNS"`, "GHSA-fc5q-39xc-vjpf", "1 high or critical findings counted but not named; 0 configured ignores can explain unidentified advisories", 2, 0},
 	}
 	for i := 0; i < len(cases) && i < 16; i++ {
 		tc := cases[i]
@@ -44,6 +49,9 @@ func TestNodeAuditUnidentifiedGaps(t *testing.T) {
 			report := fmt.Sprintf(`{"advisories":%s,"metadata":{"vulnerabilities":{"high":%d,"critical":%d}}}`, tc.advisories, tc.high, tc.critical)
 			if tc.name == "a real ignored shape" {
 				report = nodeAuditFixture(t, "pnpm-ignored.json")
+			}
+			if tc.advisories == `"NPM_VULNS"` {
+				report = fmt.Sprintf(`{"vulnerabilities":{"picomatch":{"severity":"high","via":[{"severity":"high","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"}]}},"metadata":{"vulnerabilities":{"high":%d,"critical":%d}}}`, tc.high, tc.critical)
 			}
 			policy := "auditConfig:\n  ignoreGhsas: [" + tc.ignores + "]\n"
 			err := runNodeAuditFixture(t, "pnpm", report, both, policy, false)
@@ -160,13 +168,25 @@ func nodeAuditFixture(t *testing.T, name string) string {
 	return string(data)
 }
 
-// nodeAuditStandards anchors a shared manifest fixture to the current UTC date.
-func nodeAuditStandards(t *testing.T, days int) string {
+// nodeAuditStandardsAt anchors a shared manifest fixture to an explicit UTC expiry date.
+func nodeAuditStandardsAt(t *testing.T, expires time.Time) string {
 	t.Helper()
-	expires := time.Now().UTC().AddDate(0, 0, days)
 	text := nodeAuditFixture(t, ".standards.yaml")
 	text = strings.ReplaceAll(text, "ENTERED", expires.AddDate(0, 0, -10).Format("2006-01-02"))
 	return strings.ReplaceAll(text, "EXPIRES", expires.Format("2006-01-02"))
+}
+
+// nodeAuditStandards anchors a shared manifest fixture to a UTC date offset from today.
+func nodeAuditStandards(t *testing.T, days int) string {
+	t.Helper()
+	return nodeAuditStandardsAt(t, time.Now().UTC().AddDate(0, 0, days))
+}
+
+// nodeAuditExpiredStandards returns an expired manifest fixture and its expected expiry message from one clock read.
+func nodeAuditExpiredStandards(t *testing.T) (string, string) {
+	t.Helper()
+	expiredDate := time.Now().UTC().AddDate(0, 0, -2)
+	return nodeAuditStandardsAt(t, expiredDate), "GHSA-fc5q-39xc-vjpf exception in .standards.yaml expired on " + expiredDate.Format("2006-01-02")
 }
 
 // nodeAuditReportText returns inline JSON directly or reads a named fixture file.
@@ -191,7 +211,11 @@ func stageNodeAuditFiles(t *testing.T, root, manager, standards, workspace strin
 	}
 	applyNodeAuditWorkspace(t, root, files, workspace)
 	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+		target := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -205,18 +229,30 @@ func applyNodeAuditWorkspace(t *testing.T, root string, files map[string]string,
 		files["pnpm-workspace.yaml"] = ""
 	case workspace == "ESCAPING_PACKAGE_SYMLINK":
 		delete(files, "package.json")
-		outside := filepath.Join(t.TempDir(), "outside-package.json")
-		body := `{"pnpm":{"auditConfig":{"ignoreGhsas":["GHSA-fc5q-39xc-vjpf"]}}}`
-		if err := os.WriteFile(outside, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(outside, filepath.Join(root, "package.json")); err != nil {
-			t.Fatal(err)
-		}
+		stageEscapingNodeAuditSymlink(t, filepath.Join(root, "package.json"), `{"pnpm":{"auditConfig":{"ignoreGhsas":["GHSA-fc5q-39xc-vjpf"]}}}`)
+	case workspace == "ESCAPING_INCLUDE_SYMLINK":
+		files["pnpm-workspace.yaml"] = "include:\n  ./audit.yaml: [audit]\n"
+		stageEscapingNodeAuditSymlink(t, filepath.Join(root, "audit.yaml"), "audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n")
+	case strings.HasPrefix(workspace, "FILE:"):
+		parts := strings.SplitN(strings.TrimPrefix(workspace, "FILE:"), "|", 3)
+		files["pnpm-workspace.yaml"] = parts[0]
+		files[parts[1]] = parts[2]
 	case strings.HasPrefix(workspace, "{"):
 		files["package.json"] = workspace
 	case workspace != "":
 		files["pnpm-workspace.yaml"] = workspace
+	}
+}
+
+// stageEscapingNodeAuditSymlink creates a symlink pointing outside root, skipping only when the host denies symlinks.
+func stageEscapingNodeAuditSymlink(t *testing.T, linkPath, body string) {
+	t.Helper()
+	outside := filepath.Join(t.TempDir(), filepath.Base(linkPath))
+	if err := os.WriteFile(outside, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, linkPath); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
 	}
 }
 
@@ -255,18 +291,19 @@ func runNodeAuditFixture(t *testing.T, manager, report, standards, workspace str
 func TestNodeAuditReportShapes(t *testing.T) {
 	workspace := "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n"
 	legacy := `{"pnpm":{"auditConfig":{"ignoreGhsas":["GHSA-fc5q-39xc-vjpf"]}}}`
-	expired := "GHSA-fc5q-39xc-vjpf exception in .standards.yaml expired on " + time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	liveStandards := nodeAuditStandards(t, 2)
+	expiredStandards, expired := nodeAuditExpiredStandards(t)
 	cases := []struct{ name, manager, report, standards, workspace, want string }{
 		{"a workspace missing", "pnpm", "legacy-clean.json", "", workspace, "no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf"},
 		{"a package missing", "pnpm", "legacy-clean.json", "", legacy, "no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf"},
-		{"b workspace expired", "pnpm", "legacy-clean.json", nodeAuditStandards(t, -1), workspace, expired},
-		{"b package expired", "pnpm", "legacy-clean.json", nodeAuditStandards(t, -1), legacy, expired},
-		{"c workspace live zero", "pnpm", "legacy-clean.json", nodeAuditStandards(t, 1), workspace, ""},
-		{"c package live zero", "pnpm", "legacy-clean.json", nodeAuditStandards(t, 1), legacy, ""},
-		{"c workspace live counts", "pnpm", "legacy.json", nodeAuditStandards(t, 1), workspace, "found 1 high and 0 critical vulnerabilities"},
-		{"c package live counts", "pnpm", "legacy.json", nodeAuditStandards(t, 1), legacy, "found 1 high and 0 critical vulnerabilities"},
-		{"c npm live zero", "npm", "legacy-clean.json", nodeAuditStandards(t, 1), "", ""},
-		{"c npm live counts", "npm", "legacy.json", nodeAuditStandards(t, 1), "", "found 1 high and 0 critical vulnerabilities"},
+		{"b workspace expired", "pnpm", "legacy-clean.json", expiredStandards, workspace, expired},
+		{"b package expired", "pnpm", "legacy-clean.json", expiredStandards, legacy, expired},
+		{"c workspace live zero", "pnpm", "legacy-clean.json", liveStandards, workspace, ""},
+		{"c package live zero", "pnpm", "legacy-clean.json", liveStandards, legacy, ""},
+		{"c workspace live counts", "pnpm", "legacy.json", liveStandards, workspace, "found 1 high and 0 critical vulnerabilities"},
+		{"c package live counts", "pnpm", "legacy.json", liveStandards, legacy, "found 1 high and 0 critical vulnerabilities"},
+		{"c npm live zero", "npm", "legacy-clean.json", liveStandards, "", ""},
+		{"c npm live counts", "npm", "legacy.json", liveStandards, "", "found 1 high and 0 critical vulnerabilities"},
 		{"d pnpm absent manifest", "pnpm", "legacy-clean.json", "", "", ""},
 		{"d npm absent manifest", "npm", "legacy-clean.json", "", "", ""},
 		{"e workspace text missing", "pnpm", "plain.txt", "", workspace, "no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf"},
@@ -310,44 +347,67 @@ func TestNodeAuditReportFallback(t *testing.T) {
 	}
 }
 
+// TestNodeAuditExpiryBoundary checks exact UTC midnight expiry boundaries without reading the wall clock.
+func TestNodeAuditExpiryBoundary(t *testing.T) {
+	entries := []config.Exception{{Rule: config.ExceptionRuleNodeAudit, Path: "package.json", GHSA: "GHSA-fc5q-39xc-vjpf", Expires: "2026-11-17"}}
+	if live, expired := config.NodeAuditExceptionFor(entries, "GHSA-fc5q-39xc-vjpf", time.Date(2026, 11, 17, 23, 59, 59, 0, time.UTC)); live == nil || expired != nil {
+		t.Fatalf("on expiry day before UTC midnight: live=%v expired=%v", live, expired)
+	}
+	if live, expired := config.NodeAuditExceptionFor(entries, "GHSA-fc5q-39xc-vjpf", time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)); live != nil || expired == nil || expired.Expires != "2026-11-17" {
+		t.Fatalf("at UTC midnight after expiry day: live=%v expired=%v", live, expired)
+	}
+}
+
 // TestNodeAuditExceptions covers ignored, listed, expired and legacy reports through the stage.
 func TestNodeAuditExceptions(t *testing.T) {
-	both := nodeAuditStandards(t, 1) + strings.TrimPrefix(strings.ReplaceAll(nodeAuditStandards(t, 1), "GHSA-fc5q-39xc-vjpf", "GHSA-42xw-2xvc-qx8m"), "version: 1\nexceptions:\n")
+	liveStandards := nodeAuditStandards(t, 2)
+	expiredStandards, expiredWant := nodeAuditExpiredStandards(t)
+	both := liveStandards + strings.TrimPrefix(strings.ReplaceAll(liveStandards, "GHSA-fc5q-39xc-vjpf", "GHSA-42xw-2xvc-qx8m"), "version: 1\nexceptions:\n")
 	moderateCritVia := `{"auditReportVersion":2,"vulnerabilities":{"p":{"severity":"moderate","via":[{"severity":"critical","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"}]}}}`
 	missingSecondVia := `{"auditReportVersion":2,"vulnerabilities":{"p":{"severity":"high","via":[{"severity":"high","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"},{"url":"https://github.com/advisories/GHSA-42xw-2xvc-qx8m"}]}}}`
 	duplicateDiffSev := `{"advisories":{"111":{"github_advisory_id":"GHSA-fc5q-39xc-vjpf","severity":"low"},"222":{"github_advisory_id":"GHSA-fc5q-39xc-vjpf","severity":"high"}}}`
+	duplicateSameSevGap := `{"advisories":{"111":{"github_advisory_id":"GHSA-fc5q-39xc-vjpf","severity":"high"},"222":{"github_advisory_id":"GHSA-fc5q-39xc-vjpf","severity":"high"}},"metadata":{"vulnerabilities":{"high":2,"critical":0}}}`
+	duplicateSameSevOne := `{"advisories":{"111":{"github_advisory_id":"GHSA-fc5q-39xc-vjpf","severity":"high"},"222":{"github_advisory_id":"GHSA-fc5q-39xc-vjpf","severity":"high"}},"metadata":{"vulnerabilities":{"high":1,"critical":0}}}`
+	npmDiffSevHigh := `{"auditReportVersion":2,"vulnerabilities":{"p":{"severity":"high","via":[{"severity":"low","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"},{"severity":"high","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"}]}}}`
+	npmCritPkgHighVia := `{"auditReportVersion":2,"vulnerabilities":{"p":{"severity":"critical","via":[{"severity":"high","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"}]}},"metadata":{"vulnerabilities":{"high":0,"critical":1}}}`
+	networkWordTitle := `{"advisories":{"111":{"github_advisory_id":"GHSA-fc5q-39xc-vjpf","severity":"high","title":"getaddrinfo ENOTFOUND in DNS lookup"}},"metadata":{"vulnerabilities":{"high":1,"critical":0}}}`
 	cases := []struct {
 		name, manager, report, standards, workspace, want string
 		failed                                            bool
 	}{
-		{"a ignored live", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 1), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "", false},
+		{"a ignored live", "pnpm", "pnpm-ignored.json", liveStandards, "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "", false},
 		{"b ignored missing", "pnpm", "pnpm-ignored.json", "version: 1\n", "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "configured ignored advisories; no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf", false},
-		{"c ignored expired", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, -1), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "GHSA-fc5q-39xc-vjpf exception in .standards.yaml expired on " + time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02"), false},
+		{"c ignored expired", "pnpm", "pnpm-ignored.json", expiredStandards, "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", expiredWant, false},
 		{"d listed missing", "pnpm", "pnpm-listed.json", "version: 1\n", "", "GHSA-fc5q-39xc-vjpf", true},
-		{"e listed live", "pnpm", "pnpm-listed.json", nodeAuditStandards(t, 1), "", "", true},
-		{"e npm listed live", "npm", "npm-listed.json", nodeAuditStandards(t, 1), "", "", true},
+		{"e listed live", "pnpm", "pnpm-listed.json", liveStandards, "", "", true},
+		{"e npm listed live", "npm", "npm-listed.json", liveStandards, "", "", true},
 		{"d npm listed missing", "npm", "npm-listed.json", "version: 1\n", "", "GHSA-fc5q-39xc-vjpf", true},
-		{"npm listed expired", "npm", "npm-listed.json", nodeAuditStandards(t, -1), "", "GHSA-fc5q-39xc-vjpf exception in .standards.yaml expired on ", true},
-		{"npm second advisory missing", "npm", "npm-two-advisories.json", nodeAuditStandards(t, 1), "", "GHSA-42xw-2xvc-qx8m has no unexpired exception", true},
+		{"npm listed expired", "npm", "npm-listed.json", expiredStandards, "", expiredWant, true},
+		{"npm second advisory missing", "npm", "npm-two-advisories.json", liveStandards, "", "GHSA-42xw-2xvc-qx8m has no unexpired exception", true},
 		{"npm both advisories live", "npm", "npm-two-advisories.json", both, "", "", true},
-		{"shared live", "npm", "npm-shared.json", nodeAuditStandards(t, 1), "", "", true},
+		{"shared live", "npm", "npm-shared.json", liveStandards, "", "", true},
 		{"shared missing", "npm", "npm-shared.json", "version: 1\n", "", "GHSA-fc5q-39xc-vjpf", true},
-		{"shared second advisory missing", "npm", "npm-shared-two.json", nodeAuditStandards(t, 1), "", "GHSA-42xw-2xvc-qx8m", true},
-		{"diamond live", "npm", "npm-diamond.json", nodeAuditStandards(t, 1), "", "", true},
+		{"shared second advisory missing", "npm", "npm-shared-two.json", liveStandards, "", "GHSA-42xw-2xvc-qx8m", true},
+		{"diamond live", "npm", "npm-diamond.json", liveStandards, "", "", true},
 		{"diamond missing", "npm", "npm-diamond.json", "version: 1\n", "", "GHSA-fc5q-39xc-vjpf", true},
-		{"cycle one live", "npm", "npm-cycle-one.json", nodeAuditStandards(t, 1), "", "", true},
-		{"cycle shared live", "npm", "npm-cycle-shared.json", nodeAuditStandards(t, 1), "", "", true},
-		{"second start missing reference", "npm", "npm-shared-missing.json", nodeAuditStandards(t, 1), "", "missing package missing-second", true},
+		{"cycle one live", "npm", "npm-cycle-one.json", liveStandards, "", "", true},
+		{"cycle shared live", "npm", "npm-cycle-shared.json", liveStandards, "", "", true},
+		{"second start missing reference", "npm", "npm-shared-missing.json", liveStandards, "", "missing package missing-second", true},
 		{"moderate pkg critical via missing", "npm", moderateCritVia, "version: 1\n", "", "GHSA-fc5q-39xc-vjpf has no unexpired exception", true},
-		{"moderate pkg critical via live", "npm", moderateCritVia, nodeAuditStandards(t, 1), "", "", true},
-		{"second via missing severity", "npm", missingSecondVia, nodeAuditStandards(t, 1), "", "npm audit via GHSA-42xw-2xvc-qx8m is missing severity", true},
-		{"duplicate id conflicting severities", "pnpm", duplicateDiffSev, nodeAuditStandards(t, 1), "", "node audit advisory GHSA-fc5q-39xc-vjpf has conflicting severities", true},
-		{"listed expired", "pnpm", "pnpm-listed.json", nodeAuditStandards(t, -1), "", "expired on", true},
+		{"moderate pkg critical via live", "npm", moderateCritVia, liveStandards, "", "", true},
+		{"second via missing severity", "npm", missingSecondVia, liveStandards, "", "npm audit via GHSA-42xw-2xvc-qx8m is missing severity", true},
+		{"duplicate id conflicting severities", "pnpm", duplicateDiffSev, liveStandards, "", "node audit advisory GHSA-fc5q-39xc-vjpf has conflicting severities", true},
+		{"duplicate id same severity counted once refuses high 2", "pnpm", duplicateSameSevGap, liveStandards, "", "1 high or critical findings counted but not named; 0 configured ignores can explain unidentified advisories", true},
+		{"duplicate id same severity counted once passes high 1", "pnpm", duplicateSameSevOne, liveStandards, "", "", true},
+		{"npm duplicate id conflicting severities with live exception", "npm", npmDiffSevHigh, liveStandards, "", "node audit advisory GHSA-fc5q-39xc-vjpf has conflicting severities", true},
+		{"npm critical pkg high via only refused", "npm", npmCritPkgHighVia, liveStandards, "", "npm audit high or critical package p has no bounded GHSA advisory", true},
+		{"advisory title with network words passes when excepted", "pnpm", networkWordTitle, liveStandards, "", "", true},
+		{"advisory title with network words fails as finding when unexcepted", "pnpm", networkWordTitle, "version: 1\n", "", "GHSA-fc5q-39xc-vjpf has no unexpired exception", true},
+		{"listed expired", "pnpm", "pnpm-listed.json", expiredStandards, "", expiredWant, true},
 		{"f legacy", "pnpm", "legacy.json", "version: 1\n", "", "found 1 high and 0 critical vulnerabilities", false},
-		{"legacy exception cannot hide counts", "pnpm", "legacy.json", nodeAuditStandards(t, 1), "", "found 1 high and 0 critical vulnerabilities", false},
-		{"expiry day", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 0), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "", false},
+		{"legacy exception cannot hide counts", "pnpm", "legacy.json", liveStandards, "", "found 1 high and 0 critical vulnerabilities", false},
 	}
-	for i := 0; i < len(cases) && i < 32; i++ {
+	for i := 0; i < len(cases) && i < 64; i++ {
 		tc := cases[i]
 		t.Run(tc.name, func(t *testing.T) {
 			err := runNodeAuditFixture(t, tc.manager, nodeAuditReportText(t, tc.report), tc.standards, tc.workspace, tc.failed)
@@ -362,23 +422,28 @@ func TestNodeAuditCommandResults(t *testing.T) {
 	standards := nodeAuditStandards(t, 1)
 	captureErr := errors.Join(nodeAuditExitError(1), errors.New("command output exceeds 16777216 bytes per stream"), context.Canceled)
 	cases := []struct {
-		name   string
-		runErr error
-		want   string
+		name, out string
+		runErr    error
+		want      string
 	}{
-		{"findings exit 1", nodeAuditExitError(1), ""},
-		{"exit 2", nodeAuditExitError(2), "pnpm audit --audit-level=high --json failed: exit status 2"},
-		{"signal kill", killedBySignalExitError(t), "pnpm audit --audit-level=high --json failed: signal: killed"},
-		{"launch error", &os.PathError{Op: "fork/exec", Path: "pnpm", Err: os.ErrPermission}, "pnpm audit --audit-level=high --json failed: fork/exec pnpm: permission denied"},
-		{"capture error", captureErr, "pnpm audit --audit-level=high --json failed: exit status 1\ncommand output exceeds 16777216 bytes per stream"},
+		{"findings exit 1", report, nodeAuditExitError(1), ""},
+		{"exit 2", report, nodeAuditExitError(2), "pnpm audit --audit-level=high --json failed: exit status 2"},
+		{"launch error", report, &os.PathError{Op: "fork/exec", Path: "pnpm", Err: os.ErrPermission}, "pnpm audit --audit-level=high --json failed: fork/exec pnpm: permission denied"},
+		{"capture error", report, captureErr, "pnpm audit --audit-level=high --json failed: exit status 1\ncommand output exceeds 16777216 bytes per stream"},
+		{"capture error truncated mid-report", `{"advisories":{"111":{"github_advisory_id":"GHSA-fc5q-39xc-vjpf"`, captureErr, "pnpm audit --audit-level=high --json failed: exit status 1\ncommand output exceeds 16777216 bytes per stream"},
+		{"findings exit 1 truncated mid-report keeps runner error", `{"advisories":{"111":{"github_advisory_id":"GHSA-fc5q-39xc-vjpf"`, nodeAuditExitError(1), "exit status 1"},
 	}
 	for i := 0; i < len(cases) && i < 8; i++ {
 		tc := cases[i]
 		t.Run(tc.name, func(t *testing.T) {
-			err := runNodeAuditWithErr(t, "pnpm", report, standards, "", tc.runErr)
+			err := runNodeAuditWithErr(t, "pnpm", tc.out, standards, "", tc.runErr)
 			checkNodeAuditExceptionError(t, "", tc.want, err)
 		})
 	}
+	t.Run("signal kill", func(t *testing.T) {
+		err := runNodeAuditWithErr(t, "pnpm", report, standards, "", killedBySignalExitError(t))
+		checkNodeAuditExceptionError(t, "", "pnpm audit --audit-level=high --json failed: signal: killed", err)
+	})
 }
 
 // checkNodeAuditExceptionError checks verdicts, advisory deduplication and exception filtering.
@@ -407,6 +472,18 @@ func TestNodeAuditIgnoreConfiguration(t *testing.T) {
 	cases := []struct{ name, report, policy, want string }{
 		{"modern workspace", "pnpm-ignored.json", "audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n", ""},
 		{"legacy package", "pnpm-ignored.json", `{"pnpm":{"auditConfig":{"ignoreGhsas":["GHSA-fc5q-39xc-vjpf"]}}}`, ""},
+		{"delegated audit include", "pnpm-ignored.json", "FILE:include:\n  ./configs/audit.yaml: [audit]\n|configs/audit.yaml|audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n", ""},
+		{"delegated auditConfig include", "pnpm-ignored.json", "FILE:include:\n  ./audit.yml: [auditConfig]\n|audit.yml|auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", ""},
+		{"delegated audit wrong id", "pnpm-ignored.json", "FILE:include:\n  ./audit.yaml: [audit]\n|audit.yaml|audit:\n  ignore: [GHSA-42xw-2xvc-qx8m]\n", "no exception in .standards.yaml covers GHSA-42xw-2xvc-qx8m"},
+		{"delegated audit inline conflict", "pnpm-ignored.json", "FILE:include:\n  ./audit.yaml: [audit]\naudit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n|audit.yaml|audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n", "single owner"},
+		{"delegated auditConfig inline conflict", "pnpm-ignored.json", "FILE:include:\n  ./audit.yaml: [auditConfig]\nauditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n|audit.yaml|auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "single owner"},
+		{"delegated audit duplicate owner", "pnpm-ignored.json", "FILE:include:\n  ./a.yaml: [audit]\n  ./b.yaml: [audit]\n|a.yaml|audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n", "single owner"},
+		{"delegated audit nested include", "pnpm-ignored.json", "FILE:include:\n  ./audit.yaml: [audit]\n|audit.yaml|include:\n  ./other.yaml: [audit]\naudit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n", "include"},
+		{"delegated audit second document", "pnpm-ignored.json", "FILE:include:\n  ./audit.yaml: [audit]\n|audit.yaml|audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n---\n{}\n", "parse included pnpm audit policy"},
+		{"delegated audit non-local path", "pnpm-ignored.json", "include:\n  '@scope/cfg/audit.yaml': [audit]\n", "local"},
+		{"delegated audit bad extension", "pnpm-ignored.json", "include:\n  ./audit.json: [audit]\n", ".yaml or .yml"},
+		{"delegated audit escaping parent", "pnpm-ignored.json", "include:\n  ../audit.yaml: [audit]\n", "read included pnpm audit policy ../audit.yaml"},
+		{"escaping include symlink", "pnpm-ignored.json", "ESCAPING_INCLUDE_SYMLINK", "audit.yaml"},
 		{"escaping package symlink", "pnpm-ignored.json", "ESCAPING_PACKAGE_SYMLINK", "package.json"},
 		{"second document malformed", "pnpm-ignored.json", "audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n---\n[\n", "parse pnpm-workspace.yaml"},
 		{"second document well-formed", "pnpm-ignored.json", "audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n---\npackages: []\n", "parse pnpm-workspace.yaml"},
@@ -449,6 +526,7 @@ func TestNodeAuditAdvisorySeverities(t *testing.T) {
 		{"npm null package", "npm", `{"vulnerabilities":{"pkg":null}}`, "npm audit package pkg is null"},
 		{"npm moderate pkg critical via", "npm", `{"vulnerabilities":{"p":{"severity":"moderate","via":[{"severity":"critical","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"}]}}}`, "GHSA-fc5q-39xc-vjpf has no unexpired exception"},
 		{"pnpm duplicate id conflicting severities", "pnpm", `{"advisories":{"111":{"github_advisory_id":"GHSA-fc5q-39xc-vjpf","severity":"low"},"222":{"github_advisory_id":"GHSA-fc5q-39xc-vjpf","severity":"high"}}}`, `node audit advisory GHSA-fc5q-39xc-vjpf has conflicting severities "low" and "high"`},
+		{"npm moderate pkg duplicate id conflicting severities", "npm", `{"vulnerabilities":{"p":{"severity":"moderate","via":[{"severity":"low","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"},{"severity":"moderate","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"}]}}}`, `node audit advisory GHSA-fc5q-39xc-vjpf has conflicting severities "low" and "moderate"`},
 		{"unknown GHSA", "pnpm", `{"advisories":{"123":{"severity":"high"}}}`, "123 has no unexpired exception"},
 		{"npm transitive", "npm", `{"vulnerabilities":{"parent":{"severity":"high","via":["child"]},"child":{"severity":"high","via":[{"severity":"high","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"}]}}}`, "GHSA-fc5q-39xc-vjpf"},
 		{"npm missing reference", "npm", `{"vulnerabilities":{"parent":{"severity":"high","via":["child"]}}}`, "missing package child"},

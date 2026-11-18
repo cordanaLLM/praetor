@@ -95,8 +95,33 @@ func validateNodeAuditSeverity(kind, name, severity string, nullObj, missing boo
 
 type nodeAuditFindings struct {
 	ids      []string
+	seen     map[string]string
 	high     int
 	critical int
+}
+
+// npmAdvisoryRank maps high and critical severities to their required reachability level.
+func npmAdvisoryRank(severity string) int {
+	switch severity {
+	case "high":
+		return 1
+	case "critical":
+		return 2
+	default:
+		return 0
+	}
+}
+
+// recordNodeAdvisorySeverity checks per-advisory severity consistency and reports whether id is new.
+func recordNodeAdvisorySeverity(seen map[string]string, id, severity string) (bool, error) {
+	if prev, ok := seen[id]; ok {
+		if prev != severity {
+			return false, fmt.Errorf("node audit advisory %s has conflicting severities %q and %q", id, prev, severity)
+		}
+		return false, nil
+	}
+	seen[id] = severity
+	return true, nil
 }
 
 // nodeAuditGHSA extracts an exact advisory ID, retaining unknown IDs as unexcusable findings.
@@ -149,8 +174,7 @@ func listedPnpmFindings(advisories map[string]nodeAuditAdvisory) (nodeAuditFindi
 	if len(advisories) > maxNodeAdvisories {
 		return nodeAuditFindings{}, fmt.Errorf("node audit exceeds %d listed entries", maxNodeAdvisories)
 	}
-	var findings nodeAuditFindings
-	seen := make(map[string]string, len(advisories))
+	findings := nodeAuditFindings{seen: make(map[string]string, len(advisories))}
 	keys := util.SortedKeys(advisories)
 	for i := 0; i < len(keys) && i < maxNodeAdvisories; i++ {
 		key := keys[i]
@@ -159,18 +183,18 @@ func listedPnpmFindings(advisories map[string]nodeAuditAdvisory) (nodeAuditFindi
 			return nodeAuditFindings{}, err
 		}
 		id := nodeAuditGHSA(key, advisory)
-		if prev, ok := seen[id]; ok && prev != advisory.Severity {
-			return nodeAuditFindings{}, fmt.Errorf("node audit advisory %s has conflicting severities %q and %q", id, prev, advisory.Severity)
+		fresh, err := recordNodeAdvisorySeverity(findings.seen, id, advisory.Severity)
+		if err != nil {
+			return nodeAuditFindings{}, err
 		}
-		seen[id] = advisory.Severity
-		if findings.add(advisory.Severity) {
+		if fresh && findings.add(advisory.Severity) {
 			findings.ids = append(findings.ids, id)
 		}
 	}
 	return findings, nil
 }
 
-// listedNpmFindings counts packages and requires advisory reachability for every high finding.
+// listedNpmFindings counts packages and requires matching advisory reachability for every high or critical finding.
 func listedNpmFindings(packages map[string]nodeAuditVulnerability) (nodeAuditFindings, error) {
 	if len(packages) > maxNodeAdvisories {
 		return nodeAuditFindings{}, fmt.Errorf("node audit exceeds %d listed entries", maxNodeAdvisories)
@@ -181,31 +205,32 @@ func listedNpmFindings(packages map[string]nodeAuditVulnerability) (nodeAuditFin
 	walk := newNpmAdvisoryWalk(packages, &budget)
 	for i := 0; i < len(keys) && i < maxNodeAdvisories; i++ {
 		name := keys[i]
-		reachable, err := walk.advisories(name)
+		reach, err := walk.advisories(name)
 		if err != nil {
 			return findings, err
 		}
-		if findings.add(packages[name].Severity) && !reachable {
+		severity := packages[name].Severity
+		if findings.add(severity) && reach < npmAdvisoryRank(severity) {
 			return findings, fmt.Errorf("npm audit high or critical package %s has no bounded GHSA advisory", name)
 		}
 	}
-	findings.ids = util.SortedKeys(walk.ids)
+	findings.seen = walk.seen
+	findings.ids = walk.highOrCriticalIDs()
 	return findings, nil
 }
 
 // npmAdvisoryFrame holds one package's iterative depth-first traversal state.
 type npmAdvisoryFrame struct {
-	name                   string
-	dependencies           []string
-	index, low, base, next int
-	reachable              bool
+	name                          string
+	dependencies                  []string
+	index, low, base, next, reach int
 }
 
-// npmAdvisoryWalk retains one report-wide advisory set and component reachability.
+// npmAdvisoryWalk retains one report-wide advisory severity map and component reachability rank.
 type npmAdvisoryWalk struct {
 	packages map[string]nodeAuditVulnerability
-	memo     map[string]bool
-	ids      map[string]bool
+	memo     map[string]int
+	seen     map[string]string
 	budget   *int
 	nodes    map[string]*npmAdvisoryFrame
 	path     []*npmAdvisoryFrame
@@ -214,21 +239,33 @@ type npmAdvisoryWalk struct {
 
 // newNpmAdvisoryWalk initializes traversal state shared across report starts.
 func newNpmAdvisoryWalk(packages map[string]nodeAuditVulnerability, budget *int) npmAdvisoryWalk {
-	return npmAdvisoryWalk{packages: packages, memo: make(map[string]bool), ids: make(map[string]bool), budget: budget, nodes: make(map[string]*npmAdvisoryFrame)}
+	return npmAdvisoryWalk{packages: packages, memo: make(map[string]int), seen: make(map[string]string), budget: budget, nodes: make(map[string]*npmAdvisoryFrame)}
 }
 
 // storedAdvisoryEntries exposes retained advisory storage for bounded-walk tests.
 func (w *npmAdvisoryWalk) storedAdvisoryEntries() int {
-	return len(w.ids)
+	return len(w.seen)
 }
 
-// advisories collects each advisory once and memoizes reachability through complete cycles.
-func (w *npmAdvisoryWalk) advisories(name string) (bool, error) {
-	if reachable, ok := w.memo[name]; ok {
-		return reachable, nil
+// highOrCriticalIDs returns sorted high and critical advisory IDs collected during the walk.
+func (w *npmAdvisoryWalk) highOrCriticalIDs() []string {
+	keys := util.SortedKeys(w.seen)
+	ids := make([]string, 0, len(keys))
+	for i := 0; i < len(keys) && i < maxNodeAdvisories; i++ {
+		if npmAdvisoryRank(w.seen[keys[i]]) > 0 {
+			ids = append(ids, keys[i])
+		}
+	}
+	return ids
+}
+
+// advisories collects each advisory once and memoizes reachability rank through complete cycles.
+func (w *npmAdvisoryWalk) advisories(name string) (int, error) {
+	if reach, ok := w.memo[name]; ok {
+		return reach, nil
 	}
 	if err := w.push(name); err != nil {
-		return false, err
+		return 0, err
 	}
 	for step := 0; len(w.path) > 0 && step < maxNodeAdvisories; step++ {
 		frame := w.path[len(w.path)-1]
@@ -236,14 +273,14 @@ func (w *npmAdvisoryWalk) advisories(name string) (bool, error) {
 			dependency := frame.dependencies[frame.next]
 			frame.next++
 			if err := w.follow(frame, dependency); err != nil {
-				return false, err
+				return 0, err
 			}
 			continue
 		}
 		w.finish(frame)
 	}
 	if len(w.path) > 0 {
-		return false, fmt.Errorf("npm audit traversal exceeds %d steps", maxNodeAdvisories)
+		return 0, fmt.Errorf("npm audit traversal exceeds %d steps", maxNodeAdvisories)
 	}
 	return w.memo[name], nil
 }
@@ -261,15 +298,12 @@ func (w *npmAdvisoryWalk) push(name string) error {
 	if err := validateNodeAuditSeverity("npm audit package", name, item.Severity, item.null, item.missingSeverity); err != nil {
 		return err
 	}
-	ids, dependencies, err := npmViaAdvisories(item.Via, nil, nil, w.budget)
+	reach, dependencies, err := npmViaAdvisories(item.Via, w.seen, nil, w.budget)
 	if err != nil {
 		return err
 	}
-	for i := 0; i < len(ids) && i < maxNodeAdvisories; i++ {
-		w.ids[ids[i]] = true
-	}
 	index := len(w.nodes)
-	frame := &npmAdvisoryFrame{name: name, reachable: len(ids) > 0, dependencies: dependencies, index: index, low: index, base: len(w.active)}
+	frame := &npmAdvisoryFrame{name: name, reach: reach, dependencies: dependencies, index: index, low: index, base: len(w.active)}
 	w.nodes[name] = frame
 	w.path = append(w.path, frame)
 	w.active = append(w.active, frame)
@@ -278,8 +312,8 @@ func (w *npmAdvisoryWalk) push(name string) error {
 
 // follow reuses completed reachability and records back edges without revisiting packages.
 func (w *npmAdvisoryWalk) follow(frame *npmAdvisoryFrame, dependency string) error {
-	if reachable, ok := w.memo[dependency]; ok {
-		frame.reachable = frame.reachable || reachable
+	if reach, ok := w.memo[dependency]; ok {
+		frame.reach = max(frame.reach, reach)
 		return nil
 	}
 	if child, ok := w.nodes[dependency]; ok {
@@ -298,68 +332,70 @@ func (w *npmAdvisoryWalk) finish(frame *npmAdvisoryFrame) {
 	if len(w.path) > 0 {
 		parent := w.path[len(w.path)-1]
 		parent.low = min(parent.low, frame.low)
-		parent.reachable = parent.reachable || frame.reachable
+		parent.reach = max(parent.reach, frame.reach)
 	}
 }
 
-// complete gives every strongly connected component member the same advisory reachability.
+// complete gives every strongly connected component member the same advisory reachability rank.
 func (w *npmAdvisoryWalk) complete(frame *npmAdvisoryFrame) {
-	reachable := false
+	reach := 0
 	for i := frame.base; i < len(w.active) && i < maxNodeAdvisories; i++ {
-		reachable = reachable || w.active[i].reachable
+		reach = max(reach, w.active[i].reach)
 	}
 	for i := frame.base; i < len(w.active) && i < maxNodeAdvisories; i++ {
-		w.memo[w.active[i].name] = reachable
+		w.memo[w.active[i].name] = reach
 	}
-	frame.reachable = reachable
+	frame.reach = reach
 	w.active = w.active[:frame.base]
 }
 
-// npmViaAdvisories collects direct advisory objects and schedules dependency-name references.
-func npmViaAdvisories(via []json.RawMessage, ids, queue []string, budget *int) ([]string, []string, error) {
+// npmViaAdvisories collects direct advisory objects, checks per-ID severities and schedules dependencies.
+func npmViaAdvisories(via []json.RawMessage, seen map[string]string, queue []string, budget *int) (int, []string, error) {
 	*budget -= len(via)
 	if *budget < 0 {
-		return nil, nil, fmt.Errorf("npm audit via exceeds %d entries", maxNodeAdvisories)
+		return 0, nil, fmt.Errorf("npm audit via exceeds %d entries", maxNodeAdvisories)
 	}
+	reach := 0
 	for i := 0; i < len(via) && i < maxNodeAdvisories; i++ {
-		dependency, id, err := npmViaEntry(via[i])
+		dependency, advisory, err := npmViaEntry(via[i])
 		if err != nil {
-			return nil, nil, err
+			return 0, nil, err
 		}
 		if dependency != "" {
 			queue = append(queue, dependency)
+			continue
 		}
-		if id != "" {
-			ids = append(ids, id)
+		if seen != nil {
+			if _, err := recordNodeAdvisorySeverity(seen, advisory.GHSA, advisory.Severity); err != nil {
+				return 0, nil, err
+			}
 		}
+		reach = max(reach, npmAdvisoryRank(advisory.Severity))
 	}
-	if len(queue) > maxNodeAdvisories || len(ids) > maxNodeAdvisories {
-		return nil, nil, fmt.Errorf("npm audit traversal exceeds %d entries", maxNodeAdvisories)
+	if len(queue) > maxNodeAdvisories {
+		return 0, nil, fmt.Errorf("npm audit traversal exceeds %d entries", maxNodeAdvisories)
 	}
-	return ids, queue, nil
+	return reach, queue, nil
 }
 
 // npmViaEntry distinguishes a dependency reference from a directly reported advisory.
-func npmViaEntry(raw json.RawMessage) (string, string, error) {
+func npmViaEntry(raw json.RawMessage) (string, nodeAuditAdvisory, error) {
 	if !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		var dependency string
 		if json.Unmarshal(raw, &dependency) == nil {
 			if dependency == "" {
-				return "", "", fmt.Errorf("npm audit via entry has empty package reference")
+				return "", nodeAuditAdvisory{}, fmt.Errorf("npm audit via entry has empty package reference")
 			}
-			return dependency, "", nil
+			return dependency, nodeAuditAdvisory{}, nil
 		}
 	}
 	var advisory nodeAuditAdvisory
 	if err := json.Unmarshal(raw, &advisory); err != nil {
-		return "", "", fmt.Errorf("parse npm audit via: %w", err)
+		return "", nodeAuditAdvisory{}, fmt.Errorf("parse npm audit via: %w", err)
 	}
-	id := nodeAuditGHSA("unknown GHSA", advisory)
-	if err := validateNodeAuditSeverity("npm audit via", id, advisory.Severity, advisory.null, advisory.missingSeverity); err != nil {
-		return "", "", err
+	advisory.GHSA = nodeAuditGHSA("unknown GHSA", advisory)
+	if err := validateNodeAuditSeverity("npm audit via", advisory.GHSA, advisory.Severity, advisory.null, advisory.missingSeverity); err != nil {
+		return "", nodeAuditAdvisory{}, err
 	}
-	if advisory.Severity == "high" || advisory.Severity == "critical" {
-		return "", id, nil
-	}
-	return "", "", nil
+	return "", advisory, nil
 }

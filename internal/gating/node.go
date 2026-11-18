@@ -354,13 +354,27 @@ func isNodeAuditFindingsExit(aCtx context.Context, runErr error) bool {
 	return runErr.Error() == "exit status 1" || strings.HasPrefix(runErr.Error(), "exit status 1:")
 }
 
+// isAuditNetworkFailure classifies command diagnostics, never a valid findings report, as a network error.
+func isAuditNetworkFailure(manager, out string, runErr error) bool {
+	if isNetworkFailure("", runErr) {
+		return true
+	}
+	if report, err := structuredNodeAudit(out); err == nil && report != nil {
+		return false
+	}
+	if _, hasFindings := checkAuditOutputFindings(manager, out); hasFindings {
+		return false
+	}
+	return isNetworkFailure(out, runErr)
+}
+
 // handleAuditError formats a non-covered Node audit command failure or findings verdict.
 func handleAuditError(ctx, aCtx context.Context, manager, what, out string, runErr error) error {
 	if aCtx.Err() != nil && ctx.Err() == nil {
 		return commandFailure(ctx, aCtx, what, NodeAuditTimeout, out, maxNodeOutputBytes, runErr)
 	}
 	excerpt := util.TruncateExcerpt(out, maxNodeOutputBytes)
-	if isNetworkFailure(out, runErr) {
+	if isAuditNetworkFailure(manager, out, runErr) {
 		return fmt.Errorf("%s audit requires network access but failed: %w: %s", manager, runErr, excerpt)
 	}
 	if manager == nodeManagerYarn || isNodeAuditFindingsExit(aCtx, runErr) {
@@ -404,18 +418,15 @@ func runNodeSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 
 // judgeNodeAudit preserves command failures while allowing covered, structured advisory findings.
 func judgeNodeAudit(ctx, aCtx context.Context, root, manager, what, out string, runErr error) error {
-	if runErr != nil && (aCtx.Err() != nil || isNetworkFailure(out, runErr)) {
+	if runErr != nil && (!isNodeAuditFindingsExit(aCtx, runErr) || isAuditNetworkFailure(manager, out, runErr)) {
 		return handleAuditError(ctx, aCtx, manager, what, out, runErr)
 	}
 	covered, err := judgeNodeAdvisories(aCtx, root, manager, out)
 	if err != nil {
-		return fmt.Errorf("%s found vulnerabilities: %w", what, err)
+		return formatAuditAdvisoriesError(what, err, runErr)
 	}
 	if covered {
-		if runErr == nil || isNodeAuditFindingsExit(aCtx, runErr) {
-			return nil
-		}
-		return fmt.Errorf("%s failed: %w: %s", what, runErr, util.TruncateExcerpt(out, maxNodeOutputBytes))
+		return nil
 	}
 	if runErr != nil {
 		return handleAuditError(ctx, aCtx, manager, what, out, runErr)
@@ -424,6 +435,14 @@ func judgeNodeAudit(ctx, aCtx context.Context, root, manager, what, out string, 
 		return fmt.Errorf("%s found vulnerabilities: %s", what, summary)
 	}
 	return nil
+}
+
+// formatAuditAdvisoriesError keeps the runner error visible when advisory JSON parsing fails after a non-zero exit.
+func formatAuditAdvisoriesError(what string, err, runErr error) error {
+	if runErr != nil && strings.HasPrefix(err.Error(), "parse Node audit:") {
+		return fmt.Errorf("%s found vulnerabilities: %w (%w)", what, err, runErr)
+	}
+	return fmt.Errorf("%s found vulnerabilities: %w", what, err)
 }
 
 // parseNodeManifest reads and validates package.json inside repoDir through a pinned os.Root handle.

@@ -14,7 +14,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/strictjson"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // judgeNodeAdvisories validates configured ignores before judging any npm or pnpm report shape.
@@ -46,26 +45,25 @@ func judgeStructuredNodeAdvisories(report npmAuditReport, entries []config.Excep
 	if err != nil {
 		return false, err
 	}
-	gap := max(0, report.Metadata.Vulnerabilities.High-findings.high) + max(0, report.Metadata.Vulnerabilities.Critical-findings.critical)
-	unlisted := unlistedNodeIgnoreCount(report.Advisories, ignored)
-	if gap > unlisted {
-		return false, fmt.Errorf("%d high or critical findings counted but not named; %d configured ignores can explain unidentified advisories", gap, unlisted)
+	highGap := max(0, report.Metadata.Vulnerabilities.High-findings.high)
+	critGap := max(0, report.Metadata.Vulnerabilities.Critical-findings.critical)
+	unlisted := unlistedNodeIgnoreCount(findings.seen, ignored)
+	if highGap > unlisted || critGap > unlisted-highGap {
+		return false, fmt.Errorf("%d high or critical findings counted but not named; %d configured ignores can explain unidentified advisories", uint64(highGap)+uint64(critGap), unlisted)
 	}
 	if err := checkListedNodeAdvisories(entries, findings.ids); err != nil {
 		return false, err
 	}
-	return len(findings.ids) > 0 || findings.high+findings.critical+gap > 0, nil
+	return len(findings.ids) > 0 || findings.high+findings.critical+highGap+critGap > 0, nil
 }
 
-// unlistedNodeIgnoreCount counts configured pnpm ignores absent from every listed severity.
-func unlistedNodeIgnoreCount(advisories map[string]nodeAuditAdvisory, ignored []string) int {
+// unlistedNodeIgnoreCount counts configured pnpm ignores absent from every listed advisory or vulnerability.
+func unlistedNodeIgnoreCount(listed map[string]string, ignored []string) int {
 	unlisted := make(map[string]struct{}, len(ignored))
 	for i := 0; i < len(ignored) && i < maxNodeAdvisories; i++ {
-		unlisted[ignored[i]] = struct{}{}
-	}
-	keys := util.SortedKeys(advisories)
-	for i := 0; i < len(keys) && i < maxNodeAdvisories; i++ {
-		delete(unlisted, nodeAuditGHSA(keys[i], advisories[keys[i]]))
+		if _, ok := listed[ignored[i]]; !ok {
+			unlisted[ignored[i]] = struct{}{}
+		}
 	}
 	return len(unlisted)
 }
