@@ -124,10 +124,18 @@ func TestValidateHarnessProjectionExactBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fullContent := map[string]bool{}
+	for _, target := range agentcontext.AllVendorTargets() {
+		fullContent[target.Path] = target.FullContent
+	}
 	maxLines := 0
 	for _, file := range initial.Files {
-		// Import substitutions replace the pointer line; other clients read both files.
-		loaded := file.LineCount + strings.Count(base, "\n") + 1
+		// The registry decides what a client loads: a full-content projection alone, a pointer
+		// with the canonical file. Import substitutions replace the pointer line.
+		loaded := file.LineCount
+		if !fullContent[file.RelativePath] {
+			loaded += strings.Count(base, "\n") + 1
+		}
 		if file.RelativePath == "CLAUDE.md" || file.RelativePath == ".gemini/GEMINI.md" {
 			loaded--
 		}
