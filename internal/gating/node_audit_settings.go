@@ -10,10 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 
 	"github.com/cordanaLLM/praetor/internal/nodemanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"go.yaml.in/yaml/v3"
 )
 
 type nodeAuditSettings struct {
@@ -51,9 +51,20 @@ func nodeAuditIgnored(ctx context.Context, root, manager string) ([]string, erro
 // readNodeAuditSettings prefers pnpm-workspace.yaml, which pnpm 12 reads, over legacy package policy.
 func readNodeAuditSettings(root string) (nodeAuditSettings, error) {
 	var settings nodeAuditSettings
-	data, err := util.ReadConfinedLimited(root, "pnpm-workspace.yaml", nodemanifest.MaxManifestBytes)
+	err := util.InConfinedDirectory(root, ".", func(dir *os.Root) error {
+		var readErr error
+		settings, readErr = readNodeAuditSettingsIn(dir)
+		return readErr
+	})
+	return settings, err
+}
+
+// readNodeAuditSettingsIn reads workspace or manifest audit policy through one pinned root handle.
+func readNodeAuditSettingsIn(dir *os.Root) (nodeAuditSettings, error) {
+	var settings nodeAuditSettings
+	data, err := util.ReadLimitedIn(dir, "pnpm-workspace.yaml", nodemanifest.MaxManifestBytes)
 	if err == nil {
-		if err := yaml.Unmarshal(data, &settings); err != nil {
+		if err := util.DecodeYAMLDocument(data, &settings, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
 			return settings, fmt.Errorf("parse pnpm-workspace.yaml audit policy: %w", err)
 		}
 		return settings, nil
@@ -61,7 +72,7 @@ func readNodeAuditSettings(root string) (nodeAuditSettings, error) {
 	if !errors.Is(err, fs.ErrNotExist) {
 		return settings, fmt.Errorf("read pnpm-workspace.yaml audit policy: %w", err)
 	}
-	manifest, err := parseNodeManifest(root)
+	manifest, err := parseNodeManifestIn(dir)
 	if err != nil {
 		return settings, err
 	}

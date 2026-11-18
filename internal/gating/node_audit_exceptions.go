@@ -54,7 +54,7 @@ func judgeStructuredNodeAdvisories(report npmAuditReport, entries []config.Excep
 	if err := checkListedNodeAdvisories(entries, findings.ids); err != nil {
 		return false, err
 	}
-	return findings.high+findings.critical+gap > 0, nil
+	return len(findings.ids) > 0 || findings.high+findings.critical+gap > 0, nil
 }
 
 // unlistedNodeIgnoreCount counts configured pnpm ignores absent from every listed severity.

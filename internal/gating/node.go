@@ -7,7 +7,9 @@ package gating
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -326,6 +328,33 @@ func checkAuditOutputFindings(manager, out string) (string, bool) {
 	return "", false
 }
 
+// nodeAuditFindingsExitCode is the exit status npm audit (npm 12.2.2,
+// npm-audit-report 8.0.0 lib/exit-code.js:11-14) and pnpm audit (pnpm 12.14.0,
+// https://pnpm.io/cli/audit) return when vulnerabilities at or above the audit
+// level are found.
+const nodeAuditFindingsExitCode = 1
+
+// isNodeAuditFindingsExit reports whether runErr is the package manager's
+// documented vulnerabilities-found exit status (1) without a timeout,
+// cancellation, signal termination or stream-capture overflow.
+func isNodeAuditFindingsExit(aCtx context.Context, runErr error) bool {
+	if runErr == nil || (aCtx != nil && aCtx.Err() != nil) {
+		return false
+	}
+	if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+		return false
+	}
+	if strings.Contains(runErr.Error(), "command output exceeds ") {
+		return false
+	}
+	var exit interface{ ExitCode() int }
+	if errors.As(runErr, &exit) {
+		return exit.ExitCode() == nodeAuditFindingsExitCode
+	}
+	return runErr.Error() == "exit status 1" || strings.HasPrefix(runErr.Error(), "exit status 1:")
+}
+
+// handleAuditError formats a non-covered Node audit command failure or findings verdict.
 func handleAuditError(ctx, aCtx context.Context, manager, what, out string, runErr error) error {
 	if aCtx.Err() != nil && ctx.Err() == nil {
 		return commandFailure(ctx, aCtx, what, NodeAuditTimeout, out, maxNodeOutputBytes, runErr)
@@ -334,8 +363,10 @@ func handleAuditError(ctx, aCtx context.Context, manager, what, out string, runE
 	if isNetworkFailure(out, runErr) {
 		return fmt.Errorf("%s audit requires network access but failed: %w: %s", manager, runErr, excerpt)
 	}
-	if summary, hasFindings := checkAuditOutputFindings(manager, out); hasFindings {
-		return fmt.Errorf("%s found vulnerabilities: %s", what, summary)
+	if manager == nodeManagerYarn || isNodeAuditFindingsExit(aCtx, runErr) {
+		if summary, hasFindings := checkAuditOutputFindings(manager, out); hasFindings {
+			return fmt.Errorf("%s found vulnerabilities: %s", what, summary)
+		}
 	}
 	return fmt.Errorf("%s failed: %w: %s", what, runErr, excerpt)
 }
@@ -381,7 +412,10 @@ func judgeNodeAudit(ctx, aCtx context.Context, root, manager, what, out string, 
 		return fmt.Errorf("%s found vulnerabilities: %w", what, err)
 	}
 	if covered {
-		return nil
+		if runErr == nil || isNodeAuditFindingsExit(aCtx, runErr) {
+			return nil
+		}
+		return fmt.Errorf("%s failed: %w: %s", what, runErr, util.TruncateExcerpt(out, maxNodeOutputBytes))
 	}
 	if runErr != nil {
 		return handleAuditError(ctx, aCtx, manager, what, out, runErr)
@@ -392,9 +426,20 @@ func judgeNodeAudit(ctx, aCtx context.Context, root, manager, what, out string, 
 	return nil
 }
 
+// parseNodeManifest reads and validates package.json inside repoDir through a pinned os.Root handle.
 func parseNodeManifest(repoDir string) (nodemanifest.Manifest, error) {
-	manifestPath := filepath.Join(repoDir, PackageJsonFile)
-	data, err := util.ReadFileLimited(manifestPath, nodemanifest.MaxManifestBytes)
+	var manifest nodemanifest.Manifest
+	err := util.InConfinedDirectory(repoDir, ".", func(dir *os.Root) error {
+		var readErr error
+		manifest, readErr = parseNodeManifestIn(dir)
+		return readErr
+	})
+	return manifest, err
+}
+
+// parseNodeManifestIn reads and validates package.json from an already-pinned repository root handle.
+func parseNodeManifestIn(dir *os.Root) (nodemanifest.Manifest, error) {
+	data, err := util.ReadLimitedIn(dir, PackageJsonFile, nodemanifest.MaxManifestBytes)
 	if err != nil {
 		return nodemanifest.Manifest{}, fmt.Errorf("read %s: %w", PackageJsonFile, err)
 	}

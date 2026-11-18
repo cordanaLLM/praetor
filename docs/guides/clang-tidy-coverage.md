@@ -250,8 +250,14 @@ GHSA, expiry and `.standards.yaml`. These are the shared rules implemented by
 `internal/config/node_audit_exceptions.go` and `internal/config/exceptions.go`.
 
 The stage evaluates pnpm's `advisories` map and npm 7+'s `vulnerabilities` map, including npm's
-transitive `via` references. A listed high or critical advisory needs its own live exception.
-Lower severities do not fail this stage. For older reports without either map, metadata
+transitive `via` references. Every advisory, package and `via` object must carry a severity from
+the allow-list (`info`, `low`, `moderate`, `high`, `critical`): a null entry, a missing, empty or
+unknown severity, or conflicting severities for the same advisory ID fails the stage closed, and
+`via` objects are validated and judged regardless of the severity of the package that carries them.
+A listed high or critical advisory needs its own live exception; lower severities do not fail this
+stage. A non-zero audit run passes only when its report is covered and the package manager exited
+with the documented findings status (`1`); any other exit status, signal termination, launch
+error or stream-capture overflow fails the stage. For older reports without either map, metadata
 high and critical counts retain their previous behavior and cannot be waived by GHSA.
 In pnpm 12.14.0, `pnpm audit --json` removes configured ignored advisories from the
 `advisories` map but keeps them in the metadata severity totals. The JSON names no omitted
@@ -271,7 +277,10 @@ accepted. A zero gap still permits listed advisories with live exceptions.
 For pnpm 12, declare ignores in `pnpm-workspace.yaml`, using `auditConfig.ignoreGhsas`
 or its newer replacement `audit.ignore`; the latter takes precedence, including an empty
 list. The engine also reads the legacy `pnpm.auditConfig.ignoreGhsas` in `package.json`
-when no workspace file exists. Every configured ignored GHSA requires a live exception for every report shape,
+when no workspace file exists. Both files are read through a pinned `os.Root` handle
+(`util.ReadLimitedIn`) and `nodemanifest.ParseManifest`, refusing symlinks that escape the
+repository root, and `pnpm-workspace.yaml` must decode as a single YAML document
+(`util.DecodeYAMLDocument`). Every configured ignored GHSA requires a live exception for every report shape,
 even if the report's summary already excludes ignored findings. The engine reads only
 repository files and never queries package-manager user configuration. An ignore alone
 cannot waive a finding. See [pnpm audit configuration](https://pnpm.io/cli/audit#configuration)
