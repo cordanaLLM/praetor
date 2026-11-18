@@ -4,6 +4,7 @@
 package util
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -207,5 +208,120 @@ func assertActionUseRewrite(t *testing.T, workflow string, use ActionUse) {
 	}
 	if use.source.Anchor != after[0].source.Anchor || use.source.Tag != after[0].source.Tag {
 		t.Fatalf("scalar properties changed: %q -> %q", workflow, rewritten)
+	}
+}
+
+// scanUsesNoPanic runs scan and reports a panic as an error, so a planted case fails by name.
+func scanUsesNoPanic(scan func() ([]ActionUse, error)) (uses []ActionUse, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("panic: %v", recovered)
+		}
+	}()
+	return scan()
+}
+
+// Positive, negative and boundary: LF, CRLF and bare CR line endings (yaml/v3 treats a bare CR
+// as a line break) read the same action on the same line with the same source span; NEL, LS and
+// PS breaks are read the same way. No ending panics on an out-of-range line index.
+func TestScanActionUsesLineBreaks(t *testing.T) {
+	for name, sep := range map[string]string{"LF": "\n", "CRLF": "\r\n", "CR": "\r", "NEL": "\u0085", "LS": "\u2028", "PS": "\u2029"} {
+		assertLineBreakScan(t, name, sep)
+	}
+	lines, _, err := ScanActionUses("a\r\nb\rc\nd", 4)
+	if err != nil || len(lines) != 4 || lines[0] != "a\r" || lines[3] != "d" {
+		t.Fatalf("mixed breaks = %q, %v", lines, err)
+	}
+	if _, _, err := ScanActionUses("steps:\r  - uses: ./local\r", 2); err == nil {
+		t.Fatal("a bare CR workflow of three lines was scanned within a bound of two")
+	}
+}
+
+// assertLineBreakScan scans one workflow joined with sep and checks lines, spans and the rewrite.
+func assertLineBreakScan(t *testing.T, name, sep string) {
+	t.Helper()
+	action := "actions/checkout@" + pinTestSHA
+	body := []string{"steps:", "  - name: écho", "  - uses: " + action + "  # v7.0.1", "  - uses: ./local", ""}
+	workflow := strings.Join(body, sep)
+	uses, err := scanUsesNoPanic(func() ([]ActionUse, error) {
+		_, found, scanErr := ScanActionUses(workflow, 10)
+		return found, scanErr
+	})
+	if err != nil || len(uses) != 2 {
+		t.Errorf("%s: uses = %+v, %v", name, uses, err)
+		return
+	}
+	if uses[0].Line != 2 || uses[0].Value != action || !uses[0].Pinned || workflow[uses[0].Start:uses[0].End] != action {
+		t.Errorf("%s: pinned use = %+v, span %q", name, uses[0], workflow[uses[0].Start:uses[0].End])
+	}
+	if uses[1].Line != 3 || workflow[uses[1].Start:uses[1].End] != "./local" {
+		t.Errorf("%s: local use = %+v, span %q", name, uses[1], workflow[uses[1].Start:uses[1].End])
+	}
+	assertLineBreakRewrite(t, name, workflow, uses[0])
+}
+
+// assertLineBreakRewrite replaces use's span and checks the document reads back at the same line.
+func assertLineBreakRewrite(t *testing.T, name, workflow string, use ActionUse) {
+	t.Helper()
+	replacement, err := use.Replacement("actions/checkout@v7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, after, err := ScanActionUses(workflow[:use.Start]+replacement+workflow[use.End:], 10)
+	if err != nil || len(after) != 2 || after[0].Value != "actions/checkout@v7" || after[0].Line != 2 {
+		t.Errorf("%s: rewritten uses = %+v, %v", name, after, err)
+	}
+}
+
+// Positive and negative: an unsupported coordinate is an error, never an index panic.
+func TestActionSourceOffsetBounds(t *testing.T) {
+	source := newActionSource("a\rbc\n")
+	for _, at := range [][2]int{{0, 1}, {-1, 1}, {4, 1}, {1, 0}} {
+		if offset, err := source.offset(at[0], at[1]); err == nil {
+			t.Errorf("offset(%d, %d) = %d, want an error", at[0], at[1], offset)
+		}
+	}
+	for at, want := range map[[2]int]int{{1, 1}: 0, {2, 1}: 2, {2, 2}: 3, {3, 1}: 5} {
+		if offset, err := source.offset(at[0], at[1]); err != nil || offset != want {
+			t.Errorf("offset(%d, %d) = %d, %v, want %d", at[0], at[1], offset, err, want)
+		}
+	}
+}
+
+// Positive and negative: a template that is not valid YAML keeps its plain inline uses lines,
+// bare CR templates included, and refuses a uses header with a null value or a value on the
+// next line instead of reading an empty reference that drops the action.
+func TestScanTemplateActionUsesNullAndContinuation(t *testing.T) {
+	action := "actions/checkout@" + pinTestSHA
+	for name, sep := range map[string]string{"LF": "\n", "CRLF": "\r\n", "CR": "\r"} {
+		assertTemplateLineEnding(t, name, sep, action)
+	}
+	prefix := "{{if .Enabled}}\nsteps:\n"
+	for _, text := range []string{
+		"  - uses:\n      actions/checkout@v4", "  - uses:\n", "  - uses: ~", "  - uses: null", "  - uses: !!null",
+		"  - uses: &pin", "  - uses: \"\"", "  - uses: >-\n      actions/checkout@v4",
+		"  - uses: actions/checkout\n      @v4", "  - uses:\r\n      actions/checkout@v4",
+	} {
+		_, uses, err := ScanTemplateActionUses(prefix+text+"\n{{end}}", 10)
+		if err == nil || !strings.Contains(err.Error(), "unsupported uses") {
+			t.Errorf("%q: want unsupported uses error, got %+v, %v", text, uses, err)
+		}
+	}
+	_, uses, err := ScanTemplateActionUses(prefix+"  - uses: ./local\n    with:\n      x: 1\n  - uses: "+action+"\n{{end}}", 10)
+	if err != nil || len(uses) != 2 {
+		t.Fatalf("sibling keys after uses = %+v, %v", uses, err)
+	}
+}
+
+// assertTemplateLineEnding scans an unrendered template joined with sep and checks its inline pin.
+func assertTemplateLineEnding(t *testing.T, name, sep, action string) {
+	t.Helper()
+	workflow := strings.Join([]string{"{{if .Enabled}}", "steps:", "  - uses: " + action + "  # v7.0.1", "{{end}}"}, sep)
+	uses, err := scanUsesNoPanic(func() ([]ActionUse, error) {
+		_, found, scanErr := ScanTemplateActionUses(workflow, 10)
+		return found, scanErr
+	})
+	if err != nil || len(uses) != 1 || uses[0].Line != 2 || !uses[0].Pinned || workflow[uses[0].Start:uses[0].End] != action {
+		t.Errorf("%s: template uses = %+v, %v", name, uses, err)
 	}
 }

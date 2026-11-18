@@ -115,17 +115,17 @@ func (use ActionUse) Replacement(value string) (string, error) {
 // uses: key, in order. It refuses a workflow of more than maxLines lines (HISS-02); each
 // caller passes the bound that fits the workflows it reads.
 func ScanActionUses(workflow string, maxLines int) ([]string, []ActionUse, error) {
-	lines := strings.Split(workflow, "\n")
-	if len(lines) > maxLines {
-		return nil, nil, fmt.Errorf("workflow has %d lines, want at most %d", len(lines), maxLines)
+	source := newActionSource(workflow)
+	if len(source.lines) > maxLines {
+		return nil, nil, fmt.Errorf("workflow has %d lines, want at most %d", len(source.lines), maxLines)
 	}
 	var root yaml.Node
 	if err := DecodeYAMLDocument([]byte(workflow), &root, YAMLDocumentOptions{AllowEmpty: true}); err != nil {
 		return nil, nil, err
 	}
-	uses, err := walkActionUses(workflow, lines, &root)
+	uses, err := walkActionUses(source, &root)
 	if err != nil {
 		return nil, nil, err
 	}
-	return lines, uses, nil
+	return source.lines, uses, nil
 }
