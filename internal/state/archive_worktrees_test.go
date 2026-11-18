@@ -334,29 +334,150 @@ func TestArchivePathFields(t *testing.T) {
 // TestArchiveLongProseFields keeps prose after a slash while discharging completed rows.
 func TestArchiveLongProseFields(t *testing.T) {
 	prose := "Resolve X (BUG-1): the builder returns ErrA / ErrB per target and the command exits non-zero; " + strings.Repeat("details ", 60)
-	for _, format := range []string{"- [ ] %s\n", "| TODO | %s |\n"} {
+	slashProse := "Resolve X (BUG-2): " + "/" + strings.Repeat("a/", 2047) + "a"
+	for _, sample := range []string{prose, slashProse} {
+		for _, format := range []string{"- [ ] %s\n", "| TODO | %s |\n"} {
+			t.Run(format, func(t *testing.T) { testArchiveLongProseField(t, format, sample) })
+		}
+	}
+}
+
+// testArchiveLongProseField checks one prose sample and row format against completed task archiving.
+func testArchiveLongProseField(t *testing.T, format, sample string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	kept := fmt.Sprintf(format, sample)
+	done := "- [x] completed one\n- [DONE — fixture] completed two\n"
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	writeIntegrityFile(t, open, kept+done)
+	if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != 2 {
+		t.Fatalf("long prose archive = %d, %v; want two removed rows", count, err)
+	}
+	assertIntegrityFile(t, open, kept)
+	backlog, err := contextopt.ReadSnapshot(t.Context(), filepath.Join(root, WorkingDirName, "BACKLOG.md"))
+	if err != nil || !strings.Contains(string(backlog), done) {
+		t.Fatalf("completed rows missing from backlog: %s, %v", backlog, err)
+	}
+}
+
+// TestArchiveUTF8ComponentWorktree retains completed bullet and table rows for a 128-character two-byte component.
+func TestArchiveUTF8ComponentWorktree(t *testing.T) {
+	for _, format := range []string{"- [x] id: live | path: %s | branch: fixture\n", "| DONE | %s |\n"} {
 		t.Run(format, func(t *testing.T) {
-			root := t.TempDir()
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := InitWorkingDir(root); err != nil {
 				t.Fatal(err)
 			}
-			kept := fmt.Sprintf(format, prose)
-			done := "- [x] completed one\n- [DONE — fixture] completed two\n"
+			path := filepath.Join(root, strings.Repeat("é", 128))
+			// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- owner-only worktree fixture directory when the host filesystem permits a 256-byte UTF-8 name
+			if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, syscall.ENAMETOOLONG) {
+				t.Fatal(err)
+			}
+			ops := defaultArchiveWorktreeOps()
+			ops.list = func(context.Context, string) ([]worktree.WorktreeInfo, error) {
+				return []worktree.WorktreeInfo{{Path: path}}, nil
+			}
+			kept := fmt.Sprintf(format, path)
 			open := filepath.Join(root, WorkingDirName, openLedgerName)
-			writeIntegrityFile(t, open, kept+done)
-			if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != 2 {
-				t.Fatalf("long prose archive = %d, %v; want two removed rows", count, err)
+			writeIntegrityFile(t, open, kept+"- [x] unrelated\n")
+			if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); err != nil || count != 1 {
+				t.Fatalf("utf8 component archive = %d, %v; want one removed row", count, err)
 			}
 			assertIntegrityFile(t, open, kept)
-			backlog, err := contextopt.ReadSnapshot(t.Context(), filepath.Join(root, WorkingDirName, "BACKLOG.md"))
-			if err != nil || !strings.Contains(string(backlog), done) {
-				t.Fatalf("completed rows missing from backlog: %s, %v", backlog, err)
+		})
+	}
+	t.Run("real-directory", testArchiveUTF8ComponentRealDirectory)
+}
+
+// testArchiveUTF8ComponentRealDirectory exercises real filesystem stat on hosts that allow 128 two-byte characters.
+func testArchiveUTF8ComponentRealDirectory(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, strings.Repeat("é", 128))
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- owner-only directory probes host UTF-16 vs byte component limits
+	if err := os.Mkdir(path, 0o700); errors.Is(err, syscall.ENAMETOOLONG) {
+		t.Skipf("filesystem rejects 256-byte UTF-8 component: %v", err)
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	ops := defaultArchiveWorktreeOps()
+	ops.list = func(context.Context, string) ([]worktree.WorktreeInfo, error) {
+		return []worktree.WorktreeInfo{{Path: path}}, nil
+	}
+	kept := fmt.Sprintf("- [x] id: live | path: %s | branch: fixture\n", path)
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	writeIntegrityFile(t, open, kept+"- [x] unrelated\n")
+	if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); err != nil || count != 1 {
+		t.Fatalf("real utf8 directory archive = %d, %v; want one removed row", count, err)
+	}
+	assertIntegrityFile(t, open, kept)
+}
+
+// TestArchiveRedundantLongWorktreePath retains a completed row whose redundant path exceeds 4096 bytes before cleaning.
+func TestArchiveRedundantLongWorktreePath(t *testing.T) {
+	for _, format := range []string{"- [x] id: live | path: %s | branch: fixture/linked\n", "| DONE | %s |\n"} {
+		t.Run(format, func(t *testing.T) {
+			root, linked := archiveWorktreeFixture(t)
+			resolved, err := filepath.EvalSymlinks(linked)
+			if err != nil {
+				t.Fatal(err)
 			}
+			redundant := resolved + "/" + strings.Repeat("./", 2048)
+			kept := fmt.Sprintf(format, redundant)
+			open := filepath.Join(root, WorkingDirName, openLedgerName)
+			writeIntegrityFile(t, open, kept+"- [x] unrelated\n")
+			if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != 1 {
+				t.Fatalf("redundant worktree archive = %d, %v; want one removed row", count, err)
+			}
+			assertIntegrityFile(t, open, kept)
 		})
 	}
 }
 
-// TestArchivePathFieldLengthBounds pins byte limits before path cleaning or filesystem lookup.
+// TestArchiveRejectedUnmatchedPathDischarged discharges a rejected field matching no live worktree while retaining a live match.
+func TestArchiveRejectedUnmatchedPathDischarged(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.FromSlash("/repo/live-worktree")
+	unmatchedComponent := filepath.FromSlash("/repo/" + strings.Repeat("a", 256))
+	unmatchedTotal := filepath.FromSlash("/repo/absent") + "/" + strings.Repeat("./", 2048)
+	kept := fmt.Sprintf("- [x] id: live | path: %s | branch: fixture\n", live+"/"+strings.Repeat("./", 2048))
+	discharged := fmt.Sprintf("- [x] id: gone-component | path: %s | branch: fixture\n| DONE | %s |\n", unmatchedComponent, unmatchedTotal)
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	writeIntegrityFile(t, open, discharged+kept)
+	inspections := 0
+	ops := archiveWorktreeOps{
+		list: func(context.Context, string) ([]worktree.WorktreeInfo, error) {
+			return []worktree.WorktreeInfo{{Path: live}}, nil
+		},
+		inspect: func(_ context.Context, path string) (archivePath, error) {
+			inspections++
+			return archivePath{path: path, exists: path == live}, nil
+		},
+	}
+	if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); err != nil || count != 2 {
+		t.Fatalf("unmatched rejected archive = %d, %v; want two discharged rows", count, err)
+	}
+	if inspections != 2 {
+		t.Fatalf("inspections = %d; want 2 live-worktree checks and 0 rejected-candidate stats", inspections)
+	}
+	assertIntegrityFile(t, open, kept)
+}
+
+// TestArchivePathFieldLengthBounds pins host limits before path cleaning or filesystem lookup.
 func TestArchivePathFieldLengthBounds(t *testing.T) {
 	longPath := "/" + strings.Repeat("a/", 2047) + "a"
 	for _, tc := range []struct {
@@ -370,11 +491,13 @@ func TestArchivePathFieldLengthBounds(t *testing.T) {
 		{"native-component-255", `C:\` + strings.Repeat("a", 255), true},
 		{"native-component-256", `C:\` + strings.Repeat("a", 256), false},
 		{"unicode-255-bytes", "/" + strings.Repeat("é", 127) + "a", true},
-		{"unicode-256-bytes", "/" + strings.Repeat("é", 128), false},
+		{"unicode-256-bytes", "/" + strings.Repeat("é", 128), runtime.GOOS == "windows"},
+		{"unicode-255-utf16", "/" + strings.Repeat("é", 255), runtime.GOOS == "windows"},
+		{"unicode-256-utf16", "/" + strings.Repeat("é", 256), false},
 		{"unc-component-256", `\\host\share\` + strings.Repeat("a", 256), false},
 		{"unc-total-4097", strings.ReplaceAll(longPath+"a", "/", `\`), false},
 		{"unclean-component", "/" + strings.Repeat("a", 256) + "/../short", false},
-		{"unclean-total", longPath + "/../short", false},
+		{"unclean-total", "/short" + strings.Repeat("/.", 2046), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) { testArchivePathFieldBoundary(t, tc.path, tc.candidate) })
 	}
@@ -403,6 +526,27 @@ func testArchivePathFieldBoundary(t *testing.T, path string, candidate bool) {
 	}
 }
 
+// TestArchivePathHostBounds verifies UTF-16 code unit bounds on Windows and byte bounds on POSIX hosts.
+func TestArchivePathHostBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name, goos, path string
+		want             bool
+	}{
+		{"linux-128-two-byte", "linux", "/" + strings.Repeat("é", 128), false},
+		{"windows-128-two-byte", "windows", `C:\` + strings.Repeat("é", 128), true},
+		{"windows-255-two-byte", "windows", `C:\` + strings.Repeat("é", 255), true},
+		{"windows-256-two-byte", "windows", `C:\` + strings.Repeat("é", 256), false},
+		{"windows-255-surrogate-units", "windows", `C:\` + strings.Repeat("𐐷", 127) + "a", true},
+		{"windows-256-surrogate-units", "windows", `C:\` + strings.Repeat("𐐷", 128), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := archivePathWithinHostBounds(tc.path, tc.goos); got != tc.want {
+				t.Fatalf("archivePathWithinHostBounds(%s, %s) = %v; want %v", tc.name, tc.goos, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestArchivePathStatLength distinguishes an absent candidate from a name rejected by stat.
 func TestArchivePathStatLength(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -411,19 +555,33 @@ func TestArchivePathStatLength(t *testing.T) {
 	}
 	for _, size := range []int{255, 256} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
-			path := filepath.Join(root, strings.Repeat("a", size))
-			_, statErr := os.Stat(path)
-			if size == 256 && !errors.Is(statErr, syscall.ENAMETOOLONG) {
-				t.Skipf("filesystem does not report ENAMETOOLONG for a 256-byte component: %v", statErr)
-			}
-			if size == 255 && !errors.Is(statErr, os.ErrNotExist) {
-				t.Fatalf("255-byte absent candidate stat = %v", statErr)
-			}
-			result, err := lookupArchivePath(t.Context(), path)
-			if err != nil || result.exists || result.notDirectory || result.path != filepath.Clean(path) {
-				t.Fatalf("absent archive path = %+v, %v", result, err)
-			}
+			testArchivePathStatLength(t, root, size, os.Stat)
 		})
+	}
+	t.Run("255-short-fs", func(t *testing.T) {
+		testArchivePathStatLength(t, root, 255, func(path string) (os.FileInfo, error) {
+			return nil, &os.PathError{Op: "stat", Path: path, Err: syscall.ENAMETOOLONG}
+		})
+	})
+}
+
+// testArchivePathStatLength runs one stat-length probe and skips when the host filesystem limit differs.
+func testArchivePathStatLength(t *testing.T, root string, size int, stat func(string) (os.FileInfo, error)) {
+	t.Helper()
+	path := filepath.Join(root, strings.Repeat("a", size))
+	_, statErr := stat(path)
+	if size == 256 && !errors.Is(statErr, syscall.ENAMETOOLONG) {
+		t.Skipf("filesystem does not report ENAMETOOLONG for a 256-byte component: %v", statErr)
+	}
+	if size == 255 && errors.Is(statErr, syscall.ENAMETOOLONG) {
+		t.Skipf("filesystem reports ENAMETOOLONG for a 255-byte component: %v", statErr)
+	}
+	if size == 255 && !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("255-byte absent candidate stat = %v", statErr)
+	}
+	result, err := lookupArchivePath(t.Context(), path)
+	if err != nil || result.exists || result.notDirectory || result.path != filepath.Clean(path) {
+		t.Fatalf("absent archive path = %+v, %v", result, err)
 	}
 }
 

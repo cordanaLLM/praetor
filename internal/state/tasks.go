@@ -235,6 +235,10 @@ func planTaskArchive(ctx context.Context, content string, ops archiveWorktreeOps
 	}
 	if len(plan.archive) > 0 {
 		plan.index, err = indexWorktreeRows(ctx, rows, ops)
+		if err != nil {
+			return plan, err
+		}
+		err = indexRejectedWorktreeRows(ctx, rows, plan.index)
 	}
 	return plan, err
 }
