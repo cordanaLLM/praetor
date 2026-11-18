@@ -1,0 +1,7 @@
+class C {
+  // Previous operation.
+  @dec() previous() {}
+  next(
+    x: number,
+  ) { return x; }
+}

@@ -1,0 +1,3 @@
+/// Run the operation.
+#[inline] /* a */ /* b */ /* c */
+pub fn run() {}

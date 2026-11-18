@@ -1,0 +1,5 @@
+// Previous operation.
+__attribute__((x)) int previous(void) {}
+int next(
+    int x
+) { return x; }

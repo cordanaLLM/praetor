@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/docstrings"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -498,7 +499,16 @@ func readDocstringFixture(t *testing.T, fixture, targetPath string) string {
 	if util.SourceLanguage(sourceName) != util.SourceLanguage(targetPath) {
 		t.Fatalf("fixture %s and target %s select different languages", fixture, targetPath)
 	}
-	raw, err := os.ReadFile(filepath.Join("testdata", fixture))
+	root, err := os.OpenRoot("testdata")
+	if err != nil {
+		t.Fatalf("open fixture root: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close fixture root: %v", err)
+		}
+	})
+	raw, err := root.ReadFile(fixture)
 	if err != nil {
 		t.Fatalf("read fixture %s: %v", fixture, err)
 	}
@@ -611,4 +621,91 @@ func TestCheck_Boundary_MaxAttributeLines_3D(t *testing.T) {
 	writeTestFile(t, dir, "src/lib.rs", over33)
 	repOver, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
 	assertDocstringReport(t, "33-line attribute exceeds bound", repOver, err, false, 1, 0)
+}
+
+// TestCheck_AttributeLiteralRegressions_3D covers quoted delimiters, malformed decorators,
+// and lifetime apostrophes without changing the existing fixture corpus expectations.
+func TestCheck_AttributeLiteralRegressions_3D(t *testing.T) {
+	cases := []docstringFixtureCase{
+		{"double_bracket", "ts_double_bracket.ts.txt", "web/run.ts", true, 1, 1, "", 0},
+		{"multiple_comments", "rust_attribute_multi_comment.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"single_bracket", "ts_single_bracket.ts.txt", "web/run.ts", true, 1, 1, "", 0},
+		{"single_url", "ts_single_url.ts.txt", "web/run.ts", true, 1, 1, "", 0},
+		{"single_multiline", "ts_single_multiline.ts.txt", "web/run.ts", true, 1, 1, "", 0},
+		{"unclosed_quote", "ts_unclosed_quote.ts.txt", "web/run.ts", false, 1, 0, "run", 4},
+		{"unclosed_decorator", "ts_unclosed_decorator.ts.txt", "web/run.ts", false, 1, 0, "run", 4},
+		{"python_single", "python_single_decorator.py.txt", "app/run.py", true, 1, 1, "", 0},
+		{"python_triple", "python_triple_decorator.py.txt", "app/run.py", true, 1, 1, "", 0},
+		{"rust_string_lifetime", "rust_string_lifetime.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"rust_char", "rust_char_attribute.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"rust_lifetime_argument", "rust_lifetime_attribute.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"previous_item", "rust_previous_inline.rs.txt", "src/lib.rs", false, 2, 1, "next", 3},
+		{"trailing_comment", "rust_attribute_comment.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"inline_doc_comment", "rust_attribute_doc_comment.rs.txt", "src/lib.rs", false, 1, 0, "run", 2},
+		{"inline_self", "rust_inline_self.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) { runDocstringFixtureCase(t, tc) })
+	}
+}
+
+// TestHasDocstring_AttributeItems_3D checks inline preceding items directly, including
+// headers the C and TypeScript span scanners do not name as preceding functions.
+func TestHasDocstring_AttributeItems_3D(t *testing.T) {
+	cases := []struct {
+		fixture, target string
+		previous, next  int
+	}{
+		{"rust_previous_inline.rs.txt", "src/lib.rs", 2, 3},
+		{"c_previous_inline.c.txt", "src/lib.c", 2, 3},
+		{"ts_previous_inline.ts.txt", "web/run.ts", 3, 4},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.fixture, func(t *testing.T) {
+			raw := readDocstringFixture(t, tc.fixture, tc.target)
+			lines := strings.Split(raw, "\n")
+			if !docstrings.HasDocstring(tc.target, []byte(raw), lines, hiss.FunctionSpan{Start: tc.previous, End: tc.previous}) {
+				t.Fatal("previous item lost its own documentation")
+			}
+			if docstrings.HasDocstring(tc.target, []byte(raw), lines, hiss.FunctionSpan{Start: tc.next, End: tc.next + 2}) {
+				t.Fatal("next item inherited previous documentation")
+			}
+		})
+	}
+}
+
+// TestQuotedLiteralEnd_3D checks the shared quote classifier's positive, malformed,
+// and offset boundaries without running another package's private scanner tests.
+func TestQuotedLiteralEnd_3D(t *testing.T) {
+	cases := []struct {
+		name, text, language string
+		start, end           int
+		complete             bool
+	}{
+		{"typescript_single", "']'", "typescript", 0, 3, true},
+		{"typescript_url", "'https://x'", "typescript", 0, 11, true},
+		{"typescript_escape", "'a\\'b]'", "typescript", 0, 7, true},
+		{"typescript_unclosed", "'x", "typescript", 0, 2, false},
+		{"python_triple", "'''a]\n#b)'''", "python", 0, 12, true},
+		{"python_unclosed_triple", "'''x", "python", 0, 4, false},
+		{"rust_character", "']'", "rust", 0, 3, true},
+		{"rust_lifetime", "'a", "rust", 0, 0, true},
+		{"rust_escaped_character", "'\\n'", "rust", 0, 4, true},
+		{"rust_double", "\"x]\"", "rust", 0, 4, true},
+		{"ordinary_code", "x", "c", 0, 0, true},
+		{"empty", "", "c", 0, 0, false},
+		{"negative_offset", "x", "c", -1, -1, false},
+		{"end_offset", "x", "c", 1, 1, false},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			end, complete := hiss.QuotedLiteralEnd(tc.text, tc.start, tc.language)
+			if end != tc.end || complete != tc.complete {
+				t.Fatalf("end=%d complete=%v; want end=%d complete=%v", end, complete, tc.end, tc.complete)
+			}
+		})
+	}
 }

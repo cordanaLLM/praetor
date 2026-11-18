@@ -281,13 +281,9 @@ func (s *literalStripper) consumeFence(line string, i int) int {
 // Python triple quotes are checked before ordinary quotes so a docstring is never read as an
 // empty string followed by code.
 func (s *literalStripper) openFence(line string, i int) (int, bool) {
-	if s.syn.tripleQuotes {
-		for _, fence := range []string{`"""`, `'''`} {
-			if strings.HasPrefix(line[i:], fence) {
-				s.fence = fence
-				return i + len(fence), true
-			}
-		}
+	if fence, _ := s.syn.quoteAt(line, i); len(fence) == 3 {
+		s.fence = fence
+		return i + len(fence), true
 	}
 	if s.syn.blockComments && strings.HasPrefix(line[i:], "/*") {
 		s.fence = blockCommentClose
@@ -336,14 +332,15 @@ func (s *literalStripper) copyOne(line string, i int, b *strings.Builder) int {
 		b.WriteByte(c)
 		return i + 1
 	case '"', '\'':
-		if c == '\'' && !s.syn.apostropheIsString {
-			if width := charLiteralWidth(line, i); width > 0 {
-				return i + width
-			}
-			b.WriteByte(c)
-			return i + 1
+		fence, width := s.syn.quoteAt(line, i)
+		if fence != "" {
+			return s.skipQuoted(line, i)
 		}
-		return s.skipQuoted(line, i)
+		if width > 0 {
+			return i + width
+		}
+		b.WriteByte(c)
+		return i + 1
 	default:
 		b.WriteByte(c)
 		return i + 1
@@ -1188,4 +1185,45 @@ func checkRustAbort(code, rel string, lineNum int, rep *ScanReport) {
 		recordViolation(rep, "HISS-07", rel, lineNum, "",
 			"process::"+m[1]+" ends the process from library code; return an error to fn main instead")
 	}
+}
+
+// quoteAt classifies a quote using the scanner's language syntax, leaving lifetime
+// apostrophes as code and returning a complete character literal's width separately.
+func (syn literalSyntax) quoteAt(text string, i int) (string, int) {
+	if text[i] != '\'' && text[i] != '"' {
+		return "", 0
+	}
+	if syn.tripleQuotes {
+		fence := strings.Repeat(text[i:i+1], 3)
+		if strings.HasPrefix(text[i:], fence) {
+			return fence, 3
+		}
+	}
+	if text[i] == '\'' && !syn.apostropheIsString {
+		return "", charLiteralWidth(text, i)
+	}
+	return text[i : i+1], 1
+}
+
+// QuotedLiteralEnd returns the end and completeness of a quoted literal at start.
+// A nonliteral (including a Rust lifetime) returns start and true; invalid offsets
+// return start and false. Callers bound text; escapes and characters share the
+// scanner's quoteAt, scanQuoted and charLiteralWidth implementations.
+func QuotedLiteralEnd(text string, start int, language string) (int, bool) {
+	if start < 0 || start >= len(text) {
+		return start, false
+	}
+	syn := cLikeSyntax
+	switch language {
+	case "python":
+		syn = pythonSyntax
+	case "javascript", "typescript", "svelte":
+		syn = scriptSyntax
+	}
+	fence, width := syn.quoteAt(text, start)
+	if fence == "" {
+		return start + width, true
+	}
+	end, closed, _ := scanQuoted(text, start+width, fence)
+	return end, closed
 }

@@ -1,0 +1,3 @@
+/// Run the operation.
+#[tag("]")]
+pub fn run<'a>(x: &'a str) -> &'a str { x }

@@ -1,0 +1,5 @@
+class C {
+  // Run the operation.
+  @tag("]")
+  run() {}
+}

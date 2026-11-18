@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -253,7 +254,14 @@ func readTargetFile(ctx context.Context, repoDir, headRef, rel string) ([]byte, 
 	if info.Size() > maxSourceBytes {
 		return nil, false, fmt.Errorf("file %s exceeds %d bytes", rel, maxSourceBytes)
 	}
-	data, err := os.ReadFile(fullPath) // #nosec G304 -- fullPath is confined to repoDir and verified regular above
+	root, err := os.OpenRoot(repoDir)
+	if err != nil {
+		return nil, false, fmt.Errorf("open repository root: %w", err)
+	}
+	data, err := root.ReadFile(filepath.FromSlash(rel))
+	if closeErr := root.Close(); closeErr != nil {
+		err = errors.Join(err, fmt.Errorf("close repository root: %w", closeErr))
+	}
 	if err != nil {
 		return nil, false, fmt.Errorf("read %s: %w", rel, err)
 	}
@@ -329,7 +337,7 @@ func hasShellShebang(data []byte) bool {
 func HasDocstring(rel string, data []byte, lines []string, fn hiss.FunctionSpan) bool {
 	switch resolveDocStyle(rel, data) {
 	case docStyleCommentAbove:
-		return hasCommentAbove(lines, fn.Start)
+		return hasCommentAbove(lines, fn.Start, util.SourceLanguage(rel))
 	case docStylePythonBody:
 		return hasPythonDocstring(lines, fn.Start, fn.End)
 	case docStyleShellAbove:
@@ -341,7 +349,7 @@ func HasDocstring(rel string, data []byte, lines []string, fn hiss.FunctionSpan)
 
 // hasCommentAbove checks for a //, ///, /* */, or /** */ comment ending directly above startLine,
 // skipping intervening attributes and decorators.
-func hasCommentAbove(lines []string, startLine int) bool {
+func hasCommentAbove(lines []string, startLine int, language string) bool {
 	if startLine <= 1 || startLine-1 > len(lines) {
 		return false
 	}
@@ -349,7 +357,7 @@ func hasCommentAbove(lines []string, startLine int) bool {
 	if strings.TrimSpace(lines[startLine-1]) == "{" && idx >= 1 {
 		idx--
 	}
-	idx, ok := skipAttributesAbove(lines, idx)
+	idx, ok := skipAttributesAbove(lines, idx, language)
 	if !ok || idx < 0 {
 		return false
 	}
@@ -363,16 +371,16 @@ func hasCommentAbove(lines []string, startLine int) bool {
 	return false
 }
 
-// skipAttributesAbove steps backwards from idx over at most maxAttributeLines of balanced
-// single-line or multi-line attributes and decorators, returning the index above them.
-func skipAttributesAbove(lines []string, idx int) (int, bool) {
+// skipAttributesAbove skips only complete attributes within maxAttributeLines.
+// A comment ends the lookup; other text must form a standalone annotation.
+func skipAttributesAbove(lines []string, idx int, language string) (int, bool) {
 	remaining := maxAttributeLines
 	for steps := 0; steps < maxAttributeLines && remaining > 0 && idx >= 0; steps++ {
 		trimmed := strings.TrimSpace(lines[idx])
-		if !isAttributeOrDecorator(trimmed) && !closesAttributeGroup(trimmed) {
+		if isAttributeBoundary(trimmed) {
 			return idx, true
 		}
-		nextIdx, used, ok := stepAttributeGroup(lines, idx, remaining)
+		nextIdx, used, ok := stepAttributeGroup(lines, idx, remaining, language)
 		if !ok {
 			return -1, false
 		}
@@ -382,42 +390,17 @@ func skipAttributesAbove(lines []string, idx int) (int, bool) {
 	return idx, true
 }
 
-// closesAttributeGroup reports whether a trimmed line ends with a closing bracket or parenthesis
-// that may terminate a multi-line attribute or decorator.
-func closesAttributeGroup(trimmed string) bool {
-	code := stripAttributeLine(trimmed)
-	return countParenDelta(code) < 0 && (strings.HasSuffix(code, "]") || strings.HasSuffix(code, ")"))
-}
-
-// stepAttributeGroup consumes one balanced attribute or decorator ending at idx within remaining lines.
-func stepAttributeGroup(lines []string, idx, remaining int) (int, int, bool) {
-	trimmed := strings.TrimSpace(lines[idx])
-	delta := countParenDelta(stripAttributeLine(trimmed))
-	if isAttributeOrDecorator(trimmed) {
-		if delta == 0 {
-			return idx - 1, 1, true
-		}
-		return -1, 0, false
-	}
-	if delta >= 0 {
-		return -1, 0, false
-	}
-	return scanAttributeStart(lines, idx, remaining, -delta)
-}
-
-// scanAttributeStart walks backwards from idx-1 until bracket depth reaches zero on an attribute header.
-func scanAttributeStart(lines []string, idx, remaining, depth int) (int, int, bool) {
-	for step := 1; step < remaining && idx-step >= 0; step++ {
+// stepAttributeGroup finds a header backwards, then validates its bounded text forwards.
+// Forward scanning preserves multiline literal state and detects trailing items.
+func stepAttributeGroup(lines []string, idx, remaining int, language string) (int, int, bool) {
+	for step := 0; step < remaining && idx-step >= 0; step++ {
 		trimmed := strings.TrimSpace(lines[idx-step])
-		if trimmed == "" || isCommentBoundary(trimmed) {
+		if isAttributeBoundary(trimmed) {
 			return -1, 0, false
 		}
-		depth -= countParenDelta(stripAttributeLine(trimmed))
-		if depth < 0 {
-			return -1, 0, false
-		}
-		if depth == 0 {
-			if isAttributeOrDecorator(trimmed) {
+		if isAttributeOrDecorator(trimmed) {
+			text := strings.TrimSpace(strings.Join(lines[idx-step:idx+1], "\n"))
+			if standaloneAttribute(text, language) {
 				return idx - step - 1, step + 1, true
 			}
 			return -1, 0, false
@@ -426,36 +409,114 @@ func scanAttributeStart(lines []string, idx, remaining, depth int) (int, int, bo
 	return -1, 0, false
 }
 
-// isCommentBoundary reports whether a trimmed line is a standalone comment that cannot be part of an attribute.
+// isAttributeBoundary stops lookback at blank lines and standalone comments,
+// while allowing an annotation to end with a trailing block comment.
+func isAttributeBoundary(trimmed string) bool {
+	return !isAttributeOrDecorator(trimmed) && (trimmed == "" || isCommentBoundary(trimmed))
+}
+
+// isCommentBoundary reports whether a trimmed line is a standalone comment.
 func isCommentBoundary(trimmed string) bool {
 	return strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasSuffix(trimmed, "*/")
 }
 
-// stripAttributeLine removes quoted string contents and any trailing // comment from one line.
-func stripAttributeLine(line string) string {
-	var b strings.Builder
-	var inQuote byte
-	for i := 0; i < len(line); i++ {
-		ch := line[i]
-		if inQuote != 0 {
-			switch ch {
-			case '\\':
-				i++
-			case inQuote:
-				inQuote = 0
-			}
-			continue
-		}
-		if ch == '"' {
-			inQuote = ch
-			continue
-		}
-		if strings.HasPrefix(line[i:], "//") {
-			break
-		}
-		b.WriteByte(ch)
+// attributeName matches a decorator's dotted identifier or a native attribute introducer.
+var attributeName = regexp.MustCompile(`^(?:@[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*|__attribute__|#)`)
+
+// standaloneAttribute requires balanced delimiters followed only by whitespace or comments.
+// Bare named decorators have no delimiter; all other annotations require one.
+func standaloneAttribute(text, language string) bool {
+	name := attributeName.FindString(text)
+	body := strings.TrimSpace(strings.TrimPrefix(text, name))
+	if strings.HasPrefix(name, "@") && attributeTriviaOnly(body) {
+		return true
 	}
-	return strings.TrimSpace(b.String())
+	if body == "" || !strings.ContainsRune("([", rune(body[0])) {
+		return false
+	}
+	end, ok := attributeDelimiterEnd(body, language)
+	return ok && attributeTriviaOnly(body[end:])
+}
+
+// attributeDelimiterEnd finds the first balanced closing delimiter outside literals and comments.
+// Its stack and byte walk are bounded by the caller's at-most-32-line source slice.
+func attributeDelimiterEnd(text, language string) (int, bool) {
+	stack := make([]byte, 0, len(text))
+	for i := 0; i < len(text); {
+		end, ok := attributeTokenEnd(text, i, language)
+		if !ok {
+			return 0, false
+		}
+		if end != i {
+			i = end
+			continue
+		}
+		ch := text[i]
+		switch {
+		case strings.ContainsRune("([{", rune(ch)):
+			stack = append(stack, ch)
+		case strings.ContainsRune(")]}", rune(ch)):
+			if len(stack) == 0 || !matchingAttributeDelimiter(stack[len(stack)-1], ch) {
+				return 0, false
+			}
+			stack = stack[:len(stack)-1]
+			if len(stack) == 0 {
+				return i + 1, true
+			}
+		}
+		i++
+	}
+	return 0, false
+}
+
+// matchingAttributeDelimiter reports whether open and close are a matching bracket pair.
+func matchingAttributeDelimiter(open, close byte) bool {
+	return strings.IndexByte("([{", open) == strings.IndexByte(")]}", close)
+}
+
+// attributeTokenEnd consumes shared HISS quoted literals or a comment at i.
+func attributeTokenEnd(text string, i int, language string) (int, bool) {
+	end, ok := hiss.QuotedLiteralEnd(text, i, language)
+	if !ok || end != i {
+		return end, ok
+	}
+	end = attributeCommentEnd(text, i)
+	return end, end >= 0
+}
+
+// attributeCommentEnd returns the end of a comment, i for code, or -1 for an unclosed block.
+func attributeCommentEnd(text string, i int) int {
+	if strings.HasPrefix(text[i:], "//") {
+		if end := strings.IndexByte(text[i:], '\n'); end >= 0 {
+			return i + end + 1
+		}
+		return len(text)
+	}
+	if strings.HasPrefix(text[i:], "/*") {
+		if end := strings.Index(text[i+2:], "*/"); end >= 0 {
+			return i + 2 + end + 2
+		}
+		return -1
+	}
+	return i
+}
+
+// attributeTriviaOnly accepts only whitespace and complete comments after an annotation.
+// A trailing doc comment is trivia, never documentation for the following function.
+func attributeTriviaOnly(text string) bool {
+	limit := len(text)
+	for step := 0; step < limit; step++ {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return true
+		}
+		end := attributeCommentEnd(text, 0)
+		if end <= 0 {
+			return false
+		}
+		text = text[end:]
+	}
+	return strings.TrimSpace(text) == ""
 }
 
 // isAttributeOrDecorator reports whether a trimmed line is an attribute or decorator annotation.
