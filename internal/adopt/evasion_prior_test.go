@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // priorEvasionFixtures holds every interceptor rendering a Praetor release wrote, one file per
@@ -17,6 +19,47 @@ const priorEvasionFixtures = "testdata/evasion"
 
 // currentEvasionFixture is the fixture holding the current rendering.
 const currentEvasionFixture = "current-rendering.block_evasion.py"
+
+// TestPriorEvasionFixturesUseDataExtension keeps frozen before- renderings out of source analysis.
+func TestPriorEvasionFixturesUseDataExtension(t *testing.T) {
+	fixtures := readFixtureDir(t, priorEvasionFixtures)
+	for name := range fixtures {
+		if strings.HasPrefix(name, "before-") && !strings.HasSuffix(name, ".py.txt") {
+			t.Errorf("prior rendering %s must use the .py.txt data extension", name)
+		}
+	}
+}
+
+// TestEvasionFixturesRemainInCodacyScope refuses exclusions hiding any evasion fixture.
+func TestEvasionFixturesRemainInCodacyScope(t *testing.T) {
+	root := openFixtureRoot(t, filepath.Join("..", ".."))
+	data, err := root.ReadFile(".codacy.yml")
+	if err != nil {
+		t.Fatalf("read Codacy scope: %v", err)
+	}
+	var scope struct {
+		ExcludePaths []string `yaml:"exclude_paths"`
+	}
+	if err := yamlUnmarshal(data, &scope); err != nil {
+		t.Fatalf("decode Codacy scope: %v", err)
+	}
+	const dir = "internal/adopt/testdata/evasion"
+	fixtures := readFixtureDir(t, priorEvasionFixtures)
+	for _, pattern := range scope.ExcludePaths {
+		pattern = strings.TrimPrefix(util.NormalizeSlashes(pattern), "./")
+		if strings.Contains(pattern, dir) {
+			t.Errorf("Codacy exclusion %q targets evasion fixtures", pattern)
+		}
+		for name := range fixtures {
+			segments := strings.Split(dir+"/"+name, "/")
+			for end := 1; end <= len(segments); end++ {
+				if util.MatchGlobSegments(strings.Split(pattern, "/"), segments[:end]) {
+					t.Errorf("Codacy exclusion %q hides evasion fixture %s", pattern, name)
+				}
+			}
+		}
+	}
+}
 
 // adoptEvasionFixture adopts a fresh repository whose interceptor holds existing.
 func adoptEvasionFixture(t *testing.T, name, existing string, force bool) (string, *AdoptReport) {

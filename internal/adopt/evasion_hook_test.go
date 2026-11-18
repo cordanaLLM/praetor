@@ -635,7 +635,7 @@ func TestEmittedEvasionGuardSegments(t *testing.T) {
 		TestEmittedHookFixturesMatchTheRendering(t)
 		current := mustRead(t, filepath.Join(priorEvasionFixtures, currentEvasionFixture))
 		if !strings.Contains(current, "def command_segments(") {
-			mustWrite(t, filepath.Join(priorEvasionFixtures, "before-command-segments.block_evasion.py"), current)
+			mustWrite(t, filepath.Join(priorEvasionFixtures, "before-command-segments.block_evasion.py.txt"), current)
 		}
 	}
 	if !strings.Contains(guard, evasionCommandSegments) ||
@@ -1412,7 +1412,7 @@ func TestEmittedDelimiterBraceRegression(t *testing.T) {
 // TestEmittedDelimiterBracePriorReplay records both verdicts of the regression and its two controls.
 func TestEmittedDelimiterBracePriorReplay(t *testing.T) {
 	python, fixed := emittedInterceptor(t)
-	prior := filepath.Join(priorEvasionFixtures, "before-exact-heredoc-brace.block_evasion.py")
+	prior := filepath.Join(priorEvasionFixtures, "before-exact-heredoc-brace.block_evasion.py.txt")
 	for i, tc := range evasionDelimiterBraceCases()[:6] {
 		t.Run(tc.name, func(t *testing.T) {
 			before := runInterceptor(t, python, prior, nil, nil, tc.command)
@@ -1432,7 +1432,7 @@ func TestEmittedDelimiterBracePriorReplay(t *testing.T) {
 // TestEmittedBraceCommandPriorReplay checks the prior rendering and quoted/data controls.
 func TestEmittedBraceCommandPriorReplay(t *testing.T) {
 	python, fixed := emittedInterceptor(t)
-	prior := filepath.Join(priorEvasionFixtures, "before-brace-command.block_evasion.py")
+	prior := filepath.Join(priorEvasionFixtures, "before-brace-command.block_evasion.py.txt")
 	// Four command regressions followed by their three unchanged controls.
 	for _, tc := range evasionDelimiterBraceCases()[16:23] {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1452,16 +1452,17 @@ func evasionHeredocFeedCases(t *testing.T) []struct {
 	Want          int
 } {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "agenthook", "testdata", "heredoc-consumers.json"))
+	root := openFixtureRoot(t, filepath.Join("..", "agenthook", "testdata"))
+	data, err := root.ReadFile("heredoc-consumers.json")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read heredoc consumer corpus: %v", err)
 	}
 	var cases []struct {
 		Name, Command string
 		Want          int
 	}
 	if err := json.Unmarshal(data, &cases); err != nil {
-		t.Fatal(err)
+		t.Fatalf("decode heredoc consumer corpus: %v", err)
 	}
 	return cases
 }
@@ -1483,7 +1484,7 @@ func TestEmittedEvasionHeredocFeed(t *testing.T) {
 // TestEmittedEvasionHeredocPriorReplay preserves the 22 acceptance verdicts of the prior hook.
 func TestEmittedEvasionHeredocPriorReplay(t *testing.T) {
 	python, fixed := emittedInterceptor(t)
-	prior := filepath.Join(priorEvasionFixtures, "before-heredoc-consumers.block_evasion.py")
+	prior := filepath.Join(priorEvasionFixtures, "before-heredoc-consumers.block_evasion.py.txt")
 	for _, tc := range evasionHeredocFeedCases(t)[:22] {
 		t.Run(tc.Name, func(t *testing.T) {
 			wantBefore := tc.Want
@@ -1648,7 +1649,7 @@ func recordMinimalPythonRendering(t *testing.T) {
 	previous := mustRead(t, filepath.Join(priorEvasionFixtures, currentEvasionFixture))
 	current := buildBlockEvasionPY()
 	if previous != current {
-		prior := filepath.Join(priorEvasionFixtures, "before-minimal-python.block_evasion.py")
+		prior := filepath.Join(priorEvasionFixtures, "before-minimal-python.block_evasion.py.txt")
 		if _, err := os.Stat(prior); errors.Is(err, os.ErrNotExist) {
 			mustWrite(t, prior, previous)
 		} else if err != nil {
