@@ -27,19 +27,25 @@ func TestCompileContentGoldenAndBudget(t *testing.T) {
 		t.Fatalf("got %d outputs", len(result.Files))
 	}
 	for i, file := range result.Files {
-		want := testHeader + testReferenceFor(file.RelativePath)
-		if i == 1 {
-			want = testFrontmatter + want
-		}
-		want = strings.TrimRight(want, "\n") + "\n"
-		if file.RelativePath != testPaths[i] || file.Content != want || file.LineCount != strings.Count(want, "\n")+1 {
-			t.Fatalf("projection changed: %+v", file)
-		}
+		requireGoldenProjection(t, i, file)
 	}
 	for _, invalid := range []string{"", " \n", "## Claude Code\n" + strings.Repeat("line\n", MaxLineBudget)} {
 		if got, err := tr.CompileContent(invalid); err == nil || got != nil {
 			t.Fatalf("invalid canonical accepted: %v", err)
 		}
+	}
+}
+
+// requireGoldenProjection checks one target's path, pointer bytes and physical line count.
+func requireGoldenProjection(t *testing.T, index int, file TargetFile) {
+	t.Helper()
+	want := testHeader + testReferenceFor(file.RelativePath)
+	if index == 1 {
+		want = testFrontmatter + want
+	}
+	want = strings.TrimRight(want, "\n") + "\n"
+	if file.RelativePath != testPaths[index] || file.Content != want || file.LineCount != strings.Count(want, "\n")+1 {
+		t.Fatalf("projection changed: %+v", file)
 	}
 }
 
@@ -81,31 +87,38 @@ func TestCompileContentKeepsOnlyOwnVendorSection(t *testing.T) {
 		".cursor/rules/hiss-invariants.mdc": {"## cursor", "Use the rules pane.", "## Gemini", "Fenced, not a section."},
 	}
 	for _, file := range result.Files {
-		for _, want := range shared {
-			if strings.Contains(file.Content, want) {
-				t.Fatalf("%s copied shared line %q", file.RelativePath, want)
-			}
-		}
-		for path, lines := range owned {
-			for _, line := range lines {
-				got, want := strings.Contains(file.Content, line), path == file.RelativePath
-				if got != want {
-					t.Fatalf("%s contains(%q) = %v, want %v", file.RelativePath, line, got, want)
-				}
-			}
-		}
-		if file.LineCount != strings.Count(file.Content, "\n")+1 {
-			t.Fatalf("%s line count %d disagrees with content", file.RelativePath, file.LineCount)
-		}
+		requireVendorOwnership(t, file, shared, owned)
 	}
 	if !strings.HasPrefix(result.Files[1].Content, testFrontmatter+testHeader) {
 		t.Fatalf("cursor target lost its frontmatter: %q", result.Files[1].Content)
 	}
 }
 
-// TestCompileContentVendorScanBoundary bounds canonical scanning independently of projection size.
+// requireVendorOwnership refuses shared copies and checks every owned line's destination.
+func requireVendorOwnership(t *testing.T, file TargetFile, shared []string, owned map[string][]string) {
+	t.Helper()
+	for _, want := range shared {
+		if strings.Contains(file.Content, want) {
+			t.Fatalf("%s copied shared line %q", file.RelativePath, want)
+		}
+	}
+	for path, lines := range owned {
+		for _, line := range lines {
+			got, want := strings.Contains(file.Content, line), path == file.RelativePath
+			if got != want {
+				t.Fatalf("%s contains(%q) = %v, want %v", file.RelativePath, line, got, want)
+			}
+		}
+	}
+	if file.LineCount != strings.Count(file.Content, "\n")+1 {
+		t.Fatalf("%s line count %d disagrees with content", file.RelativePath, file.LineCount)
+	}
+}
+
+// TestCompileContentVendorScanBoundary isolates the ownership scan bound with a larger loaded line budget.
 func TestCompileContentVendorScanBoundary(t *testing.T) {
 	tr := NewTranspiler()
+	tr.MaxLines = maxCanonicalLines + 16
 	atLimit := strings.Repeat("x\n", maxCanonicalLines-1)
 	if _, err := tr.CompileContent(atLimit); err != nil {
 		t.Fatalf("at-limit canonical: %v", err)
@@ -298,6 +311,12 @@ func TestVendorTargetsFollowsClientSelection(t *testing.T) {
 			t.Errorf("target %d = %q, compiled %q", i, target.Path, result.Files[i].RelativePath)
 		}
 	}
+	requireVendorSelectionBounds(t)
+}
+
+// requireVendorSelectionBounds accepts an empty selection and refuses an unknown client.
+func requireVendorSelectionBounds(t *testing.T) {
+	t.Helper()
 	if none, err := VendorTargets([]string{}); err != nil || len(none) != 0 {
 		t.Fatalf("empty selection = %v, %v", none, err)
 	}
@@ -405,14 +424,16 @@ func TestCompileContent_RelativeLinks_Positive(t *testing.T) {
 	if copilotContent == "" || claudeContent == "" {
 		t.Fatalf("missing copilot or claude file in compile result")
 	}
-	for _, want := range []string{"[a](../docs/x.md)", `![i](../img/p.png "t")`, "[r]: ../notes/y.md"} {
-		if !strings.Contains(copilotContent, want) {
-			t.Errorf("copilot-instructions.md missing %q, got:\n%s", want, copilotContent)
-		}
-	}
-	for _, want := range []string{"[a](docs/x.md)", `![i](img/p.png "t")`, "[r]: notes/y.md"} {
-		if !strings.Contains(claudeContent, want) {
-			t.Errorf("CLAUDE.md missing %q, got:\n%s", want, claudeContent)
+	requireLinkTargets(t, "copilot-instructions.md", copilotContent, []string{"[a](../docs/x.md)", `![i](../img/p.png "t")`, "[r]: ../notes/y.md"})
+	requireLinkTargets(t, "CLAUDE.md", claudeContent, []string{"[a](docs/x.md)", `![i](img/p.png "t")`, "[r]: notes/y.md"})
+}
+
+// requireLinkTargets checks every expected link without changing the source or output.
+func requireLinkTargets(t *testing.T, name, content string, wants []string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(content, want) {
+			t.Errorf("%s missing %q, got:\n%s", name, want, content)
 		}
 	}
 }

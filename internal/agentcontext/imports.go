@@ -57,41 +57,62 @@ func contextImports(text string) ([]string, []contextImport, error) {
 	return lines, imports, nil
 }
 
-// prepareImports validates root-relative imports and their expanded budgets, then emits
-// file-relative paths for import-capable clients or on-demand sentences for other clients.
+// prepareImports validates the complete loaded context before relocating imports or emitting pointers.
 func (t *Transpiler) prepareImports(target vendorTarget, text string) (string, error) {
+	text = strings.TrimRight(text, "\n") + "\n"
 	lines, imports, err := contextImports(text)
 	if err != nil {
 		return "", fmt.Errorf("target file %s: %w", target.path, err)
 	}
-	var size int
 	if target.importDepth == 0 {
 		for _, ref := range imports {
 			lines[ref.line] = "See " + ref.path + " (read on demand)."
 		}
 		text = strings.Join(lines, "\n")
-		size = len(text)
-	} else {
-		var via string
-		size, via, err = t.expandedSize(target, text, imports)
-		if err != nil {
-			return "", fmt.Errorf("target file %s: %w", target.path, err)
-		}
-		if err := checkClientSize(target.path, size); err != nil {
-			if via == "" {
-				return "", err
-			}
-			return "", fmt.Errorf("%w; expanded import %s", err, via)
-		}
+	}
+	size, via, err := t.expandedSize(target, text, imports)
+	if err != nil {
+		return "", fmt.Errorf("target file %s: %w", target.path, err)
+	}
+	if err := t.checkLoadedSize(target, size); err != nil {
+		return "", fmt.Errorf("%w; loaded canonical context via %s", err, via)
+	}
+	if target.importDepth > 0 {
 		for _, ref := range imports {
 			lines[ref.line] = target.importLine(ref.path)
 		}
-		text = strings.Join(lines, "\n")
 	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// checkLoadedSize applies the registry caps and line budget to all text a client loads.
+func (t *Transpiler) checkLoadedSize(target vendorTarget, size contextSize) error {
+	value := size.bytes
 	if clientSizeCaps[target.path].unit == "characters" {
-		size = utf8.RuneCountInString(text)
+		value = size.characters
 	}
-	return text, checkClientSize(target.path, size)
+	if err := checkClientSize(target.path, value); err != nil {
+		return err
+	}
+	if err := t.checkCanonicalSize(target, size.bytes); err != nil {
+		return err
+	}
+	if size.lines > t.MaxLines {
+		return fmt.Errorf("target file %s exceeds max line budget (%d > %d)", target.path, size.lines, t.MaxLines)
+	}
+	return nil
+}
+
+// contextSize records byte, Unicode character and line counts from the same expansion walk.
+type contextSize struct {
+	bytes, characters, lines int
+}
+
+// add counts one loaded document, including its final empty line when present.
+func (size *contextSize) add(text string) {
+	size.bytes += len(text)
+	size.characters += utf8.RuneCountInString(text)
+	size.lines += countLines(text)
 }
 
 // importLine relocates one root-relative import to the directory of its emitted projection.
@@ -106,12 +127,20 @@ type importFrame struct {
 	depth int
 }
 
-// expandedSize counts substitutions without materializing expanded documents.
+// expandedSize counts loaded canonical text and substitutions without materializing documents.
+// Native and sentence readers load both files without expanding canonical imports.
 // The active visited set detects cycles; independent repeated imports still count.
-func (t *Transpiler) expandedSize(target vendorTarget, text string, refs []contextImport) (int, string, error) {
+func (t *Transpiler) expandedSize(target vendorTarget, text string, refs []contextImport) (contextSize, string, error) {
+	var size contextSize
+	size.add(text)
+	if target.importDepth == 0 {
+		data, err := t.loadImport(CanonicalFile)
+		size.add(data)
+		return size, CanonicalFile, err
+	}
 	stack := []importFrame{{path: target.path, refs: refs}}
 	visited := map[string]bool{target.path: true}
-	size, via := len(text), ""
+	via := CanonicalFile
 	visits := 0
 	for step := 0; len(stack) > 0 && step <= 2*maxImportVisits; step++ {
 		frame := &stack[len(stack)-1]
@@ -124,27 +153,30 @@ func (t *Transpiler) expandedSize(target vendorTarget, text string, refs []conte
 		frame.next++
 		name, err := importPath(ref.path, frame.depth, target.importDepth, visited)
 		if err != nil {
-			return 0, "", err
+			return contextSize{}, "", err
 		}
 		if visits == maxImportVisits {
-			return 0, "", fmt.Errorf("import %s exceeds traversal bound (%d imports)", name, maxImportVisits)
+			return contextSize{}, "", fmt.Errorf("import %s exceeds traversal bound (%d imports)", name, maxImportVisits)
 		}
 		visits++
 		data, err := t.loadImport(name)
 		if err != nil {
-			return 0, "", err
+			return contextSize{}, "", err
 		}
 		_, children, err := contextImports(data)
 		if err != nil {
-			return 0, "", fmt.Errorf("import %s: %w", name, err)
+			return contextSize{}, "", fmt.Errorf("import %s: %w", name, err)
 		}
-		size += len(data) - ref.bytes
+		size.add(data)
+		size.bytes -= ref.bytes
+		size.characters -= utf8.RuneCountInString("@" + ref.path)
+		size.lines-- // The import line is replaced, while its newline remains.
 		via = name
 		visited[name] = true
 		stack = append(stack, importFrame{path: name, refs: children, depth: frame.depth + 1})
 	}
 	if len(stack) != 0 {
-		return 0, "", fmt.Errorf("import %s exceeds traversal bound (%d imports)", via, maxImportVisits)
+		return contextSize{}, "", fmt.Errorf("import %s exceeds traversal bound (%d imports)", via, maxImportVisits)
 	}
 	return size, via, nil
 }

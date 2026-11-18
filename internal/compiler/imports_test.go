@@ -60,10 +60,11 @@ func TestCompileAndVerifyRefuseOversizedGeminiProjection(t *testing.T) {
 	assertCompilerImportError(t, err, ".gemini/GEMINI.md", "client size cap")
 }
 
+// TestProjectDocCapIncludesKnownNestedContexts counts canonical and projection bytes with nested documents.
 func TestProjectDocCapIncludesKnownNestedContexts(t *testing.T) {
 	for _, size := range []int{32767, 32768, 32769} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
-			root := nestedRepo(t, map[string]string{"sub/AGENTS.md": strings.Repeat("x", size-len(lintTerseAgents))})
+			root := nestedRepo(t, map[string]string{"sub/AGENTS.md": strings.Repeat("x", size-len(lintTerseAgents)-codexProjectionBytes())})
 			tr := NewTranspiler()
 			tr.Clients = []string{"codex"}
 			_, err := tr.CompileContext(t.Context(), filepath.Join(root, "AGENTS.md"))
@@ -107,10 +108,10 @@ func TestProjectDocCapChain_Negative_DeepChainRefusedAndNamed(t *testing.T) {
 	assertCompilerImportError(t, err, "AGENTS.md", "client size cap", "a/b/c/AGENTS.md")
 }
 
-// Boundary: a chain exactly at the cap passes, one byte more is refused.
+// TestProjectDocCapChain_Boundary_ExactCap includes the projection before judging the exact loaded cap.
 func TestProjectDocCapChain_Boundary_ExactCap(t *testing.T) {
 	part1 := 10000
-	part2 := 32768 - len(lintTerseAgents) - part1
+	part2 := 32768 - len(lintTerseAgents) - codexProjectionBytes() - part1
 	files := func(second int) map[string]string {
 		return map[string]string{"a/AGENTS.md": strings.Repeat("a", part1), "a/b/AGENTS.md": strings.Repeat("b", second)}
 	}
@@ -145,4 +146,9 @@ func TestCompileContextProjectionsRefusesImportBeforeWrites(t *testing.T) {
 	if output.Len() != 0 {
 		t.Fatalf("refused compilation reported writes: %s", &output)
 	}
+}
+
+// codexProjectionBytes returns the emitted native wrapper bytes included in the loaded cap.
+func codexProjectionBytes() int {
+	return len(strings.TrimRight(agentcontext.ProjectionFrame(".codex/rules.md"), "\n") + "\n")
 }

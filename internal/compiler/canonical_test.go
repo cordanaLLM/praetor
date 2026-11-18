@@ -64,7 +64,7 @@ func TestCompileRejectsEmptyCanonicalSource(t *testing.T) {
 	}
 }
 
-// TestCompileVendorLineBudget refuses client-only text above the projection line cap.
+// TestCompileVendorLineBudget counts owned lines in both canonical and projection text.
 func TestCompileVendorLineBudget(t *testing.T) {
 	compiler := NewTranspiler()
 	compiler.Clients = []string{"cursor"}
@@ -72,13 +72,9 @@ func TestCompileVendorLineBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	maxLines := 0
-	for _, file := range minimal.Files {
-		if file.LineCount > maxLines {
-			maxLines = file.LineCount
-		}
-	}
-	source := "## Cursor\npolicy" + strings.Repeat("\npolicy", MaxLineBudget-maxLines)
+	// Each added owned line is loaded twice: natively and in the projection.
+	loadedLines := minimal.Files[0].LineCount + strings.Count("## Cursor\npolicy", "\n") + 1
+	source := "## Cursor\npolicy" + strings.Repeat("\npolicy", (MaxLineBudget-loadedLines)/2)
 	result, err := compiler.CompileContent(source)
 	if err != nil {
 		t.Fatalf("exact maximum budget rejected: %v", err)

@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 )
 
-// TestProjectionClientSizeCaps bounds expanded imports and native client-only text.
+// TestProjectionClientSizeCaps bounds the projection together with the canonical text it loads.
 func TestProjectionClientSizeCaps(t *testing.T) {
 	cases := []struct {
 		client, file, unit string
@@ -25,11 +25,11 @@ func TestProjectionClientSizeCaps(t *testing.T) {
 		t.Run(fmt.Sprintf("%s-%d", tc.client, tc.size), func(t *testing.T) {
 			tr := NewTranspiler()
 			tr.Clients = []string{tc.client}
-			source := strings.Repeat("x", tc.size-len(generatedHeader)-1)
+			overhead := len(generatedHeader) + 1 // Import line replaced; its newline remains.
 			if tc.client == "windsurf" {
-				section := "## Windsurf\n"
-				source = section + strings.Repeat("x", tc.size-len(generatedHeader)-len(section)-1)
+				overhead = len(strings.TrimRight(generatedHeader, "\n") + "\n")
 			}
+			source := strings.Repeat("x", tc.size-overhead)
 			res, err := tr.CompileContent(source)
 			if tc.size > tc.cap {
 				want := fmt.Sprintf("target file %s exceeds client size cap (%d %s > %d)", tc.file, tc.size, tc.unit, tc.cap)
@@ -43,11 +43,12 @@ func TestProjectionClientSizeCaps(t *testing.T) {
 	}
 }
 
+// TestCanonicalClientSizeCap includes the Codex projection in the loaded document cap.
 func TestCanonicalClientSizeCap(t *testing.T) {
 	for _, size := range []int{32767, 32768, 32769} {
 		tr := NewTranspiler()
 		tr.Clients = []string{"codex"}
-		_, err := tr.CompileContent(strings.Repeat("x", size))
+		_, err := tr.CompileContent(strings.Repeat("x", size-len(strings.TrimRight(generatedHeader, "\n")+"\n")))
 		if size > 32768 {
 			assertImportError(t, err, "AGENTS.md", "32769 bytes > 32768")
 		} else if err != nil {
@@ -56,15 +57,16 @@ func TestCanonicalClientSizeCap(t *testing.T) {
 	}
 }
 
-// TestWindsurfCapCountsUnicodeCharacters counts retained Unicode text as characters.
+// TestWindsurfCapCountsUnicodeCharacters counts loaded canonical Unicode as characters.
 func TestWindsurfCapCountsUnicodeCharacters(t *testing.T) {
 	for _, size := range []int{11999, 12000, 12001} {
 		tr := NewTranspiler()
 		tr.Clients = []string{"windsurf"}
-		res, err := tr.CompileContent("## Windsurf\n" + strings.Repeat("é", size-utf8.RuneCountInString(generatedHeader)-len("## Windsurf\n")-1))
+		source := strings.Repeat("é", size-utf8.RuneCountInString(strings.TrimRight(generatedHeader, "\n")+"\n"))
+		res, err := tr.CompileContent(source)
 		if size > 12000 {
 			assertImportError(t, err, "12001 characters > 12000")
-		} else if err != nil || utf8.RuneCountInString(res.Files[0].Content) != size {
+		} else if err != nil || utf8.RuneCountInString(res.Files[0].Content+source) != size {
 			t.Fatalf("size %d: result=%v error=%v", size, res, err)
 		}
 	}
@@ -210,4 +212,66 @@ func TestNonExpandingClientsNeedNoImportReader(t *testing.T) {
 	tr.Clients = []string{"gemini"}
 	_, err := tr.CompileContent("@missing.md")
 	assertImportError(t, err, "missing.md", "no repository reader")
+}
+
+// TestProjectionLoadedLineBudget applies the budget to every client's complete loaded context.
+func TestProjectionLoadedLineBudget(t *testing.T) {
+	for _, target := range vendorTargets {
+		t.Run(target.client, func(t *testing.T) {
+			frame := strings.TrimRight(target.prefix+testHeader+testReferenceFor(target.path), "\n") + "\n"
+			overhead := countLines(frame) + 1
+			if target.importDepth > 0 {
+				overhead = countLines(frame)
+			}
+			for _, extra := range []int{-1, 0, 1} {
+				source := strings.Repeat("rule\n", MaxLineBudget-overhead+extra)
+				tr := NewTranspiler()
+				tr.Clients = []string{target.client}
+				_, err := tr.CompileContent(source)
+				if extra > 0 {
+					assertImportError(t, err, target.path, "max line budget (301 > 300)")
+				} else if err != nil {
+					t.Fatalf("loaded lines %d: %v", MaxLineBudget+extra, err)
+				}
+			}
+		})
+	}
+}
+
+// TestImportExpansionLineBudget counts nested and repeated imports against the loaded line budget.
+func TestImportExpansionLineBudget(t *testing.T) {
+	for _, client := range []string{"claude", "gemini"} {
+		t.Run(client, func(t *testing.T) {
+			tr := importTranspiler(map[string]string{"bulk": strings.Repeat("rule\n", 150), "nested": "@bulk"})
+			tr.Clients = []string{client}
+			_, err := tr.CompileContent("@nested\n@bulk")
+			assertImportError(t, err, "max line budget", "> 300")
+		})
+	}
+}
+
+// TestCanonicalSnapshotCapsCountCRLF preserves the original canonical snapshot for size caps.
+func TestCanonicalSnapshotCapsCountCRLF(t *testing.T) {
+	for _, tc := range []struct {
+		client, file  string
+		cap, overhead int
+	}{
+		{"codex", "AGENTS.md", 32768, len(strings.TrimRight(testHeader, "\n") + "\n")},
+		{"windsurf", ".windsurfrules", 12000, len(strings.TrimRight(testHeader, "\n") + "\n")},
+		{"gemini", ".gemini/GEMINI.md", 24000, len(testHeader) + 1},
+	} {
+		t.Run(tc.client, func(t *testing.T) {
+			for _, extra := range []int{0, 1} {
+				tr := NewTranspiler()
+				tr.Clients = []string{tc.client}
+				source := strings.Repeat("x", tc.cap-tc.overhead-2+extra) + "\r\n"
+				_, err := tr.CompileContent(source)
+				if extra > 0 {
+					assertImportError(t, err, tc.file, "client size cap", fmt.Sprintf("%d", tc.cap+1))
+				} else if err != nil {
+					t.Fatalf("exact snapshot cap rejected: %v", err)
+				}
+			}
+		})
+	}
 }

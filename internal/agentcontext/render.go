@@ -24,7 +24,7 @@ const maxCanonicalLines = MaxLineBudget * (len(vendorTargets) + 1)
 type TargetFile struct {
 	RelativePath string
 	Content      string
-	LineCount    int
+	LineCount    int // Physical projection lines; loaded context budgets also include canonical text.
 	// Remove marks a file the write deletes instead of writing: Content is empty.
 	Remove bool
 }
@@ -44,6 +44,7 @@ type CompileResult struct {
 
 // Transpiler compiles canonical AGENTS.md into vendor-native agent configurations.
 type Transpiler struct {
+	// MaxLines bounds the complete context each selected client loads.
 	MaxLines int
 	// ReadImport resolves a repository-root-relative import through a bounded reader.
 	ReadImport func(string) (string, error)
@@ -329,16 +330,13 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := t.checkCanonicalSize(targets, len(content)); err != nil {
-		return nil, err
-	}
 	if strings.TrimSpace(content) == "" {
 		return nil, fmt.Errorf("canonical AGENTS.md content is empty")
 	}
+	selected := t.withCanonical(content)
 	if lf, _, err := util.NormalizeLineEndingsStrict(content); err == nil {
 		content = lf
 	}
-	selected := t.withCanonical(content)
 	lines, owners, err := ownVendorLines(content)
 	if err != nil {
 		return nil, err
@@ -363,6 +361,7 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 
 // withCanonical binds imports of AGENTS.md to the source snapshot being compiled.
 // Pure callers need no filesystem reader for this first hop; nested imports still do.
+// Bind before projection normalization so caps count the canonical bytes clients actually read.
 func (t *Transpiler) withCanonical(content string) *Transpiler {
 	selected := *t
 	selected.ReadImport = func(name string) (string, error) {
@@ -377,8 +376,9 @@ func (t *Transpiler) withCanonical(content string) *Transpiler {
 	return &selected
 }
 
-func (t *Transpiler) checkCanonicalSize(targets []vendorTarget, contentBytes int) error {
-	if !slices.ContainsFunc(targets, func(target vendorTarget) bool { return target.client == string(clientid.Codex) }) {
+// checkCanonicalSize applies Codex's cap to its projection, canonical source and largest nested chain.
+func (t *Transpiler) checkCanonicalSize(target vendorTarget, contentBytes int) error {
+	if target.client != string(clientid.Codex) {
 		return nil
 	}
 	err := checkClientSize(CanonicalFile, contentBytes+t.ProjectDocBytes)
@@ -409,12 +409,7 @@ func (t *Transpiler) renderTargets(targets []vendorTarget, body func(section str
 		if err != nil {
 			return nil, err
 		}
-		text = strings.TrimRight(text, "\n") + "\n"
-		count := countLines(text)
-		if count > t.MaxLines {
-			return nil, fmt.Errorf("target file %s exceeds max line budget (%d > %d)", target.path, count, t.MaxLines)
-		}
-		files[i] = TargetFile{RelativePath: target.path, Content: text, LineCount: count}
+		files[i] = TargetFile{RelativePath: target.path, Content: text, LineCount: countLines(text)}
 	}
 	return files, nil
 }

@@ -88,9 +88,8 @@ func TestServer_CompileContextRegisterBlock(t *testing.T) {
 	expectText(t, "re-verify", reverify, "100% in sync")
 }
 
-// The MCP verify and audit mirror the CLI caveman gate: a terse AGENTS.md passes with its
-// counts, and prose written below the harness fails both. A writing compile still writes the
-// targets, then fails on the same lint instead of reporting success.
+// TestServer_CompileContextCavemanLint requires MCP to write current pointer targets for
+// prose input before reporting the lint failure; verify and audit must still refuse prose.
 func TestServer_CompileContextCavemanLint(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	verify := callTool(t, srv, "standards_compile_context", map[string]any{"verify_only": true})
@@ -105,43 +104,52 @@ func TestServer_CompileContextCavemanLint(t *testing.T) {
 		"and extend the code that is already there. Two implementations of one behavior are a defect: they " +
 		"drift, and the second one stops matching the first.\n"
 	writeFixtureFile(t, root, "AGENTS.md", string(agents)+prose)
+	writeFixtureFile(t, root, "CLAUDE.md", "stale projection\n")
 	expectError(t, "prose compile", callTool(t, srv, "standards_compile_context", nil), "context written, but compile-context --verify will fail")
-	if claude, err := os.ReadFile(filepath.Join(root, "CLAUDE.md")); err != nil || !strings.Contains(string(claude), "Two implementations") {
+	if claude, err := os.ReadFile(filepath.Join(root, "CLAUDE.md")); err != nil || !strings.Contains(string(claude), "@AGENTS.md") || strings.Contains(string(claude), "Two implementations") {
 		t.Fatalf("a prose compile must still write the targets: %v", err)
 	}
 	expectError(t, "prose verify", callTool(t, srv, "standards_compile_context", map[string]any{"verify_only": true}), "fails the caveman lint")
 	expectError(t, "prose audit", callTool(t, srv, "standards_audit", nil), "fails the caveman lint")
 }
 
+// TestServer_HindsightRejectsEscapingCacheSymlinks refuses file and directory escapes.
 func TestServer_HindsightRejectsEscapingCacheSymlinks(t *testing.T) {
 	for _, directory := range []bool{false, true} {
 		t.Run(fmt.Sprintf("directory=%t", directory), func(t *testing.T) {
-			srv, root := newFixtureServer(t)
-			outside := t.TempDir()
-			marker := filepath.Join(outside, "distilled.json")
-			if err := os.WriteFile(marker, []byte("protected\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			link, target := filepath.Join(root, hindsight.MemoryFileRel), marker
-			if directory {
-				link, target = filepath.Join(root, hindsight.MemoryDirRel), outside
-			}
-			if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(target, link); err != nil {
-				t.Fatal(err)
-			}
-			res := callTool(t, srv, "standards_hindsight_optimize", nil)
-			expectError(t, "escaping cache", res, "outside the server root")
-			got, err := os.ReadFile(marker)
-			if err != nil || string(got) != "protected\n" {
-				t.Fatalf("outside cache changed: %q %v", got, err)
-			}
-			recall := callTool(t, srv, "standards_memory_recall", map[string]any{"query": "protected"})
-			expectError(t, "escaping recall", recall, "outside the server root")
+			checkEscapingCacheSymlink(t, directory)
 		})
 	}
+}
+
+// checkEscapingCacheSymlink preserves the outside marker when either cache path escapes.
+func checkEscapingCacheSymlink(t *testing.T, directory bool) {
+	t.Helper()
+	srv, root := newFixtureServer(t)
+	outside := t.TempDir()
+	marker := filepath.Join(outside, "distilled.json")
+	if err := os.WriteFile(marker, []byte("protected\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link, target := filepath.Join(root, hindsight.MemoryFileRel), marker
+	if directory {
+		link, target = filepath.Join(root, hindsight.MemoryDirRel), outside
+	}
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal.
+	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	res := callTool(t, srv, "standards_hindsight_optimize", nil)
+	expectError(t, "escaping cache", res, "outside the server root")
+	got, err := os.ReadFile(marker)
+	if err != nil || string(got) != "protected\n" {
+		t.Fatalf("outside cache changed: %q %v", got, err)
+	}
+	recall := callTool(t, srv, "standards_memory_recall", map[string]any{"query": "protected"})
+	expectError(t, "escaping recall", recall, "outside the server root")
 }
 
 func TestServer_InspectionRejectsEscapingChildrenAndOverflow(t *testing.T) {
@@ -227,6 +235,7 @@ func TestServer_MemoryRecallRejectsCorruptCache(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, hindsight.MemoryFileRel)); err != nil {
 		t.Fatal(err)
 	}
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal.
 	if err := os.Mkdir(filepath.Join(root, hindsight.MemoryFileRel), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -264,6 +273,7 @@ func TestServer_Positive_NeedsReport(t *testing.T) {
 	expectText(t, "needs default", res, "Mapping availability")
 
 	// A framework checkout inside the root is inspected domain by domain.
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need traversal for inspection.
 	if err := os.MkdirAll(filepath.Join(root, "fw", "http"), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -340,6 +350,7 @@ func TestServer_Positive_DogfoodOnFixture(t *testing.T) {
 
 	targets := filepath.Join(root, "targets")
 	repo := filepath.Join(targets, "leaf")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture repository directories need traversal.
 	if err := os.MkdirAll(repo, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -385,6 +396,7 @@ func TestServer_Positive_HarvestWorkstation(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	dev := filepath.Join(root, "devroot")
 	repo := filepath.Join(dev, "org", "leaf")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture repository directories need traversal.
 	if err := os.MkdirAll(repo, 0o750); err != nil {
 		t.Fatal(err)
 	}

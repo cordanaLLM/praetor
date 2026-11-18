@@ -76,7 +76,7 @@ func vendorSections(body string) string {
 
 // TestUnknownClientPointer uses the sentence fallback when no loading mechanism is documented.
 func TestUnknownClientPointer(t *testing.T) {
-	tr := NewTranspiler()
+	tr := NewTranspiler().withCanonical("policy\n")
 	target := vendorTarget{path: "UNKNOWN.md", section: "Unknown"}
 	files, err := tr.renderTargets([]vendorTarget{target}, func(string) string { return "" })
 	want := generatedHeader + "Read AGENTS.md for canonical agent instructions.\n"
