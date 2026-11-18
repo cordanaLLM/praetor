@@ -36,16 +36,11 @@ const (
 )
 
 type nodeAuditSettings struct {
-	Include      yaml.Node              `json:"-" yaml:"include"`
-	Audit        *nodeAuditPolicy       `json:"audit" yaml:"audit"`
-	AuditConfig  *nodeAuditLegacyConfig `json:"auditConfig" yaml:"auditConfig"`
-	auditDefined bool
-}
-
-type nodeAuditYAMLDocument struct {
-	Include     yaml.Node `yaml:"include"`
-	Audit       yaml.Node `yaml:"audit"`
-	AuditConfig yaml.Node `yaml:"auditConfig"`
+	Include        any                    `json:"-" yaml:"include"`
+	Audit          *nodeAuditPolicy       `json:"audit" yaml:"audit"`
+	AuditConfig    *nodeAuditLegacyConfig `json:"auditConfig" yaml:"auditConfig"`
+	auditDefined   bool
+	includeDefined bool
 }
 
 type nodeAuditInclude struct {
@@ -56,22 +51,24 @@ type nodeAuditInclude struct {
 
 // decodeNodeAuditSettings preserves defined null settings and include presence while decoding one document.
 func decodeNodeAuditSettings(data []byte) (nodeAuditSettings, error) {
-	var document nodeAuditYAMLDocument
+	var document map[string]yaml.Node
 	var settings nodeAuditSettings
 	if err := util.DecodeYAMLDocument(data, &document, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
 		return settings, err
 	}
-	settings.Include = document.Include
-	settings.auditDefined = document.Audit.Kind != 0 || document.AuditConfig.Kind != 0
-	if document.Audit.Kind != 0 {
-		if err := document.Audit.Decode(&settings.Audit); err != nil {
-			return settings, fmt.Errorf("decode audit: %w", err)
-		}
+	include, includeDefined := document["include"]
+	settings.includeDefined = includeDefined
+	if err := include.Decode(&settings.Include); err != nil {
+		return settings, fmt.Errorf("decode pnpm-workspace.yaml include: %w", err)
 	}
-	if document.AuditConfig.Kind != 0 {
-		if err := document.AuditConfig.Decode(&settings.AuditConfig); err != nil {
-			return settings, fmt.Errorf("decode auditConfig: %w", err)
-		}
+	audit, auditDefined := document["audit"]
+	auditConfig, auditConfigDefined := document["auditConfig"]
+	settings.auditDefined = auditDefined || auditConfigDefined
+	if err := audit.Decode(&settings.Audit); err != nil {
+		return settings, fmt.Errorf("decode audit: %w", err)
+	}
+	if err := auditConfig.Decode(&settings.AuditConfig); err != nil {
+		return settings, fmt.Errorf("decode auditConfig: %w", err)
 	}
 	return settings, nil
 }
@@ -142,6 +139,9 @@ func readNodeAuditSettingsIn(dir *os.Root) (nodeAuditSettings, error) {
 
 // resolveNodeAuditIncludes reserves list owners before reading audit owners and bounded wildcard files.
 func resolveNodeAuditIncludes(dir *os.Root, settings *nodeAuditSettings) error {
+	if !settings.includeDefined {
+		return nil
+	}
 	includes, err := decodeNodeAuditIncludes(settings.Include)
 	if err != nil {
 		return err
@@ -179,16 +179,10 @@ func applyNodeAuditInclude(dir *os.Root, entry nodeAuditInclude, settings *nodeA
 }
 
 // decodeNodeAuditIncludes bounds the decoded source mapping before examining any delegation.
-func decodeNodeAuditIncludes(node yaml.Node) ([]nodeAuditInclude, error) {
-	if node.Kind == 0 {
-		return nil, nil
-	}
-	if node.Kind != yaml.MappingNode {
+func decodeNodeAuditIncludes(value any) ([]nodeAuditInclude, error) {
+	sources, ok := value.(map[string]any)
+	if !ok {
 		return nil, fmt.Errorf("pnpm-workspace.yaml include must be a source mapping")
-	}
-	var sources map[string]yaml.Node
-	if err := node.Decode(&sources); err != nil {
-		return nil, fmt.Errorf("decode pnpm-workspace.yaml include: %w", err)
 	}
 	if len(sources) > maxNodeAuditIncludes {
 		return nil, fmt.Errorf("pnpm-workspace.yaml include exceeds %d entries", maxNodeAuditIncludes)
@@ -213,12 +207,12 @@ func decodeNodeAuditIncludes(node yaml.Node) ([]nodeAuditInclude, error) {
 }
 
 // parseNodeAuditInclude accepts only a string wildcard or a list of string setting names.
-func parseNodeAuditInclude(path string, node yaml.Node) (nodeAuditInclude, error) {
+func parseNodeAuditInclude(path string, value any) (nodeAuditInclude, error) {
 	entry := nodeAuditInclude{path: path}
-	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" && node.Value == "*" {
+	if text, ok := value.(string); ok && text == "*" {
 		entry.wildcard = true
 	} else {
-		audit, err := nodeAuditIncludeList(path, node)
+		audit, err := nodeAuditIncludeList(path, value)
 		if err != nil {
 			return entry, err
 		}
@@ -230,19 +224,20 @@ func parseNodeAuditInclude(path string, node yaml.Node) (nodeAuditInclude, error
 	return entry, nil
 }
 
-// nodeAuditIncludeList validates every delegated name without YAML scalar-to-string coercion.
-// The workspace byte limit also bounds the number of list items in its YAML nodes.
-func nodeAuditIncludeList(path string, node yaml.Node) (bool, error) {
-	if node.Kind != yaml.SequenceNode {
+// nodeAuditIncludeList validates decoded names without scalar-to-string coercion.
+// The workspace byte limit bounds each flat list; aliases substitute items, never splice lists.
+func nodeAuditIncludeList(path string, value any) (bool, error) {
+	fields, ok := value.([]any)
+	if !ok {
 		return false, fmt.Errorf("pnpm-workspace.yaml include %q: expected a list of setting names or '*'", path)
 	}
 	audit := false
-	for i := 0; i < len(node.Content) && i < nodemanifest.MaxManifestBytes; i++ {
-		field := node.Content[i]
-		if field.Kind != yaml.ScalarNode || field.Tag != "!!str" {
+	for i := 0; i < len(fields) && i < nodemanifest.MaxManifestBytes; i++ {
+		field, ok := fields[i].(string)
+		if !ok {
 			return false, fmt.Errorf("pnpm-workspace.yaml include %q: setting names must be strings", path)
 		}
-		if field.Value == "audit" || field.Value == "auditConfig" {
+		if field == "audit" || field == "auditConfig" {
 			audit = true
 		}
 	}
@@ -310,7 +305,7 @@ func readIncludedNodeAuditFile(dir *os.Root, path string) (nodeAuditSettings, er
 	if err != nil {
 		return included, fmt.Errorf("parse included pnpm audit policy %s: %w", path, err)
 	}
-	if included.Include.Kind != 0 {
+	if included.includeDefined {
 		return included, fmt.Errorf("included pnpm audit policy %s must not define include", path)
 	}
 	return included, nil

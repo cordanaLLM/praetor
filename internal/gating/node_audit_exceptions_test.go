@@ -302,6 +302,23 @@ func TestNodeAuditIncludeConfiguration(t *testing.T) {
 		{"f local glob unrelated", "legacy-clean.json", "include:\n  ./*.yaml: [catalog]\n", "include \"./*.yaml\" must name one local file, not a glob"},
 		{"h null nested include", "legacy-clean.json", "FILE:include:\n  ./audit.yaml: '*'\n|audit.yaml|include: null\n", "included pnpm audit policy ./audit.yaml must not define include"},
 		{"i same file aliases", "pnpm-ignored.json", "FILE:include:\n  ./audit.yml: [audit, auditConfig]\n|audit.yml|audit: {}\nauditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", ""},
+		{"j alias wildcard live ignores", "pnpm-ignored.json", "FILES:include:\n  ./empty.yaml: &all '*'\n  ./audit.yaml: *all\n|empty.yaml||audit.yaml|" + ignored, ""},
+		{"j alias list live ignores", "pnpm-ignored.json", "FILE:names: &names [audit]\ninclude:\n  ./audit.yaml: *names\n|audit.yaml|" + ignored, ""},
+		{"j alias item live ignores", "pnpm-ignored.json", "FILE:name: &name audit\ninclude:\n  ./audit.yaml:\n    - *name\n|audit.yaml|" + ignored, ""},
+		{"j alias mapping live ignores", "pnpm-ignored.json", "FILE:policies: &policies\n  ./audit.yaml: [audit]\ninclude: *policies\n|audit.yaml|" + ignored, ""},
+		{"j alias number", "legacy-clean.json", "number: &number 42\ninclude:\n  ./bad.yaml: *number\n", "include \"./bad.yaml\": expected a list of setting names or '*'"},
+		{"j alias wrong mapping", "legacy-clean.json", "policy: &policy {audit: true}\ninclude:\n  ./bad.yaml: *policy\n", "include \"./bad.yaml\": expected a list of setting names or '*'"},
+		{"j explicit string item", "pnpm-ignored.json", "FILE:include:\n  ./audit.yaml: [!!str audit]\n|audit.yaml|" + ignored, ""},
+		{"j explicit string wildcard", "pnpm-ignored.json", "FILE:include:\n  ./audit.yaml: !!str '*'\n|audit.yaml|" + ignored, ""},
+		{"j number item", "legacy-clean.json", "include:\n  ./bad.yaml: [1]\n", "include \"./bad.yaml\": setting names must be strings"},
+		{"j boolean item", "legacy-clean.json", "include:\n  ./bad.yaml: [true]\n", "include \"./bad.yaml\": setting names must be strings"},
+		{"j quoted number item", "legacy-clean.json", "include:\n  ./unread.yaml: ['1']\n", ""},
+		{"j self referencing alias", "legacy-clean.json", "include:\n  ./bad.yaml: &loop [*loop]\n", "decode pnpm-workspace.yaml include: yaml: anchor 'loop' value contains itself"},
+		{"j null value", "legacy-clean.json", "include:\n  ./bad.yaml: null\n", "include \"./bad.yaml\": expected a list of setting names or '*'"},
+		{"j boolean value", "legacy-clean.json", "include:\n  ./bad.yaml: true\n", "include \"./bad.yaml\": expected a list of setting names or '*'"},
+		{"j nested list item", "legacy-clean.json", "include:\n  ./bad.yaml: [[audit]]\n", "include \"./bad.yaml\": setting names must be strings"},
+		{"j null item", "legacy-clean.json", "include:\n  ./bad.yaml: [null]\n", "include \"./bad.yaml\": setting names must be strings"},
+		{"j null include mapping", "legacy-clean.json", "include: null\n", "include must be a source mapping"},
 	}
 	for i := 0; i < len(cases) && i < 64; i++ {
 		tc := cases[i]
