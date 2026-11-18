@@ -913,17 +913,34 @@ receive independent scans (`TestPolicyEvasionHeredocFeed`, `TestParityEvasionHer
 `HeredocConsumerMutants` tests pin both classifications and the unknown-reader default.
 
 A data here-document ends only at the line the shell itself ends it on. The
-delimiter word is read as the shell reads it (`util.ShellHereDocDelimiter`): quote removal
-keeps literal quotes inside the quoted word, so `cat <<'"EOF"'` ends at a line `"EOF"`, and
-in an unquoted here-document backslash-newline lines are joined before the comparison, so
-`E\` followed by `OF` ends it. A command after that line is judged as a command. A delimiter
-word that is partly quoted, holds an expansion or is missing is refused, because the guard
-cannot tell where the body ends. An unquoted brace word up to and including the git
-subcommand, as in `git {commit,-n} -m x` or `{git,commit,-n,-m,x}`, can expand to a skip
-flag, so it is refused; quoted braces and braces in data operands pass
+delimiter word is read by `util.ShellHereDocDelimiter` (`internal/util/shell_heredoc.go`,
+mirrored by `shell_here_doc_delimiter` in `.config/agent/hooks/block_evasion.py` and
+`internal/adopt/hooks.go`): a plain (`<<EOF`), whole single- or double-quoted (`<<'EOF'`,
+`<<"EOF"`) or leading-backslash (`<<\EOF`) word without inner quotes, escapes or expansions
+is accepted (`TestShellHereDocDelimiter_Positive` in `internal/util/shell_heredoc_test.go`,
+`TestPolicyDelimiterBraceRegression` in `internal/agenthook/policy_test.go`). Because the
+shell keeps inner quotes during quote removal (`cat <<'"EOF"'` or `cat <<"'true'"` ends at a
+line `"EOF"` or `'true'`, not `EOF` or `true`), a delimiter word with inner quotes, partial
+quoting (`cat <<'true'X`), an inner escape (`<<EO\F`), an expansion (`cat <<$end`), an
+unterminated quote (`cat <<'EOF`) or a missing word is refused rather than guessed
+(`TestShellHereDocDelimiter_Negative` in `internal/util/shell_heredoc_test.go`,
+`TestPolicyDelimiterBraceRegression`, `TestParityDelimiterBraceRegression` in
+`internal/agenthook/parity_test.go`, `TestEmittedDelimiterBraceRegression` in
+`internal/adopt/evasion_hook_test.go`). In an unquoted here-document, backslash-newline
+continuations in the body are joined before comparing with the delimiter, so `E\` followed by
+`OF` ends `<<EOF` and a command after that line is judged as a command, while in a quoted
+here-document (`<<'true'`) the backslash stays literal (`TestPolicyDelimiterBraceRegression`,
+`TestParityDelimiterBraceRegression`, `TestEmittedDelimiterBraceRegression`). An unquoted
+brace word up to and including the git subcommand, as in `git {commit,-n} -m x` or
+`{git,commit,-n,-m,x}`, or an expanding or unclosed brace word in a commit message
+(`git commit -m {msg,other}`, `git commit -m fix{1..3}`, `git commit -m fix{a..c}`,
+`git commit -m {msg,-n`), can split into a skip flag and is refused; quoted braces
+(`git commit -m '{a,b}'`), literal brace pairs without a depth-one comma or sequence
+(`git commit -m fix{docs}`), and braces in non-commit operands (`echo {a,b}`) pass
 (`TestPolicyDelimiterBraceRegression`, `TestParityDelimiterBraceRegression`,
 `TestEmittedDelimiterBraceRegression`; the earlier renderings replay in
-`TestEmittedDelimiterBracePriorReplay` and `TestEmittedBraceCommandPriorReplay`).
+`TestEmittedDelimiterBracePriorReplay` and `TestEmittedBraceCommandPriorReplay` in
+`internal/adopt/evasion_hook_test.go`).
 
 When an expansion can supply an option or pathspec in the commit or `am` command itself,
 the short-flag scan conservatively retains the whole command. This includes quoted or

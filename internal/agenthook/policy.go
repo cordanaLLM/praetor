@@ -319,6 +319,7 @@ var (
 	shellBoundaryVetoPattern   = regexp.MustCompile(`--%|%[;&|]`)
 	shellRedirectPattern       = regexp.MustCompile(`^&?[<>](?:[<>|]|&[0-9-]*)?`)
 	shellUnsupportedPattern    = regexp.MustCompile(`[^\t\x20-\x7e]|[{}^!]`)
+	shellBraceSequencePattern  = regexp.MustCompile(`^(?:[+-]?[0-9]+\.\.[+-]?[0-9]+|[A-Za-z]\.\.[A-Za-z])(?:\.\.[+-]?[0-9]+)?$`)
 	shellDataOptionPattern     = regexp.MustCompile(`^(--(?:message|file|reuse-message|reedit-message|author|date)(=|$)|-[mFCc])`)
 	shellArrayExpansionPattern = regexp.MustCompile(`^\$(?:@|\{(?:@|!?[A-Za-z_][A-Za-z0-9_]*\[@\]|![A-Za-z_][A-Za-z0-9_]*@\}))`)
 	// Reuse the short-flag rule's Git option prefilter without requiring its flag tail.
@@ -338,14 +339,26 @@ var heredocConsumers = map[string]string{
 func HeredocConsumers() map[string]string { return maps.Clone(heredocConsumers) }
 
 // shellConsumerToken admits literal words only; expansion leaves the consumer unknown.
-var shellConsumerToken = regexp.MustCompile(`^(?:[^ \t\n'"\\$\x60;&|<>()]+|'[^']*'|"[^"\\$\x60]*"|\\[^\n])+`)
+var shellConsumerToken = regexp.MustCompile(`^(?:[^ \t\n'"\\$\x60;&|<>()]+|'[^']*'|"(?:[^"\\$\x60]|\\[\s\S])*"|\\[\s\S])+`)
+
+// shellLiteralWord returns the leading literal shell word when it ends at a word boundary.
+func shellLiteralWord(text string) string {
+	word := shellConsumerToken.FindString(text)
+	if word == "" {
+		return ""
+	}
+	if len(word) < len(text) && !strings.ContainsRune(" \t\n;&|<>()", rune(text[len(word)])) {
+		return ""
+	}
+	return word
+}
 
 // shellConsumer reads the first executable basename, skipping literal assignments and env.
 func shellConsumer(text string) string {
 	environment, value := false, false
 	for remaining := len(text); remaining > 0; remaining-- {
 		text = strings.TrimLeft(text, " \t")
-		word := shellConsumerToken.FindString(text)
+		word := shellLiteralWord(text)
 		if word == "" {
 			return ""
 		}
@@ -399,8 +412,12 @@ func shellConsumerMode(text string) string {
 	return heredocConsumers["*"]
 }
 
-// shellConsumerStage retains mutable pipeline offsets until every reader is known.
-type shellConsumerStage struct{ start, end int }
+// shellConsumerStage retains mutable pipeline offsets, redirection spans and plain-file stdout state.
+type shellConsumerStage struct {
+	start, end int
+	redirects  [][2]int
+	stdoutFile bool
+}
 
 // shellConsumerFrame retains pipeline stages and whether their output remains data.
 type shellConsumerFrame struct {
@@ -413,6 +430,7 @@ type shellFeed struct {
 	document   shellDocument
 	body       string
 	expandable bool
+	unresolved bool
 }
 
 // shellDocument records a pending delimiter without interpreting its body as shell syntax.
@@ -449,7 +467,8 @@ type shellSpans struct {
 	uncertain                      bool
 	err                            error
 	judged                         []byte
-	wordStart                      int
+	wordStart, redirectStart       int
+	braceDepth                     int
 	nextData, redirectData         bool
 	wordExpansion, wordSplitting   bool
 	argumentsUncertain             bool
@@ -461,7 +480,6 @@ type shellSpans struct {
 	nested                         []shellInput
 	consumerFrames                 []*shellConsumerFrame
 	feeds                          []shellFeed
-	hereString                     *shellDocument
 	documentEnd                    int
 }
 
@@ -491,7 +509,7 @@ func scanShellInput(input shellInput) ([]shellSpan, []shellInput, error) {
 	if !input.document {
 		return scanCommandSpans(input.text)
 	}
-	s := shellSpans{command: input.text, judged: []byte(input.text), wordStart: -1, executionStart: -1}
+	s := shellSpans{command: input.text, judged: []byte(input.text), wordStart: -1, redirectStart: -1, executionStart: -1}
 	for s.position < len(s.command) {
 		if !s.documentStep() {
 			return nil, nil, s.err
@@ -506,7 +524,9 @@ func scanShellInput(input shellInput) ([]shellSpan, []shellInput, error) {
 	for _, execution := range s.wordExecutions {
 		s.nested = append(s.nested, shellInput{text: execution})
 	}
-	s.feedInputs()
+	if !s.feedInputs() {
+		return nil, nil, s.err
+	}
 	return nil, s.nested, nil
 }
 
@@ -533,14 +553,19 @@ func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 	if !strings.ContainsAny(command, "{}<") && !shellCommitPattern.MatchString(joinLineContinuations(command)) {
 		return []shellSpan{{text: command, veto: readOnlyVetoPattern.MatchString(command)}}, nil, nil
 	}
-	s := shellSpans{command: command, judged: []byte(command), wordStart: -1, executionStart: -1,
+	s := shellSpans{command: command, judged: []byte(command), wordStart: -1, redirectStart: -1, executionStart: -1,
 		whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command)}
 	for s.position < len(command) {
 		if !s.step() || s.err != nil {
 			return nil, nil, s.err
 		}
 	}
-	s.split(len(command), len(command))
+	return s.finishCommandSpans(len(command))
+}
+
+// finishCommandSpans seals outer command state and resolves deferred stdin feeds.
+func (s *shellSpans) finishCommandSpans(end int) ([]shellSpan, []shellInput, error) {
+	s.split(end, end)
 	if s.err != nil {
 		return nil, nil, s.err
 	}
@@ -550,8 +575,10 @@ func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 	if len(s.documents) > 0 {
 		return nil, nil, fmt.Errorf("invalid shell command: unterminated here-document")
 	}
-	s.consumerBoundary(len(command), len(command), false)
-	s.feedInputs()
+	s.consumerBoundary(end, end, false)
+	if !s.feedInputs() {
+		return nil, nil, s.err
+	}
 	if s.whole {
 		return []shellSpan{{text: string(s.judged), veto: true}}, s.nested, nil
 	}
@@ -575,7 +602,7 @@ func (s *shellSpans) push(closer byte) bool {
 	frame := s.consumerFrame()
 	if closer != '"' {
 		stage := frame.stages[len(frame.stages)-1]
-		data := frame.data && heredocConsumers[shellConsumer(s.command[stage.start:s.position])] != "shell"
+		data := frame.data && heredocConsumers[shellConsumer(s.stageCommandText(stage, s.position))] != "shell"
 		frame = newShellConsumerFrame(s.position, data)
 	}
 	s.consumerFrames = append(s.consumerFrames, frame)
@@ -683,9 +710,9 @@ func (s *shellSpans) finishWord(end int) {
 		return
 	}
 	word := s.command[s.wordStart:end]
-	if s.hereString != nil {
-		s.feeds = append(s.feeds, shellFeed{*s.hereString, unquoteShellWord(word), false})
-		s.hereString = nil
+	if s.redirectData && s.redirectStart >= 0 {
+		s.recordRedirect(s.redirectStart, end)
+		s.redirectStart = -1
 	}
 	s.enterGitCommand(word, end)
 	data := s.nextData || s.redirectData
@@ -698,6 +725,7 @@ func (s *shellSpans) finishWord(end int) {
 		s.nextData = s.nextData && s.redirectData
 	}
 	s.wordStart, s.executionStart = -1, -1
+	s.braceDepth = 0
 	s.wordExpansion, s.wordSplitting, s.redirectData = false, false, false
 	s.wordExecutions = nil
 }
@@ -818,13 +846,54 @@ func (s *shellSpans) controlCharacter(ch byte) {
 	if len(s.stack) != 0 {
 		return
 	}
-	glob := strings.ContainsRune("*?[{}", rune(ch))
+	glob := strings.ContainsRune("*?[", rune(ch)) || strings.ContainsRune("{}", rune(ch)) && s.braceSplitting(ch)
 	s.wordExpansion = s.wordExpansion || glob
 	s.wordSplitting = s.wordSplitting || glob
 	if strings.ContainsRune("{}", rune(ch)) {
 		s.braceCommand()
 	}
 	s.whole = s.whole || shellUnsupportedPattern.MatchString(s.command[s.position:s.position+1])
+}
+
+// braceSplitting reports whether a brace at s.position expands or leaves the word unbalanced.
+func (s *shellSpans) braceSplitting(ch byte) bool {
+	if ch == '}' {
+		if s.braceDepth == 0 {
+			return true
+		}
+		s.braceDepth--
+		return false
+	}
+	if bracePairSplitting(s.command[s.position:]) {
+		return true
+	}
+	s.braceDepth++
+	return false
+}
+
+// bracePairSplitting reports whether text, starting at '{', expands or fails to close within the word.
+func bracePairSplitting(text string) bool {
+	depth := 0
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+		if strings.ContainsRune(" \t\n;&|<>()'\"$\\`", rune(ch)) {
+			return true
+		}
+		switch ch {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return shellBraceSequencePattern.MatchString(text[1:i])
+			}
+		case ',':
+			if depth == 1 {
+				return true
+			}
+		}
+	}
+	return true
 }
 
 // braceCommand reuses the Git option grammar to retain unknown command and subcommand words.
@@ -859,14 +928,19 @@ func (s *shellSpans) commandPrefix(word string) bool {
 
 // wordBoundary rejects escaped blanks and operators as lexical word boundaries.
 func (s *shellSpans) wordBoundary() bool {
-	if s.position == 0 {
+	return s.wordBoundaryAt(s.position)
+}
+
+// wordBoundaryAt reports whether position follows an unescaped lexical word boundary.
+func (s *shellSpans) wordBoundaryAt(position int) bool {
+	if position == 0 {
 		return true
 	}
-	if !strings.ContainsRune(" \t\n;|&(<>", rune(s.command[s.position-1])) {
+	if !strings.ContainsRune(" \t\n;|&(<>", rune(s.command[position-1])) {
 		return false
 	}
 	escapes := 0
-	for i := s.position - 2; i >= 0 && s.command[i] == '\\'; i-- {
+	for i := position - 2; i >= 0 && s.command[i] == '\\'; i-- {
 		escapes++
 	}
 	return escapes%2 == 0
@@ -890,13 +964,26 @@ func (s *shellSpans) comment() bool {
 
 // documentData masks raw bodies and retains them for consumer-aware scanning.
 func (s *shellSpans) documentData(document shellDocument, start int) {
-	s.feeds = append(s.feeds, shellFeed{document, s.command[start:s.documentEnd], document.expandable})
+	body := stripDocumentTabs(s.command[start:s.documentEnd], document.tabs)
+	s.feeds = append(s.feeds, shellFeed{document: document, body: body, expandable: document.expandable})
 	s.mask(start, s.position)
+}
+
+// stripDocumentTabs removes leading tabs from each line of a tab-stripped here-document body.
+func stripDocumentTabs(body string, tabs bool) string {
+	if !tabs || !strings.Contains(body, "\t") {
+		return body
+	}
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimLeft(line, "\t")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // newShellConsumerFrame starts a pipeline with explicit output ownership.
 func newShellConsumerFrame(start int, data bool) *shellConsumerFrame {
-	return &shellConsumerFrame{[]*shellConsumerStage{{start, start}}, data}
+	return &shellConsumerFrame{[]*shellConsumerStage{{start: start, end: start}}, data}
 }
 
 // consumerFrame lazily initializes ownership for callers constructing the scanner directly.
@@ -905,6 +992,29 @@ func (s *shellSpans) consumerFrame() *shellConsumerFrame {
 		s.consumerFrames = append(s.consumerFrames, newShellConsumerFrame(0, true))
 	}
 	return s.consumerFrames[len(s.consumerFrames)-1]
+}
+
+// stageCommandText returns command[stage.start:end] with parsed redirection spans replaced by spaces.
+func (s *shellSpans) stageCommandText(stage *shellConsumerStage, end int) string {
+	if len(stage.redirects) == 0 {
+		return s.command[stage.start:end]
+	}
+	var b strings.Builder
+	pos := stage.start
+	for _, span := range stage.redirects {
+		if span[0] >= end {
+			break
+		}
+		if span[0] > pos {
+			b.WriteString(s.command[pos:span[0]])
+		}
+		b.WriteByte(' ')
+		pos = max(pos, min(span[1], end))
+	}
+	if pos < end {
+		b.WriteString(s.command[pos:end])
+	}
+	return b.String()
 }
 
 // consumerBoundary seals a stage, retaining downstream pipeline references for pending feeds.
@@ -916,7 +1026,7 @@ func (s *shellSpans) consumerBoundary(end, next int, pipeline bool) {
 	}
 	stage.end = end
 	if pipeline {
-		frame.stages = append(frame.stages, &shellConsumerStage{next, next})
+		frame.stages = append(frame.stages, &shellConsumerStage{start: next, end: next})
 	} else {
 		s.consumerFrames[len(s.consumerFrames)-1] = newShellConsumerFrame(next, frame.data)
 	}
@@ -934,23 +1044,31 @@ func (s *shellSpans) documentCode(document shellDocument) bool {
 		return true
 	}
 	for _, stage := range document.frame.stages[document.stage:] {
-		if shellConsumerMode(s.command[stage.start:stage.end]) == "shell" {
+		if shellConsumerMode(s.stageCommandText(stage, stage.end)) == "shell" {
 			return true
+		}
+		if stage.stdoutFile {
+			return false
 		}
 	}
 	return false
 }
 
 // feedInputs scans shell-fed bodies as commands and expandable data as substitutions only.
-func (s *shellSpans) feedInputs() {
+func (s *shellSpans) feedInputs() bool {
 	for _, feed := range s.feeds {
 		if s.documentCode(feed.document) {
+			if feed.unresolved {
+				s.err = fmt.Errorf("invalid shell command: unresolved here-string expansion")
+				return false
+			}
 			s.nested = append(s.nested, shellInput{text: feed.body})
 		} else if feed.expandable && strings.ContainsAny(feed.body, "$`") {
 			s.wordExpansion = true
 			s.nested = append(s.nested, shellInput{text: feed.body, document: true})
 		}
 	}
+	return true
 }
 
 // separator distinguishes Bash's combined-output redirection from command boundaries.
@@ -996,64 +1114,120 @@ func (s *shellSpans) split(end, next int) {
 	s.start = next
 	s.uncertain = false
 	s.nextData, s.redirectData = false, false
+	s.redirectStart = -1
 	s.argumentsUncertain = false
 	s.commandWordSeen = false
 	s.gitWordStart = -1
 	s.gitCommand = ""
 }
 
+// redirectDescriptor returns any leading descriptor digits and the start offset of a redirection.
+func (s *shellSpans) redirectDescriptor() (string, int) {
+	if s.command[s.position] == '&' {
+		return "", s.position
+	}
+	start := s.position
+	for start > 0 && s.command[start-1] >= '0' && s.command[start-1] <= '9' {
+		start--
+	}
+	if start < s.position && s.wordBoundaryAt(start) {
+		return s.command[start:s.position], start
+	}
+	return "", s.position
+}
+
+// recordRedirect records one parsed redirection span on the active pipeline stage.
+func (s *shellSpans) recordRedirect(start, end int) {
+	frame := s.consumerFrame()
+	stage := frame.stages[len(frame.stages)-1]
+	stage.redirects = append(stage.redirects, [2]int{start, end})
+}
+
 // redirection retains descriptor duplication and document openers in their owning span.
 func (s *shellSpans) redirection() bool {
+	fd, redirStart := s.redirectDescriptor()
 	if len(s.stack) == 0 {
 		s.finishWord(s.position)
 	}
 	rest := s.command[s.position:]
 	if strings.HasPrefix(rest, "<<<") {
-		return s.hereStringFeed()
+		return s.hereStringFeed(redirStart)
 	}
 	if strings.HasPrefix(rest, "<<") {
-		opener := 2
-		tabs := strings.HasPrefix(rest, "<<-")
-		if tabs {
-			opener++
-		}
-		opener += len(rest[opener:]) - len(strings.TrimLeft(rest[opener:], " \t"))
-		word, _, _ := strings.Cut(rest[opener:], "\n")
-		delimiter, quoted, width, err := util.ShellHereDocDelimiter(word)
-		if err != nil {
-			s.err = fmt.Errorf("invalid shell command: unsupported here-document delimiter")
-			return false
-		}
-		if len(s.documents) == shellNestingLimit {
-			s.err = fmt.Errorf("invalid shell command: pending here-document bound exceeded: %d", shellNestingLimit)
-			return false
-		}
-		document := s.feedDocument()
-		document.delimiter, document.tabs = delimiter, tabs
-		document.owner, document.depth, document.expandable = len(s.parts), len(s.stack), !quoted
-		s.documents = append(s.documents, document)
-		s.position += opener + width
-		return true
+		return s.hereDocumentOpener(rest, redirStart)
 	}
 	redirect := shellRedirectPattern.FindString(rest)
 	s.position += len(redirect)
-	s.redirectData = len(s.stack) == 0 && !strings.ContainsAny(redirect, "0123456789-")
+	plain := !strings.ContainsAny(redirect, "0123456789-")
+	s.redirectData = len(s.stack) == 0 && plain
+	s.recordStandardRedirect(fd, redirect, redirStart, plain)
 	return true
 }
 
+// hereDocumentOpener queues a pending here-document delimiter and records its opener span.
+func (s *shellSpans) hereDocumentOpener(rest string, redirStart int) bool {
+	opener := 2
+	tabs := strings.HasPrefix(rest, "<<-")
+	if tabs {
+		opener++
+	}
+	opener += len(rest[opener:]) - len(strings.TrimLeft(rest[opener:], " \t"))
+	word, _, _ := strings.Cut(rest[opener:], "\n")
+	delimiter, quoted, width, err := util.ShellHereDocDelimiter(word)
+	if err != nil {
+		s.err = fmt.Errorf("invalid shell command: unsupported here-document delimiter")
+		return false
+	}
+	if len(s.documents) == shellNestingLimit {
+		s.err = fmt.Errorf("invalid shell command: pending here-document bound exceeded: %d", shellNestingLimit)
+		return false
+	}
+	document := s.feedDocument()
+	document.delimiter, document.tabs = delimiter, tabs
+	document.owner, document.depth, document.expandable = len(s.parts), len(s.stack), !quoted
+	s.documents = append(s.documents, document)
+	s.position += opener + width
+	s.recordRedirect(redirStart, s.position)
+	return true
+}
+
+// recordStandardRedirect updates stage redirection spans and plain-file stdout tracking.
+func (s *shellSpans) recordStandardRedirect(fd, redirect string, redirStart int, plain bool) {
+	target := ""
+	if plain {
+		after := s.position + len(s.command[s.position:]) - len(strings.TrimLeft(s.command[s.position:], " \t"))
+		target = shellLiteralWord(s.command[after:])
+		if target != "" {
+			s.recordRedirect(redirStart, after+len(target))
+		} else {
+			s.redirectStart = redirStart
+		}
+	} else {
+		s.recordRedirect(redirStart, s.position)
+	}
+	if (fd == "" || fd == "1") && strings.Contains(redirect, ">") && redirect != "<>" {
+		frame := s.consumerFrame()
+		stage := frame.stages[len(frame.stages)-1]
+		stage.stdoutFile = plain && !strings.HasPrefix(redirect, ">&") && target != ""
+	}
+}
+
 // hereStringFeed consumes literal stdin words directly, retaining expanded words for scanning.
-func (s *shellSpans) hereStringFeed() bool {
+func (s *shellSpans) hereStringFeed(redirStart int) bool {
 	document := s.feedDocument()
 	s.position += 3
 	s.position += len(s.command[s.position:]) - len(strings.TrimLeft(s.command[s.position:], " \t"))
-	word := shellConsumerToken.FindString(s.command[s.position:])
+	word := shellLiteralWord(s.command[s.position:])
 	if word == "" {
-		s.hereString, s.redirectData = &document, true
+		s.feeds = append(s.feeds, shellFeed{document: document, unresolved: true})
+		s.redirectData = len(s.stack) == 0
+		s.redirectStart = redirStart
 		return true
 	}
-	s.feeds = append(s.feeds, shellFeed{document, unquoteShellWord(word), false})
+	s.feeds = append(s.feeds, shellFeed{document: document, body: unquoteShellWord(word)})
 	s.mask(s.position, s.position+len(word))
 	s.position += len(word)
+	s.recordRedirect(redirStart, s.position)
 	return true
 }
 
@@ -1084,7 +1258,7 @@ func (s *shellSpans) newline() bool {
 	}
 	s.documents = remaining
 	frame := s.consumerFrame()
-	frame.stages[len(frame.stages)-1] = &shellConsumerStage{s.position, s.position}
+	frame.stages[len(frame.stages)-1] = &shellConsumerStage{start: s.position, end: s.position}
 	if depth == 0 {
 		s.start = s.position
 	}

@@ -187,7 +187,9 @@ def shell_word_escape(word, position, quote):
     if position + 1 == len(word):
         raise ValueError("invalid shell command: trailing word escape")
     following = word[position + 1]
-    if quote == '"' and following not in '"\\$\x60\n':
+    if following == "\n":
+        return "", True
+    if quote == '"' and following not in '"\\$\x60':
         return "\\", False
     return following, True
 
@@ -259,9 +261,12 @@ class CommandSpans:
     array_expansion_pattern = re.compile(
         r"\$(?:@|\{(?:@|!?[A-Za-z_][A-Za-z0-9_]*\[@\]|![A-Za-z_][A-Za-z0-9_]*@\}))"
     )
+    brace_sequence_pattern = re.compile(
+        r"^(?:[+-]?[0-9]+\.\.[+-]?[0-9]+|[A-Za-z]\.\.[A-Za-z])(?:\.\.[+-]?[0-9]+)?$"
+    )
     literal_pattern = re.compile(r'[^"\\$\x60\n]+')
     consumer_token = re.compile(
-        r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"[^\"\\$\x60]*\"|\\[^\n])+"
+        r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"(?:[^\"\\$\x60]|\\[\s\S])*\"|\\[\s\S])+"
     )
     assignment_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
@@ -273,17 +278,15 @@ class CommandSpans:
         self.position = self.start = self.here_lines = 0
         self.whole = bool(re.search(self.state_pattern, command))
         self.whole |= bool(re.search(r"--%|%[;&|]", command))
-        self.word_start = self.execution_start = -1
-        self.execution_depth = 0
+        self.word_start = self.execution_start = self.redirect_start = -1
+        self.execution_depth = self.brace_depth = 0
         self.next_data = self.redirect_data = self.word_expansion = False
         self.word_splitting = False
         self.git_word_start = -1
-        self.arguments_uncertain = False
-        self.command_word_seen = False
+        self.arguments_uncertain = self.command_word_seen = False
         self.git_command = ""
-        self.word_executions, self.nested = [], []
-        self.consumer_frames = [([[0, 0]], True)]
-        self.feeds, self.here_string = [], None
+        self.word_executions, self.nested, self.feeds = [], [], []
+        self.consumer_frames = [([[0, 0, [], False]], True)]
         self.document_end = 0
 
     def top(self):
@@ -297,12 +300,24 @@ class CommandSpans:
         frame = self.consumer_frames[-1]
         if closer != '"':
             stages, data = frame
-            start, end = stages[-1][0], self.position
-            mode = self.consumer_mode(self.command[start:end], False)
-            frame = ([[self.position, self.position]], data and mode != "shell")
+            mode = self.consumer_mode(self.stage_text(stages[-1], self.position), False)
+            frame = (
+                [[self.position, self.position, [], False]],
+                data and mode != "shell",
+            )
         self.consumer_frames.append(frame)
         self.stack.append(closer)
         return True
+
+    def literal_word(self, text):
+        """Return a leading literal shell word when it ends at a word boundary."""
+        match = self.consumer_token.match(text)
+        if not match:
+            return ""
+        end = match.end()
+        if end < len(text) and text[end] not in " \t\n;&|<>()":
+            return ""
+        return match[0]
 
     def quoted_step(self):
         """Handle escapes and constructs also active inside double quotes."""
@@ -386,9 +401,9 @@ class CommandSpans:
             return
         start = self.word_start
         word = self.command[start:end]
-        if self.here_string is not None:
-            self.feeds.append((self.here_string, shell_unquote_word(word), False))
-            self.here_string = None
+        if self.redirect_data and self.redirect_start >= 0:
+            self.record_redirect(self.redirect_start, end)
+            self.redirect_start = -1
         self.enter_git_command(word, end)
         data = self.next_data or self.redirect_data
         self.mask_word(word, end)
@@ -397,6 +412,7 @@ class CommandSpans:
         if data:
             self.next_data = self.next_data and self.redirect_data
         self.word_start = self.execution_start = -1
+        self.brace_depth = 0
         self.word_expansion = self.word_splitting = self.redirect_data = False
         self.word_executions = []
 
@@ -496,13 +512,43 @@ class CommandSpans:
         """Keep unsupported syntax and positional globs conservative."""
         if self.stack:
             return
-        glob = ch in "*?[{}"
+        glob = ch in "*?[" or ch in "{}" and self.brace_splitting(ch)
         self.word_expansion |= glob
         self.word_splitting |= glob
         if ch in "{}":
             self.brace_command()
         if ch in "{}^!" or ord(ch) > 126 or ord(ch) < 32 and ch != "\t":
             self.whole = True
+
+    def brace_splitting(self, ch):
+        """Report whether a brace at position expands or is unbalanced."""
+        if ch == "}":
+            if self.brace_depth == 0:
+                return True
+            self.brace_depth -= 1
+            return False
+        start = self.position
+        if self.brace_pair_splitting(self.command[start:]):
+            return True
+        self.brace_depth += 1
+        return False
+
+    def brace_pair_splitting(self, text):
+        """Report whether text starting at '{' expands or fails to close."""
+        depth = 0
+        for index in range(len(text)):
+            ch = text[index]
+            if ch in " \t\n;&|<>()'\"$\\\x60":
+                return True
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return bool(self.brace_sequence_pattern.match(text[1:index]))
+            elif ch == "," and depth == 1:
+                return True
+        return True
 
     def brace_command(self):
         """Reuse the Git option grammar to retain unknown command words."""
@@ -536,12 +582,16 @@ class CommandSpans:
 
     def word_boundary(self):
         """Reject escaped blanks and operators as lexical word boundaries."""
-        if self.position == 0:
+        return self.word_boundary_at(self.position)
+
+    def word_boundary_at(self, position):
+        """Report whether position follows an unescaped lexical word boundary."""
+        if position == 0:
             return True
-        if self.command[self.position - 1] not in " \t\n;|&(<>":
+        if self.command[position - 1] not in " \t\n;|&(<>":
             return False
         escapes = 0
-        for index in range(self.position - 2, -1, -1):
+        for index in range(position - 2, -1, -1):
             if self.command[index] != "\\":
                 break
             escapes += 1
@@ -564,8 +614,27 @@ class CommandSpans:
         """Mask raw bodies and retain them for consumer-aware scanning."""
         end = self.document_end
         body = self.command[start:end]
-        self.feeds.append((document, body, document[4]))
+        if document[1]:
+            body = "\n".join(line.lstrip("\t") for line in body.split("\n"))
+        self.feeds.append((document, body, document[4], False))
         self.mask(start, self.position)
+
+    def stage_text(self, stage, end):
+        """Return stage command text up to end with redirection spans removed."""
+        position = stage[0]
+        if not stage[2]:
+            return self.command[position:end]
+        parts = []
+        for redir_start, redir_end in stage[2]:
+            if redir_start >= end:
+                break
+            if redir_start > position:
+                parts.append(self.command[position:redir_start])
+            parts.append(" ")
+            position = max(position, min(redir_end, end))
+        if position < end:
+            parts.append(self.command[position:end])
+        return "".join(parts)
 
     def consumer_mode(self, text, unknown=True):
         """Classify stdin conservatively; only named shells execute argument output."""
@@ -573,12 +642,12 @@ class CommandSpans:
         environment = value = False
         for _ in range(len(text)):
             text = text.lstrip(" \t")
-            match = self.consumer_token.match(text)
-            if not match:
+            token = self.literal_word(text)
+            if not token:
                 break
-            end = match.end()
-            text = text[end:]
-            word = shell_unquote_word(match[0])
+            width = len(token)
+            text = text[width:]
+            word = shell_unquote_word(token)
             if value:
                 value = False
                 continue
@@ -614,9 +683,12 @@ class CommandSpans:
             return
         stages[-1][1] = end
         if pipeline:
-            stages.append([next_position, next_position])
+            stages.append([next_position, next_position, [], False])
         else:
-            self.consumer_frames[-1] = ([[next_position, next_position]], data)
+            self.consumer_frames[-1] = (
+                [[next_position, next_position, [], False]],
+                data,
+            )
 
     def feed_document(self):
         """Bind stdin to its stage before following pipeline readers are known."""
@@ -637,15 +709,21 @@ class CommandSpans:
         if not data:
             return True
         first = document[6]
-        for start, end in stages[first:]:
-            if self.consumer_mode(self.command[start:end]) == "shell":
+        for stage in stages[first:]:
+            if self.consumer_mode(self.stage_text(stage, stage[1])) == "shell":
                 return True
+            if stage[3]:
+                return False
         return False
 
     def feed_inputs(self):
         """Scan shell-fed bodies as commands and data expansions as substitutions."""
-        for document, body, expandable in self.feeds:
+        for document, body, expandable, unresolved in self.feeds:
             if self.document_code(document):
+                if unresolved:
+                    raise ValueError(
+                        "invalid shell command: unresolved here-string expansion"
+                    )
                 self.nested.append((body, False))
             elif expandable and any(ch in body for ch in "$\x60"):
                 self.word_expansion = True
@@ -708,62 +786,109 @@ class CommandSpans:
         self.start = next_position
         self.uncertain = False
         self.next_data = self.redirect_data = False
+        self.redirect_start = -1
         self.arguments_uncertain = False
         self.command_word_seen = False
         self.git_word_start = -1
         self.git_command = ""
 
+    def redirect_descriptor(self):
+        """Return any leading descriptor digits and the redirection start offset."""
+        if self.command[self.position] == "&":
+            return "", self.position
+        start = self.position
+        for index in range(self.position - 1, -1, -1):
+            if not self.command[index].isdigit():
+                break
+            start = index
+        if start < self.position and self.word_boundary_at(start):
+            end = self.position
+            return self.command[start:end], start
+        return "", self.position
+
+    def record_redirect(self, start, end):
+        """Record one parsed redirection span on the active pipeline stage."""
+        self.consumer_frames[-1][0][-1][2].append((start, end))
+
     def redirection(self):
         """Keep descriptor duplication and document openers in their span."""
+        fd, redir_start = self.redirect_descriptor()
         if not self.stack:
             self.finish_word(self.position)
         position = self.position
         rest = self.command[position:]
         if rest.startswith("<<<"):
-            return self.here_string_feed()
+            return self.here_string_feed(redir_start)
         if rest.startswith("<<"):
-            opener = 2 + rest.startswith("<<-")
-            opener += len(rest[opener:]) - len(rest[opener:].lstrip(" \t"))
-            word = rest[opener:].partition("\n")[0]
-            delimiter, quoted, width = shell_here_doc_delimiter(word)
-            if len(self.documents) == self.nesting_limit:
-                raise ValueError(
-                    "invalid shell command: pending here-document bound exceeded: 16"
-                )
-            self.documents.append(
-                (
-                    delimiter,
-                    rest.startswith("<<-"),
-                    len(self.parts),
-                    len(self.stack),
-                    not quoted,
-                    self.consumer_frames[-1],
-                    len(self.consumer_frames[-1][0]) - 1,
-                )
-            )
-            self.position += opener + width
-            return True
+            return self.here_document_opener(rest, redir_start)
         redirect = re.match(self.redirect_pattern, rest)[0]
         self.position += len(redirect)
         plain = not any(ch in redirect for ch in "0123456789-")
         self.redirect_data = not self.stack and plain
+        self.record_standard_redirect(fd, redirect, redir_start, plain)
         return True
 
-    def here_string_feed(self):
-        """Consume literal stdin words directly, retaining expanded words for scanning."""
+    def here_document_opener(self, rest, redir_start):
+        """Queue one pending here-document delimiter and record its opener span."""
+        opener = 2 + rest.startswith("<<-")
+        opener += len(rest[opener:]) - len(rest[opener:].lstrip(" \t"))
+        word = rest[opener:].partition("\n")[0]
+        delimiter, quoted, width = shell_here_doc_delimiter(word)
+        if len(self.documents) == self.nesting_limit:
+            raise ValueError(
+                "invalid shell command: pending here-document bound exceeded: 16"
+            )
+        self.documents.append(
+            (
+                delimiter,
+                rest.startswith("<<-"),
+                len(self.parts),
+                len(self.stack),
+                not quoted,
+                self.consumer_frames[-1],
+                len(self.consumer_frames[-1][0]) - 1,
+            )
+        )
+        self.position += opener + width
+        self.record_redirect(redir_start, self.position)
+        return True
+
+    def record_standard_redirect(self, fd, redirect, redir_start, plain):
+        """Record a non-document redirection span and plain-file stdout target."""
+        target = ""
+        if plain:
+            start = self.position
+            rest = self.command[start:]
+            after = self.position + len(rest) - len(rest.lstrip(" \t"))
+            target = self.literal_word(self.command[after:])
+            if target:
+                self.record_redirect(redir_start, after + len(target))
+            else:
+                self.redirect_start = redir_start
+        else:
+            self.record_redirect(redir_start, self.position)
+        if fd in ("", "1") and ">" in redirect and redirect != "<>":
+            stdout_file = plain and not redirect.startswith(">&") and bool(target)
+            self.consumer_frames[-1][0][-1][3] = stdout_file
+
+    def here_string_feed(self, redir_start):
+        """Consume literal stdin words directly; refuse unresolved shell feeds."""
         document = self.feed_document()
         self.position += 3
         start = self.position
         rest = self.command[start:]
         self.position += len(rest) - len(rest.lstrip(" \t"))
         start = self.position
-        word = self.consumer_token.match(self.command[start:])
+        word = self.literal_word(self.command[start:])
         if not word:
-            self.here_string, self.redirect_data = document, True
+            self.feeds.append((document, "", False, True))
+            self.redirect_data = not self.stack
+            self.redirect_start = redir_start
             return True
-        self.feeds.append((document, shell_unquote_word(word[0]), False))
-        self.mask(self.position, self.position + len(word[0]))
-        self.position += len(word[0])
+        self.feeds.append((document, shell_unquote_word(word), False, False))
+        self.mask(self.position, self.position + len(word))
+        self.position += len(word)
+        self.record_redirect(redir_start, self.position)
         return True
 
     def newline(self):
@@ -784,7 +909,7 @@ class CommandSpans:
             self.document_body(document[0], document[1], document[4])
             self.document_data(document, body_start)
         self.documents = remaining
-        self.consumer_frames[-1][0][-1][:] = [self.position, self.position]
+        self.consumer_frames[-1][0][-1][:] = [self.position, self.position, [], False]
         if depth == 0:
             self.start = self.position
         return True

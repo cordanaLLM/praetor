@@ -506,7 +506,10 @@ func stepDoubleQuotedByte(sb *strings.Builder, word string, i int, c byte, inDou
 	}
 	if c == '\\' && i+1 < len(word) {
 		next := word[i+1]
-		if next == '"' || next == '\\' || next == '$' || next == '`' || next == '\n' {
+		if next == '\n' {
+			return i + 1
+		}
+		if next == '"' || next == '\\' || next == '$' || next == '`' {
 			sb.WriteByte(next)
 			return i + 1
 		}
@@ -525,7 +528,9 @@ func stepUnquotedByte(sb *strings.Builder, word string, i int, c byte, inSingle,
 	case '\\':
 		if i+1 < len(word) {
 			i++
-			sb.WriteByte(word[i])
+			if word[i] != '\n' {
+				sb.WriteByte(word[i])
+			}
 		}
 	default:
 		sb.WriteByte(c)

@@ -993,7 +993,7 @@ func delimiterBraceCases() []struct {
 	name, command string
 	want          int
 } {
-	return []struct {
+	return append([]struct {
 		name, command string
 		want          int
 	}{
@@ -1042,6 +1042,26 @@ func delimiterBraceCases() []struct {
 		{"quoted option hides no subcommand", `git -c '{x.y=z,commit,-n}' -m msg`, 0},
 		{"non git operand names git", `echo git {commit,-n} -m msg`, 0},
 		{"git data operand names git", `git log git {commit,-n} -m msg`, 0},
+	}, roundSixDelimiterBraceCases()...)
+}
+
+// roundSixDelimiterBraceCases covers literal message braces, expanding braces and inner delimiter quotes.
+func roundSixDelimiterBraceCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"literal brace pair in commit message", `git commit -m fix{docs}`, 0},
+		{"brace comma list in commit message", `git commit -m fix{docs,tests}`, 2},
+		{"brace numeric sequence in commit message", `git commit -m fix{1..3}`, 2},
+		{"brace letter sequence in commit message", `git commit -m fix{a..c}`, 2},
+		{"nested braces with comma in commit message", `git commit -m fix{{a,b}}`, 2},
+		{"parameter expansion brace in commit message", `git commit -m fix${docs}`, 2},
+		{"unclosed brace in commit message", `git commit -m fix{docs`, 2},
+		{"single-quoted inner delimiter quotes", "cat <<'\"EOF\"'\ndata\n\"EOF\"\ngit commit -n -m msg\nEOF", 2},
 	}
 }
 
@@ -1090,6 +1110,7 @@ func heredocFeedCases(t *testing.T) []struct {
 // TestParityEvasionHeredocFeed checks consumer ownership in both policy implementations.
 func TestParityEvasionHeredocFeed(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
+	builtin := policy(t)
 	for _, tc := range heredocFeedCases(t) {
 		t.Run(tc.Name, func(t *testing.T) {
 			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.Command}})
@@ -1098,6 +1119,9 @@ func TestParityEvasionHeredocFeed(t *testing.T) {
 			t.Logf("canonical rc=%d want=%d", got.exit, want)
 			if got.exit != want {
 				t.Errorf("canonical rc=%d want=%d: %s", got.exit, want, got.stderr)
+			}
+			if verdict := builtin.Command(tc.Command); (verdict.Outcome == Allow) != (tc.Want == 0) {
+				t.Errorf("Go verdict: %+v, want rc=%d", verdict, tc.Want)
 			}
 		})
 	}

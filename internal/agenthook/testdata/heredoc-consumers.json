@@ -313,5 +313,115 @@
     "name": "here-string nested heredoc delimiter",
     "command": "bash <<< '\"bash\" <<EOF\ngit commit -n -m x\nEOF'",
     "want": 2
+  },
+  {
+    "name": "here-string prefix literal plus variable",
+    "command": "bash <<< 'echo '\"$name\"",
+    "want": 2
+  },
+  {
+    "name": "here-string prefix literal plus command substitution",
+    "command": "bash <<< 'echo '$(printf %s safe)",
+    "want": 2
+  },
+  {
+    "name": "here-string literal plus backtick part",
+    "command": "bash <<< 'echo '`printf %s safe`",
+    "want": 2
+  },
+  {
+    "name": "here-string complete single-quoted literal",
+    "command": "bash <<< 'echo safe'",
+    "want": 0
+  },
+  {
+    "name": "here-string complete double-quoted literal",
+    "command": "bash <<< \"echo safe\"",
+    "want": 0
+  },
+  {
+    "name": "here-string adjacent single and double quoted parts",
+    "command": "bash <<<'echo \"<<'\"\\\"\"",
+    "want": 0
+  },
+  {
+    "name": "here-string escaped quote inside double quotes",
+    "command": "bash <<< \"echo \\\"<<\\\"\"",
+    "want": 0
+  },
+  {
+    "name": "here-string escaped quote in second fragment evasion",
+    "command": "bash <<< 'echo ok; '\"git commit \\\"-m\\\" x -n\"",
+    "want": 2
+  },
+  {
+    "name": "here-string ANSI-C quoted part",
+    "command": "bash <<< $'echo safe'",
+    "want": 2
+  },
+  {
+    "name": "here-string inner heredoc delimiter continuation",
+    "command": "bash <<< \"cat <<E\\\nOF\nhello\nEOF\"",
+    "want": 0
+  },
+  {
+    "name": "here-string single-quoted continuation preserved",
+    "command": "bash <<< 'cat <<\\EOF\nline\\\nEOF'",
+    "want": 0
+  },
+  {
+    "name": "here-string trailing backslash refused",
+    "command": "bash <<< 'echo safe'\\",
+    "want": 2
+  },
+  {
+    "name": "tab-stripped outer heredoc with inner heredoc",
+    "command": "bash <<-'OUTER'\n\tcat <<'INNER'\n\thello\n\tINNER\n\tOUTER",
+    "want": 0
+  },
+  {
+    "name": "tab-stripped outer heredoc keeps leading spaces",
+    "command": "bash <<-'OUTER'\n\tcat <<'INNER'\n\thello\n    INNER\n\tOUTER",
+    "want": 2
+  },
+  {
+    "name": "plain outer heredoc keeps leading tabs",
+    "command": "bash <<'OUTER'\n\tcat <<'INNER'\n\thello\n\tINNER\nOUTER",
+    "want": 2
+  },
+  {
+    "name": "leading heredoc before data reader",
+    "command": "<<'EOF' cat > notes.txt\nO'Brien <draft>\nEOF",
+    "want": 0
+  },
+  {
+    "name": "leading heredoc before shell",
+    "command": "<<'EOF' bash\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "leading heredoc before unknown reader",
+    "command": "<<'EOF' python3 -\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "heredoc redirected to file before pipe to sh",
+    "command": "cat <<'EOF' > notes.txt | sh\nO'Brien <draft>\nEOF",
+    "want": 0
+  },
+  {
+    "name": "heredoc duplicated descriptor before pipe to sh",
+    "command": "cat <<'EOF' >&1 | sh\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "heredoc process substitution target before pipe to sh",
+    "command": "cat <<'EOF' > >(cat) | sh\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "heredoc variable target before pipe to sh",
+    "command": "cat <<'EOF' > \"$out\" | sh\ngit commit -n -m x\nEOF",
+    "want": 2
   }
 ]

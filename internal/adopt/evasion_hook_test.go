@@ -482,7 +482,7 @@ func evasionSegmentMutants() []struct {
 	name, before, after, command string
 	want                         int
 } {
-	return []struct {
+	return append([]struct {
 		name, before, after, command string
 		want                         int
 	}{
@@ -490,12 +490,12 @@ func evasionSegmentMutants() []struct {
 		{"partial brace subcommand uncertainty removed", `self.git_command, self.arguments_uncertain = "unknown", True`, `pass`, evasionDelimiterBraceCases()[17].command, 0},
 		{"brace command uncertainty removed", `self.git_command, self.arguments_uncertain = "unknown", True`, `pass`, evasionDelimiterBraceCases()[18].command, 0},
 		{"partial brace command uncertainty removed", `self.git_command, self.arguments_uncertain = "unknown", True`, `pass`, evasionDelimiterBraceCases()[19].command, 0},
-		{"brace uncertainty removed", `glob = ch in "*?[{}"`, `glob = ch in "*?["`, evasionDelimiterBraceCases()[0].command, 0},
+		{"brace uncertainty removed", `glob = ch in "*?[" or ch in "{}" and self.brace_splitting(ch)`, `glob = ch in "*?["`, evasionDelimiterBraceCases()[0].command, 0},
 		{"partial delimiter reader removed", "delimiter, quoted, width = shell_here_doc_delimiter(word)",
-			"match = re.match(r\"(\\\"[^\\\"]*\\\"|'[^']*'|[-A-Za-z0-9_]+)\", word)\n            delimiter = match[0].strip(\"\\\"'\")\n            quoted, width = delimiter != match[0], match.end()",
+			"match = re.match(r\"(\\\"[^\\\"]*\\\"|'[^']*'|[-A-Za-z0-9_]+)\", word)\ndelimiter = match[0].strip(\"\\\"'\")\nquoted, width = delimiter != match[0], match.end()",
 			evasionDelimiterBraceCases()[1].command, 0},
 		{"literal quote reader removed", "delimiter, quoted, width = shell_here_doc_delimiter(word)",
-			"match = re.match(r\"(\\\"[^\\\"]*\\\"|'[^']*'|[-A-Za-z0-9_]+)\", word)\n            delimiter = match[0].strip(\"\\\"'\")\n            quoted, width = delimiter != match[0], match.end()",
+			"match = re.match(r\"(\\\"[^\\\"]*\\\"|'[^']*'|[-A-Za-z0-9_]+)\", word)\ndelimiter = match[0].strip(\"\\\"'\")\nquoted, width = delimiter != match[0], match.end()",
 			evasionDelimiterBraceCases()[2].command, 0},
 		{"body continuation removed", "if expandable and found and escapes % 2:", "if False:", evasionDelimiterBraceCases()[3].command, 0},
 
@@ -503,8 +503,8 @@ func evasionSegmentMutants() []struct {
 			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
 		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1, exempt)", "segments, None, exempt)",
 			`git commit -m 'message $name' && tail -n 1`, 2},
-		{"redirection veto", `    if not any(ch in command for ch in "{}<") and not commit_command(`,
-			"    if re.search(r\"[<>]\", command):\n        return [(command, True)], []\n" + `    if not any(ch in command for ch in "{}<") and not commit_command(`,
+		{"redirection veto", `if not any(ch in command for ch in "{}<") and not commit_command(`,
+			"if re.search(r\"[<>]\", command):\n    return [(command, True)], []\n" + `if not any(ch in command for ch in "{}<") and not commit_command(`,
 			`git commit -m x 2>&1 | tail -n 1`, 2},
 		{"positional expansion", "self.uncertain |= self.word_expansion", "self.uncertain |= False",
 			`git commit "$x" && git log -n 1`, 0},
@@ -522,21 +522,75 @@ func evasionSegmentMutants() []struct {
 		{"escaped boundary", "if not self.word_boundary():",
 			"if self.position > 0 and self.command[self.position - 1] not in \" \\t\\n;|&(\":",
 			`git commit -m fix\ #note -n`, 0},
+	}, evasionRoundSixMutants()...)
+}
+
+// evasionRoundSixMutants builds regressions for round-six here-string, heredoc and brace defences.
+func evasionRoundSixMutants() []struct {
+	name, before, after, command string
+	want                         int
+} {
+	return []struct {
+		name, before, after, command string
+		want                         int
+	}{
+		{"prefix-only here-string read", `if end < len(text) and text[end] not in " \t\n;&|<>()":`,
+			`if False:`, "bash <<< 'echo '\"$name\"", 0},
+		{"here-string fragments not joined",
+			`r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"(?:[^\"\\$\x60]|\\[\s\S])*\"|\\[\s\S])+"`,
+			`r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"[^\"\\$\x60]*\"|\\[^\n])+"`,
+			"bash <<<'echo \"<<'\"\\\"\"", 2},
+		{"here-string continuation kept", "if following == \"\\n\":\n    return \"\", True",
+			"if False:\n    return \"\", True", "bash <<< \"cat <<E\\\nOF\nhello\nEOF\"", 2},
+		{"tab-stripped heredoc tabs kept",
+			"if document[1]:\n    body = \"\\n\".join(line.lstrip(\"\\t\") for line in body.split(\"\\n\"))",
+			"if False:\n    body = \"\"",
+			"bash <<-'OUTER'\n\tcat <<'INNER'\n\thello\n\tINNER\n\tOUTER", 2},
+		{"leading redirection not skipped", "        if not stage[2]:", "        if True:",
+			"<<'EOF' cat > notes.txt\nO'Brien <draft>\nEOF", 2},
+		{"output redirection ignored", "if stage[3]:\n    return False",
+			"if False:\n    return False",
+			"cat <<'EOF' > notes.txt | sh\nO'Brien <draft>\nEOF", 2},
+		{"every brace pair treated as splitting",
+			`glob = ch in "*?[" or ch in "{}" and self.brace_splitting(ch)`,
+			`glob = ch in "*?[{}"`, `git commit -m fix{docs}`, 2},
 	}
+}
+
+// replaceEvasionMutant indents each continuation relative to the matched source line.
+func replaceEvasionMutant(rendered, before, after string) string {
+	first, _, _ := strings.Cut(before, "\n")
+	offset := strings.Index(rendered, first)
+	if offset < 0 {
+		return rendered
+	}
+	if strings.Contains(before, "\n") || strings.Contains(after, "\n") {
+		start := strings.LastIndex(rendered[:offset], "\n") + 1
+		line, _, _ := strings.Cut(rendered[start:], "\n")
+		indent := line[:len(line)-len(strings.TrimLeft(line, " "))]
+		before = strings.ReplaceAll(before, "\n", "\n"+indent)
+		after = strings.ReplaceAll(after, "\n", "\n"+indent)
+	}
+	return strings.Replace(rendered, before, after, 1)
 }
 
 // TestEmittedEvasionSegmentMutants proves both whole-command matching paths regress.
 func TestEmittedEvasionSegmentMutants(t *testing.T) {
 	python, fixed := emittedInterceptor(t)
+	t.Run("compilation defence", func(t *testing.T) { testEvasionMutantCompilation(t, python) })
+	t.Run("interpreter exits", testInterceptorExitCodes)
 	for _, tc := range evasionSegmentMutants() {
 		t.Run(tc.name, func(t *testing.T) {
 			rendered := buildBlockEvasionPY()
-			mutant := strings.Replace(rendered, tc.before, tc.after, 1)
+			mutant := replaceEvasionMutant(rendered, tc.before, tc.after)
 			if mutant == rendered {
 				t.Fatal("mutation did not change the rendering")
 			}
 			script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
 			mustWrite(t, script, mutant)
+			if err := compileEvasionMutant(t, python, script, tc.name); err != nil {
+				t.Fatal(err)
+			}
 			code := runInterceptor(t, python, script, nil, nil, tc.command)
 			fixedCode := runInterceptor(t, python, fixed, nil, nil, tc.command)
 			t.Logf("mutant hook rc=%d; fixed hook rc=%d", code, fixedCode)
@@ -545,6 +599,75 @@ func TestEmittedEvasionSegmentMutants(t *testing.T) {
 			}
 			if fixedCode != 2-tc.want {
 				t.Errorf("fixed exit %d, want %d", fixedCode, 2-tc.want)
+			}
+		})
+	}
+}
+
+// compileEvasionMutant checks Python syntax before a fixture can assert policy behaviour.
+func compileEvasionMutant(t *testing.T, python, script, name string) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), interceptorWallClock)
+	defer cancel()
+	envCtx, err := util.WithCommandEnvironment(ctx, []string{"PATH=" + os.Getenv("PATH"), "SYSTEMROOT=" + os.Getenv("SYSTEMROOT")})
+	if err != nil {
+		return fmt.Errorf("mutant compiler environment: %w", err)
+	}
+	res, err := util.RunCommandBytes(envCtx, "", python, util.MaxCommandOutputBytes, "-m", "py_compile", script)
+	if err != nil {
+		return fmt.Errorf("mutant does not compile: %s: %w: %s", name, err, interceptorStderr(t, res.Stderr))
+	}
+	return nil
+}
+
+// testEvasionMutantCompilation plants syntax and indentation errors beside valid Python.
+func testEvasionMutantCompilation(t *testing.T, python string) {
+	t.Helper()
+	for _, tc := range []struct {
+		name, source, diagnostic string
+	}{
+		{"valid", "pass\n", ""},
+		{"syntax", "if True\n    pass\n", "line 1"},
+		{"indentation", "pass\n    pass\n", "line 2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := filepath.Join(t.TempDir(), "planted.py")
+			mustWrite(t, script, tc.source)
+			err := compileEvasionMutant(t, python, script, tc.name)
+			if tc.diagnostic == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "mutant does not compile: "+tc.name) ||
+				!strings.Contains(err.Error(), tc.diagnostic) {
+				t.Fatalf("compiler diagnostic = %v; want named refusal and %s", err, tc.diagnostic)
+			}
+		})
+	}
+}
+
+// interceptorExitError accepts only the emitted hook's allow (0) and refusal (2) statuses.
+func interceptorExitError(code int, stderr string) error {
+	if code == 0 || code == 2 && !strings.Contains(stderr, "Traceback") {
+		return nil
+	}
+	return fmt.Errorf("interceptor crashed instead of refusing: exit %d: %s", code, stderr)
+}
+
+// testInterceptorExitCodes checks allow/refuse and planted crashes without traceback text.
+func testInterceptorExitCodes(t *testing.T) {
+	t.Helper()
+	for _, code := range []int{0, 2, 1, -1, 3} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			err := interceptorExitError(code, "IndentationError: unexpected indent")
+			if code == 0 || code == 2 {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "interceptor crashed") {
+				t.Fatalf("exit %d: crash diagnostic = %v", code, err)
 			}
 		})
 	}
@@ -891,8 +1014,8 @@ func runInterceptorOutput(t *testing.T, python, script string, stdin []byte, ext
 	stderr := res.Stderr
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		if strings.Contains(string(stderr), "Traceback") {
-			t.Errorf("interceptor crashed instead of refusing: %s", string(stderr))
+		if err := interceptorExitError(exitErr.ExitCode(), string(stderr)); err != nil {
+			t.Fatal(err)
 		}
 		return exitErr.ExitCode(), interceptorStderr(t, stderr)
 	}
@@ -1388,7 +1511,7 @@ func evasionDelimiterBraceCases() []struct {
 	name, command string
 	want          int
 } {
-	return []struct {
+	return append([]struct {
 		name, command string
 		want          int
 	}{
@@ -1437,6 +1560,26 @@ func evasionDelimiterBraceCases() []struct {
 		{"quoted option hides no subcommand", `git -c '{x.y=z,commit,-n}' -m msg`, 0},
 		{"non git operand names git", `echo git {commit,-n} -m msg`, 0},
 		{"git data operand names git", `git log git {commit,-n} -m msg`, 0},
+	}, evasionRoundSixDelimiterBraceCases()...)
+}
+
+// evasionRoundSixDelimiterBraceCases covers literal message braces, expanding braces and inner delimiter quotes.
+func evasionRoundSixDelimiterBraceCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"literal brace pair in commit message", `git commit -m fix{docs}`, 0},
+		{"brace comma list in commit message", `git commit -m fix{docs,tests}`, 2},
+		{"brace numeric sequence in commit message", `git commit -m fix{1..3}`, 2},
+		{"brace letter sequence in commit message", `git commit -m fix{a..c}`, 2},
+		{"nested braces with comma in commit message", `git commit -m fix{{a,b}}`, 2},
+		{"parameter expansion brace in commit message", `git commit -m fix${docs}`, 2},
+		{"unclosed brace in commit message", `git commit -m fix{docs`, 2},
+		{"single-quoted inner delimiter quotes", "cat <<'\"EOF\"'\ndata\n\"EOF\"\ngit commit -n -m msg\nEOF", 2},
 	}
 }
 
