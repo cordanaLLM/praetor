@@ -202,6 +202,7 @@ func securityRepo(t *testing.T) string {
 	})
 }
 
+// TestSecurityWorkflow_Positive_UneditedPriorIsRefreshed proves every recorded prior rendering is replaced by the current one, with and without a tools module.
 func TestSecurityWorkflow_Positive_UneditedPriorIsRefreshed(t *testing.T) {
 	for name, prior := range readPriorFixtures(t, securityPriorDir) {
 		for _, declared := range []bool{false, true} {
@@ -235,6 +236,7 @@ func TestSecurityWorkflow_Positive_UneditedPriorIsRefreshed(t *testing.T) {
 	}
 }
 
+// TestSecurityWorkflow_Negative_EditedPriorIsKeptAndReported proves a hand-edited prior rendering is kept byte for byte and named in the report.
 func TestSecurityWorkflow_Negative_EditedPriorIsKeptAndReported(t *testing.T) {
 	fixtures := readPriorFixtures(t, securityPriorDir)
 	prior := fixtures["1371.yml"]
@@ -260,6 +262,7 @@ func TestSecurityWorkflow_Negative_EditedPriorIsKeptAndReported(t *testing.T) {
 	}
 }
 
+// TestSecurityWorkflow_Positive_ApplySelectsBothManagedRenderings proves apply picks the fallback or the tools-module rendering from the repository's tools module.
 func TestSecurityWorkflow_Positive_ApplySelectsBothManagedRenderings(t *testing.T) {
 	for name, files := range map[string]map[string]string{
 		"no tools module": nil,

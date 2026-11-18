@@ -177,6 +177,7 @@ func draftSteps(steps []ghworkflow.Step) int {
 	return 0
 }
 
+// newNodeJob builds the expected Node CI job from the fixture's package.json and .yarnrc.yml.
 func newNodeJob(t *testing.T, repo string) *nodeJob {
 	t.Helper()
 	manifest := readFixtureManifest(t, repo)
@@ -329,6 +330,7 @@ type fixtureManifest struct {
 	scripts        map[string]string
 }
 
+// readFixtureManifest reads the fixture's package.json; a missing file yields the zero manifest.
 func readFixtureManifest(t *testing.T, repo string) fixtureManifest {
 	t.Helper()
 	var manifest fixtureManifest
