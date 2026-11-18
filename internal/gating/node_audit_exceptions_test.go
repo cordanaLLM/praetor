@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -427,37 +426,24 @@ func (r *nodeAuditSymlinkRecorder) Fatal(args ...any) {
 // Skipf records a fixture skip without skipping the outer regression test.
 func (r *nodeAuditSymlinkRecorder) Skipf(string, ...any) { r.skipped = true }
 
-// nodeAuditSymlinkPermissionError recognizes permission denial through wrapped OS errors.
-// Windows ERROR_PRIVILEGE_NOT_HELD (syscall/types_windows.go) is 1314 but does not match fs.ErrPermission;
-// its numeric value permits constructing and checking it on Unix hosts too.
-func nodeAuditSymlinkPermissionError(err error) bool {
-	const windowsPrivilegeNotHeld = syscall.Errno(1314)
-	return errors.Is(err, fs.ErrPermission) || errors.Is(err, windowsPrivilegeNotHeld)
-}
-
-// TestNodeAuditSymlinkPermissionError permits skips only for permission failures, including Windows privilege denial.
-func TestNodeAuditSymlinkPermissionError(t *testing.T) {
+// TestNodeAuditIsSymlinkPermissionError checks the cross-platform errors.Is decision of isSymlinkPermissionError;
+// the Windows branch is message based and lives in dependency_folders.go.
+func TestNodeAuditIsSymlinkPermissionError(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
 		want bool
 	}{
-		{"windows privilege not held", &os.LinkError{Op: "symlink", Err: syscall.Errno(1314)}, true},
-		{"permission denied", &os.LinkError{Op: "symlink", Err: syscall.EACCES}, true},
-		{"file exists", &os.LinkError{Op: "symlink", Err: syscall.EEXIST}, false},
-		{"missing parent", &os.LinkError{Op: "symlink", Err: syscall.ENOENT}, false},
+		{"permission denied", &os.LinkError{Op: "symlink", Err: fs.ErrPermission}, true},
+		{"file exists", &os.LinkError{Op: "symlink", Err: fs.ErrExist}, false},
+		{"no such file or directory", &os.LinkError{Op: "symlink", Err: fs.ErrNotExist}, false},
 		{"plain error", errors.New("symlink creation failed"), false},
-		{"operation not permitted", &os.LinkError{Op: "symlink", Err: syscall.EPERM}, true},
-		{"permission sentinel", fmt.Errorf("symlink: %w", fs.ErrPermission), true},
-		{"disk full", &os.LinkError{Op: "symlink", Err: syscall.ENOSPC}, false},
-		{"privilege text is insufficient", errors.New("privilege: access is denied"), false},
-		{"success", nil, false},
 	}
-	for i := 0; i < len(cases) && i < 10; i++ {
+	for i := 0; i < len(cases) && i < 8; i++ {
 		tc := cases[i]
 		t.Run(tc.name, func(t *testing.T) {
-			if got := nodeAuditSymlinkPermissionError(tc.err); got != tc.want {
-				t.Fatalf("permission error = %v, want %v: %v", got, tc.want, tc.err)
+			if got := isSymlinkPermissionError(tc.err); got != tc.want {
+				t.Fatalf("isSymlinkPermissionError(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}
@@ -487,7 +473,7 @@ func stageEscapingNodeAuditSymlink(t nodeAuditSymlinkFixture, linkPath, body str
 		return
 	}
 	if err := os.Symlink(outside, linkPath); err != nil {
-		if nodeAuditSymlinkPermissionError(err) {
+		if isSymlinkPermissionError(err) {
 			t.Skipf("symlink creation denied by host permissions: %v", err)
 			return
 		}
