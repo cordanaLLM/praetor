@@ -26,7 +26,12 @@ func goTelemetryMode(t *testing.T, home string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	ctx, err = util.WithCommandEnvironment(ctx, []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GOTOOLCHAIN=local"})
+	// Suppress Go's detached telemetry sidecar without overriding the mode file.
+	// GO_TELEMETRY_CHILD=2 keeps counter writes in the command we wait for, so no
+	// writer can outlive RunCommand and race the test home's cleanup (#1908).
+	ctx, err = util.WithCommandEnvironment(ctx, []string{
+		"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GOTOOLCHAIN=local", "GO_TELEMETRY_CHILD=2",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +59,12 @@ func TestDisableContainerTelemetry_Positive_GoReadsOff(t *testing.T) {
 	if got := goTelemetryMode(t, home); got != "off" {
 		t.Fatalf("after disableContainerTelemetry go reads telemetry %q, want off", got)
 	}
+	// The go command creates upload.token synchronously before starting its detached
+	// telemetry writer. Refuse that startup even when the cleanup race does not fire.
+	token := filepath.Join(home, ".config", "go", "telemetry", "local", "upload.token")
+	if _, err := os.Stat(token); !os.IsNotExist(err) {
+		t.Fatalf("go env allowed a detached telemetry writer: upload.token stat = %v", err)
+	}
 }
 
 // Negative: a mode file holding another mode, local or on, with or without its date, is
@@ -62,6 +73,7 @@ func TestDisableContainerTelemetry_Negative_OtherModeRewritten(t *testing.T) {
 	for _, text := range []string{"local", "on 2026-01-01\n", "local 2026-10-17"} {
 		home := t.TempDir()
 		modeFile := filepath.Join(home, filepath.FromSlash(containerTelemetryModeRel))
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- owner-only fixture directory needs traversal; 0o700 is least privilege
 		if err := os.MkdirAll(filepath.Dir(modeFile), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -83,6 +95,7 @@ func TestDisableContainerTelemetry_Negative_OtherModeRewritten(t *testing.T) {
 func TestDisableContainerTelemetry_Boundary_KeptOffAndUnwritable(t *testing.T) {
 	home := t.TempDir()
 	modeFile := filepath.Join(home, filepath.FromSlash(containerTelemetryModeRel))
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- owner-only fixture directory needs traversal; 0o700 is least privilege
 	if err := os.MkdirAll(filepath.Dir(modeFile), 0o700); err != nil {
 		t.Fatal(err)
 	}
