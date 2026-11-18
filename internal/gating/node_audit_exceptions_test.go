@@ -16,29 +16,33 @@ import (
 	"time"
 )
 
-// TestNodeAuditUnidentifiedGaps refuses ignores with no report-level identity tie.
+// TestNodeAuditUnidentifiedGaps bounds omitted advisories by configured ignores absent from the report.
 func TestNodeAuditUnidentifiedGaps(t *testing.T) {
 	standards := nodeAuditStandards(t, 1)
 	both := standards + strings.TrimPrefix(strings.ReplaceAll(standards, "GHSA-fc5q-39xc-vjpf", "GHSA-42xw-2xvc-qx8m"), "version: 1\nexceptions:\n")
 	listed := `{"GHSA-fc5q-39xc-vjpf":{"severity":"high"}}`
 	cases := []struct {
 		name, advisories, ignores, want string
-		high                            int
+		high, critical                  int
 	}{
-		{"a listed ignore counted twice", listed, "GHSA-fc5q-39xc-vjpf", "unidentified advisories", 2},
-		{"b two unrelated ignores", `{}`, "GHSA-fc5q-39xc-vjpf, GHSA-42xw-2xvc-qx8m", "unidentified advisories", 2},
-		{"c real ignored shape no tie", `{}`, "GHSA-fc5q-39xc-vjpf", "unidentified advisories", 1},
-		{"d listed excepted no gap", listed, "GHSA-fc5q-39xc-vjpf", "", 1},
-		{"e gap no ignores", `{}`, "", "unidentified advisories", 1},
-		{"f zero tied ignores equal gap", `{}`, "GHSA-fc5q-39xc-vjpf", "", 0},
-		{"f zero tied ignores one above", `{}`, "GHSA-fc5q-39xc-vjpf", "unidentified advisories", 1},
-		{"f gap above ignore count", `{}`, "GHSA-fc5q-39xc-vjpf", "unidentified advisories", 2},
+		{"a real ignored shape", `{}`, "GHSA-fc5q-39xc-vjpf", "", 1, 0},
+		{"c listed ignore counted twice", listed, "GHSA-fc5q-39xc-vjpf", "1 high or critical findings counted but not named; 0 configured ignores can explain unidentified advisories", 2, 0},
+		{"d gap equals unlisted ignores", listed, "GHSA-fc5q-39xc-vjpf, GHSA-42xw-2xvc-qx8m", "", 2, 0},
+		{"d gap above unlisted ignores", listed, "GHSA-fc5q-39xc-vjpf, GHSA-42xw-2xvc-qx8m", "2 high or critical findings counted but not named; 1 configured ignores can explain unidentified advisories", 3, 0},
+		{"e gap no ignores", `{}`, "", "1 high or critical findings counted but not named; 0 configured ignores can explain unidentified advisories", 1, 0},
+		// Two omitted advisories: the report names neither, so their IDs cannot be distinguished from other configured IDs.
+		{"f two omitted advisories", `{}`, "GHSA-fc5q-39xc-vjpf, GHSA-42xw-2xvc-qx8m", "", 2, 0},
+		{"listed excepted no gap", listed, "GHSA-fc5q-39xc-vjpf", "", 1, 0},
+		{"zero gap", `{}`, "GHSA-fc5q-39xc-vjpf", "", 0, 0},
+		{"critical gap equals unlisted ignores", `{}`, "GHSA-fc5q-39xc-vjpf", "", 0, 1},
+		{"combined gap above unlisted ignores", `{}`, "GHSA-fc5q-39xc-vjpf", "2 high or critical findings counted but not named; 1 configured ignores can explain unidentified advisories", 1, 1},
+		{"moderate listed ignore never counts", strings.ReplaceAll(listed, "high", "moderate"), "GHSA-fc5q-39xc-vjpf", "1 high or critical findings counted but not named; 0 configured ignores can explain unidentified advisories", 1, 0},
 	}
-	for i := 0; i < len(cases) && i < 8; i++ {
+	for i := 0; i < len(cases) && i < 16; i++ {
 		tc := cases[i]
 		t.Run(tc.name, func(t *testing.T) {
-			report := fmt.Sprintf(`{"advisories":%s,"metadata":{"vulnerabilities":{"high":%d}}}`, tc.advisories, tc.high)
-			if tc.name == "c real ignored shape no tie" {
+			report := fmt.Sprintf(`{"advisories":%s,"metadata":{"vulnerabilities":{"high":%d,"critical":%d}}}`, tc.advisories, tc.high, tc.critical)
+			if tc.name == "a real ignored shape" {
 				report = nodeAuditFixture(t, "pnpm-ignored.json")
 			}
 			policy := "auditConfig:\n  ignoreGhsas: [" + tc.ignores + "]\n"
@@ -266,7 +270,7 @@ func TestNodeAuditExceptions(t *testing.T) {
 		name, manager, report, standards, workspace, want string
 		failed                                            bool
 	}{
-		{"a ignored live unidentified", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 1), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "unidentified advisories", false},
+		{"a ignored live", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 1), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "", false},
 		{"b ignored missing", "pnpm", "pnpm-ignored.json", "version: 1\n", "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "configured ignored advisories; no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf", false},
 		{"c ignored expired", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, -1), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "GHSA-fc5q-39xc-vjpf exception in .standards.yaml expired on " + time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02"), false},
 		{"d listed missing", "pnpm", "pnpm-listed.json", "version: 1\n", "", "GHSA-fc5q-39xc-vjpf", true},
@@ -285,7 +289,7 @@ func TestNodeAuditExceptions(t *testing.T) {
 		{"listed expired", "pnpm", "pnpm-listed.json", nodeAuditStandards(t, -1), "", "expired on", true},
 		{"f legacy", "pnpm", "legacy.json", "version: 1\n", "", "found 1 high and 0 critical vulnerabilities", false},
 		{"legacy exception cannot hide counts", "pnpm", "legacy.json", nodeAuditStandards(t, 1), "", "found 1 high and 0 critical vulnerabilities", false},
-		{"expiry day unidentified", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 0), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "unidentified advisories", false},
+		{"expiry day", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 0), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "", false},
 	}
 	for i := 0; i < len(cases) && i < 32; i++ {
 		tc := cases[i]
@@ -320,8 +324,8 @@ func checkNodeAuditExceptionError(t *testing.T, report, want string, err error) 
 // TestNodeAuditIgnoreConfiguration covers pnpm policy locations, precedence and fail-closed gaps.
 func TestNodeAuditIgnoreConfiguration(t *testing.T) {
 	cases := []struct{ name, policy, want string }{
-		{"modern workspace", "audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n", "unidentified advisories"},
-		{"legacy package", `{"pnpm":{"auditConfig":{"ignoreGhsas":["GHSA-fc5q-39xc-vjpf"]}}}`, "unidentified advisories"},
+		{"modern workspace", "audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n", ""},
+		{"legacy package", `{"pnpm":{"auditConfig":{"ignoreGhsas":["GHSA-fc5q-39xc-vjpf"]}}}`, ""},
 		{"unknown gap", "packages: []\n", "unidentified advisories"},
 		{"unknown id", "auditConfig:\n  ignoreGhsas: [CVE-2026-1234]\n", "not a GHSA id"},
 		{"wrong id", "auditConfig:\n  ignoreGhsas: [GHSA-42xw-2xvc-qx8m]\n", "no exception in .standards.yaml covers GHSA-42xw-2xvc-qx8m"},
@@ -331,7 +335,8 @@ func TestNodeAuditIgnoreConfiguration(t *testing.T) {
 		{"invalid yaml", "auditConfig: [\n", "parse pnpm-workspace.yaml"},
 		{"cve ignore", "auditConfig:\n  ignoreCves: [CVE-2026-1234]\n", "cannot be covered by GHSA"},
 	}
-	for _, tc := range cases {
+	for i := 0; i < len(cases) && i < 16; i++ {
+		tc := cases[i]
 		t.Run(tc.name, func(t *testing.T) {
 			err := runNodeAuditFixture(t, "pnpm", nodeAuditFixture(t, "pnpm-ignored.json"), nodeAuditStandards(t, 1), tc.policy, false)
 			if tc.want == "" {

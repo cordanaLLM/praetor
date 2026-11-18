@@ -253,11 +253,20 @@ The stage evaluates pnpm's `advisories` map and npm 7+'s `vulnerabilities` map, 
 transitive `via` references. A listed high or critical advisory needs its own live exception.
 Lower severities do not fail this stage. For older reports without either map, metadata
 high and critical counts retain their previous behavior and cannot be waived by GHSA.
-The stage compares metadata counts against listed findings to detect suppressed findings;
-every positive gap fails with an unidentified-advisories error. Neither supported report map
-identifies omitted advisories, so an ignore never explains a gap, even with a live exception.
-An ignored ID already listed cannot cover another finding; unrelated ignored IDs cannot
-cover missing findings either. A zero gap still permits listed advisories with live exceptions.
+In pnpm 12.14.0, `pnpm audit --json` removes configured ignored advisories from the
+`advisories` map but keeps them in the metadata severity totals. The JSON names no omitted
+advisory; text output reports the ignored count and severities, such as `2 ignored: 2 high`.
+Each omitted advisory contributes one to the summary gap, even when it affects multiple
+installed versions. The stage accepts a high or critical summary gap only up to the number
+of configured ignored IDs absent from the listed advisories. A listed ignore never counts,
+regardless of its severity. A larger gap fails with an unidentified-advisories error naming
+the gap and the number of configured ignores that can explain it.
+
+This count cannot establish the identity of an omitted advisory: the report names none,
+and pnpm omits only configured IDs. Two unlisted configured ignores with live exceptions
+can therefore explain a gap of two; the report cannot distinguish those IDs from other
+omitted IDs. Every configured ignore must have an unexpired exception before any gap is
+accepted. A zero gap still permits listed advisories with live exceptions.
 
 For pnpm 12, declare ignores in `pnpm-workspace.yaml`, using `auditConfig.ignoreGhsas`
 or its newer replacement `audit.ignore`; the latter takes precedence, including an empty
