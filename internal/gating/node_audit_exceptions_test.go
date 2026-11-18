@@ -18,9 +18,18 @@ import (
 // nodeAuditFixture reads the frozen package-manager reports without running a manager.
 func nodeAuditFixture(t *testing.T, name string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "node-audit", name))
+	root, err := os.OpenRoot(filepath.Join("testdata", "node-audit"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open the node-audit fixtures: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close the node-audit fixtures: %v", err)
+		}
+	})
+	data, err := root.ReadFile(name)
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", name, err)
 	}
 	return string(data)
 }
