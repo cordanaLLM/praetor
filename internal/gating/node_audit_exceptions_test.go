@@ -8,12 +8,134 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestNodeAuditUnidentifiedGaps refuses ignores with no report-level identity tie.
+func TestNodeAuditUnidentifiedGaps(t *testing.T) {
+	standards := nodeAuditStandards(t, 1)
+	both := standards + strings.TrimPrefix(strings.ReplaceAll(standards, "GHSA-fc5q-39xc-vjpf", "GHSA-42xw-2xvc-qx8m"), "version: 1\nexceptions:\n")
+	listed := `{"GHSA-fc5q-39xc-vjpf":{"severity":"high"}}`
+	cases := []struct {
+		name, advisories, ignores, want string
+		high                            int
+	}{
+		{"a listed ignore counted twice", listed, "GHSA-fc5q-39xc-vjpf", "unidentified advisories", 2},
+		{"b two unrelated ignores", `{}`, "GHSA-fc5q-39xc-vjpf, GHSA-42xw-2xvc-qx8m", "unidentified advisories", 2},
+		{"c real ignored shape no tie", `{}`, "GHSA-fc5q-39xc-vjpf", "unidentified advisories", 1},
+		{"d listed excepted no gap", listed, "GHSA-fc5q-39xc-vjpf", "", 1},
+		{"e gap no ignores", `{}`, "", "unidentified advisories", 1},
+		{"f zero tied ignores equal gap", `{}`, "GHSA-fc5q-39xc-vjpf", "", 0},
+		{"f zero tied ignores one above", `{}`, "GHSA-fc5q-39xc-vjpf", "unidentified advisories", 1},
+		{"f gap above ignore count", `{}`, "GHSA-fc5q-39xc-vjpf", "unidentified advisories", 2},
+	}
+	for i := 0; i < len(cases) && i < 8; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			report := fmt.Sprintf(`{"advisories":%s,"metadata":{"vulnerabilities":{"high":%d}}}`, tc.advisories, tc.high)
+			if tc.name == "c real ignored shape no tie" {
+				report = nodeAuditFixture(t, "pnpm-ignored.json")
+			}
+			policy := "auditConfig:\n  ignoreGhsas: [" + tc.ignores + "]\n"
+			err := runNodeAuditFixture(t, "pnpm", report, both, policy, false)
+			checkNodeAuditExceptionError(t, "", tc.want, err)
+		})
+	}
+}
+
+// nodeAuditChainID generates distinct valid IDs without a large committed fixture.
+func nodeAuditChainID(index int) string {
+	const alphabet = "23456789cfghjmpqrvwx"
+	var suffix [4]byte
+	for i := 0; i < len(suffix) && i < 4; i++ {
+		suffix[i] = alphabet[index%len(alphabet)]
+		index /= len(alphabet)
+	}
+	return "GHSA-" + string(suffix[:]) + "-2222-2222"
+}
+
+// nodeAuditDistinctChain generates a report within the package and traversal limits.
+func nodeAuditDistinctChain(count int) map[string]nodeAuditVulnerability {
+	packages := make(map[string]nodeAuditVulnerability, count)
+	for i := 0; i < count && i < maxNodeAdvisories; i++ {
+		via := []json.RawMessage{json.RawMessage(fmt.Sprintf(`{"severity":"high","github_advisory_id":%q}`, nodeAuditChainID(i)))}
+		if i+1 < count {
+			via = append(via, json.RawMessage(fmt.Sprintf(`"pkg%05d"`, i+1)))
+		}
+		packages[fmt.Sprintf("pkg%05d", i)] = nodeAuditVulnerability{Severity: "high", Via: via}
+	}
+	return packages
+}
+
+// checkNodeAuditWalkStorage stops a planted quadratic walk before it exhausts host memory.
+func checkNodeAuditWalkStorage(t *testing.T, walk *npmAdvisoryWalk, ceiling int) {
+	t.Helper()
+	if err := walk.push("pkg00000"); err != nil {
+		t.Fatal(err)
+	}
+	for step := 0; len(walk.path) > 0 && step < maxNodeAdvisories; step++ {
+		frame := walk.path[len(walk.path)-1]
+		if frame.next < len(frame.dependencies) {
+			dependency := frame.dependencies[frame.next]
+			frame.next++
+			if err := walk.follow(frame, dependency); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			walk.finish(frame)
+		}
+		if entries := walk.storedAdvisoryEntries(); entries > ceiling {
+			t.Fatalf("retained advisory entries %d exceed linear ceiling %d", entries, ceiling)
+		}
+	}
+	if len(walk.path) != 0 {
+		t.Fatal("bounded walk did not finish")
+	}
+}
+
+// TestNodeAuditDistinctChainStorage proves linear retained IDs and the real report verdict.
+func TestNodeAuditDistinctChainStorage(t *testing.T) {
+	const count = 20000
+	packages := nodeAuditDistinctChain(count)
+	budget := maxNodeAdvisories
+	walk := newNpmAdvisoryWalk(packages, &budget)
+	checkNodeAuditWalkStorage(t, &walk, 4*count)
+	if got := walk.storedAdvisoryEntries(); got != count {
+		t.Fatalf("stored advisory entries: got %d, want %d", got, count)
+	}
+	if len(walk.memo) != count || budget != maxNodeAdvisories-(3*count-1) {
+		t.Fatalf("completed packages=%d remaining budget=%d", len(walk.memo), budget)
+	}
+	checkNodeAuditChainVerdict(t, packages, count)
+	t.Logf("packages=%d retained IDs=%d charged steps=%d", count, walk.storedAdvisoryEntries(), maxNodeAdvisories-budget)
+}
+
+// checkNodeAuditChainVerdict verifies parsing, complete findings and exception refusal.
+func checkNodeAuditChainVerdict(t *testing.T, packages map[string]nodeAuditVulnerability, count int) {
+	t.Helper()
+	report := npmAuditReport{Vulnerabilities: packages}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := structuredNodeAudit(string(encoded))
+	if err != nil || parsed == nil {
+		t.Fatalf("generated report: %v", err)
+	}
+	findings, err := listedNodeFindings(*parsed)
+	if err != nil || len(findings.ids) != count || findings.high != count {
+		t.Fatalf("chain findings: ids=%d high=%d err=%v", len(findings.ids), findings.high, err)
+	}
+	covered, err := judgeStructuredNodeAdvisories(*parsed, nil, nil)
+	if covered || err == nil || !strings.Contains(err.Error(), "has no unexpired exception") {
+		t.Fatalf("unexcepted chain verdict: covered=%v err=%v", covered, err)
+	}
+}
 
 // nodeAuditFixture reads the frozen package-manager reports without running a manager.
 func nodeAuditFixture(t *testing.T, name string) string {
@@ -144,7 +266,7 @@ func TestNodeAuditExceptions(t *testing.T) {
 		name, manager, report, standards, workspace, want string
 		failed                                            bool
 	}{
-		{"a ignored live", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 1), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "", false},
+		{"a ignored live unidentified", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 1), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "unidentified advisories", false},
 		{"b ignored missing", "pnpm", "pnpm-ignored.json", "version: 1\n", "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "configured ignored advisories; no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf", false},
 		{"c ignored expired", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, -1), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "GHSA-fc5q-39xc-vjpf exception in .standards.yaml expired on " + time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02"), false},
 		{"d listed missing", "pnpm", "pnpm-listed.json", "version: 1\n", "", "GHSA-fc5q-39xc-vjpf", true},
@@ -163,7 +285,7 @@ func TestNodeAuditExceptions(t *testing.T) {
 		{"listed expired", "pnpm", "pnpm-listed.json", nodeAuditStandards(t, -1), "", "expired on", true},
 		{"f legacy", "pnpm", "legacy.json", "version: 1\n", "", "found 1 high and 0 critical vulnerabilities", false},
 		{"legacy exception cannot hide counts", "pnpm", "legacy.json", nodeAuditStandards(t, 1), "", "found 1 high and 0 critical vulnerabilities", false},
-		{"expiry day", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 0), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "", false},
+		{"expiry day unidentified", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 0), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "unidentified advisories", false},
 	}
 	for i := 0; i < len(cases) && i < 32; i++ {
 		tc := cases[i]
@@ -198,8 +320,8 @@ func checkNodeAuditExceptionError(t *testing.T, report, want string, err error) 
 // TestNodeAuditIgnoreConfiguration covers pnpm policy locations, precedence and fail-closed gaps.
 func TestNodeAuditIgnoreConfiguration(t *testing.T) {
 	cases := []struct{ name, policy, want string }{
-		{"modern workspace", "audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n", ""},
-		{"legacy package", `{"pnpm":{"auditConfig":{"ignoreGhsas":["GHSA-fc5q-39xc-vjpf"]}}}`, ""},
+		{"modern workspace", "audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n", "unidentified advisories"},
+		{"legacy package", `{"pnpm":{"auditConfig":{"ignoreGhsas":["GHSA-fc5q-39xc-vjpf"]}}}`, "unidentified advisories"},
 		{"unknown gap", "packages: []\n", "unidentified advisories"},
 		{"unknown id", "auditConfig:\n  ignoreGhsas: [CVE-2026-1234]\n", "not a GHSA id"},
 		{"wrong id", "auditConfig:\n  ignoreGhsas: [GHSA-42xw-2xvc-qx8m]\n", "no exception in .standards.yaml covers GHSA-42xw-2xvc-qx8m"},
@@ -236,6 +358,8 @@ func TestNodeAuditAdvisorySeverities(t *testing.T) {
 		{"npm transitive", "npm", `{"vulnerabilities":{"parent":{"severity":"high","via":["child"]},"child":{"severity":"high","via":[{"severity":"high","url":"https://github.com/advisories/GHSA-fc5q-39xc-vjpf"}]}}}`, "GHSA-fc5q-39xc-vjpf"},
 		{"npm missing reference", "npm", `{"vulnerabilities":{"parent":{"severity":"high","via":["child"]}}}`, "missing package child"},
 		{"npm cycle", "npm", `{"vulnerabilities":{"parent":{"severity":"high","via":["parent"]}}}`, "no bounded GHSA"},
+		{"npm disconnected package", "npm", `{"vulnerabilities":{"a":{"severity":"high","via":[{"severity":"high","github_advisory_id":"GHSA-fc5q-39xc-vjpf"}]},"z":{"severity":"high","via":[]}}}`, "no bounded GHSA"},
+		{"npm disconnected cycle", "npm", `{"vulnerabilities":{"a":{"severity":"high","via":[{"severity":"high","github_advisory_id":"GHSA-fc5q-39xc-vjpf"}]},"z":{"severity":"high","via":["z"]}}}`, "no bounded GHSA"},
 		{"npm shared high", "npm", nodeAuditFixture(t, "npm-shared.json"), "GHSA-fc5q-39xc-vjpf"},
 		{"npm shared cycle", "npm", nodeAuditFixture(t, "npm-cycle-shared.json"), "GHSA-fc5q-39xc-vjpf"},
 		{"npm shared unresolved", "npm", nodeAuditFixture(t, "npm-shared-missing.json"), "missing package missing-second"},
@@ -277,7 +401,8 @@ func TestNodeAuditLimits(t *testing.T) {
 	}
 	packages := map[string]nodeAuditVulnerability{"parent": {Severity: "high", Via: []json.RawMessage{json.RawMessage(`"parent"`)}}}
 	budget := 0
-	if _, err := npmPackageAdvisories(packages, "parent", &budget, make(map[string][]string)); err == nil {
+	walk := newNpmAdvisoryWalk(packages, &budget)
+	if _, err := walk.advisories("parent"); err == nil {
 		t.Fatal("exhausted traversal budget accepted")
 	}
 	budget = 0

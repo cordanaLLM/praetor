@@ -254,7 +254,10 @@ transitive `via` references. A listed high or critical advisory needs its own li
 Lower severities do not fail this stage. For older reports without either map, metadata
 high and critical counts retain their previous behavior and cannot be waived by GHSA.
 The stage compares metadata counts against listed findings to detect suppressed findings;
-an unexplained gap fails rather than treating an empty advisory map as a clean audit.
+every positive gap fails with an unidentified-advisories error. Neither supported report map
+identifies omitted advisories, so an ignore never explains a gap, even with a live exception.
+An ignored ID already listed cannot cover another finding; unrelated ignored IDs cannot
+cover missing findings either. A zero gap still permits listed advisories with live exceptions.
 
 For pnpm 12, declare ignores in `pnpm-workspace.yaml`, using `auditConfig.ignoreGhsas`
 or its newer replacement `audit.ignore`; the latter takes precedence, including an empty

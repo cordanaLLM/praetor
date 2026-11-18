@@ -46,7 +46,7 @@ func judgeStructuredNodeAdvisories(report npmAuditReport, entries []config.Excep
 		return false, err
 	}
 	gap := max(0, report.Metadata.Vulnerabilities.High-findings.high) + max(0, report.Metadata.Vulnerabilities.Critical-findings.critical)
-	if gap > len(ignored) {
+	if gap > 0 {
 		return false, fmt.Errorf("%d ignored high or critical findings; no exception in .standards.yaml covers the unidentified advisories (configured GHSA ids: %s)", gap, strings.Join(ignored, ", "))
 	}
 	if err := checkListedNodeAdvisories(entries, findings.ids); err != nil {
