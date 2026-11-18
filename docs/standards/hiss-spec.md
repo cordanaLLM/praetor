@@ -63,7 +63,7 @@ Functions must remain strictly bounded in complexity and scope:
 | **Function Length** | $\le 60$ LOC | AST Scanner |
 | **Executable Statements** | $\le 50$ Statements | Compiler AST |
 
-**Function Length** is measured over the body: from the line carrying the opening brace to the line carrying the closing brace, both counted. The signature is not part of the measurement, so a definition written `int f(void)` / `{` on two lines is exactly as long as the same definition written `int f(void) {` on one, and a signature wrapped across a long parameter list -- the ordinary shape of a GPU kernel -- adds nothing to the count. A brace-delimited scanner may still recognise a function from its signature line, which is how it names one whose brace is elsewhere; recognition and measurement are separate. Reformatting must never move a function across the cap.
+**Function Length** is measured over the body: from the line carrying the opening brace to the line carrying the closing brace, both counted. The signature is not part of the measurement, so a definition written `int f(void)` / `{` on two lines is exactly as long as the same definition written `int f(void) {` on one, and a signature wrapped across a long parameter list -- the ordinary shape of a GPU kernel -- adds nothing to the count. The native (C, C++, Objective-C++, CUDA and HIP), Rust and JavaScript/TypeScript/Svelte scanners record the function span used by documentation coverage from the first line of the signature through the closing brace, including wrapped signatures. This span does not change the HISS-04 length calculation or its finding location, which remains the opening-brace line. Reformatting must never move a function across the cap.
 
 ### HISS-05: Variable Scoping
 

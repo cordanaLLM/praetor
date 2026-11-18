@@ -108,7 +108,8 @@ Test code and function bodies are both brace-delimited items, and one tracker (`
   by any run of `const`, `async`, `unsafe`, `safe`, `default` and `extern` qualifiers before `fn`.
   The grammar matches the line after literals are stripped, so a `fn` in a string or comment is not
   a header. Outer attributes may precede the header on the same line (`#[inline] pub fn`,
-  `#[tokio::main] async fn main() {`).
+  `#[tokio::main] async fn main() {`). The recorded function span runs from this header line
+  through the closing brace even when the signature wraps onto later lines.
 - The abort policy exempts the body of the unindented `fn main`; rustfmt indents a method of the
   same name inside its `impl` block, so the method stays library code. The header line belongs to
   `fn main` too, so a one-line `fn main() { std::process::exit(run()) }` is exempt.
