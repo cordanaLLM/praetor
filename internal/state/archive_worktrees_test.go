@@ -315,6 +315,131 @@ func TestArchiveEquivalentPaths(t *testing.T) {
 	}
 }
 
+// TestArchiveAliasLongSpelling retains the same live row verbatim through short and overlong aliases.
+func TestArchiveAliasLongSpelling(t *testing.T) {
+	root, linked := archiveWorktreeFixture(t)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(filepath.Dir(linked), alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	for _, repeats := range []int{1, 2048} {
+		for _, format := range []string{"- [x] id: live | path: %s | next: pending commit\n", "| DONE | %s | next: pending commit |\n"} {
+			t.Run(fmt.Sprintf("%d/%s", repeats, format), func(t *testing.T) {
+				path := filepath.Join(alias, filepath.Base(linked)) + "/" + strings.Repeat("./", repeats)
+				kept := fmt.Sprintf(format, path)
+				open := filepath.Join(root, WorkingDirName, openLedgerName)
+				writeIntegrityFile(t, open, kept+"- [x] unrelated\n")
+				if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != 1 {
+					t.Fatalf("alias archive = %d, %v; want one removed row", count, err)
+				}
+				assertIntegrityFile(t, open, kept)
+			})
+		}
+	}
+}
+
+// TestArchiveLongSymlinkLoop preserves every row when the cleaned alias cannot be resolved.
+func TestArchiveLongSymlinkLoop(t *testing.T) {
+	root := t.TempDir()
+	loop := filepath.Join(root, "loop")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	_, statErr := os.Stat(loop)
+	if statErr == nil {
+		t.Fatal("symlink loop stat unexpectedly succeeded")
+	}
+	testArchiveLongPathError(t, root, loop, statErr)
+}
+
+// testArchiveLongPathError checks fail-closed archive publication through a redundant spelling.
+func testArchiveLongPathError(t *testing.T, root, path string, want error) {
+	t.Helper()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	body := "- [x] path: " + path + "/" + strings.Repeat("./", 2048) + " | next: pending commit\n- [x] unrelated\n"
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	backlog := filepath.Join(root, WorkingDirName, "BACKLOG.md")
+	writeIntegrityFile(t, open, body)
+	writeIntegrityFile(t, backlog, "unchanged backlog\n")
+	ops := defaultArchiveWorktreeOps()
+	ops.list = func(context.Context, string) ([]worktree.WorktreeInfo, error) { return nil, nil }
+	var pathErr *os.PathError
+	if !errors.As(want, &pathErr) {
+		t.Fatalf("expected native PathError: %v", want)
+	}
+	if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); count != 0 || !errors.Is(err, pathErr.Err) {
+		t.Fatalf("long spelling archive = %d, %v; want %v and no removed rows", count, err, pathErr.Err)
+	}
+	assertIntegrityFile(t, open, body)
+	assertIntegrityFile(t, backlog, "unchanged backlog\n")
+}
+
+// TestArchiveCleanedTotalLimit avoids inspection of an impossible whole path with no live worktree.
+func TestArchiveCleanedTotalLimit(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	path := "/" + strings.Repeat("a/", 17000) + "a"
+	for _, format := range []string{"- [x] path: %s\n", "| DONE | %s |\n"} {
+		open := filepath.Join(root, WorkingDirName, openLedgerName)
+		writeIntegrityFile(t, open, fmt.Sprintf(format, path)+"- [ ] pending\n")
+		calls := 0
+		ops := archiveWorktreeOps{
+			list: func(context.Context, string) ([]worktree.WorktreeInfo, error) { return nil, nil },
+			inspect: func(context.Context, string) (archivePath, error) {
+				calls++
+				return archivePath{}, errors.New("impossible path reached stat")
+			},
+		}
+		if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); err != nil || count != 1 || calls != 0 {
+			t.Fatalf("total limit archive = %d, %v, inspections = %d", count, err, calls)
+		}
+		assertIntegrityFile(t, open, "- [ ] pending\n")
+	}
+}
+
+// TestArchiveWindowsSpellings exercises native case and current-drive root-relative canonicalization.
+func TestArchiveWindowsSpellings(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows filesystem case and root-relative semantics require Windows")
+	}
+	root, linked := archiveWorktreeFixture(t)
+	t.Chdir(root)
+	for _, path := range []string{strings.ToUpper(linked), strings.ToLower(linked), strings.TrimPrefix(linked, filepath.VolumeName(linked))} {
+		for _, repeats := range []int{1, 2048, archivePathArgumentLimit()/2 + 1} {
+			for _, format := range []string{"- [x] path: %s | next: pending commit\n", "| DONE | %s | next: pending commit |\n"} {
+				kept := fmt.Sprintf(format, path+"/"+strings.Repeat("./", repeats))
+				open := filepath.Join(root, WorkingDirName, openLedgerName)
+				writeIntegrityFile(t, open, kept+"- [x] unrelated\n")
+				if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != 1 {
+					t.Fatalf("Windows spelling archive = %d, %v", count, err)
+				}
+				assertIntegrityFile(t, open, kept)
+			}
+		}
+	}
+}
+
+// TestArchiveWindowsNativeTooLong classifies the real Windows stat error for an oversized component.
+func TestArchiveWindowsNativeTooLong(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("native ERROR_FILENAME_EXCED_RANGE stat requires Windows")
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, strings.Repeat("a", 300))
+	_, statErr := os.Stat(path)
+	if !errors.Is(statErr, syscall.Errno(206)) {
+		t.Fatalf("native stat = %v; want ERROR_FILENAME_EXCED_RANGE (206)", statErr)
+	}
+	result, err := lookupArchivePath(t.Context(), path)
+	if err != nil || result.exists || result.notDirectory {
+		t.Fatalf("Windows too-long lookup = %+v, %v", result, err)
+	}
+}
+
 // TestArchivePathFields prevents a longer field from masking the completed live row.
 func TestArchivePathFields(t *testing.T) {
 	root, linked := archiveWorktreeFixture(t)
@@ -376,7 +501,9 @@ func TestArchiveUTF8ComponentWorktree(t *testing.T) {
 			}
 			path := filepath.Join(root, strings.Repeat("é", 128))
 			// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- owner-only worktree fixture directory when the host filesystem permits a 256-byte UTF-8 name
-			if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, syscall.ENAMETOOLONG) {
+			if err := os.Mkdir(path, 0o700); errors.Is(err, syscall.ENAMETOOLONG) {
+				t.Skipf("filesystem cannot create a 128-character two-byte name: %v", err)
+			} else if err != nil {
 				t.Fatal(err)
 			}
 			ops := defaultArchiveWorktreeOps()
@@ -424,7 +551,7 @@ func testArchiveUTF8ComponentRealDirectory(t *testing.T) {
 	assertIntegrityFile(t, open, kept)
 }
 
-// TestArchiveRedundantLongWorktreePath retains a completed row whose redundant path exceeds 4096 bytes before cleaning.
+// TestArchiveRedundantLongWorktreePath retains a live row exceeding the native total bound only before cleaning.
 func TestArchiveRedundantLongWorktreePath(t *testing.T) {
 	for _, format := range []string{"- [x] id: live | path: %s | branch: fixture/linked\n", "| DONE | %s |\n"} {
 		t.Run(format, func(t *testing.T) {
@@ -433,7 +560,7 @@ func TestArchiveRedundantLongWorktreePath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			redundant := resolved + "/" + strings.Repeat("./", 2048)
+			redundant := resolved + "/" + strings.Repeat("./", archivePathArgumentLimit()/2+1)
 			kept := fmt.Sprintf(format, redundant)
 			open := filepath.Join(root, WorkingDirName, openLedgerName)
 			writeIntegrityFile(t, open, kept+"- [x] unrelated\n")
@@ -445,8 +572,8 @@ func TestArchiveRedundantLongWorktreePath(t *testing.T) {
 	}
 }
 
-// TestArchiveRejectedUnmatchedPathDischarged discharges a rejected field matching no live worktree while retaining a live match.
-func TestArchiveRejectedUnmatchedPathDischarged(t *testing.T) {
+// TestArchiveCleanedUnmatchedPathDischarged inspects feasible cleaned fields and retains only the live worktree.
+func TestArchiveCleanedUnmatchedPathDischarged(t *testing.T) {
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
 		t.Fatal(err)
@@ -469,35 +596,35 @@ func TestArchiveRejectedUnmatchedPathDischarged(t *testing.T) {
 		},
 	}
 	if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); err != nil || count != 2 {
-		t.Fatalf("unmatched rejected archive = %d, %v; want two discharged rows", count, err)
+		t.Fatalf("cleaned unmatched archive = %d, %v; want two discharged rows", count, err)
 	}
-	if inspections != 2 {
-		t.Fatalf("inspections = %d; want 2 live-worktree checks and 0 rejected-candidate stats", inspections)
+	if inspections != 5 {
+		t.Fatalf("inspections = %d; want 3 unique cleaned candidates and 2 live-worktree checks", inspections)
 	}
 	assertIntegrityFile(t, open, kept)
 }
 
-// TestArchivePathFieldLengthBounds pins host limits before path cleaning or filesystem lookup.
+// TestArchivePathFieldLengthBounds applies only the total limit after lexical cleaning.
 func TestArchivePathFieldLengthBounds(t *testing.T) {
-	longPath := "/" + strings.Repeat("a/", 2047) + "a"
+	limit := archivePathArgumentLimit()
+	if limit == 0 {
+		t.Skip("host has no verified pre-stat total ceiling; native stat decides")
+	}
+	boundary := "/" + strings.Repeat("a/", (limit-3)/2) + "aa"
 	for _, tc := range []struct {
 		name, path string
 		candidate  bool
 	}{
 		{"component-255", "/" + strings.Repeat("a", 255), true},
-		{"component-256", "/" + strings.Repeat("a", 256), false},
-		{"total-4096", longPath, true},
-		{"total-4097", longPath + "a", false},
-		{"native-component-255", `C:\` + strings.Repeat("a", 255), true},
-		{"native-component-256", `C:\` + strings.Repeat("a", 256), false},
-		{"unicode-255-bytes", "/" + strings.Repeat("é", 127) + "a", true},
-		{"unicode-256-bytes", "/" + strings.Repeat("é", 128), runtime.GOOS == "windows"},
-		{"unicode-255-utf16", "/" + strings.Repeat("é", 255), runtime.GOOS == "windows"},
-		{"unicode-256-utf16", "/" + strings.Repeat("é", 256), false},
-		{"unc-component-256", `\\host\share\` + strings.Repeat("a", 256), false},
-		{"unc-total-4097", strings.ReplaceAll(longPath+"a", "/", `\`), false},
-		{"unclean-component", "/" + strings.Repeat("a", 256) + "/../short", false},
-		{"unclean-total", "/short" + strings.Repeat("/.", 2046), false},
+		{"component-256", "/" + strings.Repeat("a", 256), true},
+		{"total-at-limit", boundary, true},
+		{"total-over-limit", boundary + "a", false},
+		{"native-component-256", `C:\` + strings.Repeat("a", 256), true},
+		{"unicode-256-bytes", "/" + strings.Repeat("é", 128), true},
+		{"unicode-256-utf16", "/" + strings.Repeat("é", 256), true},
+		{"unc-component-256", `\\host\share\` + strings.Repeat("a", 256), true},
+		{"unclean-component", "/" + strings.Repeat("a", 256) + "/../short", true},
+		{"unclean-total", "/short" + strings.Repeat("/.", limit/2), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) { testArchivePathFieldBoundary(t, tc.path, tc.candidate) })
 	}
@@ -526,24 +653,35 @@ func testArchivePathFieldBoundary(t *testing.T, path string, candidate bool) {
 	}
 }
 
-// TestArchivePathHostBounds verifies UTF-16 code unit bounds on Windows and byte bounds on POSIX hosts.
+// TestArchivePathHostBounds pins native total units without imposing a component ceiling.
 func TestArchivePathHostBounds(t *testing.T) {
-	for _, tc := range []struct {
-		name, goos, path string
-		want             bool
-	}{
-		{"linux-128-two-byte", "linux", "/" + strings.Repeat("é", 128), false},
-		{"windows-128-two-byte", "windows", `C:\` + strings.Repeat("é", 128), true},
-		{"windows-255-two-byte", "windows", `C:\` + strings.Repeat("é", 255), true},
-		{"windows-256-two-byte", "windows", `C:\` + strings.Repeat("é", 256), false},
-		{"windows-255-surrogate-units", "windows", `C:\` + strings.Repeat("𐐷", 127) + "a", true},
-		{"windows-256-surrogate-units", "windows", `C:\` + strings.Repeat("𐐷", 128), false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := archivePathWithinHostBounds(tc.path, tc.goos); got != tc.want {
-				t.Fatalf("archivePathWithinHostBounds(%s, %s) = %v; want %v", tc.name, tc.goos, got, tc.want)
-			}
-		})
+	limit := archivePathArgumentLimit()
+	if limit == 0 {
+		t.Skip("host has no verified pre-stat total ceiling")
+	}
+	for _, size := range []int{limit - 1, limit, limit + 1} {
+		if got := archivePathWithinBounds(strings.Repeat("a", size)); got != (size <= limit) {
+			t.Fatalf("total %d: within bounds = %v; limit %d", size, got, limit)
+		}
+	}
+	if !archivePathWithinBounds("/" + strings.Repeat("é", 128)) {
+		t.Fatal("component length must reach native stat")
+	}
+}
+
+// TestArchiveWindowsPathUnits checks native UTF-16 boundaries for Unicode and unpaired surrogates.
+func TestArchiveWindowsPathUnits(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("native UTF16FromString and WTF-8 conversion require Windows")
+	}
+	limit := archivePathArgumentLimit()
+	for _, unit := range []string{"é", "\xed\xa0\x80", "\xed\xbf\xbf"} {
+		if !archivePathWithinBounds(strings.Repeat(unit, limit)) || archivePathWithinBounds(strings.Repeat(unit, limit+1)) {
+			t.Fatal("native single-unit UTF-16 boundary mismatch")
+		}
+	}
+	if !archivePathWithinBounds(strings.Repeat("𐐷", limit/2)+"a") || archivePathWithinBounds(strings.Repeat("𐐷", limit/2)+"aa") {
+		t.Fatal("native surrogate-pair boundary mismatch")
 	}
 }
 
@@ -570,10 +708,10 @@ func testArchivePathStatLength(t *testing.T, root string, size int, stat func(st
 	t.Helper()
 	path := filepath.Join(root, strings.Repeat("a", size))
 	_, statErr := stat(path)
-	if size == 256 && !errors.Is(statErr, syscall.ENAMETOOLONG) {
+	if size == 256 && !archivePathTooLong(statErr) {
 		t.Skipf("filesystem does not report ENAMETOOLONG for a 256-byte component: %v", statErr)
 	}
-	if size == 255 && errors.Is(statErr, syscall.ENAMETOOLONG) {
+	if size == 255 && archivePathTooLong(statErr) {
 		t.Skipf("filesystem reports ENAMETOOLONG for a 255-byte component: %v", statErr)
 	}
 	if size == 255 && !errors.Is(statErr, os.ErrNotExist) {
@@ -593,7 +731,7 @@ func TestArchiveInvalidPathStatPreservesRows(t *testing.T) {
 	}
 	path := filepath.Join(root, "invalid\x00name")
 	_, statErr := os.Stat(path)
-	if statErr == nil || errors.Is(statErr, os.ErrNotExist) || errors.Is(statErr, syscall.ENAMETOOLONG) {
+	if statErr == nil || errors.Is(statErr, os.ErrNotExist) || archivePathTooLong(statErr) {
 		t.Fatalf("invalid-name fixture stat = %v; want another error", statErr)
 	}
 	body := "- [x] path: " + path + " | done\n- [x] unrelated\n"
@@ -637,6 +775,8 @@ func TestArchivePermissionDeniedStatPreservesRows(t *testing.T) {
 	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrPermission) {
 		t.Fatalf("locked fixture stat = %v; want permission denied", statErr)
 	}
+	_, longStatErr := os.Stat(path)
+	testArchiveLongPathError(t, root, path, longStatErr)
 	body := "- [x] path: " + path + " | done\n- [x] unrelated\n"
 	open := filepath.Join(root, WorkingDirName, openLedgerName)
 	backlog := filepath.Join(root, WorkingDirName, "BACKLOG.md")

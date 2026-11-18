@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -67,7 +66,7 @@ func boundedArchivePath(ctx context.Context, path string, lookup func(string) (a
 func lookupArchivePath(ctx context.Context, path string) (archivePath, error) {
 	result := archivePath{path: filepath.Clean(filepath.FromSlash(path))}
 	info, err := os.Stat(result.path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENAMETOOLONG) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) && !archivePathTooLong(err) {
 		return result, fmt.Errorf("inspect archive worktree %s: %w", path, err)
 	}
 	result.exists = err == nil && info.IsDir()
