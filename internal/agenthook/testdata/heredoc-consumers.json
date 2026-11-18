@@ -298,5 +298,20 @@
     "name": "env data message substitution",
     "command": "env -i git commit -m \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
     "want": 0
+  },
+  {
+    "name": "quoted data consumer heredoc delimiter",
+    "command": "\"cat\" <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 0
+  },
+  {
+    "name": "quoted consumer heredoc delimiter",
+    "command": "\"bash\" <<'EOF'\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "here-string nested heredoc delimiter",
+    "command": "bash <<< '\"bash\" <<EOF\ngit commit -n -m x\nEOF'",
+    "want": 2
   }
 ]

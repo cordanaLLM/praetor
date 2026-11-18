@@ -7,7 +7,6 @@ Enforces HISS by intercepting attempts to bypass Git hooks, linters, or verifica
 import sys
 import os
 import re
-import shlex
 import json
 from pathlib import Path
 import shutil
@@ -183,6 +182,38 @@ def scan_command_spans(command, short_pattern):
     return spans.parts, spans.nested
 
 
+def shell_word_escape(word, position, quote):
+    """Resolve one escape using the Go word reader's double-quote rules."""
+    if position + 1 == len(word):
+        raise ValueError("invalid shell command: trailing word escape")
+    following = word[position + 1]
+    if quote == '"' and following not in '"\\$\x60\n':
+        return "\\", False
+    return following, True
+
+
+def shell_unquote_word(word):
+    """Remove quoting from one bounded word; refuse incomplete quotes or escapes."""
+    result, quote, skip = [], "", False
+    for index in range(len(word)):
+        if skip:
+            skip = False
+            continue
+        ch = word[index]
+        if ch == quote:
+            quote = ""
+        elif ch == "\\" and quote != "'":
+            text, skip = shell_word_escape(word, index, quote)
+            result.append(text)
+        elif not quote and ch in "'\"":
+            quote = ch
+        else:
+            result.append(ch)
+    if quote:
+        raise ValueError("invalid shell command: unbalanced word quote")
+    return "".join(result)
+
+
 def shell_here_doc_delimiter(text):
     """Read exactly the delimiter subset accepted by util.ShellHereDocDelimiter."""
     word_end = " \t;&|<>()"
@@ -356,7 +387,7 @@ class CommandSpans:
         start = self.word_start
         word = self.command[start:end]
         if self.here_string is not None:
-            self.feeds.append((self.here_string, shlex.split(word)[0], False))
+            self.feeds.append((self.here_string, shell_unquote_word(word), False))
             self.here_string = None
         self.enter_git_command(word, end)
         data = self.next_data or self.redirect_data
@@ -547,7 +578,7 @@ class CommandSpans:
                 break
             end = match.end()
             text = text[end:]
-            word = shlex.split(match[0])[0]
+            word = shell_unquote_word(match[0])
             if value:
                 value = False
                 continue
@@ -730,7 +761,7 @@ class CommandSpans:
         if not word:
             self.here_string, self.redirect_data = document, True
             return True
-        self.feeds.append((document, shlex.split(word[0])[0], False))
+        self.feeds.append((document, shell_unquote_word(word[0]), False))
         self.mask(self.position, self.position + len(word[0]))
         self.position += len(word[0])
         return True

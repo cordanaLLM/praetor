@@ -1160,3 +1160,48 @@ func TestParityEvasionHeredocConsumerMutants(t *testing.T) {
 		})
 	}
 }
+
+// TestParityEvasionShellWords compares canonical unquoting with Go word by word; malformed input refuses.
+func TestParityEvasionShellWords(t *testing.T) {
+	const corpus = "testdata/shell-words.json"
+	data, err := os.ReadFile(corpus)
+	if err != nil {
+		t.Fatalf("read shell word corpus: %v", err)
+	}
+	var cases []struct {
+		Name, Word string
+		Want       *string
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatalf("decode shell word corpus: %v", err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			if tc.Want == nil {
+				if _, err := commandSegments("git commit -m " + tc.Word); err == nil {
+					t.Error("Go accepted malformed shell word")
+				}
+			} else if got := unquoteShellWord(tc.Word); got != *tc.Want {
+				t.Errorf("Go word %q want %q", got, *tc.Want)
+			}
+		})
+	}
+	const program = `import json, runpy, sys
+hook = runpy.run_path(sys.argv[1])
+with open(sys.argv[2], encoding="utf-8") as source:
+    cases = json.load(source)
+for index in range(len(cases)):
+    case = cases[index]
+    try:
+        got = hook["shell_unquote_word"](case["word"])
+    except ValueError:
+        got = None
+    if got != case["want"]:
+        sys.exit(case["name"] + ": got " + repr(got) + ", want " + repr(case["want"]))
+`
+	result, err := util.RunCommandBytes(testsupport.DeadlineContext(t), "", testsupport.PythonInterpreter(t),
+		util.MaxCommandOutputBytes, "-B", "-c", program, pythonGuard, corpus)
+	if err != nil {
+		t.Fatalf("replay canonical shell words: %v: %s", err, result.Stderr)
+	}
+}

@@ -431,7 +431,6 @@ is deliberately not part of lefthook.yml.
 import json
 import os
 import re
-import shlex
 import sys
 
 MAX_INPUT_BYTES = {{MAX_INPUT_BYTES}}
@@ -664,6 +663,38 @@ def scan_command_spans(command, short_pattern):
     return spans.parts, spans.nested
 
 
+def shell_word_escape(word, position, quote):
+    """Resolve one escape using the Go word reader's double-quote rules."""
+    if position + 1 == len(word):
+        raise ValueError("invalid shell command: trailing word escape")
+    following = word[position + 1]
+    if quote == '"' and following not in '"\\$\x60\n':
+        return "\\", False
+    return following, True
+
+
+def shell_unquote_word(word):
+    """Remove quoting from one bounded word; refuse incomplete quotes or escapes."""
+    result, quote, skip = [], "", False
+    for index in range(len(word)):
+        if skip:
+            skip = False
+            continue
+        ch = word[index]
+        if ch == quote:
+            quote = ""
+        elif ch == "\\" and quote != "'":
+            text, skip = shell_word_escape(word, index, quote)
+            result.append(text)
+        elif not quote and ch in "'\"":
+            quote = ch
+        else:
+            result.append(ch)
+    if quote:
+        raise ValueError("invalid shell command: unbalanced word quote")
+    return "".join(result)
+
+
 def shell_here_doc_delimiter(text):
     """Read exactly the delimiter subset accepted by util.ShellHereDocDelimiter."""
     word_end = " \t;&|<>()"
@@ -837,7 +868,7 @@ class CommandSpans:
         start = self.word_start
         word = self.command[start:end]
         if self.here_string is not None:
-            self.feeds.append((self.here_string, shlex.split(word)[0], False))
+            self.feeds.append((self.here_string, shell_unquote_word(word), False))
             self.here_string = None
         self.enter_git_command(word, end)
         data = self.next_data or self.redirect_data
@@ -1028,7 +1059,7 @@ class CommandSpans:
                 break
             end = match.end()
             text = text[end:]
-            word = shlex.split(match[0])[0]
+            word = shell_unquote_word(match[0])
             if value:
                 value = False
                 continue
@@ -1211,7 +1242,7 @@ class CommandSpans:
         if not word:
             self.here_string, self.redirect_data = document, True
             return True
-        self.feeds.append((document, shlex.split(word[0])[0], False))
+        self.feeds.append((document, shell_unquote_word(word[0]), False))
         self.mask(self.position, self.position + len(word[0]))
         self.position += len(word[0])
         return True
@@ -1654,6 +1685,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"f297459bcaba9adaba3fd8d62d4b400e79f583e27981e3fee1b8511a1ff8482f": "bounded word unquoting without optional Python modules",
 	"899552ce7b5253b3f85040dde560beb2e201ca74481f589ae03d92e120a45bc9": "stdin consumer ownership for here-documents and here-strings",
 	"e76074f216d1d60d63b0efab43643a1a42441732c36d59b29e4cc88d714c425d": "uncertain command and Git subcommand brace words fail closed",
 	"31c7c15c77717609cbfddb4f18ad5ab5a66166a325113eb740c7e45774ae87f6": "exact heredoc delimiter words, logical body lines and brace argument refusal",

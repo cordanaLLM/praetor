@@ -611,6 +611,7 @@ func TestEmittedEvasionGuardSegments(t *testing.T) {
 	guard := mustRead(t, path)
 	guard = strings.ReplaceAll(guard, "\r\n", "\n")
 	if os.Getenv(updateEmittedFixturesEnv) == "1" {
+		recordMinimalPythonRendering(t)
 		marker := "# Every match of the privilege rule"
 		guard = removeGuardSegments(t, guard, marker)
 		guard = strings.Replace(guard, marker, evasionCommandSegments+marker, 1)
@@ -1530,5 +1531,166 @@ func TestEmittedEvasionHeredocConsumerMutants(t *testing.T) {
 				t.Errorf("mutant rc=%d want=%d: %s", got, tc.want, stderr)
 			}
 		})
+	}
+}
+
+// minimalPythonImports pins the origin/main hook imports: reduced standard libraries on
+// minimal Python installations cannot be assumed to provide additional modules.
+var minimalPythonImports = []string{"json", "os", "re", "sys"}
+
+// interceptorImportViolations reads Python imports statically, including nested and aliased imports.
+func interceptorImportViolations(t *testing.T, source string, allowed []string) []string {
+	t.Helper()
+	python := testsupport.PythonInterpreter(t)
+	const program = `import ast, json, sys
+allowed = set(sys.argv[1:])
+nodes = list(ast.walk(ast.parse(sys.stdin.read())))
+names = set()
+for index in range(len(nodes)):
+    node = nodes[index]
+    if isinstance(node, ast.Import):
+        names.update(node.names[index].name for index in range(len(node.names)))
+    elif isinstance(node, ast.ImportFrom):
+        names.add("." * node.level + (node.module or ""))
+print(json.dumps(sorted(name for name in names if name not in allowed)))
+`
+	ctx, err := util.WithCommandStdin(testsupport.DeadlineContext(t), []byte(source))
+	if err != nil {
+		t.Fatalf("set import checker input: %v", err)
+	}
+	args := append([]string{"-B", "-c", program}, allowed...)
+	result, err := util.RunCommandBytes(ctx, "", python, util.MaxCommandOutputBytes, args...)
+	if err != nil {
+		t.Fatalf("read interceptor imports: %v: %s", err, result.Stderr)
+	}
+	var violations []string
+	if err := json.Unmarshal(result.Stdout, &violations); err != nil {
+		t.Fatalf("decode import violations: %v", err)
+	}
+	return violations
+}
+
+// TestEmittedEvasionMinimalImports holds both shipped hooks to the minimal Python allow-list.
+func TestEmittedEvasionMinimalImports(t *testing.T) {
+	for name, source := range map[string]string{
+		"emitted":   buildBlockEvasionPY(),
+		"canonical": mustRead(t, filepath.Join("..", "..", filepath.FromSlash(evasionHookFile))),
+	} {
+		t.Run(name, func(t *testing.T) {
+			allowed := slices.Clone(minimalPythonImports)
+			if name == "canonical" {
+				// origin/main's canonical hook also uses these repository integrations.
+				allowed = append(allowed, "pathlib", "shutil", "subprocess")
+			}
+			if got := interceptorImportViolations(t, source, allowed); len(got) != 0 {
+				t.Errorf("imports outside minimal Python allow-list: %v", got)
+			}
+		})
+	}
+}
+
+// TestEmittedEvasionImportAllowListRejectsUnknown plants every static import shape, never importing it.
+func TestEmittedEvasionImportAllowListRejectsUnknown(t *testing.T) {
+	for source, want := range map[string]string{
+		"import shlex\n": "shlex", "from shlex import split\n": "shlex",
+		"import os, shlex as words\n": "shlex", "if True:\n    import shlex\n": "shlex",
+		"import shlex.submodule\n": "shlex.submodule", "import json.tool\n": "json.tool",
+		"from json.tool import main\n": "json.tool", "from .json import loads\n": ".json",
+	} {
+		t.Run(source, func(t *testing.T) {
+			if got := interceptorImportViolations(t, source, minimalPythonImports); !slices.Equal(got, []string{want}) {
+				t.Errorf("planted import accepted: %v", got)
+			}
+		})
+	}
+}
+
+// TestEmittedEvasionMinimalPython replays document consumers with shlex explicitly unavailable.
+func TestEmittedEvasionMinimalPython(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	wrapper := filepath.Join(t.TempDir(), "minimal_python.py")
+	mustWrite(t, wrapper, `import builtins, sys
+original_import = builtins.__import__
+def minimal_import(name, *args, **kwargs):
+    """Reproduce the reduced interpreter without hiding unrelated import failures."""
+    if name == "shlex":
+        raise ModuleNotFoundError("minimal Python has no shlex")
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = minimal_import
+sys.argv = sys.argv[1:]
+with open(sys.argv[0], encoding="utf-8") as source:
+    exec(compile(source.read(), sys.argv[0], "exec"), {"__name__": "__main__", "__file__": sys.argv[0]})
+`)
+	for _, name := range []string{"bash quoted", "cat piped to bash", "commit -F - message data"} {
+		found := false
+		for _, tc := range evasionHeredocFeedCases(t) {
+			if tc.Name != name {
+				continue
+			}
+			found = true
+			t.Run(name, func(t *testing.T) {
+				got, stderr := runInterceptorOutput(t, python, wrapper, nil, nil, script, tc.Command)
+				t.Logf("minimal Python rc=%d want=%d", got, tc.Want)
+				if got != tc.Want {
+					t.Errorf("minimal Python rc=%d want=%d: %s", got, tc.Want, stderr)
+				}
+			})
+		}
+		if !found {
+			t.Fatalf("minimal Python corpus case missing: %s", name)
+		}
+	}
+}
+
+// recordMinimalPythonRendering preserves the prior hook and computes the new digest on explicit updates.
+func recordMinimalPythonRendering(t *testing.T) {
+	t.Helper()
+	previous := mustRead(t, filepath.Join(priorEvasionFixtures, currentEvasionFixture))
+	current := buildBlockEvasionPY()
+	if previous != current {
+		prior := filepath.Join(priorEvasionFixtures, "before-minimal-python.block_evasion.py")
+		if _, err := os.Stat(prior); errors.Is(err, os.ErrNotExist) {
+			mustWrite(t, prior, previous)
+		} else if err != nil {
+			t.Fatalf("stat prior minimal Python rendering: %v", err)
+		} else if mustRead(t, prior) != previous {
+			t.Fatal("prior minimal Python rendering already contains different bytes")
+		}
+	}
+	digest := fixtureDigest(t, "minimal Python rendering", []byte(current))
+	if _, exists := priorEvasionHookDigests[digest]; exists {
+		return
+	}
+	path := "hooks.go"
+	source := mustRead(t, path)
+	const marker = "var priorEvasionHookDigests = map[string]string{\n"
+	if strings.Count(source, marker) != 1 {
+		t.Fatal("prior evasion digest table boundary missing or ambiguous")
+	}
+	entry := fmt.Sprintf("\t%q: %q,\n", digest, "bounded word unquoting without optional Python modules")
+	mustWrite(t, path, strings.Replace(source, marker, marker+entry, 1))
+}
+
+// TestEmittedEvasionShellWords replays the Go reference corpus, including malformed-word refusals.
+func TestEmittedEvasionShellWords(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	corpus := filepath.Join("..", "agenthook", "testdata", "shell-words.json")
+	const program = `import json, runpy, sys
+hook = runpy.run_path(sys.argv[1])
+with open(sys.argv[2], encoding="utf-8") as source:
+    cases = json.load(source)
+for index in range(len(cases)):
+    case = cases[index]
+    try:
+        got = hook["shell_unquote_word"](case["word"])
+    except ValueError:
+        got = None
+    if got != case["want"]:
+        sys.exit(case["name"] + ": got " + repr(got) + ", want " + repr(case["want"]))
+`
+	result, err := util.RunCommandBytes(testsupport.DeadlineContext(t), "", python,
+		util.MaxCommandOutputBytes, "-B", "-c", program, script, corpus)
+	if err != nil {
+		t.Fatalf("replay emitted shell words: %v: %s", err, result.Stderr)
 	}
 }
