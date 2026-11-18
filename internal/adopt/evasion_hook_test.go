@@ -605,49 +605,94 @@ func TestEmittedEvasionQueueBoundMutant(t *testing.T) {
 	}
 }
 
+// readRootedText reads a UTF-8 text file under dir through os.OpenRoot.
+func readRootedText(t *testing.T, dir, rel string) string {
+	t.Helper()
+	data, err := openFixtureRoot(t, dir).ReadFile(filepath.FromSlash(rel))
+	if err != nil {
+		t.Fatalf("read %s/%s: %v", dir, rel, err)
+	}
+	return string(data)
+}
+
+// regenerateCanonicalEvasionGuard updates the shared segmentation block of a canonical guard.
+func regenerateCanonicalEvasionGuard(t *testing.T, guard string) string {
+	t.Helper()
+	marker := "# Every match of the privilege rule"
+	guard = removeGuardSegments(t, guard, marker)
+	guard = strings.Replace(guard, marker, interceptorConsumers()+evasionCommandSegments+marker, 1)
+	if !strings.Contains(guard, "    raw_command = command_str\n") {
+		guard = strings.Replace(guard, "    command_str = join_line_continuations(command_str)",
+			"    raw_command = command_str\n    command_str = join_line_continuations(command_str)", 1)
+	}
+	guard = strings.Replace(guard, "segments = command_segments(command_str)",
+		"segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])", 1)
+	if !strings.Contains(guard, "segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])") {
+		guard = strings.Replace(guard, "    judged = without_read_only_words(command_str)",
+			"    try:\n        segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])\n"+
+				"    except ValueError as error:\n        sys.stderr.write(str(error) + \"\\n\")\n        return False\n"+
+				"    judged = without_read_only_words(command_str)", 1)
+	}
+	const currentCall = "        exempt = pattern in READ_ONLY_EXEMPT_PATTERNS\n" +
+		"        text = judged if exempt else command_str\n" +
+		"        if search_command(\n" +
+		"            pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0], exempt\n" +
+		"        ):\n" +
+		"            reason = ("
+	for _, oldCall := range [2]string{
+		"        text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else command_str\n" +
+			"        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0]):\n" +
+			"            reason = (",
+		"        text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else command_str\n" +
+			"        if search(pattern, text):\n" +
+			"            reason = (",
+	} {
+		guard = strings.Replace(guard, oldCall, currentCall, 1)
+	}
+	guard = strings.Replace(guard, "    for pattern in TOPOLOGY_PATTERNS:\n        if re.search(pattern, command_str):",
+		"    for pattern in TOPOLOGY_PATTERNS:\n        if search_full_inputs(pattern, command_str, segments, False):", 1)
+	guard = strings.Replace(guard, "sys.stderr.write(str(error) + \"\\n\")",
+		"sys.stderr.write(\""+agenthook.InvalidInputRefusal+"\" + str(error) + \"\\n\")", 1)
+	return guard
+}
+
+// checkCanonicalEvasionGuard verifies that the canonical guard matches the rendered segments and table.
+func checkCanonicalEvasionGuard(guard, rendered string) error {
+	shared := interceptorConsumers() + evasionCommandSegments
+	if !strings.Contains(guard, shared) || !strings.Contains(rendered, shared) ||
+		!strings.Contains(guard, "pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0], exempt") {
+		return errors.New("engine guard segmentation differs; regenerate with PRAETOR_UPDATE_EMITTED_FIXTURES=1")
+	}
+	return nil
+}
+
 // TestEmittedEvasionGuardSegments regenerates shared segmentation without replacing admission.
 func TestEmittedEvasionGuardSegments(t *testing.T) {
 	path := filepath.Join("..", "..", filepath.FromSlash(evasionHookFile))
-	guard := mustRead(t, path)
+	guard := readRootedText(t, filepath.Join("..", ".."), evasionHookFile)
 	guard = strings.ReplaceAll(guard, "\r\n", "\n")
 	if os.Getenv(updateEmittedFixturesEnv) == "1" {
 		recordMinimalPythonRendering(t)
-		marker := "# Every match of the privilege rule"
-		guard = removeGuardSegments(t, guard, marker)
-		guard = strings.Replace(guard, marker, evasionCommandSegments+marker, 1)
-		if !strings.Contains(guard, "    raw_command = command_str\n") {
-			guard = strings.Replace(guard, "    command_str = join_line_continuations(command_str)",
-				"    raw_command = command_str\n    command_str = join_line_continuations(command_str)", 1)
-		}
-		guard = strings.Replace(guard, "segments = command_segments(command_str)",
-			"segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])", 1)
-		if !strings.Contains(guard, "segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])") {
-			guard = strings.Replace(guard, "    judged = without_read_only_words(command_str)",
-				"    try:\n        segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])\n"+
-					"    except ValueError as error:\n        sys.stderr.write(str(error) + \"\\n\")\n        return False\n"+
-					"    judged = without_read_only_words(command_str)", 1)
-		}
-		guard = strings.Replace(guard, "        if search(pattern, text):\n            reason = (",
-			"        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0], exempt):\n            reason = (", 1)
-		guard = strings.Replace(guard, "sys.stderr.write(str(error) + \"\\n\")",
-			"sys.stderr.write(\""+agenthook.InvalidInputRefusal+"\" + str(error) + \"\\n\")", 1)
+		guard = regenerateCanonicalEvasionGuard(t, guard)
 		mustWrite(t, path, guard)
 		TestEmittedHookFixturesMatchTheRendering(t)
-		current := mustRead(t, filepath.Join(priorEvasionFixtures, currentEvasionFixture))
+		current := readRootedText(t, priorEvasionFixtures, currentEvasionFixture)
 		if !strings.Contains(current, "def command_segments(") {
 			mustWrite(t, filepath.Join(priorEvasionFixtures, "before-command-segments.block_evasion.py.txt"), current)
 		}
 	}
-	if !strings.Contains(guard, evasionCommandSegments) ||
-		!strings.Contains(guard, "pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0], exempt") {
-		t.Fatal("engine guard segmentation differs; regenerate with PRAETOR_UPDATE_EMITTED_FIXTURES=1")
+	if err := checkCanonicalEvasionGuard(guard, buildBlockEvasionPY()); err != nil {
+		t.Fatal(err)
 	}
 }
 
 // removeGuardSegments removes the previous shared parser before regeneration.
 func removeGuardSegments(t *testing.T, guard, marker string) string {
 	t.Helper()
-	start := strings.Index(guard, "def commit_command(")
+	start := strings.Index(guard, "HEREDOC_CONSUMERS = {\n")
+	if start < 0 {
+		start = strings.Index(guard, "def commit_command(")
+	}
 	if start < 0 {
 		start = strings.Index(guard, "def command_segments(")
 	}
@@ -1524,8 +1569,12 @@ func TestEmittedEvasionHeredocConsumerMutants(t *testing.T) {
 		{"unknown as data", `HEREDOC_CONSUMERS = {"*": "data"}` + "\n", "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			mutated := table.ReplaceAllLiteralString(source, tc.replacement)
+			if mutated == source {
+				t.Fatalf("heredoc consumer mutation %s did not change the rendering", tc.name)
+			}
 			script := filepath.Join(t.TempDir(), "mutant.py")
-			mustWrite(t, script, table.ReplaceAllLiteralString(source, tc.replacement))
+			mustWrite(t, script, mutated)
 			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
 			t.Logf("mutant rc=%d want=%d", got, tc.want)
 			if got != tc.want {
@@ -1646,30 +1695,120 @@ with open(sys.argv[0], encoding="utf-8") as source:
 // recordMinimalPythonRendering preserves the prior hook and computes the new digest on explicit updates.
 func recordMinimalPythonRendering(t *testing.T) {
 	t.Helper()
-	previous := mustRead(t, filepath.Join(priorEvasionFixtures, currentEvasionFixture))
-	current := buildBlockEvasionPY()
+	recordEvasionRenderingAt(t, priorEvasionFixtures, "hooks.go", buildBlockEvasionPY())
+}
+
+// recordEvasionRenderingAt archives an outgoing rendering in fixturesDir and extends hooksPath.
+func recordEvasionRenderingAt(t *testing.T, fixturesDir, hooksPath, current string) {
+	t.Helper()
+	previous := readRootedText(t, fixturesDir, currentEvasionFixture)
 	if previous != current {
-		prior := filepath.Join(priorEvasionFixtures, "before-minimal-python.block_evasion.py.txt")
+		previousDigest := fixtureDigest(t, "outgoing rendering", []byte(previous))
+		archiveName := "before-" + previousDigest[:12] + ".block_evasion.py.txt"
+		prior := filepath.Join(fixturesDir, archiveName)
 		if _, err := os.Stat(prior); errors.Is(err, os.ErrNotExist) {
 			mustWrite(t, prior, previous)
 		} else if err != nil {
-			t.Fatalf("stat prior minimal Python rendering: %v", err)
-		} else if mustRead(t, prior) != previous {
-			t.Fatal("prior minimal Python rendering already contains different bytes")
+			t.Fatalf("stat prior rendering archive %s: %v", archiveName, err)
+		} else if readRootedText(t, fixturesDir, archiveName) != previous {
+			t.Fatalf("prior rendering archive %s already contains different bytes", archiveName)
 		}
 	}
 	digest := fixtureDigest(t, "minimal Python rendering", []byte(current))
 	if _, exists := priorEvasionHookDigests[digest]; exists {
 		return
 	}
-	path := "hooks.go"
-	source := mustRead(t, path)
+	source := readRootedText(t, filepath.Dir(hooksPath), filepath.Base(hooksPath))
+	if strings.Contains(source, fmt.Sprintf("\t%q:", digest)) {
+		return
+	}
 	const marker = "var priorEvasionHookDigests = map[string]string{\n"
 	if strings.Count(source, marker) != 1 {
 		t.Fatal("prior evasion digest table boundary missing or ambiguous")
 	}
 	entry := fmt.Sprintf("\t%q: %q,\n", digest, "bounded word unquoting without optional Python modules")
-	mustWrite(t, path, strings.Replace(source, marker, marker+entry, 1))
+	mustWrite(t, hooksPath, strings.Replace(source, marker, marker+entry, 1))
+}
+
+// TestEmittedEvasionGuardUpdater verifies 4-arg upgrades, digest archiving and consumer sync on scratch copies.
+func TestEmittedEvasionGuardUpdater(t *testing.T) {
+	canonical := strings.ReplaceAll(readRootedText(t, filepath.Join("..", ".."), evasionHookFile), "\r\n", "\n")
+	rendered := buildBlockEvasionPY()
+	t.Run("upgrade_four_argument_call", func(t *testing.T) {
+		const currentCall = "        exempt = pattern in READ_ONLY_EXEMPT_PATTERNS\n" +
+			"        text = judged if exempt else command_str\n" +
+			"        if search_command(\n" +
+			"            pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0], exempt\n" +
+			"        ):\n" +
+			"            reason = ("
+		const priorCall = "        text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else command_str\n" +
+			"        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0]):\n" +
+			"            reason = ("
+		priorGuard := strings.Replace(canonical, currentCall, priorCall, 1)
+		if priorGuard == canonical {
+			t.Fatal("failed to construct prior four-argument guard")
+		}
+		upgraded := regenerateCanonicalEvasionGuard(t, priorGuard)
+		if err := checkCanonicalEvasionGuard(upgraded, rendered); err != nil || upgraded != canonical {
+			t.Fatalf("four-argument guard was not upgraded to canonical form: %v", err)
+		}
+		if rerun := regenerateCanonicalEvasionGuard(t, upgraded); rerun != canonical {
+			t.Fatal("rerun modified the current canonical guard form")
+		}
+	})
+	t.Run("archive_outgoing_rendering", func(t *testing.T) {
+		assertScratchRenderingArchive(t, rendered)
+	})
+	t.Run("canonical_consumer_table", func(t *testing.T) {
+		stale := strings.Replace(canonical, interceptorConsumers(), "HEREDOC_CONSUMERS = {\n    \"*\": \"shell\",\n}\n\n\n", 1)
+		if stale == canonical {
+			t.Fatal("failed to construct stale consumer table in canonical guard")
+		}
+		if err := checkCanonicalEvasionGuard(stale, rendered); err == nil {
+			t.Fatal("checkCanonicalEvasionGuard accepted drifted HEREDOC_CONSUMERS table")
+		}
+		refreshed := regenerateCanonicalEvasionGuard(t, stale)
+		if err := checkCanonicalEvasionGuard(refreshed, rendered); err != nil || refreshed != canonical {
+			t.Fatalf("updater did not refresh HEREDOC_CONSUMERS in canonical guard: %v", err)
+		}
+	})
+}
+
+// assertScratchRenderingArchive runs the rendering archive updater twice in t.TempDir.
+func assertScratchRenderingArchive(t *testing.T, rendered string) {
+	t.Helper()
+	scratch := t.TempDir()
+	fixturesDir := filepath.Join(scratch, "evasion")
+	originals := readFixtureDir(t, priorEvasionFixtures)
+	for name, data := range originals {
+		mustWrite(t, filepath.Join(fixturesDir, name), string(data))
+	}
+	hooksPath := filepath.Join(scratch, "hooks.go")
+	originalHooks := readRootedText(t, ".", "hooks.go")
+	mustWrite(t, hooksPath, originalHooks)
+	next := strings.Replace(rendered, "BLOCK_EXIT = 2", "BLOCK_EXIT = 2  # scratch update", 1)
+	recordEvasionRenderingAt(t, fixturesDir, hooksPath, next)
+	recordEvasionRenderingAt(t, fixturesDir, hooksPath, next)
+	outgoingDigest := fixtureDigest(t, "outgoing rendering", originals[currentEvasionFixture])
+	archiveName := "before-" + outgoingDigest[:12] + ".block_evasion.py.txt"
+	if got := readRootedText(t, fixturesDir, archiveName); got != string(originals[currentEvasionFixture]) {
+		t.Fatalf("archive %s does not hold outgoing rendering", archiveName)
+	}
+	for name, want := range originals {
+		if got := readRootedText(t, fixturesDir, name); got != string(want) {
+			t.Fatalf("historical fixture %s modified", name)
+		}
+	}
+	nextDigest := fixtureDigest(t, "next rendering", []byte(next))
+	updatedHooks := readRootedText(t, scratch, "hooks.go")
+	if strings.Count(updatedHooks, fmt.Sprintf("\t%q:", nextDigest)) != 1 {
+		t.Fatalf("digest %s not recorded once in scratch hooks.go", nextDigest)
+	}
+	for digest := range priorEvasionHookDigests {
+		if !strings.Contains(updatedHooks, fmt.Sprintf("\t%q:", digest)) {
+			t.Fatalf("existing digest %s removed from scratch hooks.go", digest)
+		}
+	}
 }
 
 // TestEmittedEvasionShellWords replays the Go reference corpus, including malformed-word refusals.

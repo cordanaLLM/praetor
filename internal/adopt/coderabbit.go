@@ -7,14 +7,18 @@ package adopt
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -50,21 +54,61 @@ func codeRabbitConfiguration(evidence bool) string {
 	return strings.Replace(codeRabbitConfig, codeRabbitEvidence, "        ", 1)
 }
 
+// codeRabbitMakeOptions is the allow-list of GNU Make options that still execute recipes for
+// the requested goals; any other option disqualifies a step as CI verification evidence.
+var codeRabbitMakeOptions = []string{
+	// GNU Make manual 9.8 "Summary of Options": unconditionally remake all targets.
+	`-B`, `--always-make`,
+	// GNU Make manual 5.7 "Recursive Use of make", 9.8 "Summary of Options": change directory before reading makefiles.
+	`-C[ \t]*[^- \t;|&][^ \t;|&]*`, `--directory(?:=|[ \t]+)[^- \t;|&][^ \t;|&]*`,
+	// GNU Make manual 9.8 "Summary of Options": print debugging information in addition to normal processing.
+	`-d`, `--debug(?:=[^ \t;|&]+)?`,
+	// GNU Make manual 6.9 "Variables from the Environment", 9.8 "Summary of Options": environment overrides makefile variables.
+	`-e`, `--environment-overrides`,
+	// GNU Make manual 3.3 "Including Other Makefiles", 9.8 "Summary of Options": search directory for included makefiles.
+	`-I[ \t]*[^- \t;|&][^ \t;|&]*`, `--include-dir(?:=|[ \t]+)[^- \t;|&][^ \t;|&]*`,
+	// GNU Make manual 5.4 "Parallel Execution", 9.8 "Summary of Options": run up to N recipes simultaneously.
+	`-j(?:[ \t]*[0-9]+)?`, `--jobs(?:=[0-9]+)?`, `--jobserver-style=[^ \t;|&]+`,
+	// GNU Make manual 9.6 "Testing the Compilation of a Program", 9.8 "Summary of Options": continue after error, still failing if any target fails.
+	`-k`, `--keep-going`, `-S`, `--no-keep-going`, `--stop`,
+	// GNU Make manual 5.4 "Parallel Execution", 9.8 "Summary of Options": load-average limit for parallel jobs.
+	`-l(?:[ \t]*[0-9.]+)?`, `--(?:load-average|max-load)(?:=[0-9.]+)?`,
+	// GNU Make manual 9.8 "Summary of Options": check symlink timestamps as well as target timestamps.
+	`-L`, `--check-symlink-times`,
+	// GNU Make manual 5.4.2 "Output During Parallel Execution", 9.8 "Summary of Options": group output of parallel recipes.
+	`-O[A-Za-z]*`, `--output-sync(?:=[A-Za-z]+)?`,
+	// GNU Make manual 9.8 "Summary of Options": print rule database and still execute as usual.
+	`-p`, `--print-data-base`,
+	// GNU Make manual 10.2 "Using Implicit Rules", 10.3 "Variables Used by Implicit Rules", 9.8 "Summary of Options": disable built-in implicit rules or variables.
+	`-r`, `--no-builtin-rules`, `-R`, `--no-builtin-variables`,
+	// GNU Make manual 5.2 "Recipe Echoing", 9.8 "Summary of Options": control recipe echoing without skipping execution.
+	`-s`, `--silent`, `--quiet`, `--no-silent`,
+	// GNU Make manual 9.8 "Summary of Options": reorder prerequisite traversal or print recipe traces during execution.
+	`--shuffle(?:=[^ \t;|&]+)?`, `--trace`,
+	// GNU Make manual 5.7.4 "The '--print-directory' Option", 9.8 "Summary of Options": working-directory diagnostics and undefined-variable warnings.
+	`-w`, `--print-directory`, `--no-print-directory`, `--warn-undefined-variables`,
+	// GNU Make manual 9.2 "Arguments to Specify the Goals": end of options marker.
+	`--`,
+}
+
+// buildCodeRabbitVerifyStep compiles the make verify-all detector from the allowed option list.
+func buildCodeRabbitVerifyStep(options []string) *regexp.Regexp {
+	// GNU Make manual 9.2 "Arguments to Specify the Goals" and 9.5 "Overriding Variables".
+	arg := `(?:` + strings.Join(options, `|`) + `|[A-Za-z_][A-Za-z0-9_]*=[^ \t;|&]*|[A-Za-z0-9_./][A-Za-z0-9_./-]*)`
+	return regexp.MustCompile(`(?m)(?:^|[;&|])[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*=[^ \t;|&]+[ \t]+)*make[ \t]+(?:` + arg + `[ \t]+)*verify-all(?:[ \t]+` + arg + `)*(?:[ \t]*[;&|]|[ \t]*$)`)
+}
+
 // codeRabbitVerifyStep recognises literal make invocations at shell command boundaries.
-var codeRabbitVerifyStep = regexp.MustCompile(`(?m)(?:^|[;&|])[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*=[^ \t]+[ \t]+)*make[ \t]+(?:-[^ \t;|&]+[ \t]+)*verify-all(?:[ \t;|&]|$)`)
+var codeRabbitVerifyStep = buildCodeRabbitVerifyStep(codeRabbitMakeOptions)
+
+// codeRabbitWorkflowBatch bounds one directory read call between context deadline checks.
+const codeRabbitWorkflowBatch = 16
 
 // codeRabbitWorkflowEvidence reads the existing workflow model and bounds before claiming CI evidence.
 func codeRabbitWorkflowEvidence(ctx context.Context, s *adoptSession) (bool, error) {
-	dir, err := repoFile(s.repoPath, ghworkflow.Dir)
-	if err != nil {
+	entries, err := readCodeRabbitWorkflowEntries(ctx, s)
+	if err != nil || len(entries) == 0 {
 		return false, err
-	}
-	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read verification workflows: %w", err)
 	}
 	paths, err := workflowEnginePinPaths(entries)
 	if err != nil {
@@ -83,6 +127,51 @@ func codeRabbitWorkflowEvidence(ctx context.Context, s *adoptSession) (bool, err
 		found = found || match
 	}
 	return found, nil
+}
+
+// readCodeRabbitWorkflowEntries reads .github/workflows in bounded batches while checking ctx.
+func readCodeRabbitWorkflowEntries(ctx context.Context, s *adoptSession) (_ []os.DirEntry, err error) {
+	root, err := contextopt.OpenDirectoryIn(ctx, s.repoPath, filepath.FromSlash(ghworkflow.Dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", ghworkflow.Dir, err)
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	directory, err := root.Open(".")
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", ghworkflow.Dir, err)
+	}
+	defer func() { err = errors.Join(err, directory.Close()) }()
+	entries, err := readBoundedDirectoryBatches(ctx, directory)
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	return entries, nil
+}
+
+// readBoundedDirectoryBatches reads directory entries in batches up to ghworkflow.MaxFiles.
+func readBoundedDirectoryBatches(ctx context.Context, directory *os.File) ([]os.DirEntry, error) {
+	var entries []os.DirEntry
+	for batch := 0; batch < ghworkflow.MaxFiles/codeRabbitWorkflowBatch+1; batch++ {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("read %s: %w", ghworkflow.Dir, err)
+		}
+		part, err := directory.ReadDir(codeRabbitWorkflowBatch)
+		entries = append(entries, part...)
+		if len(entries) > ghworkflow.MaxFiles {
+			return nil, fmt.Errorf("read %s: exceeds %d entries", ghworkflow.Dir, ghworkflow.MaxFiles)
+		}
+		if errors.Is(err, io.EOF) {
+			return entries, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", ghworkflow.Dir, err)
+		}
+	}
+	return entries, nil
 }
 
 // codeRabbitWorkflowStep checks parsed run steps rather than workflow comments or job names.
@@ -120,9 +209,10 @@ func reconcileCodeRabbit(ctx context.Context, s *adoptSession) error {
 		return fmt.Errorf("read CodeRabbit configuration: %w", err)
 	}
 	if !exists {
+		created, verified := codeRabbitCreatedReport(evidence)
 		_, err := s.scaffoldFile(ctx, scaffold{rel: codeRabbitFile, perm: filePerm, content: []byte(codeRabbitConfiguration(evidence)),
-			created:  "Enabled CodeRabbit auto-review of drafts on every base branch and CI evidence guidance",
-			verified: "CodeRabbit auto-review and CI evidence guidance configured"})
+			created:  created,
+			verified: verified})
 		return err
 	}
 	merged, err := mergeCodeRabbit(ctx, data, evidence)
@@ -135,6 +225,16 @@ func reconcileCodeRabbit(ctx context.Context, s *adoptSession) error {
 	}
 	return publishAdoptionMerge(ctx, s, codeRabbitFile, data, merged,
 		"Managed draft and all-base auto-review; added CI evidence guidance unless global instructions exist; user instructions and comments kept; decline coderabbit to opt out")
+}
+
+// codeRabbitCreatedReport returns the created and verified report messages for evidence.
+func codeRabbitCreatedReport(evidence bool) (string, string) {
+	if evidence {
+		return "Enabled CodeRabbit auto-review of drafts on every base branch and CI evidence guidance",
+			"CodeRabbit auto-review and CI evidence guidance configured"
+	}
+	return "Enabled CodeRabbit auto-review of drafts on every base branch",
+		"CodeRabbit auto-review configured"
 }
 
 // mergeCodeRabbit manages auto-review defaults and adds global guidance only when absent.

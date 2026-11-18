@@ -484,10 +484,20 @@ func TestCodeRabbitWorkflowEvidence(t *testing.T) {
 		{"step", "make verify-all", true},
 		{"no step", "go test ./...", false},
 		{"no workflows", "", false},
-		{"comment", "echo make verify-all", false},
+		{"argument text", "echo make verify-all", false},
+		{"comment", "|\n          # note; make verify-all", false},
 		{"quoted command", "echo 'text; make verify-all'", false},
 		{"other target", "make verify-all-extra", false},
 		{"flags", "make -j4 verify-all", true},
+		{"jobs spaced", "make -j 4 verify-all", true},
+		{"directory", "make -C . verify-all", true},
+		{"variable assignment", "make CI=1 verify-all", true},
+		{"goal list", "make lint verify-all", true},
+		{"version long", "make --version verify-all", false},
+		{"version short", "make -v verify-all", false},
+		{"dry run", "make -n verify-all", false},
+		{"question", "make -q verify-all", false},
+		{"touch", "make -t verify-all", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := t.TempDir()
@@ -502,8 +512,48 @@ func TestCodeRabbitWorkflowEvidence(t *testing.T) {
 			if got := strings.Contains(text, "CI verification job"); got != tc.want {
 				t.Fatalf("CI evidence=%v want=%v: %s", got, tc.want, text)
 			}
+			detail := findActionDetail(s.report.ActionDetails, codeRabbitFile)
+			if got := strings.Contains(detail, "CI evidence guidance"); got != tc.want {
+				t.Fatalf("report CI evidence=%v want=%v: %s", got, tc.want, detail)
+			}
 		})
 	}
+}
+
+// TestCodeRabbitWorkflowDiscovery checks missing folders, entry bounds and context cancellation.
+func TestCodeRabbitWorkflowDiscovery(t *testing.T) {
+	t.Run("missing folder", func(t *testing.T) {
+		repo := t.TempDir()
+		s := &adoptSession{repoPath: repo, report: &AdoptReport{}}
+		if err := reconcileCodeRabbit(t.Context(), s); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(mustRead(t, filepath.Join(repo, codeRabbitFile)), "CI verification job") {
+			t.Fatal("missing workflow folder reported CI evidence")
+		}
+	})
+	t.Run("bound exceeded", func(t *testing.T) {
+		repo := t.TempDir()
+		for i := 0; i <= 64; i++ {
+			mustWrite(t, filepath.Join(repo, ".github/workflows", "entry-"+strings.Repeat("a", i/16)+string(rune('a'+i%16))+".txt"), "note\n")
+		}
+		s := &adoptSession{repoPath: repo, report: &AdoptReport{}}
+		err := reconcileCodeRabbit(t.Context(), s)
+		if err == nil || !strings.Contains(err.Error(), ".github/workflows") || !strings.Contains(err.Error(), "exceeds 64 entries") {
+			t.Fatalf("bound error = %v, want .github/workflows exceeds 64 entries", err)
+		}
+	})
+	t.Run("cancelled context", func(t *testing.T) {
+		repo := t.TempDir()
+		mustWrite(t, filepath.Join(repo, ".github/workflows/README.md"), "workflows\n")
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		s := &adoptSession{repoPath: repo, report: &AdoptReport{}}
+		err := reconcileCodeRabbit(ctx, s)
+		if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), ".github/workflows") {
+			t.Fatalf("cancelled error = %v, want context.Canceled naming .github/workflows", err)
+		}
+	})
 }
 
 // TestCodeRabbitManagedEvidenceRefresh checks removal and restoration without taking user globals.

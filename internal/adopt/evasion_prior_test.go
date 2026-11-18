@@ -30,6 +30,59 @@ func TestPriorEvasionFixturesUseDataExtension(t *testing.T) {
 	}
 }
 
+// codacyEvasionExclusions returns every Codacy exclusion in data that hides an evasion fixture.
+func codacyEvasionExclusions(t *testing.T, data []byte, fixtures map[string][]byte) []string {
+	t.Helper()
+	var findings []string
+	for _, pattern := range parseCodacyExcludePatterns(t, data) {
+		findings = append(findings, matchCodacyEvasionPattern(pattern, fixtures)...)
+	}
+	return findings
+}
+
+// parseCodacyExcludePatterns decodes top-level and enabled engine exclusions from Codacy YAML.
+func parseCodacyExcludePatterns(t *testing.T, data []byte) []string {
+	t.Helper()
+	var scope struct {
+		ExcludePaths []string `yaml:"exclude_paths"`
+		Engines      map[string]struct {
+			Enabled      *bool    `yaml:"enabled"`
+			ExcludePaths []string `yaml:"exclude_paths"`
+		} `yaml:"engines"`
+	}
+	if err := yamlUnmarshal(data, &scope); err != nil {
+		t.Fatalf("decode Codacy scope: %v", err)
+	}
+	patterns := slices.Clone(scope.ExcludePaths)
+	for _, engine := range scope.Engines {
+		if engine.Enabled == nil || *engine.Enabled {
+			patterns = append(patterns, engine.ExcludePaths...)
+		}
+	}
+	return patterns
+}
+
+// matchCodacyEvasionPattern matches one exclusion pattern against evasion fixtures by whole path segments.
+func matchCodacyEvasionPattern(pattern string, fixtures map[string][]byte) []string {
+	const dir = "internal/adopt/testdata/evasion"
+	dirSegments := strings.Split(dir, "/")
+	cleaned := strings.TrimSuffix(strings.TrimPrefix(util.NormalizeSlashes(pattern), "./"), "/")
+	patSegments := strings.Split(cleaned, "/")
+	var findings []string
+	if len(patSegments) >= len(dirSegments) && slices.Equal(patSegments[:len(dirSegments)], dirSegments) {
+		findings = append(findings, pattern)
+	}
+	for name := range fixtures {
+		segments := strings.Split(dir+"/"+name, "/")
+		for end := 1; end <= len(segments); end++ {
+			if util.MatchGlobSegments(patSegments, segments[:end]) {
+				findings = append(findings, pattern+":"+name)
+			}
+		}
+	}
+	return findings
+}
+
 // TestEvasionFixturesRemainInCodacyScope refuses exclusions hiding any evasion fixture.
 func TestEvasionFixturesRemainInCodacyScope(t *testing.T) {
 	root := openFixtureRoot(t, filepath.Join("..", ".."))
@@ -37,27 +90,24 @@ func TestEvasionFixturesRemainInCodacyScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Codacy scope: %v", err)
 	}
-	var scope struct {
-		ExcludePaths []string `yaml:"exclude_paths"`
-	}
-	if err := yamlUnmarshal(data, &scope); err != nil {
-		t.Fatalf("decode Codacy scope: %v", err)
-	}
-	const dir = "internal/adopt/testdata/evasion"
 	fixtures := readFixtureDir(t, priorEvasionFixtures)
-	for _, pattern := range scope.ExcludePaths {
-		pattern = strings.TrimPrefix(util.NormalizeSlashes(pattern), "./")
-		if strings.Contains(pattern, dir) {
-			t.Errorf("Codacy exclusion %q targets evasion fixtures", pattern)
-		}
-		for name := range fixtures {
-			segments := strings.Split(dir+"/"+name, "/")
-			for end := 1; end <= len(segments); end++ {
-				if util.MatchGlobSegments(strings.Split(pattern, "/"), segments[:end]) {
-					t.Errorf("Codacy exclusion %q hides evasion fixture %s", pattern, name)
-				}
+	if findings := codacyEvasionExclusions(t, data, fixtures); len(findings) != 0 {
+		t.Errorf("Codacy exclusions hide evasion fixtures: %v", findings)
+	}
+	for _, tc := range []struct {
+		name, config string
+		want         bool
+	}{
+		{"engine-level exclusion", "engines:\n  bandit:\n    enabled: true\n    exclude_paths:\n      - \"internal/adopt/testdata/evasion/before-minimal-python.block_evasion.py.txt\"\n", true},
+		{"sibling folder", "exclude_paths:\n  - \"internal/adopt/testdata/evasion-archive/**\"\n", false},
+		{"top-level exclusion", "exclude_paths:\n  - \"internal/adopt/testdata/evasion/**\"\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := len(codacyEvasionExclusions(t, []byte(tc.config), fixtures)) > 0
+			if got != tc.want {
+				t.Fatalf("exclusion finding=%v want=%v", got, tc.want)
 			}
-		}
+		})
 	}
 }
 

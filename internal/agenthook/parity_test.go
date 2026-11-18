@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"os/exec"
@@ -1102,13 +1103,30 @@ func TestParityEvasionHeredocFeed(t *testing.T) {
 	}
 }
 
-// TestParityEvasionHeredocConsumers compares the canonical literal table with Go policy.
-func TestParityEvasionHeredocConsumers(t *testing.T) {
-	data, err := os.ReadFile(pythonGuard)
+// readPythonGuard reads the canonical Python guard through a rooted handle.
+func readPythonGuard(t *testing.T) string {
+	t.Helper()
+	root, err := os.OpenRoot(filepath.Join("..", ".."))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open repository root: %v", err)
 	}
-	_, text, ok := strings.Cut(string(data), "HEREDOC_CONSUMERS = {\n")
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			t.Errorf("close repository root: %v", closeErr)
+		}
+	}()
+	data, err := root.ReadFile(filepath.FromSlash(".config/agent/hooks/block_evasion.py"))
+	if err != nil {
+		t.Fatalf("read canonical guard: %v", err)
+	}
+	return string(data)
+}
+
+// parseCanonicalHeredocConsumers extracts the literal HEREDOC_CONSUMERS map from canonical guard source.
+func parseCanonicalHeredocConsumers(t *testing.T, source string) map[string]string {
+	t.Helper()
+	normalized := strings.ReplaceAll(source, "\r\n", "\n")
+	_, text, ok := strings.Cut(normalized, "HEREDOC_CONSUMERS = {\n")
 	body, _, closed := strings.Cut(text, "}\n")
 	if !ok || !closed {
 		t.Fatal("consumer table missing")
@@ -1118,14 +1136,36 @@ func TestParityEvasionHeredocConsumers(t *testing.T) {
 	for _, pair := range entries.FindAllStringSubmatch(body, len(body)) {
 		got[pair[1]] = pair[2]
 	}
-	if !maps.Equal(got, HeredocConsumers()) {
-		t.Errorf("consumer table differs: %v", got)
+	return got
+}
+
+// mutateCanonicalHeredocConsumers replaces the HEREDOC_CONSUMERS block and fails by name when unchanged.
+func mutateCanonicalHeredocConsumers(source, name, replacement string) (string, error) {
+	normalized := strings.ReplaceAll(source, "\r\n", "\n")
+	table := regexp.MustCompile(`(?s)HEREDOC_CONSUMERS = \{.*?\}\n`)
+	mutated := table.ReplaceAllLiteralString(normalized, replacement)
+	if mutated == normalized {
+		return "", fmt.Errorf("heredoc consumer mutation %s did not change the guard", name)
+	}
+	return mutated, nil
+}
+
+// TestParityEvasionHeredocConsumers compares the canonical literal table with Go policy.
+func TestParityEvasionHeredocConsumers(t *testing.T) {
+	lf := strings.ReplaceAll(readPythonGuard(t), "\r\n", "\n")
+	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+	for name, source := range map[string]string{"lf": lf, "crlf": crlf} {
+		t.Run(name, func(t *testing.T) {
+			if got := parseCanonicalHeredocConsumers(t, source); !maps.Equal(got, HeredocConsumers()) {
+				t.Errorf("consumer table differs: %v", got)
+			}
+		})
 	}
 	var quoted []string
 	for _, option := range admissionWrappers["env"].values {
 		quoted = append(quoted, strconv.Quote(option))
 	}
-	if want := "values = (" + strings.Join(quoted, ", ") + ")"; !strings.Contains(string(data), want) {
+	if want := "values = (" + strings.Join(quoted, ", ") + ")"; !strings.Contains(lf, want) {
 		t.Errorf("env value-option arities differ: want %s", want)
 	}
 }
@@ -1133,31 +1173,43 @@ func TestParityEvasionHeredocConsumers(t *testing.T) {
 // TestParityEvasionHeredocConsumerMutants proves each canonical ownership barrier matters.
 func TestParityEvasionHeredocConsumerMutants(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
-	data, err := os.ReadFile(pythonGuard)
+	lf := strings.ReplaceAll(readPythonGuard(t), "\r\n", "\n")
+	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+	if _, err := mutateCanonicalHeredocConsumers("print(1)\n", "unchanged-table", "HEREDOC_CONSUMERS = {}\n"); err == nil || !strings.Contains(err.Error(), "unchanged-table") {
+		t.Fatalf("no-op mutation error = %v, want failure naming unchanged-table", err)
+	}
+	for style, source := range map[string]string{"lf": lf, "crlf": crlf} {
+		for _, tc := range []struct {
+			name, replacement, command string
+			want                       int
+		}{
+			{"empty", "HEREDOC_CONSUMERS = {}\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
+			{"data as shells", `HEREDOC_CONSUMERS = {"*": "shell"}` + "\n", "git commit -F - <<'EOF'\ngit commit -n -m x\nEOF", 1},
+			{"unknown as data", `HEREDOC_CONSUMERS = {"*": "data"}` + "\n", "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 0},
+		} {
+			t.Run(style+"/"+tc.name, func(t *testing.T) {
+				assertCanonicalHeredocConsumerMutant(t, interpreter, source, tc.name, tc.replacement, tc.command, tc.want)
+			})
+		}
+	}
+}
+
+// assertCanonicalHeredocConsumerMutant writes one mutated canonical guard and checks its verdict.
+func assertCanonicalHeredocConsumerMutant(t *testing.T, interpreter, source, name, replacement, command string, want int) {
+	t.Helper()
+	mutated, err := mutateCanonicalHeredocConsumers(source, name, replacement)
 	if err != nil {
 		t.Fatal(err)
 	}
-	table := regexp.MustCompile(`(?s)HEREDOC_CONSUMERS = \{.*?\}\n`)
-	for _, tc := range []struct {
-		name, replacement, command string
-		want                       int
-	}{
-		{"empty", "HEREDOC_CONSUMERS = {}\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
-		{"data as shells", `HEREDOC_CONSUMERS = {"*": "shell"}` + "\n", "git commit -F - <<'EOF'\ngit commit -n -m x\nEOF", 1},
-		{"unknown as data", `HEREDOC_CONSUMERS = {"*": "data"}` + "\n", "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			script := filepath.Join(t.TempDir(), "mutant.py")
-			if err := os.WriteFile(script, table.ReplaceAllLiteral(data, []byte(tc.replacement)), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
-			got := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
-			t.Logf("mutant rc=%d want=%d", got.exit, tc.want)
-			if got.exit != tc.want {
-				t.Errorf("mutant rc=%d want=%d: %s", got.exit, tc.want, got.stderr)
-			}
-		})
+	script := filepath.Join(t.TempDir(), "mutant.py")
+	if err := os.WriteFile(script, []byte(mutated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": command}})
+	got := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
+	t.Logf("mutant rc=%d want=%d", got.exit, want)
+	if got.exit != want {
+		t.Errorf("mutant rc=%d want=%d: %s", got.exit, want, got.stderr)
 	}
 }
 
