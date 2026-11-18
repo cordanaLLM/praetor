@@ -18,6 +18,8 @@ import (
 	"io/fs"
 	"strings"
 	"text/template"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Directory is the repository-relative home of the shipped templates, SourceFile the Go file
@@ -45,8 +47,8 @@ var shipped embed.FS
 // TestEveryShippedTemplateRenders fails the day one does. A maintainer's note that must not
 // reach adopters is a template comment: "<%- /* note */ -%>" renders to nothing.
 const (
-	FileLeftDelim  = "<%"
-	FileRightDelim = "%>"
+	FileLeftDelim  = util.FileLeftDelim
+	FileRightDelim = util.FileRightDelim
 )
 
 // Context holds the variables a template renders against. A template naming a field that is

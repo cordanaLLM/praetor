@@ -208,7 +208,10 @@ func engineWorkflowCandidates(t *testing.T, root, rel string) ([]ActionCandidate
 	if err != nil {
 		t.Fatalf("read %s: %v", rel, err)
 	}
-	_, uses, err := util.ScanTemplateActionUses(string(content), maxWorkflowLines)
+	_, uses, err := util.ScanActionUses(string(content), maxWorkflowLines)
+	if strings.HasSuffix(rel, ".tmpl") {
+		_, uses, err = util.ScanTemplateActionUses(string(content), maxWorkflowLines)
+	}
 	if err != nil {
 		t.Fatalf("read %s: %v", rel, err)
 	}

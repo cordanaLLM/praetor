@@ -113,8 +113,9 @@ func (use ActionUse) Replacement(value string) (string, error) {
 
 // ScanActionUses splits workflow into lines and returns them with every line that declares a
 // uses: key, in order. It refuses a workflow of more than maxLines lines (HISS-02); each
-// caller passes the bound that fits the workflows it reads.
-func ScanActionUses(workflow string, maxLines int) ([]string, []ActionUse, error) {
+// caller passes the bound that fits the workflows it reads. An optional reserved placeholder
+// is allowed only in non-uses scalar mapping values, after decoding with the same YAML reader.
+func ScanActionUses(workflow string, maxLines int, placeholders ...string) ([]string, []ActionUse, error) {
 	source := newActionSource(workflow)
 	if len(source.lines) > maxLines {
 		return nil, nil, fmt.Errorf("workflow has %d lines, want at most %d", len(source.lines), maxLines)
@@ -125,6 +126,9 @@ func ScanActionUses(workflow string, maxLines int) ([]string, []ActionUse, error
 	}
 	uses, err := walkActionUses(source, &root)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := validateActionPlaceholders(&root, placeholders, workflow); err != nil {
 		return nil, nil, err
 	}
 	return source.lines, uses, nil

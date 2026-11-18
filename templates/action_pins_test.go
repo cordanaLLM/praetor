@@ -18,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/semver"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/templates"
 )
 
 // Only local ./ actions and docker:// references are exempt from commit pinning.
@@ -215,4 +216,94 @@ func actionInventoryFixtureContext(t *testing.T) context.Context {
 		t.Fatal(err)
 	}
 	return ctx
+}
+
+// TestTemplateActionBlockFunctions proves every admitted block through the renderer's real function map.
+func TestTemplateActionBlockFunctions(t *testing.T) {
+	for _, name := range []string{"hostedGateOn", "hostedGateScheduledOn", "hostedGateConcurrency", "hostedGateDraftStep"} {
+		t.Run(name, func(t *testing.T) {
+			body := "{{ " + name + " }}"
+			rendered, err := templates.Render(name, body, templates.Context{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, uses, err := util.ScanActionUses(rendered, 100)
+			if err != nil || len(uses) != 0 || rendered == "" {
+				t.Fatalf("block output = %q, uses = %+v, err = %v", rendered, uses, err)
+			}
+			_, uses, err = util.ScanTemplateActionUses(body, 100, "", "")
+			if err != nil || len(uses) != 0 {
+				t.Fatalf("proven block refused: %+v, %v", uses, err)
+			}
+		})
+	}
+}
+
+// templateInventoryEntry fixes the base head's source identity and action reference.
+type templateInventoryEntry struct {
+	line, start, end int
+	ref              string
+}
+
+// baseTemplateInventory records all committed YAML templates at head 848a7c8c7.
+func baseTemplateInventory() map[string][]templateInventoryEntry {
+	return map[string][]templateInventoryEntry{
+		"flutter/analysis_options.yaml.tmpl": {},
+		"flutter/ci-flutter.yml.tmpl": {
+			{20, 786, 843, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1"},
+			{36, 1367, 1431, "subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2  # v2.23.0"},
+		},
+		"go/.golangci.yml.tmpl": {},
+		"go/ci-go.yml.tmpl": {
+			{20, 786, 843, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1"},
+			{36, 1339, 1396, "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0"},
+			{52, 2277, 2331, "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0"},
+			{66, 3079, 3133, "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0"},
+		},
+		"go/security-go.yml.tmpl": {
+			{18, 640, 697, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1"},
+			{24, 892, 949, "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0"},
+			{36, 1497, 1551, "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0"},
+			{46, 1944, 1998, "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0"},
+		},
+		"jvm/ci-jvm.yml.tmpl": {
+			{27, 1344, 1401, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1"},
+			{45, 2101, 2160, "actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880  # v6.3.0"},
+		},
+		"node/ci-node.yml.tmpl": {
+			{33, 1848, 1905, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1"},
+			{49, 2459, 2518, "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0"},
+			{77, 3510, 3569, "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0"},
+			{109, 4684, 4742, "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0"},
+			{112, 4874, 4933, "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0"},
+			{133, 5639, 5698, "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0"},
+		},
+		"osimage/.yamllint.yml.tmpl": {},
+		"rust/ci-rust-library.yml.tmpl": {
+			{15, 390, 447, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1"},
+		},
+		"rust/ci-rust.yml.tmpl": {
+			{24, 974, 1031, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1"},
+		},
+	}
+}
+
+// TestTemplateActionInventoryMatchesBase keeps every committed template accepted with identical inventory.
+func TestTemplateActionInventoryMatchesBase(t *testing.T) {
+	for name, want := range baseTemplateInventory() {
+		body, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, uses, err := util.ScanTemplateActionUses(string(body), 100000)
+		if err != nil || len(uses) != len(want) {
+			t.Fatalf("%s: uses = %+v, err = %v; want %+v", name, uses, err, want)
+		}
+		for i, use := range uses {
+			got := templateInventoryEntry{use.Line, use.Start, use.End, use.Ref}
+			if got != want[i] {
+				t.Errorf("%s: inventory[%d] = %+v, want %+v", name, i, got, want[i])
+			}
+		}
+	}
 }
