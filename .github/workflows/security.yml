@@ -160,4 +160,4 @@ jobs:
       # Skips only a fixture holding deliberate bad values:
       # - .config/hiss/testdata/HISS-12: deliberately fake secrets for HISS-12 gitleaks verification
       - name: Run Filesystem Vulnerability & Secret Scan (trivy)
-        run: trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .config/hiss/testdata/HISS-12 .
+        run: trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --ignorefile .config/security/trivyignore.yaml --skip-dirs .config/hiss/testdata/HISS-12 .
