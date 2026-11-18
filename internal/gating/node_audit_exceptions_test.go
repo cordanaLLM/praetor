@@ -51,7 +51,10 @@ func runNodeAuditFixture(t *testing.T, manager, report, standards, workspace str
 	if manager == nodeManagerPnpm {
 		lock = "pnpm-lock.yaml"
 	}
-	files := map[string]string{"package.json": `{}`, lock: "", ".standards.yaml": standards}
+	files := map[string]string{"package.json": `{}`, lock: ""}
+	if standards != "" {
+		files[".standards.yaml"] = standards
+	}
 	if strings.HasPrefix(workspace, "{") {
 		files["package.json"] = workspace
 		workspace = ""
@@ -75,6 +78,65 @@ func runNodeAuditFixture(t *testing.T, manager, report, standards, workspace str
 	return err
 }
 
+// TestNodeAuditReportShapes requires live ignores before falling back to summary counts.
+func TestNodeAuditReportShapes(t *testing.T) {
+	workspace := "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n"
+	legacy := `{"pnpm":{"auditConfig":{"ignoreGhsas":["GHSA-fc5q-39xc-vjpf"]}}}`
+	expired := "GHSA-fc5q-39xc-vjpf exception in .standards.yaml expired on " + time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	cases := []struct{ name, manager, report, standards, workspace, want string }{
+		{"a workspace missing", "pnpm", "legacy-clean.json", "", workspace, "no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf"},
+		{"a package missing", "pnpm", "legacy-clean.json", "", legacy, "no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf"},
+		{"b workspace expired", "pnpm", "legacy-clean.json", nodeAuditStandards(t, -1), workspace, expired},
+		{"b package expired", "pnpm", "legacy-clean.json", nodeAuditStandards(t, -1), legacy, expired},
+		{"c workspace live zero", "pnpm", "legacy-clean.json", nodeAuditStandards(t, 1), workspace, ""},
+		{"c package live zero", "pnpm", "legacy-clean.json", nodeAuditStandards(t, 1), legacy, ""},
+		{"c workspace live counts", "pnpm", "legacy.json", nodeAuditStandards(t, 1), workspace, "found 1 high and 0 critical vulnerabilities"},
+		{"c package live counts", "pnpm", "legacy.json", nodeAuditStandards(t, 1), legacy, "found 1 high and 0 critical vulnerabilities"},
+		{"c npm live zero", "npm", "legacy-clean.json", nodeAuditStandards(t, 1), "", ""},
+		{"c npm live counts", "npm", "legacy.json", nodeAuditStandards(t, 1), "", "found 1 high and 0 critical vulnerabilities"},
+		{"d pnpm absent manifest", "pnpm", "legacy-clean.json", "", "", ""},
+		{"d npm absent manifest", "npm", "legacy-clean.json", "", "", ""},
+		{"e workspace text missing", "pnpm", "plain.txt", "", workspace, "no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf"},
+		{"e package text missing", "pnpm", "plain.txt", "", legacy, "no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf"},
+	}
+	for i := 0; i < len(cases) && i < 32; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			err := runNodeAuditFixture(t, tc.manager, nodeAuditFixture(t, tc.report), tc.standards, tc.workspace, false)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %q; got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// TestNodeAuditReportFallback preserves the uncovered verdict without an exception manifest.
+func TestNodeAuditReportFallback(t *testing.T) {
+	cases := []struct{ manager, report string }{
+		{"pnpm", "legacy-clean.json"}, {"npm", "legacy-clean.json"},
+		{"pnpm", "legacy.json"}, {"npm", "legacy.json"},
+	}
+	for i := 0; i < len(cases) && i < 4; i++ {
+		tc := cases[i]
+		t.Run(tc.manager+" "+tc.report, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			covered, err := judgeNodeAdvisories(t.Context(), root, tc.manager, nodeAuditFixture(t, tc.report))
+			if covered || err != nil {
+				t.Fatalf("want (false, nil) without .standards.yaml; got (%v, %v)", covered, err)
+			}
+		})
+	}
+}
+
 // TestNodeAuditExceptions covers ignored, listed, expired and legacy reports through the stage.
 func TestNodeAuditExceptions(t *testing.T) {
 	both := nodeAuditStandards(t, 1) + strings.TrimPrefix(strings.ReplaceAll(nodeAuditStandards(t, 1), "GHSA-fc5q-39xc-vjpf", "GHSA-42xw-2xvc-qx8m"), "version: 1\nexceptions:\n")
@@ -83,7 +145,7 @@ func TestNodeAuditExceptions(t *testing.T) {
 		failed                                            bool
 	}{
 		{"a ignored live", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, 1), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "", false},
-		{"b ignored missing", "pnpm", "pnpm-ignored.json", "version: 1\n", "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "1 ignored high or critical findings; no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf", false},
+		{"b ignored missing", "pnpm", "pnpm-ignored.json", "version: 1\n", "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "configured ignored advisories; no exception in .standards.yaml covers GHSA-fc5q-39xc-vjpf", false},
 		{"c ignored expired", "pnpm", "pnpm-ignored.json", nodeAuditStandards(t, -1), "auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", "GHSA-fc5q-39xc-vjpf exception in .standards.yaml expired on " + time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02"), false},
 		{"d listed missing", "pnpm", "pnpm-listed.json", "version: 1\n", "", "GHSA-fc5q-39xc-vjpf", true},
 		{"e listed live", "pnpm", "pnpm-listed.json", nodeAuditStandards(t, 1), "", "", true},
@@ -186,8 +248,12 @@ func TestNodeAuditLimits(t *testing.T) {
 	if _, err := structuredNodeAudit(strings.Repeat(" ", (16<<20)+1)); err == nil {
 		t.Fatal("oversized audit accepted")
 	}
-	if _, err := uniqueNodeIgnoreIDs(make([]string, maxNodeAdvisories+1)); err == nil {
-		t.Fatal("oversized ignore list accepted")
+	ids := strings.Split(strings.Repeat("GHSA-fc5q-39xc-vjpf,", maxNodeAdvisories-1)+"GHSA-fc5q-39xc-vjpf", ",")
+	if _, err := uniqueNodeIgnoreIDs(append(ids, "GHSA-fc5q-39xc-vjpf")); err == nil || !strings.Contains(err.Error(), "ignore list exceeds") {
+		t.Fatalf("oversized valid ignore list: want entry-bound error; got %v", err)
+	}
+	if got, err := uniqueNodeIgnoreIDs(ids); err != nil || len(got) != 1 {
+		t.Fatalf("ignore list at bound: want one deduplicated id; got %v, %v", got, err)
 	}
 	packages := map[string]nodeAuditVulnerability{"parent": {Severity: "high", Via: []json.RawMessage{json.RawMessage(`"parent"`)}}}
 	budget := 0

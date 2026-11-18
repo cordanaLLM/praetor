@@ -259,7 +259,7 @@ an unexplained gap fails rather than treating an empty advisory map as a clean a
 For pnpm 12, declare ignores in `pnpm-workspace.yaml`, using `auditConfig.ignoreGhsas`
 or its newer replacement `audit.ignore`; the latter takes precedence, including an empty
 list. The engine also reads the legacy `pnpm.auditConfig.ignoreGhsas` in `package.json`
-when no workspace file exists. Every configured ignored GHSA requires a live exception,
+when no workspace file exists. Every configured ignored GHSA requires a live exception for every report shape,
 even if the report's summary already excludes ignored findings. The engine reads only
 repository files and never queries package-manager user configuration. An ignore alone
 cannot waive a finding. See [pnpm audit configuration](https://pnpm.io/cli/audit#configuration)

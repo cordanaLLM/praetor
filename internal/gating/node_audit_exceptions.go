@@ -16,18 +16,10 @@ import (
 	"github.com/cordanaLLM/praetor/internal/strictjson"
 )
 
-// judgeNodeAdvisories applies the shared exception loader to structured npm and pnpm reports.
+// judgeNodeAdvisories validates configured ignores before judging any npm or pnpm report shape.
 func judgeNodeAdvisories(ctx context.Context, root, manager, out string) (bool, error) {
 	if manager != nodeManagerNpm && manager != nodeManagerPnpm {
 		return false, nil
-	}
-	report, err := structuredNodeAudit(out)
-	if err != nil || report == nil {
-		return false, err
-	}
-	findings, err := listedNodeFindings(*report)
-	if err != nil {
-		return false, err
 	}
 	entries, err := config.LoadExceptionsFor(ctx, root, config.ExceptionRuleNodeAudit)
 	if err != nil {
@@ -37,9 +29,25 @@ func judgeNodeAdvisories(ctx context.Context, root, manager, out string) (bool, 
 	if err != nil {
 		return false, err
 	}
-	gap := max(0, report.Metadata.Vulnerabilities.High-findings.high) + max(0, report.Metadata.Vulnerabilities.Critical-findings.critical)
-	if err := checkIgnoredNodeAdvisories(entries, ignored, gap); err != nil {
+	if err := checkIgnoredNodeAdvisories(entries, ignored); err != nil {
 		return false, err
+	}
+	report, err := structuredNodeAudit(out)
+	if err != nil || report == nil {
+		return false, err
+	}
+	return judgeStructuredNodeAdvisories(*report, entries, ignored)
+}
+
+// judgeStructuredNodeAdvisories checks listed findings and gaps after configured ignores pass.
+func judgeStructuredNodeAdvisories(report npmAuditReport, entries []config.Exception, ignored []string) (bool, error) {
+	findings, err := listedNodeFindings(report)
+	if err != nil {
+		return false, err
+	}
+	gap := max(0, report.Metadata.Vulnerabilities.High-findings.high) + max(0, report.Metadata.Vulnerabilities.Critical-findings.critical)
+	if gap > len(ignored) {
+		return false, fmt.Errorf("%d ignored high or critical findings; no exception in .standards.yaml covers the unidentified advisories (configured GHSA ids: %s)", gap, strings.Join(ignored, ", "))
 	}
 	if err := checkListedNodeAdvisories(entries, findings.ids); err != nil {
 		return false, err
@@ -81,8 +89,8 @@ func checkListedNodeAdvisories(entries []config.Exception, ids []string) error {
 	return nil
 }
 
-// checkIgnoredNodeAdvisories requires an entry for every configured ignore and accounts for gaps.
-func checkIgnoredNodeAdvisories(entries []config.Exception, ignored []string, gap int) error {
+// checkIgnoredNodeAdvisories requires a live entry for every configured ignore on every report path.
+func checkIgnoredNodeAdvisories(entries []config.Exception, ignored []string) error {
 	missing := make([]string, 0, len(ignored))
 	for i := 0; i < len(ignored) && i < maxNodeAdvisories; i++ {
 		live, expired := config.NodeAuditExceptionFor(entries, ignored[i], time.Now().UTC())
@@ -95,10 +103,7 @@ func checkIgnoredNodeAdvisories(entries []config.Exception, ignored []string, ga
 		missing = append(missing, ignored[i])
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("%d ignored high or critical findings; no exception in .standards.yaml covers %s", gap, strings.Join(missing, ", "))
-	}
-	if gap > len(ignored) {
-		return fmt.Errorf("%d ignored high or critical findings; no exception in .standards.yaml covers the unidentified advisories (configured GHSA ids: %s)", gap, strings.Join(ignored, ", "))
+		return fmt.Errorf("configured ignored advisories; no exception in .standards.yaml covers %s", strings.Join(missing, ", "))
 	}
 	return nil
 }
