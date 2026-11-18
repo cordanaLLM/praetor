@@ -899,18 +899,32 @@ inspected: `git commit -m "$(git commit -n)"` refuses. A word-starting shell com
 at the newline; `git commit -m x # author's note` passes without treating its apostrophe
 as a quote (the same parity tests).
 
-Here-documents and here-strings follow their consumers. Shell input (`bash`, `sh`, `zsh`,
-`dash`, `ksh`, `sh -s`, absolute paths and `env` prefixes), `source` or `.` on `/dev/stdin`,
-and bodies piped through `cat` into a shell receive the full prohibited-flag scan. The same
-rule applies when `bash -c` or `eval` consumes a substitution containing the body. Unknown
-stdin consumers, including `python3 -`, receive the shell rule and fail closed. The shared
-`HeredocConsumers` / `HEREDOC_CONSUMERS` table classifies `git`, `cat`, `tee`, `head`,
-`tail` and `wc` as data readers; a downstream shell or enclosing executable substitution
-changes the body to code. Commit messages read with `-F -`, message substitutions, and
-`cat` or `tee` writing a file remain data; executable expansions in unquoted data still
-receive independent scans (`TestPolicyEvasionHeredocFeed`, `TestParityEvasionHeredocFeed`,
-`TestEmittedEvasionHeredocFeed`). Consumer-table parity and the corresponding
-`HeredocConsumerMutants` tests pin both classifications and the unknown-reader default.
+Here-document and here-string bodies count as data only in two proven shapes: a simple
+top-level literal reader from `HeredocConsumers` / `HEREDOC_CONSUMERS`, whose later pipeline
+stages also read data until a parsed stdout redirection writes a literal file; or a
+substitution containing exactly one such reader inside a double-quoted data operand of a
+literal, unwrapped `git commit`. Groups, unmodeled wrappers, command-position substitutions
+and uncertain words select code. Function declarations and shell-state changes invalidate
+later data proofs. Everything else is judged as code. Executable expansions
+in unquoted data receive independent scans. An unquoted document fed to a shell keeps
+its whole body, including every inner document, in code context whenever the body contains
+a dollar sign, a backtick or a backslash-newline sequence. The structural allow-list requires
+all three sequences to be absent; it does not enumerate dangerous commands or expansion
+results (`shellDocumentLiteral` in `internal/agenthook/policy.go`, `document_literal` in
+the canonical and emitted Python). Quoted outer documents and unquoted bodies without
+these sequences retain the proven data-reader shapes. Backslash-newline joins happen before command
+word and descriptor tokenization, and before parsing an unquoted document fed to a shell.
+`TestEvasionShellOracle` replays the command corpora and a bounded deterministic product
+through all three policy forms and real Bash with a recording Git stub, filesystem isolation
+and no network; an allowed shell-executed bypass fails the test. Its 2,000-command bound
+retains the complete carrier product and includes 30 outer-expansion cases: one or two
+inner quoted documents, delimiter/blank/payload output, and dollar-command, backtick,
+parameter, arithmetic and continuation spellings. Arithmetic cannot emit an empty string
+directly, so its blank case uses a zero-length parameter slice with an arithmetic length.
+The remaining slots sample continuation/indent repeats. The recorder detector reads Git
+2.56.1's documented global and commit option arities, excludes option values and stops at
+the pathspec `--`; a log command's `--grep commit -n` is not a commit bypass. Linux replay requires
+`bash` and `bwrap`; other platforms report why isolated execution cannot run.
 
 A data here-document ends only at the line the shell itself ends it on. The
 delimiter word is read by `util.ShellHereDocDelimiter` (`internal/util/shell_heredoc.go`,

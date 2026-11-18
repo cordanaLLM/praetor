@@ -222,17 +222,17 @@
   {
     "name": "printf message substitution data",
     "command": "printf %s \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
-    "want": 0
+    "want": 2
   },
   {
     "name": "echo message substitution data",
     "command": "echo \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
-    "want": 0
+    "want": 2
   },
   {
     "name": "group data document",
     "command": "(cat > notes.txt <<'EOF'\ngit commit -n -m x\nEOF\n)",
-    "want": 0
+    "want": 2
   },
   {
     "name": "quoted here string data expansion",
@@ -297,7 +297,7 @@
   {
     "name": "env data message substitution",
     "command": "env -i git commit -m \"$(cat <<'EOF'\ngit commit -n -m x\nEOF\n)\"",
-    "want": 0
+    "want": 2
   },
   {
     "name": "quoted data consumer heredoc delimiter",
@@ -420,8 +420,33 @@
     "want": 2
   },
   {
+    "name": "heredoc empty literal target",
+    "command": "cat <<'EOF' > ''\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
     "name": "heredoc variable target before pipe to sh",
     "command": "cat <<'EOF' > \"$out\" | sh\ngit commit -n -m x\nEOF",
+    "want": 2
+  },
+  {
+    "name": "round10 unquoted outer literal data file",
+    "command": "cat > notes.txt <<OUTER\ngit commit -n -m x\nOUTER",
+    "want": 0
+  },
+  {
+    "name": "round10 unquoted outer shell literal inner data",
+    "command": "bash <<OUTER\ncat > notes.txt <<'D1'\ngit commit -n -m x\nD1\nOUTER",
+    "want": 0
+  },
+  {
+    "name": "round10 quoted outer shell literal inner data",
+    "command": "bash <<'OUTER'\ncat > notes.txt <<'D1'\ngit commit -n -m x\nD1\nOUTER",
+    "want": 0
+  },
+  {
+    "name": "round10 unquoted nested expansion",
+    "command": "bash <<OUTER\ncat <<'D1'\ncat <<'D2'\n$(cat <<< D1)\ngit commit -n -m x\nD2\nD1\nOUTER",
     "want": 2
   }
 ]

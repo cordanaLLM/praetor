@@ -117,7 +117,7 @@ func evasionFallbackCases() []struct {
 		{"am parameter", `git am $flags patch && tail -n 1`, 2},
 		{"own substitution", `git commit $(cat flags) -m x && tail -n 1`, 2},
 		{"own escape", `git commit -m a\b && tail -n 1`, 2},
-		{"own continuation", "git commit -m x\\\n && tail -n 1", 2},
+		{"own continuation", "git commit -m x\\\n && tail -n 1", 0},
 		{"single quoted newline", "git commit -m 'a\nb' && tail -n 1", 2},
 		{"double quoted newline", "git commit -m \"a\nb\" && tail -n 1", 2},
 		{"later newline", "git commit -m x && printf \"a\nb\" | tail -n 1", 0},
@@ -415,6 +415,8 @@ func splittingSegmentCase(name string) bool {
 		"runtime-only message parameter", "runtime-only positional array",
 		"substitution", "glob",
 		"am substitution",
+		"substitution flag", "backtick flag", "nested substitution flag",
+		"substitution separator flag", "positional substitution", "state function",
 	}, name)
 }
 
@@ -502,9 +504,9 @@ func evasionSegmentMutants() []struct {
 		{"old span", "for segment in segments:", "for segment in [(text, bool(re.search(READ_ONLY_VETO, text)))]:",
 			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
 		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1, exempt)", "segments, None, exempt)",
-			`git commit -m 'message $name' && tail -n 1`, 2},
-		{"redirection veto", `if not any(ch in command for ch in "{}<") and not commit_command(`,
-			"if re.search(r\"[<>]\", command):\n    return [(command, True)], []\n" + `if not any(ch in command for ch in "{}<") and not commit_command(`,
+			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
+		{"redirection veto", `if not needs_shell_spans(command, short_pattern):`,
+			"if re.search(r\"[<>]\", command):\n    return [(command, True)], []\n" + `if not needs_shell_spans(command, short_pattern):`,
 			`git commit -m x 2>&1 | tail -n 1`, 2},
 		{"positional expansion", "self.uncertain |= self.word_expansion", "self.uncertain |= False",
 			`git commit "$x" && git log -n 1`, 0},
@@ -537,7 +539,7 @@ func evasionRoundSixMutants() []struct {
 		{"prefix-only here-string read", `if end < len(text) and text[end] not in " \t\n;&|<>()":`,
 			`if False:`, "bash <<< 'echo '\"$name\"", 0},
 		{"here-string fragments not joined",
-			`r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"(?:[^\"\\$\x60]|\\[\s\S])*\"|\\[\s\S])+"`,
+			`r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"(?:[^\"\\$\x60]|\\[\s\S])*\"|\\[^\n])+"`,
 			`r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"[^\"\\$\x60]*\"|\\[^\n])+"`,
 			"bash <<<'echo \"<<'\"\\\"\"", 2},
 		{"here-string continuation kept", "if following == \"\\n\":\n    return \"\", True",
@@ -776,6 +778,10 @@ func regenerateCanonicalEvasionGuard(t *testing.T, guard string) string {
 		"    for pattern in TOPOLOGY_PATTERNS:\n        if search_full_inputs(pattern, command_str, segments, False):", 1)
 	guard = strings.Replace(guard, "sys.stderr.write(str(error) + \"\\n\")",
 		"sys.stderr.write(\""+agenthook.InvalidInputRefusal+"\" + str(error) + \"\\n\")", 1)
+	if !strings.Contains(guard, "    command_str = executable_text(command_str, segments)\n") {
+		guard = strings.Replace(guard, "    judged = without_read_only_words(command_str)",
+			"    command_str = executable_text(command_str, segments)\n    judged = without_read_only_words(command_str)", 1)
+	}
 	return guard
 }
 
@@ -1669,6 +1675,56 @@ func TestEmittedEvasionHeredocFeed(t *testing.T) {
 	}
 }
 
+// TestEmittedEvasionProvenShapesPriorReplay measures each conservative change against the outgoing rendering.
+func TestEmittedEvasionProvenShapesPriorReplay(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	prior := filepath.Join(priorEvasionFixtures, "before-50882fd4d562.block_evasion.py.txt")
+	names := []string{
+		"printf message substitution data", "echo message substitution data",
+		"group data document", "env data message substitution", "heredoc empty literal target",
+	}
+	count := 0
+	for _, tc := range evasionHeredocFeedCases(t) {
+		if !slices.Contains(names, tc.Name) {
+			continue
+		}
+		count++
+		before := runInterceptor(t, python, prior, nil, nil, tc.Command)
+		after := runInterceptor(t, python, fixed, nil, nil, tc.Command)
+		t.Logf("%s: outgoing rc=%d current rc=%d", tc.Name, before, after)
+		if before != 0 || after != tc.Want {
+			t.Errorf("%s: outgoing rc=%d want=0 current rc=%d want=%d", tc.Name, before, after, tc.Want)
+		}
+	}
+	if count != len(names) {
+		t.Fatalf("proven-shape fixture count=%d want=%d", count, len(names))
+	}
+}
+
+// TestEmittedEvasionOuterExpansionPriorReplay preserves round 9's data shapes and exposes its bypass.
+func TestEmittedEvasionOuterExpansionPriorReplay(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	prior := filepath.Join(priorEvasionFixtures, "before-f5318e397d26.block_evasion.py.txt")
+	count := 0
+	for _, tc := range evasionHeredocFeedCases(t) {
+		if !strings.HasPrefix(tc.Name, "round10 ") {
+			continue
+		}
+		count++
+		t.Run(tc.Name, func(t *testing.T) {
+			before := runInterceptor(t, python, prior, nil, nil, tc.Command)
+			after := runInterceptor(t, python, fixed, nil, nil, tc.Command)
+			t.Logf("round 9 rc=%d round 10 rc=%d want=%d", before, after, tc.Want)
+			if before != 0 || after != tc.Want {
+				t.Errorf("round 9 rc=%d want=0 round 10 rc=%d want=%d", before, after, tc.Want)
+			}
+		})
+	}
+	if count != 4 {
+		t.Fatalf("outer expansion fixture count=%d want=4", count)
+	}
+}
+
 // TestEmittedEvasionHeredocPriorReplay preserves the 22 acceptance verdicts of the prior hook.
 func TestEmittedEvasionHeredocPriorReplay(t *testing.T) {
 	python, fixed := emittedInterceptor(t)
@@ -1707,9 +1763,10 @@ func TestEmittedEvasionHeredocConsumerMutants(t *testing.T) {
 		name, replacement, command string
 		want                       int
 	}{
-		{"empty", "HEREDOC_CONSUMERS = {}\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
+		{"empty", "HEREDOC_CONSUMERS = {}\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 2},
 		{"data as shells", `HEREDOC_CONSUMERS = {"*": "shell"}` + "\n", "git commit -F - <<'EOF'\ngit commit -n -m x\nEOF", 2},
-		{"unknown as data", `HEREDOC_CONSUMERS = {"*": "data"}` + "\n", "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 0},
+		{"unknown as data", `HEREDOC_CONSUMERS = {"*": "data"}` + "\n", "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 2},
+		{"shell named as data", `HEREDOC_CONSUMERS = {"bash": "data"}` + "\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := table.ReplaceAllLiteralString(source, tc.replacement)
@@ -1869,7 +1926,7 @@ func recordEvasionRenderingAt(t *testing.T, fixturesDir, hooksPath, current stri
 	if strings.Count(source, marker) != 1 {
 		t.Fatal("prior evasion digest table boundary missing or ambiguous")
 	}
-	entry := fmt.Sprintf("\t%q: %q,\n", digest, "bounded word unquoting without optional Python modules")
+	entry := fmt.Sprintf("\t%q: %q,\n", digest, "proven data-reader shapes and shell execution replay")
 	mustWrite(t, hooksPath, strings.Replace(source, marker, marker+entry, 1))
 }
 

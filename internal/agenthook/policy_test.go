@@ -132,8 +132,14 @@ func TestBuiltinRules(t *testing.T) {
 	}
 }
 
+// TestNewPolicyOperatorDenyList retains raw operator matching even inside proven message data.
 func TestNewPolicyOperatorDenyList(t *testing.T) {
 	compiled := policy(t, `\bterraform\s+destroy\b`, organisationContainerPattern)
+	for _, command := range []string{"git commit -m 'terraform destroy'", "git commit -F - <<'EOF'\nterraform destroy\nEOF"} {
+		if verdict := compiled.Command(command); verdict.Outcome != Deny {
+			t.Errorf("operator data text ignored: %+v", verdict)
+		}
+	}
 	if verdict := compiled.Command("terraform destroy -auto-approve"); verdict.Outcome != Deny ||
 		!strings.HasPrefix(verdict.Reason, "[BLOCKED BY operator] ") {
 		t.Errorf("operator pattern ignored: %+v", verdict)
@@ -307,9 +313,10 @@ func TestPolicyEvasionHeredocConsumerMutants(t *testing.T) {
 		command string
 		want    int
 	}{
-		{"empty", map[string]string{}, "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
+		{"empty", map[string]string{}, "bash <<'EOF'\ngit commit -n -m x\nEOF", 2},
 		{"data as shells", map[string]string{"*": "shell"}, "git commit -F - <<'EOF'\ngit commit -n -m x\nEOF", 2},
-		{"unknown as data", map[string]string{"*": "data"}, "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 0},
+		{"unknown as data", map[string]string{"*": "data"}, "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 2},
+		{"shell named as data", map[string]string{"bash": "data"}, "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			heredocConsumers = tc.table

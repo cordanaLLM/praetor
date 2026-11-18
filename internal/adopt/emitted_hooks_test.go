@@ -109,6 +109,9 @@ func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 			t.Errorf("close repository root: %v", err)
 		}
 	}()
+	if os.Getenv(updateEmittedFixturesEnv) == "1" {
+		recordMinimalPythonRendering(t)
+	}
 	for rel, want := range emittedHookRenderings(t) {
 		path := filepath.Join(emittedFixtureRoot, filepath.FromSlash(rel))
 		if os.Getenv(updateEmittedFixturesEnv) == "1" {

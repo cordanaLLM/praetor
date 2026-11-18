@@ -22,6 +22,7 @@ type denyRule struct {
 	readOnlyExempt bool
 	requiredAny    []string
 	exemptFirst    *regexp.Regexp
+	operator       bool
 }
 
 // matches applies an optional first-command exemption to the line holding each match.
@@ -339,7 +340,7 @@ var heredocConsumers = map[string]string{
 func HeredocConsumers() map[string]string { return maps.Clone(heredocConsumers) }
 
 // shellConsumerToken admits literal words only; expansion leaves the consumer unknown.
-var shellConsumerToken = regexp.MustCompile(`^(?:[^ \t\n'"\\$\x60;&|<>()]+|'[^']*'|"(?:[^"\\$\x60]|\\[\s\S])*"|\\[\s\S])+`)
+var shellConsumerToken = regexp.MustCompile(`^(?:[^ \t\n'"\\$\x60;&|<>()]+|'[^']*'|"(?:[^"\\$\x60]|\\[\s\S])*"|\\[^\n])+`)
 
 // shellLiteralWord returns the leading literal shell word when it ends at a word boundary.
 func shellLiteralWord(text string) string {
@@ -353,39 +354,28 @@ func shellLiteralWord(text string) string {
 	return word
 }
 
-// shellConsumer reads the first executable basename, skipping literal assignments and env.
+// shellConsumer proves a literal simple command; empty words, wrappers and expansions fail closed.
 func shellConsumer(text string) string {
-	environment, value := false, false
+	name := ""
 	for remaining := len(text); remaining > 0; remaining-- {
 		text = strings.TrimLeft(text, " \t")
+		if text == "" {
+			return name
+		}
 		word := shellLiteralWord(text)
 		if word == "" {
 			return ""
 		}
 		text = text[len(word):]
 		word = unquoteShellWord(word)
-		if value {
-			value = false
-			continue
+		if word == "" {
+			return ""
 		}
-		if environment && strings.HasPrefix(word, "-") {
-			var known bool
-			value, known = shellConsumerEnvOption(word)
-			if !known {
-				return "*"
-			}
-			continue
+		if name == "" {
+			name = word
 		}
-		if assignmentWord.MatchString(word) {
-			continue
-		}
-		name := word[strings.LastIndexByte(word, '/')+1:]
-		if name != "env" {
-			return name
-		}
-		environment = true
 	}
-	return ""
+	return name
 }
 
 // shellConsumerEnvOption reuses admission's env value arities; unknown options fail closed.
@@ -409,7 +399,7 @@ func shellConsumerMode(text string) string {
 	if mode, ok := heredocConsumers[shellConsumer(text)]; ok {
 		return mode
 	}
-	return heredocConsumers["*"]
+	return "shell"
 }
 
 // shellConsumerStage retains mutable pipeline offsets, redirection spans and plain-file stdout state.
@@ -417,13 +407,19 @@ type shellConsumerStage struct {
 	start, end int
 	redirects  [][2]int
 	stdoutFile bool
+	unknown    bool
 }
 
 // shellConsumerFrame retains pipeline stages and whether their output remains data.
 type shellConsumerFrame struct {
 	stages []*shellConsumerStage
 	data   bool
+	proof  *shellDataProof
+	group  bool
 }
+
+// shellDataProof counts all commands of a candidate data-operand substitution, across boundaries.
+type shellDataProof struct{ commands int }
 
 // shellFeed defers stdin classification until the entire pipeline has been read.
 type shellFeed struct {
@@ -441,6 +437,7 @@ type shellDocument struct {
 	expandable   bool
 	frame        *shellConsumerFrame
 	stage        int
+	enclosed     bool
 }
 
 // shellSpan retains the raw exemption veto after message data has been masked.
@@ -454,6 +451,7 @@ type shellSpan struct {
 type shellInput struct {
 	text     string
 	document bool
+	codeOnly bool
 }
 
 // shellSpans walks raw command bytes once, using a bounded stack rather than recursion.
@@ -467,12 +465,19 @@ type shellSpans struct {
 	uncertain                      bool
 	err                            error
 	judged                         []byte
+	ruleText                       []byte
 	wordStart, redirectStart       int
 	braceDepth                     int
 	nextData, redirectData         bool
 	wordExpansion, wordSplitting   bool
 	argumentsUncertain             bool
 	commandWordSeen                bool
+	commandUnknown                 bool
+	prefixMode                     string
+	prefixValue                    bool
+	groups                         int
+	consumerStateUnknown           bool
+	codeOnly                       bool
 	gitWordStart                   int
 	gitCommand                     string
 	executionStart, executionDepth int
@@ -492,7 +497,7 @@ func commandSegments(command string) ([]shellSpan, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(spans) > 0 && !queue[i].document {
+		if len(spans) > 0 && !queue[i].document && spans[0].raw == "" {
 			spans[0].raw = queue[i].text
 		}
 		parts = append(parts, spans...)
@@ -507,7 +512,7 @@ func commandSegments(command string) ([]shellSpan, error) {
 // scanShellInput chooses command parsing or executable extraction from document data.
 func scanShellInput(input shellInput) ([]shellSpan, []shellInput, error) {
 	if !input.document {
-		return scanCommandSpans(input.text)
+		return scanCommandSpans(input.text, input.codeOnly)
 	}
 	s := shellSpans{command: input.text, judged: []byte(input.text), wordStart: -1, redirectStart: -1, executionStart: -1}
 	for s.position < len(s.command) {
@@ -549,18 +554,19 @@ func (s *shellSpans) documentStep() bool {
 }
 
 // scanCommandSpans masks data operands and refuses unknown commit/am argument lists.
-func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
-	if !strings.ContainsAny(command, "{}<") && !shellCommitPattern.MatchString(joinLineContinuations(command)) {
+func scanCommandSpans(command string, codeOnly bool) ([]shellSpan, []shellInput, error) {
+	if !strings.ContainsAny(command, "{}<") && !shellCommitPattern.MatchString(joinLineContinuations(unquoteShellWord(command))) &&
+		!shellCommitPattern.MatchString(joinLineContinuations(command)) {
 		return []shellSpan{{text: command, veto: readOnlyVetoPattern.MatchString(command)}}, nil, nil
 	}
-	s := shellSpans{command: command, judged: []byte(command), wordStart: -1, redirectStart: -1, executionStart: -1,
-		whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command)}
-	for s.position < len(command) {
+	s := shellSpans{command: command, judged: []byte(command), ruleText: []byte(command), wordStart: -1, redirectStart: -1, executionStart: -1,
+		whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command), consumerStateUnknown: codeOnly, codeOnly: codeOnly}
+	for s.position < len(s.command) {
 		if !s.step() || s.err != nil {
 			return nil, nil, s.err
 		}
 	}
-	return s.finishCommandSpans(len(command))
+	return s.finishCommandSpans(len(s.command))
 }
 
 // finishCommandSpans seals outer command state and resolves deferred stdin feeds.
@@ -580,7 +586,10 @@ func (s *shellSpans) finishCommandSpans(end int) ([]shellSpan, []shellInput, err
 		return nil, nil, s.err
 	}
 	if s.whole {
-		return []shellSpan{{text: string(s.judged), veto: true}}, s.nested, nil
+		return []shellSpan{{text: string(s.judged), veto: true, raw: string(s.ruleText)}}, s.nested, nil
+	}
+	if len(s.parts) > 0 {
+		s.parts[0].raw = string(s.ruleText)
 	}
 	return s.parts, s.nested, nil
 }
@@ -601,12 +610,46 @@ func (s *shellSpans) push(closer byte) bool {
 	}
 	frame := s.consumerFrame()
 	if closer != '"' {
-		stage := frame.stages[len(frame.stages)-1]
-		data := frame.data && heredocConsumers[shellConsumer(s.stageCommandText(stage, s.position))] != "shell"
-		frame = newShellConsumerFrame(s.position, data)
+		parent := frame
+		frame = newShellConsumerFrame(s.position, parent.data)
+		frame.group = true
+		if s.executionStart == s.position && s.executionDepth == len(s.stack)+1 {
+			frame.data, frame.group = s.dataSubstitution(), parent.group
+			frame.proof = &shellDataProof{}
+		}
 	}
 	s.consumerFrames = append(s.consumerFrames, frame)
 	s.stack = append(s.stack, closer)
+	return true
+}
+
+// dataSubstitution proves a double-quoted data operand of a literal, unwrapped Git command.
+func (s *shellSpans) dataSubstitution() bool {
+	if s.top() != '"' || len(s.stack) != 1 || s.groups != 0 || s.wordStart < 0 {
+		return false
+	}
+	frame := s.consumerFrame()
+	stage := frame.stages[len(frame.stages)-1]
+	text := strings.TrimLeft(s.stageCommandText(stage, s.wordStart), " \t")
+	word := shellLiteralWord(text)
+	if word == "" || unquoteShellWord(word) != "git" || !frame.data {
+		return false
+	}
+	return s.gitCommand == "commit" && s.dataOffset(s.command[s.wordStart:s.position]) >= 0
+}
+
+// joinContinuation removes shell backslash-newline once, before any command-word or descriptor reader.
+// Single quotes and document bodies bypass step; expandable shell-fed documents join in feedInputs.
+func (s *shellSpans) joinContinuation() bool {
+	if !strings.HasPrefix(s.command[s.position:], "\\\n") {
+		return false
+	}
+	position := s.position
+	s.command = s.command[:position] + s.command[position+2:]
+	s.judged = append(s.judged[:position], s.judged[position+2:]...)
+	if s.ruleText != nil {
+		s.ruleText = append(s.ruleText[:position], s.ruleText[position+2:]...)
+	}
 	return true
 }
 
@@ -643,6 +686,9 @@ func (s *shellSpans) quotedStep() (bool, bool) {
 
 // step advances a byte or one lexical construct; failure selects the conservative scan.
 func (s *shellSpans) step() bool {
+	if s.joinContinuation() {
+		return true
+	}
 	if s.wordStep() {
 		return true
 	}
@@ -717,6 +763,7 @@ func (s *shellSpans) finishWord(end int) {
 	s.enterGitCommand(word, end)
 	data := s.nextData || s.redirectData
 	s.maskWord(word, end)
+	s.normalizeWord(word, end, data)
 	s.commandWord(word)
 	for _, execution := range s.wordExecutions {
 		s.nested = append(s.nested, shellInput{text: execution})
@@ -736,16 +783,70 @@ func (s *shellSpans) commandWord(word string) {
 		return
 	}
 	s.commandWordSeen, s.gitWordStart = true, -1
+	word = unquoteShellWord(word)
+	s.consumerStateUnknown = s.consumerStateUnknown || shellStatePattern.MatchString(word) ||
+		slices.Contains([]string{"eval", ".", "source"}, word)
+	s.commandUnknown = !knownShellCommand(word)
 	if strings.HasSuffix(word, "git") && shellCommitPattern.MatchString(word+" commit") {
 		s.gitWordStart = s.wordStart + len(word) - len("git")
 	}
 }
 
+// knownShellCommand separates modeled commands from unknown launcher prefixes for brace words.
+func knownShellCommand(word string) bool {
+	name := word[strings.LastIndexByte(word, '/')+1:]
+	if name != word {
+		return shellPrefixName(word) != ""
+	}
+	_, known := heredocConsumers[name]
+	return known || slices.Contains([]string{"echo", "printf", "find", "mkdir", "env", "command", "exec", "builtin"}, name)
+}
+
+// shellPrefixName proves a literal launcher basename before interpreting its arguments.
+func shellPrefixName(word string) string {
+	if shellLiteralWord(word) != word {
+		return ""
+	}
+	name := word[strings.LastIndexByte(word, '/')+1:]
+	if slices.Contains([]string{"env", "command", "exec", "builtin"}, name) {
+		return name
+	}
+	return ""
+}
+
+// normalizeWord exposes adjacent literal quote fragments without changing offsets or data operands.
+func (s *shellSpans) normalizeWord(word string, end int, data bool) {
+	if data || s.dataOffset(word) >= 0 || shellLiteralWord(word) != word {
+		return
+	}
+	literal := unquoteShellWord(word)
+	if !normalizableWord(word, literal) {
+		return
+	}
+	s.mask(s.wordStart, end)
+	copy(s.judged[s.wordStart:end], literal)
+	s.maskRules(s.wordStart, end)
+	if s.ruleText != nil {
+		copy(s.ruleText[s.wordStart:end], literal)
+	}
+}
+
+// normalizableWord admits command and option spellings without turning literal punctuation into syntax.
+func normalizableWord(raw, word string) bool {
+	if raw == word || strings.ContainsAny(word, " \t\n;&|()<>[]{}^!") {
+		return false
+	}
+	return word == "commit" || word == "am" || strings.HasSuffix(word, "git") || strings.HasPrefix(word, "-")
+}
+
 // maskWord excludes data while retaining splitting after the command word, before any subcommand.
 func (s *shellSpans) maskWord(word string, end int) {
 	offset := s.dataOffset(word)
-	if offset >= 0 && !s.wordSplitting && !s.argumentsUncertain {
+	if offset >= 0 && !s.wordSplitting && !s.argumentsUncertain && !s.codeOnly {
 		s.mask(s.wordStart+offset, end)
+		if !s.redirectData {
+			s.maskRules(s.wordStart+offset, end)
+		}
 	} else {
 		s.uncertain = s.uncertain || s.wordExpansion
 	}
@@ -754,10 +855,14 @@ func (s *shellSpans) maskWord(word string, end int) {
 
 // enterGitCommand identifies the first Git subcommand before interpreting its operands.
 func (s *shellSpans) enterGitCommand(word string, end int) {
-	if s.gitCommand != "" || word != "commit" && word != "am" {
+	if s.gitCommand != "" || shellLiteralWord(word) != word {
 		return
 	}
-	if shellCommitPattern.MatchString(joinLineContinuations(s.command[s.start:end])) {
+	word = unquoteShellWord(word)
+	if word != "commit" && word != "am" {
+		return
+	}
+	if shellCommitPattern.MatchString(string(s.judged[s.start:s.wordStart]) + word) {
 		s.gitCommand = word
 	}
 }
@@ -785,11 +890,18 @@ func (s *shellSpans) mask(start, end int) {
 	}
 }
 
+// maskRules removes proven message and document data while preserving redirect targets for other rules.
+func (s *shellSpans) maskRules(start, end int) {
+	for index := start; index < end && index < len(s.ruleText); index++ {
+		s.ruleText[index] = ' '
+	}
+}
+
 // markExpansion retains splitting for array expansions even inside double quotes.
 func (s *shellSpans) markExpansion() {
 	s.wordExpansion = true
 	array := s.executionStart < 0 && shellArrayExpansionPattern.MatchString(s.command[s.position:])
-	s.wordSplitting = s.wordSplitting || len(s.stack) == 0 || array
+	s.wordSplitting = s.wordSplitting || len(s.stack) == 0 || array || s.codeOnly
 }
 
 // redirectOrExecution recognises process substitutions before ordinary redirections.
@@ -805,6 +917,9 @@ func (s *shellSpans) redirectOrExecution() bool {
 // openExecution records the outermost executable body within the current word.
 func (s *shellSpans) openExecution(closer byte, width int) bool {
 	s.markExpansion()
+	if s.executionStart < 0 && !s.dataSubstitution() && s.gitCommand != "" {
+		s.wordSplitting = true
+	}
 	if s.executionStart < 0 {
 		s.executionStart, s.executionDepth = s.position+width, len(s.stack)+1
 	}
@@ -828,6 +943,9 @@ func (s *shellSpans) closeFrame() {
 // parenthesis handles grouping independently from quotes and other structural characters.
 func (s *shellSpans) parenthesis(ch byte) bool {
 	if ch == '(' {
+		if len(s.stack) == 0 && (s.commandWordSeen || s.wordStart >= 0 && s.wordStart < s.position) {
+			s.consumerStateUnknown = true
+		}
 		s.whole = s.whole || s.top() != ')'
 		s.position++
 		return s.push(')')
@@ -843,16 +961,33 @@ func (s *shellSpans) parenthesis(ch byte) bool {
 
 // controlCharacter retains conservative handling of unsupported syntax and positional globs.
 func (s *shellSpans) controlCharacter(ch byte) {
+	s.groupBrace(ch)
 	if len(s.stack) != 0 {
 		return
 	}
 	glob := strings.ContainsRune("*?[", rune(ch)) || strings.ContainsRune("{}", rune(ch)) && s.braceSplitting(ch)
 	s.wordExpansion = s.wordExpansion || glob
 	s.wordSplitting = s.wordSplitting || glob
-	if strings.ContainsRune("{}", rune(ch)) {
+	if glob && strings.ContainsRune("{}", rune(ch)) {
 		s.braceCommand()
 	}
 	s.whole = s.whole || shellUnsupportedPattern.MatchString(s.command[s.position:s.position+1])
+}
+
+// groupBrace tracks only standalone grouping braces, independently of command and pipeline boundaries.
+func (s *shellSpans) groupBrace(ch byte) {
+	next := s.position + 1
+	if !strings.ContainsRune("{}", rune(ch)) || !s.wordBoundaryAt(s.position) {
+		return
+	}
+	if next < len(s.command) && !strings.ContainsRune(" \t\n;&|<>", rune(s.command[next])) {
+		return
+	}
+	if ch == '{' {
+		s.groups++
+	} else {
+		s.groups = max(0, s.groups-1)
+	}
 }
 
 // braceSplitting reports whether a brace at s.position expands or leaves the word unbalanced.
@@ -905,9 +1040,9 @@ func (s *shellSpans) braceCommand() {
 	if !s.commandWordSeen && s.commandPrefix(word) {
 		return
 	}
-	unknown := !s.commandWordSeen
+	unknown := !s.commandWordSeen || s.commandUnknown
 	if s.commandWordSeen && s.gitWordStart >= 0 {
-		prefix := joinLineContinuations(s.command[s.gitWordStart:s.wordStart])
+		prefix := string(s.judged[s.gitWordStart:s.wordStart])
 		unknown = shellCommitPrefixPattern.MatchString(prefix+" commit") ||
 			shellCommitPrefixPattern.MatchString(prefix+word+" commit")
 	}
@@ -916,14 +1051,39 @@ func (s *shellSpans) braceCommand() {
 	}
 }
 
-// commandPrefix keeps leading assignments and standalone grouping braces out of command words.
+// commandPrefix reads modeled launcher words and env switch arities; unknown prefixes remain commands.
 func (s *shellSpans) commandPrefix(word string) bool {
+	if shellLiteralWord(word) == word && word != "" {
+		word = unquoteShellWord(word)
+	}
+	if s.launcherPrefix(word) {
+		return true
+	}
 	if assignmentWord.MatchString(word) {
 		return true
 	}
 	end := s.wordStart + 1
 	return len(word) == 1 && strings.ContainsAny(word, "{}") && (end == len(s.command) ||
 		strings.ContainsRune(" \t\n;&|<>", rune(s.command[end])))
+}
+
+// launcherPrefix consumes modeled launcher words and their known env option values.
+func (s *shellSpans) launcherPrefix(word string) bool {
+	if s.prefixValue {
+		s.prefixValue = false
+		return true
+	}
+	if s.prefixMode == "env" && strings.HasPrefix(word, "-") {
+		var known bool
+		s.prefixValue, known = shellConsumerEnvOption(word)
+		return known
+	}
+	name := shellPrefixName(word)
+	if name != "" {
+		s.prefixMode = name
+		return true
+	}
+	return false
 }
 
 // wordBoundary rejects escaped blanks and operators as lexical word boundaries.
@@ -957,6 +1117,9 @@ func (s *shellSpans) comment() bool {
 		end = s.position + newline
 	}
 	s.mask(s.position, end)
+	if len(s.stack) == 0 {
+		s.wordStart = -1
+	}
 	s.uncertain = s.uncertain || len(s.stack) > 0
 	s.position = end
 	return true
@@ -967,6 +1130,7 @@ func (s *shellSpans) documentData(document shellDocument, start int) {
 	body := stripDocumentTabs(s.command[start:s.documentEnd], document.tabs)
 	s.feeds = append(s.feeds, shellFeed{document: document, body: body, expandable: document.expandable})
 	s.mask(start, s.position)
+	s.maskRules(start, s.position)
 }
 
 // stripDocumentTabs removes leading tabs from each line of a tab-stripped here-document body.
@@ -983,7 +1147,7 @@ func stripDocumentTabs(body string, tabs bool) string {
 
 // newShellConsumerFrame starts a pipeline with explicit output ownership.
 func newShellConsumerFrame(start int, data bool) *shellConsumerFrame {
-	return &shellConsumerFrame{[]*shellConsumerStage{{start: start, end: start}}, data}
+	return &shellConsumerFrame{stages: []*shellConsumerStage{{start: start, end: start}}, data: data}
 }
 
 // consumerFrame lazily initializes ownership for callers constructing the scanner directly.
@@ -1028,23 +1192,34 @@ func (s *shellSpans) consumerBoundary(end, next int, pipeline bool) {
 	if pipeline {
 		frame.stages = append(frame.stages, &shellConsumerStage{start: next, end: next})
 	} else {
-		s.consumerFrames[len(s.consumerFrames)-1] = newShellConsumerFrame(next, frame.data)
+		if frame.proof != nil && strings.TrimSpace(s.stageCommandText(stage, end)) != "" {
+			frame.proof.commands += len(frame.stages)
+		}
+		replacement := newShellConsumerFrame(next, frame.data)
+		replacement.proof, replacement.group = frame.proof, frame.group
+		s.consumerFrames[len(s.consumerFrames)-1] = replacement
 	}
 }
 
 // feedDocument binds stdin to its current stage before following pipeline readers are known.
 func (s *shellSpans) feedDocument() shellDocument {
 	frame := s.consumerFrame()
-	return shellDocument{frame: frame, stage: len(frame.stages) - 1}
+	return shellDocument{frame: frame, stage: len(frame.stages) - 1, enclosed: frame.group || s.groups > 0}
 }
 
-// documentCode follows every downstream reader and the enclosing substitution consumer.
+// documentCode admits only proven simple top-level data readers or one proven data-operand reader.
 func (s *shellSpans) documentCode(document shellDocument) bool {
-	if !document.frame.data {
+	if document.enclosed || !document.frame.data {
+		return true
+	}
+	if s.consumerStateUnknown {
+		return true
+	}
+	if document.frame.proof != nil && document.frame.proof.commands != 1 {
 		return true
 	}
 	for _, stage := range document.frame.stages[document.stage:] {
-		if shellConsumerMode(s.stageCommandText(stage, stage.end)) == "shell" {
+		if stage.unknown || shellConsumerMode(s.stageCommandText(stage, stage.end)) != "data" {
 			return true
 		}
 		if stage.stdoutFile {
@@ -1054,21 +1229,61 @@ func (s *shellSpans) documentCode(document shellDocument) bool {
 	return false
 }
 
-// feedInputs scans shell-fed bodies as commands and expandable data as substitutions only.
+// shellDocumentLiteral allows structure only when no expansion character sequence is present.
+func shellDocumentLiteral(body string) bool {
+	return !strings.ContainsAny(body, "$`") && !strings.Contains(body, "\\\n")
+}
+
+// feedInputs scans shell-fed bodies as code, propagating unresolved outer expansion to all depths.
 func (s *shellSpans) feedInputs() bool {
 	for _, feed := range s.feeds {
 		if s.documentCode(feed.document) {
-			if feed.unresolved {
-				s.err = fmt.Errorf("invalid shell command: unresolved here-string expansion")
+			if !s.feedCode(feed) {
 				return false
 			}
-			s.nested = append(s.nested, shellInput{text: feed.body})
 		} else if feed.expandable && strings.ContainsAny(feed.body, "$`") {
 			s.wordExpansion = true
 			s.nested = append(s.nested, shellInput{text: feed.body, document: true})
 		}
 	}
 	return true
+}
+
+// feedCode retains expansion execution and prevents inner documents from restoring data proofs.
+func (s *shellSpans) feedCode(feed shellFeed) bool {
+	if feed.unresolved {
+		s.err = fmt.Errorf("invalid shell command: unresolved here-string expansion")
+		return false
+	}
+	body := feed.body
+	expands := feed.expandable && !shellDocumentLiteral(body)
+	if expands {
+		s.nested = append(s.nested, shellInput{text: body, document: true})
+	}
+	if feed.expandable {
+		body = joinDocumentContinuations(body)
+	}
+	s.nested = append(s.nested, shellInput{text: body, codeOnly: s.codeOnly || expands})
+	return true
+}
+
+// joinDocumentContinuations removes unquoted document escapes before the receiving shell parses quotes.
+func joinDocumentContinuations(body string) string {
+	var joined strings.Builder
+	for position := 0; position < len(body); position++ {
+		if body[position] == '\\' && position+1 < len(body) {
+			position++
+			if body[position] != '\n' {
+				if !strings.ContainsRune("\\$`", rune(body[position])) {
+					joined.WriteByte('\\')
+				}
+				joined.WriteByte(body[position])
+			}
+			continue
+		}
+		joined.WriteByte(body[position])
+	}
+	return joined.String()
 }
 
 // separator distinguishes Bash's combined-output redirection from command boundaries.
@@ -1117,6 +1332,8 @@ func (s *shellSpans) split(end, next int) {
 	s.redirectStart = -1
 	s.argumentsUncertain = false
 	s.commandWordSeen = false
+	s.commandUnknown, s.prefixValue = false, false
+	s.prefixMode = ""
 	s.gitWordStart = -1
 	s.gitCommand = ""
 }
@@ -1197,10 +1414,13 @@ func (s *shellSpans) recordStandardRedirect(fd, redirect string, redirStart int,
 	if plain {
 		after := s.position + len(s.command[s.position:]) - len(strings.TrimLeft(s.command[s.position:], " \t"))
 		target = shellLiteralWord(s.command[after:])
-		if target != "" {
+		if target != "" && unquoteShellWord(target) != "" {
 			s.recordRedirect(redirStart, after+len(target))
 		} else {
+			target = ""
 			s.redirectStart = redirStart
+			frame := s.consumerFrame()
+			frame.stages[len(frame.stages)-1].unknown = true
 		}
 	} else {
 		s.recordRedirect(redirStart, s.position)
@@ -1226,6 +1446,7 @@ func (s *shellSpans) hereStringFeed(redirStart int) bool {
 	}
 	s.feeds = append(s.feeds, shellFeed{document: document, body: unquoteShellWord(word)})
 	s.mask(s.position, s.position+len(word))
+	s.maskRules(s.position, s.position+len(word))
 	s.position += len(word)
 	s.recordRedirect(redirStart, s.position)
 	return true
@@ -1430,7 +1651,7 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 		if err != nil {
 			return nil, fmt.Errorf("operator deny pattern %d: %w", index, err)
 		}
-		rules = append(rules, denyRule{pattern: compiled, source: source, prefix: rulePrefix("operator", operatorMessage)})
+		rules = append(rules, denyRule{pattern: compiled, source: source, prefix: rulePrefix("operator", operatorMessage), operator: true})
 	}
 	return &Policy{rules: rules}, nil
 }
@@ -1472,9 +1693,16 @@ func (p *Policy) commandRulesIn(ctx context.Context, command, workDir string) Ve
 		return Verdict{Outcome: Deny, Reason: InvalidInputRefusal + err.Error()}
 	}
 	command = joinLineContinuations(command)
-	judged := withoutReadOnlyWords(command)
+	code := command
+	if len(segments) > 0 {
+		code = joinLineContinuations(segments[0].raw)
+	}
+	judged := withoutReadOnlyWords(code)
 	for _, rule := range p.rules {
-		text := command
+		text := code
+		if rule.operator {
+			text = command
+		}
 		if rule.readOnlyExempt {
 			text = judged
 		}

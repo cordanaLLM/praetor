@@ -502,7 +502,7 @@ func fallbackSegmentCases() []struct {
 		{"am parameter", `git am $flags patch && tail -n 1`, 2},
 		{"own substitution", `git commit $(cat flags) -m x && tail -n 1`, 2},
 		{"own escape", `git commit -m a\b && tail -n 1`, 2},
-		{"own continuation", "git commit -m x\\\n && tail -n 1", 2},
+		{"own continuation", "git commit -m x\\\n && tail -n 1", 0},
 		{"single quoted newline", "git commit -m 'a\nb' && tail -n 1", 2},
 		{"double quoted newline", "git commit -m \"a\nb\" && tail -n 1", 2},
 		{"later newline", "git commit -m x && printf \"a\nb\" | tail -n 1", 0},
@@ -926,6 +926,8 @@ func splittingSegmentCase(name string) bool {
 		"runtime-only message parameter", "runtime-only positional array",
 		"substitution", "glob",
 		"am substitution",
+		"substitution flag", "backtick flag", "nested substitution flag",
+		"substitution separator flag", "positional substitution", "state function",
 	}, name)
 }
 
@@ -1207,9 +1209,10 @@ func TestParityEvasionHeredocConsumerMutants(t *testing.T) {
 			name, replacement, command string
 			want                       int
 		}{
-			{"empty", "HEREDOC_CONSUMERS = {}\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
+			{"empty", "HEREDOC_CONSUMERS = {}\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 1},
 			{"data as shells", `HEREDOC_CONSUMERS = {"*": "shell"}` + "\n", "git commit -F - <<'EOF'\ngit commit -n -m x\nEOF", 1},
-			{"unknown as data", `HEREDOC_CONSUMERS = {"*": "data"}` + "\n", "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 0},
+			{"unknown as data", `HEREDOC_CONSUMERS = {"*": "data"}` + "\n", "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 1},
+			{"shell named as data", `HEREDOC_CONSUMERS = {"bash": "data"}` + "\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
 		} {
 			t.Run(style+"/"+tc.name, func(t *testing.T) {
 				assertCanonicalHeredocConsumerMutant(t, interpreter, source, tc.name, tc.replacement, tc.command, tc.want)

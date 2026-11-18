@@ -502,7 +502,7 @@ def command_segments(command, short_pattern):
         if index >= len(queue):
             break
         spans, nested = scan_shell_input(queue[index], short_pattern)
-        if spans and not queue[index][1]:
+        if spans and not queue[index][1] and len(spans[0]) == 2:
             text, veto = spans[0]
             spans[0] = (text, veto, queue[index][0])
         parts.extend(spans)
@@ -516,12 +516,13 @@ def command_segments(command, short_pattern):
 
 def scan_shell_input(source, short_pattern):
     """Choose command parsing or executable extraction from document data."""
-    command, document = source
+    command, document = source[:2]
     if not document:
-        return scan_command_spans(command, short_pattern)
+        code_only = len(source) > 2 and source[2]
+        return scan_command_spans(command, short_pattern, code_only)
     spans = CommandSpans(command, short_pattern)
     for _ in range(len(command)):
-        if spans.position >= len(command):
+        if spans.position >= len(spans.command):
             break
         spans.document_step()
     if spans.stack:
@@ -533,27 +534,71 @@ def scan_shell_input(source, short_pattern):
     return [], spans.nested
 
 
-def scan_command_spans(command, short_pattern):
+def scan_command_spans(command, short_pattern, code_only=False):
     """Mask data operands while collecting executable message substitutions."""
-    if not any(ch in command for ch in "{}<") and not commit_command(
-        command, short_pattern
-    ):
+    if not needs_shell_spans(command, short_pattern):
         return [(command, bool(re.search(READ_ONLY_VETO, command)))], []
     spans = CommandSpans(command, short_pattern)
+    spans.consumer_state_unknown = code_only
+    spans.code_only = code_only
     for _ in range(len(command)):
-        if spans.position >= len(command):
+        if spans.position >= len(spans.command):
             break
         spans.step()
-    spans.split(len(command), len(command))
+    end = len(spans.command)
+    spans.split(end, end)
     if spans.stack:
         raise ValueError("invalid shell command: unbalanced shell stack")
     if spans.documents:
         raise ValueError("invalid shell command: unterminated here-document")
-    spans.consumer_boundary(len(command), len(command), False)
+    spans.consumer_boundary(end, end, False)
     spans.feed_inputs()
+    code = "".join(spans.rule_text)
     if spans.whole:
-        return [("".join(spans.judged), True)], spans.nested
+        return [("".join(spans.judged), True, code)], spans.nested
+    if spans.parts:
+        text, veto = spans.parts[0]
+        spans.parts[0] = (text, veto, code)
     return spans.parts, spans.nested
+
+
+def needs_shell_spans(command, short_pattern):
+    """Preserve downstream parsers' diagnostics outside document, brace and Git argument syntax."""
+    try:
+        decoded = shell_unquote_word(command)
+    except ValueError:
+        decoded = ""
+    return (
+        any(ch in command for ch in "{}<")
+        or commit_command(command, short_pattern)
+        or commit_command(decoded, short_pattern)
+    )
+
+
+def executable_text(command, segments):
+    """Apply proven data masks to every policy rule, including long switches."""
+    if segments and len(segments[0]) == 3:
+        command = segments[0][2]
+    return join_line_continuations(command)
+
+
+def join_document_continuations(body):
+    """Join unquoted document escapes before the receiving shell interprets quotes."""
+    joined, skip = [], False
+    for index in range(len(body)):
+        if skip:
+            skip = False
+            continue
+        ch = body[index]
+        if ch == "\\" and index + 1 < len(body):
+            skip = True
+            if body[index + 1] in "\\$\x60":
+                joined.append(body[index + 1])
+            elif body[index + 1] != "\n":
+                joined.extend((ch, body[index + 1]))
+        else:
+            joined.append(ch)
+    return "".join(joined)
 
 
 def shell_word_escape(word, position, quote):
@@ -640,13 +685,14 @@ class CommandSpans:
     )
     literal_pattern = re.compile(r'[^"\\$\x60\n]+')
     consumer_token = re.compile(
-        r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"(?:[^\"\\$\x60]|\\[\s\S])*\"|\\[\s\S])+"
+        r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"(?:[^\"\\$\x60]|\\[\s\S])*\"|\\[^\n])+"
     )
     assignment_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
     def __init__(self, command, short_pattern):
         """Initialize raw offsets, data masking and the shell-state veto."""
         self.command, self.judged = command, list(command)
+        self.rule_text = list(command)
         self.short_pattern, self.uncertain = short_pattern, False
         self.parts, self.stack, self.documents = [], [], []
         self.position = self.start = self.here_lines = 0
@@ -660,7 +706,11 @@ class CommandSpans:
         self.arguments_uncertain = self.command_word_seen = False
         self.git_command = ""
         self.word_executions, self.nested, self.feeds = [], [], []
-        self.consumer_frames = [([[0, 0, [], False]], True)]
+        self.consumer_frames = [([[0, 0, [], False, False]], True, None, False)]
+        self.command_unknown = self.prefix_value = False
+        self.prefix_mode, self.groups = "", 0
+        self.consumer_state_unknown = False
+        self.code_only = False
         self.document_end = 0
 
     def top(self):
@@ -673,14 +723,50 @@ class CommandSpans:
             raise ValueError("invalid shell command: nesting bound exceeded: 16")
         frame = self.consumer_frames[-1]
         if closer != '"':
-            stages, data = frame
-            mode = self.consumer_mode(self.stage_text(stages[-1], self.position), False)
+            stages, data, proof, group = frame
+            execution = self.execution_start == self.position
+            execution &= self.execution_depth == len(self.stack) + 1
+            if execution:
+                data, proof = self.data_substitution(), [0]
             frame = (
-                [[self.position, self.position, [], False]],
-                data and mode != "shell",
+                [[self.position, self.position, [], False, False]],
+                data,
+                proof,
+                group or not execution,
             )
         self.consumer_frames.append(frame)
         self.stack.append(closer)
+        return True
+
+    def data_substitution(self):
+        """Prove a double-quoted data operand of a literal, unwrapped Git command."""
+        if (
+            self.top() != '"'
+            or len(self.stack) != 1
+            or self.groups
+            or self.word_start < 0
+        ):
+            return False
+        stages, data, _, _ = self.consumer_frames[-1]
+        text = self.stage_text(stages[-1], self.word_start).lstrip(" \t")
+        word = self.literal_word(text)
+        if not word or shell_unquote_word(word) != "git" or not data:
+            return False
+        start, stop = self.word_start, self.position
+        return (
+            self.git_command == "commit"
+            and self.data_offset(self.command[start:stop]) >= 0
+        )
+
+    def join_continuation(self):
+        """Remove backslash-newline once before command-word and descriptor tokenization."""
+        if not self.command.startswith("\\\n", self.position):
+            return False
+        position = self.position
+        stop = position + 2
+        self.command = self.command[:position] + self.command[stop:]
+        del self.judged[position:stop]
+        del self.rule_text[position:stop]
         return True
 
     def literal_word(self, text):
@@ -719,6 +805,8 @@ class CommandSpans:
 
     def step(self):
         """Advance a word or construct, retaining double-quoted punctuation."""
+        if self.join_continuation():
+            return True
         if self.word_step():
             return True
         handled, ok = self.quoted_step()
@@ -781,6 +869,7 @@ class CommandSpans:
         self.enter_git_command(word, end)
         data = self.next_data or self.redirect_data
         self.mask_word(word, end)
+        self.normalize_word(word, end, data)
         self.command_word(word)
         self.nested.extend((execution, False) for execution in self.word_executions)
         if data:
@@ -795,26 +884,85 @@ class CommandSpans:
         if self.command_word_seen or self.redirect_data or self.command_prefix(word):
             return
         self.command_word_seen, self.git_word_start = True, -1
+        word = shell_unquote_word(word)
+        self.consumer_state_unknown |= bool(
+            re.search(self.state_pattern, word)
+        ) or word in ("eval", ".", "source")
+        self.command_unknown = not self.known_command(word)
         if word.endswith("git") and commit_command(
             word + " commit", self.short_pattern
         ):
             self.git_word_start = self.word_start + len(word) - len("git")
 
+    def known_command(self, word):
+        """Separate modeled commands from unknown launcher prefixes before brace words."""
+        name = word.rsplit("/", 1)[-1]
+        if name != word:
+            return bool(self.prefix_name(word))
+        return name in HEREDOC_CONSUMERS or name in (
+            "echo",
+            "printf",
+            "find",
+            "mkdir",
+            "env",
+            "command",
+            "exec",
+            "builtin",
+        )
+
+    def prefix_name(self, word):
+        """Prove a literal launcher basename before interpreting its arguments."""
+        if self.literal_word(word) != word:
+            return ""
+        name = word.rsplit("/", 1)[-1]
+        return name if name in ("env", "command", "exec", "builtin") else ""
+
+    def normalize_word(self, word, end, data):
+        """Expose adjacent literal quote fragments without moving offsets or masking code."""
+        if data or self.data_offset(word) >= 0 or self.literal_word(word) != word:
+            return
+        literal = shell_unquote_word(word)
+        if not self.normalizable_word(word, literal):
+            return
+        self.mask(self.word_start, end)
+        start = self.word_start
+        stop = start + len(literal)
+        self.judged[start:stop] = list(literal)
+        self.mask_rules(start, end)
+        self.rule_text[start:stop] = list(literal)
+
+    def normalizable_word(self, raw, word):
+        """Keep literal punctuation quoted; expose only command and option spellings."""
+        if raw == word or any(ch in word for ch in " \t\n;&|()<>[]{}^!"):
+            return False
+        return word in ("commit", "am") or word.endswith("git") or word.startswith("-")
+
     def mask_word(self, word, end):
         """Exclude data; retain splitting after the command word, before subcommands."""
         offset = self.data_offset(word)
-        if offset >= 0 and not self.word_splitting and not self.arguments_uncertain:
+        if (
+            offset >= 0
+            and not self.word_splitting
+            and not self.arguments_uncertain
+            and not self.code_only
+        ):
             self.mask(self.word_start + offset, end)
+            if not self.redirect_data:
+                self.mask_rules(self.word_start + offset, end)
         else:
             self.uncertain |= self.word_expansion
         self.arguments_uncertain |= self.command_word_seen and self.word_splitting
 
     def enter_git_command(self, word, end):
         """Identify the Git subcommand before interpreting its operands."""
-        if self.git_command or word not in ("commit", "am"):
+        if self.git_command or self.literal_word(word) != word:
             return
-        start = self.start
-        if commit_command(self.command[start:end], self.short_pattern):
+        word = shell_unquote_word(word)
+        if word not in ("commit", "am"):
+            return
+        start, stop = self.start, self.word_start
+        prefix = "".join(self.judged[start:stop])
+        if commit_command(prefix + word, self.short_pattern):
             self.git_command = word
 
     def data_offset(self, word):
@@ -833,13 +981,21 @@ class CommandSpans:
         """Remove data from short-option matching without changing offsets."""
         self.judged[start:end] = " " * (end - start)
 
+    def mask_rules(self, start, end):
+        """Mask proven message and document data; retain redirect targets for other rules."""
+        self.rule_text[start:end] = " " * (end - start)
+
     def mark_expansion(self):
         """Retain splitting for array expansions even inside double quotes."""
         self.word_expansion = True
-        self.word_splitting |= not self.stack or (
-            self.execution_start < 0
-            and self.array_expansion_pattern.match(self.command, self.position)
-            is not None
+        self.word_splitting |= (
+            self.code_only
+            or not self.stack
+            or (
+                self.execution_start < 0
+                and self.array_expansion_pattern.match(self.command, self.position)
+                is not None
+            )
         )
 
     def redirect_or_execution(self):
@@ -852,6 +1008,12 @@ class CommandSpans:
     def open_execution(self, closer, width):
         """Record the outermost executable body within the current word."""
         self.mark_expansion()
+        if (
+            self.execution_start < 0
+            and not self.data_substitution()
+            and self.git_command
+        ):
+            self.word_splitting = True
         if self.execution_start < 0:
             self.execution_start = self.position + width
             self.execution_depth = len(self.stack) + 1
@@ -872,6 +1034,10 @@ class CommandSpans:
     def parenthesis(self, ch):
         """Handle grouping independently from other structural characters."""
         if ch == "(":
+            if not self.stack and (
+                self.command_word_seen or 0 <= self.word_start < self.position
+            ):
+                self.consumer_state_unknown = True
             self.whole |= self.top() != ")"
             self.position += 1
             return self.push(")")
@@ -884,15 +1050,25 @@ class CommandSpans:
 
     def control_character(self, ch):
         """Keep unsupported syntax and positional globs conservative."""
+        self.group_brace(ch)
         if self.stack:
             return
         glob = ch in "*?[" or ch in "{}" and self.brace_splitting(ch)
         self.word_expansion |= glob
         self.word_splitting |= glob
-        if ch in "{}":
+        if glob and ch in "{}":
             self.brace_command()
         if ch in "{}^!" or ord(ch) > 126 or ord(ch) < 32 and ch != "\t":
             self.whole = True
+
+    def group_brace(self, ch):
+        """Track standalone grouping braces across command and pipeline boundaries."""
+        if ch not in "{}" or not self.word_boundary_at(self.position):
+            return
+        after = self.position + 1
+        if after < len(self.command) and self.command[after] not in " \t\n;&|<>":
+            return
+        self.groups = self.groups + 1 if ch == "{" else max(0, self.groups - 1)
 
     def brace_splitting(self, ch):
         """Report whether a brace at position expands or is unbalanced."""
@@ -932,10 +1108,10 @@ class CommandSpans:
         word = self.command[start:stop]
         if not self.command_word_seen and self.command_prefix(word):
             return
-        unknown = not self.command_word_seen
+        unknown = not self.command_word_seen or self.command_unknown
         if self.command_word_seen and self.git_word_start >= 0:
             git_start, word_start = self.git_word_start, self.word_start
-            prefix = self.command[git_start:word_start]
+            prefix = "".join(self.judged[git_start:word_start])
             unknown = commit_command(prefix + " commit", self.short_pattern, True)
             unknown |= commit_command(
                 prefix + word + " commit", self.short_pattern, True
@@ -944,7 +1120,11 @@ class CommandSpans:
             self.git_command, self.arguments_uncertain = "unknown", True
 
     def command_prefix(self, word):
-        """Keep leading assignments and standalone groups out of command words."""
+        """Read modeled launchers, assignments and standalone grouping braces."""
+        if word and self.literal_word(word) == word:
+            word = shell_unquote_word(word)
+        if self.launcher_prefix(word):
+            return True
         if self.assignment_pattern.match(word):
             return True
         end = self.word_start + 1
@@ -953,6 +1133,20 @@ class CommandSpans:
             and word in "{}"
             and (end == len(self.command) or self.command[end] in " \t\n;&|<>")
         )
+
+    def launcher_prefix(self, word):
+        """Read modeled launcher words and env switch arities; keep unknown prefixes."""
+        if self.prefix_value:
+            self.prefix_value = False
+            return True
+        if self.prefix_mode == "env" and word.startswith("-"):
+            self.prefix_value, known = self.consumer_env_option(word)
+            return known
+        name = self.prefix_name(word)
+        if name:
+            self.prefix_mode = name
+            return True
+        return False
 
     def word_boundary(self):
         """Reject escaped blanks and operators as lexical word boundaries."""
@@ -980,6 +1174,8 @@ class CommandSpans:
         if end < 0:
             end = len(self.command)
         self.mask(self.position, end)
+        if not self.stack:
+            self.word_start = -1
         self.uncertain |= bool(self.stack)
         self.position = end
         return True
@@ -992,6 +1188,7 @@ class CommandSpans:
             body = "\n".join(line.lstrip("\t") for line in body.split("\n"))
         self.feeds.append((document, body, document[4], False))
         self.mask(start, self.position)
+        self.mask_rules(start, self.position)
 
     def stage_text(self, stage, end):
         """Return stage command text up to end with redirection spans removed."""
@@ -1010,33 +1207,24 @@ class CommandSpans:
             parts.append(self.command[position:end])
         return "".join(parts)
 
-    def consumer_mode(self, text, unknown=True):
-        """Classify stdin conservatively; only named shells execute argument output."""
-        fallback = HEREDOC_CONSUMERS.get("*", "") if unknown else ""
-        environment = value = False
+    def consumer_mode(self, text):
+        """Prove a literal simple reader; empty words, wrappers and expansions select code."""
+        name = ""
         for _ in range(len(text)):
             text = text.lstrip(" \t")
+            if not text:
+                return HEREDOC_CONSUMERS.get(name, "shell")
             token = self.literal_word(text)
             if not token:
-                break
+                return "shell"
             width = len(token)
             text = text[width:]
             word = shell_unquote_word(token)
-            if value:
-                value = False
-                continue
-            if environment and word.startswith("-"):
-                value, known = self.consumer_env_option(word)
-                if not known:
-                    return HEREDOC_CONSUMERS.get("*", "")
-                continue
-            if self.assignment_pattern.match(word):
-                continue
-            name = word.rsplit("/", 1)[-1]
-            if name != "env":
-                return HEREDOC_CONSUMERS.get(name, fallback)
-            environment = True
-        return fallback
+            if not word:
+                return "shell"
+            if not name:
+                name = word
+        return HEREDOC_CONSUMERS.get(name, "shell")
 
     def consumer_env_option(self, word):
         """Mirror admission's env value arities; unknown options fail closed."""
@@ -1052,16 +1240,20 @@ class CommandSpans:
 
     def consumer_boundary(self, end, next_position, pipeline):
         """Seal stages while retaining downstream readers for pending feeds."""
-        stages, data = self.consumer_frames[-1]
+        stages, data, proof, group = self.consumer_frames[-1]
         if end < stages[-1][0]:
             return
         stages[-1][1] = end
         if pipeline:
-            stages.append([next_position, next_position, [], False])
+            stages.append([next_position, next_position, [], False, False])
         else:
+            if proof is not None and self.stage_text(stages[-1], end).strip():
+                proof[0] += len(stages)
             self.consumer_frames[-1] = (
-                [[next_position, next_position, [], False]],
+                [[next_position, next_position, [], False, False]],
                 data,
+                proof,
+                group,
             )
 
     def feed_document(self):
@@ -1075,30 +1267,48 @@ class CommandSpans:
             False,
             frame,
             len(frame[0]) - 1,
+            frame[3] or self.groups > 0,
         )
 
     def document_code(self, document):
-        """Follow pipeline readers and enclosing substitution output ownership."""
-        stages, data = document[5]
-        if not data:
+        """Admit only proven top-level readers or one proven data-operand reader."""
+        stages, data, proof, _ = document[5]
+        if document[7] or not data:
+            return True
+        if self.consumer_state_unknown:
+            return True
+        if proof is not None and proof[0] != 1:
             return True
         first = document[6]
         for stage in stages[first:]:
-            if self.consumer_mode(self.stage_text(stage, stage[1])) == "shell":
+            if (
+                stage[4]
+                or self.consumer_mode(self.stage_text(stage, stage[1])) != "data"
+            ):
                 return True
             if stage[3]:
                 return False
         return False
 
+    def document_literal(self, body):
+        """Allow structure only when no expansion character sequence is present."""
+        return not any(ch in body for ch in "$\x60") and "\\\n" not in body
+
     def feed_inputs(self):
-        """Scan shell-fed bodies as commands and data expansions as substitutions."""
+        """Propagate unresolved outer expansion through every inner document."""
         for document, body, expandable, unresolved in self.feeds:
             if self.document_code(document):
                 if unresolved:
                     raise ValueError(
                         "invalid shell command: unresolved here-string expansion"
                     )
-                self.nested.append((body, False))
+                expands = expandable and not self.document_literal(body)
+                code_only = self.code_only or expands
+                if expands:
+                    self.nested.append((body, True))
+                if expandable:
+                    body = join_document_continuations(body)
+                self.nested.append((body, False, code_only))
             elif expandable and any(ch in body for ch in "$\x60"):
                 self.word_expansion = True
                 self.nested.append((body, True))
@@ -1163,6 +1373,8 @@ class CommandSpans:
         self.redirect_start = -1
         self.arguments_uncertain = False
         self.command_word_seen = False
+        self.command_unknown = self.prefix_value = False
+        self.prefix_mode = ""
         self.git_word_start = -1
         self.git_command = ""
 
@@ -1172,7 +1384,7 @@ class CommandSpans:
             return "", self.position
         start = self.position
         for index in range(self.position - 1, -1, -1):
-            if not self.command[index].isdigit():
+            if self.command[index] not in "0123456789":
                 break
             start = index
         if start < self.position and self.word_boundary_at(start):
@@ -1221,6 +1433,7 @@ class CommandSpans:
                 not quoted,
                 self.consumer_frames[-1],
                 len(self.consumer_frames[-1][0]) - 1,
+                self.consumer_frames[-1][3] or self.groups > 0,
             )
         )
         self.position += opener + width
@@ -1235,10 +1448,12 @@ class CommandSpans:
             rest = self.command[start:]
             after = self.position + len(rest) - len(rest.lstrip(" \t"))
             target = self.literal_word(self.command[after:])
-            if target:
+            if target and shell_unquote_word(target):
                 self.record_redirect(redir_start, after + len(target))
             else:
+                target = ""
                 self.redirect_start = redir_start
+                self.consumer_frames[-1][0][-1][4] = True
         else:
             self.record_redirect(redir_start, self.position)
         if fd in ("", "1") and ">" in redirect and redirect != "<>":
@@ -1261,6 +1476,7 @@ class CommandSpans:
             return True
         self.feeds.append((document, shell_unquote_word(word), False, False))
         self.mask(self.position, self.position + len(word))
+        self.mask_rules(self.position, self.position + len(word))
         self.position += len(word)
         self.record_redirect(redir_start, self.position)
         return True
@@ -1283,7 +1499,13 @@ class CommandSpans:
             self.document_body(document[0], document[1], document[4])
             self.document_data(document, body_start)
         self.documents = remaining
-        self.consumer_frames[-1][0][-1][:] = [self.position, self.position, [], False]
+        self.consumer_frames[-1][0][-1][:] = [
+            self.position,
+            self.position,
+            [],
+            False,
+            False,
+        ]
         if depth == 0:
             self.start = self.position
         return True
@@ -1400,6 +1622,7 @@ def check_command(command):
         segments = command_segments(raw_command, READ_ONLY_EXEMPT_1)
     except ValueError as error:
         raise Blocked(INVALID_INPUT_REFUSAL + str(error)) from error
+    command = executable_text(command, segments)
     judged = without_read_only_words(command)
     for pattern, refusal in RULES:
         exempt = pattern in READ_ONLY_EXEMPT
