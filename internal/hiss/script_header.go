@@ -55,6 +55,8 @@ const (
 // scriptHeader is a function header found on a line, before its body is known to open.
 type scriptHeader struct {
 	name string
+	// line is the 1-based line the function header starts on.
+	line int
 	// alias is the second name that reaches a named function expression bound to a variable.
 	alias  string
 	callee scriptCallee

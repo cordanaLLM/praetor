@@ -150,6 +150,8 @@ func isScriptTestPath(rel string) bool {
 // scriptFunc is one open named function.
 type scriptFunc struct {
 	name string
+	// header is the 1-based line the function signature starts on, recorded by noteFunction.
+	header int
 	// start is the line the body opens on; HISS-04 measures from there, as for C and Rust.
 	start int
 	// depth is the brace depth inside the body; the function closes when the depth drops
@@ -195,7 +197,7 @@ type scriptScanner struct {
 // observe feeds one physical line.
 func (s *scriptScanner) observe(lineNum int, line string) {
 	code := s.strip.strip(line)
-	h, bodyAt, params := s.header(code)
+	h, bodyAt, params := s.header(code, lineNum)
 	s.outer = ""
 	if len(s.open) > 0 {
 		s.outer = s.open[0].name
@@ -214,24 +216,25 @@ func (s *scriptScanner) observe(lineNum int, line string) {
 // closing parenthesis does not hide a function whose header and body open on one of its lines:
 // `name({` starts both a method with a destructured parameter and a call with an object
 // argument, and the methods of that object are still functions.
-func (s *scriptScanner) header(code string) (scriptHeader, int, string) {
+func (s *scriptScanner) header(code string, lineNum int) (scriptHeader, int, string) {
 	if !s.sigSet {
-		return s.lineHeader(code, true)
+		return s.lineHeader(code, lineNum, true)
 	}
 	if h, bodyAt, params, closed := s.continueSignature(code); closed {
 		return h, bodyAt, params
 	}
-	return s.lineHeader(code, false)
+	return s.lineHeader(code, lineNum, false)
 }
 
 // lineHeader finds a function header written on this line. A header whose parameter list is
 // wrapped onto the lines below starts a pending signature when follow is set.
-func (s *scriptScanner) lineHeader(code string, follow bool) (scriptHeader, int, string) {
+func (s *scriptScanner) lineHeader(code string, lineNum int, follow bool) (scriptHeader, int, string) {
 	lead := len(code) - len(strings.TrimLeft(code, " \t"))
 	h, ok := matchScriptHeader(strings.TrimSpace(code))
 	if !ok {
 		return scriptHeader{}, -1, ""
 	}
+	h.line = lineNum
 	at := lead + h.at
 	if !h.paren {
 		return h, bodyBrace(code, at, false), ""
@@ -270,7 +273,7 @@ func (s *scriptScanner) continueSignature(code string) (scriptHeader, int, strin
 // newFunc builds the function a header opens, deciding the spellings that reach it from its
 // own body. The enclosing functions whose name one of its parameters binds are shadowed.
 func (s *scriptScanner) newFunc(h scriptHeader, params string, lineNum int) scriptFunc {
-	fn := scriptFunc{name: h.name, start: lineNum, calls: selfCalls{name: h.name, excluded: isScriptSelectorByte}}
+	fn := scriptFunc{name: h.name, header: h.line, start: lineNum, calls: selfCalls{name: h.name, excluded: isScriptSelectorByte}}
 	switch h.callee {
 	case scriptBareCallee:
 		fn.calls.callees = []string{h.name}
@@ -341,7 +344,7 @@ func (s *scriptScanner) closeDeeper(code string, col, lineNum int) {
 			return
 		}
 		s.observeBody(top, code[top.from:col], lineNum)
-		noteFunction(s.rep, top.name, top.start, lineNum)
+		noteFunction(s.rep, top.name, top.header, lineNum)
 		if length := lineNum - top.start + 1; length > s.maxLOC {
 			recordViolation(s.rep, "HISS-04", s.rel, top.start, top.name,
 				fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", top.name, length, s.maxLOC))

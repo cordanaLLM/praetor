@@ -80,6 +80,9 @@ type braceTracker struct {
 	inFunc     bool
 	pending    bool
 	pendingAge int
+	// header is the 1-based line the function signature starts on, recorded by noteFunction so
+	// FunctionSpan.Start names the header line rather than the opening brace line.
+	header int
 	// start is the line the body opens on -- the line carrying the opening brace, never the
 	// line the signature starts on. HISS-04 measures the brace-delimited body, so a
 	// signature parked on its own line above the brace lends the function no extra LOC.
@@ -114,6 +117,7 @@ func (t *braceTracker) observe(code, trimmed string, idx int, isHeader bool, nam
 			return // a declaration without a body (trait method, prototype)
 		}
 		t.name = name
+		t.header = idx + 1
 		if opens > 0 {
 			t.enter(idx, opens-closes)
 			return
@@ -144,12 +148,13 @@ func (t *braceTracker) enter(idx, level int) {
 	}
 }
 
+// finish records the completed function span from its header line and enforces HISS-04 from its brace line.
 func (t *braceTracker) finish(endLine int) {
 	t.inFunc = false
 	if t.scopeOnly {
 		return
 	}
-	noteFunction(t.rep, t.name, t.start, endLine)
+	noteFunction(t.rep, t.name, t.header, endLine)
 	funcLen := endLine - t.start + 1
 	if funcLen > t.maxLOC {
 		recordViolation(t.rep, "HISS-04", t.rel, t.start, t.name,

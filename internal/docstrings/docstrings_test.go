@@ -45,6 +45,7 @@ func newDocstringTestRepo(t *testing.T, baseFiles map[string]string) string {
 func writeTestFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	full := filepath.Join(dir, filepath.FromSlash(rel))
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal.
 	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -225,6 +226,7 @@ func TestCheck_Boundary_SubmoduleGitlinkAndSymlinkSkipped(t *testing.T) {
 	headOID := runGitOut(t, dir, "rev-parse", "HEAD")
 
 	writeTestFile(t, dir, "pkg/a.go", "package pkg\n\n// Covered is documented.\nfunc Covered() {\n\t_ = 1\n}\n")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal.
 	if err := os.MkdirAll(filepath.Join(dir, "vendor", "sub"), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -476,4 +478,98 @@ func TestParsePrePushStdin_Deadline_3D(t *testing.T) {
 	if _, err := docstrings.ParsePrePushStdin(t.Context(), strings.NewReader(exactMax+"\n")); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("ParsePrePushStdin 1 MiB + 1 byte boundary: got err=%v, want exceeds error", err)
 	}
+}
+
+type docstringFixtureCase struct {
+	name          string
+	fixture       string
+	targetPath    string
+	passed        bool
+	counted       int
+	covered       int
+	uncoveredName string
+	uncoveredLine int
+}
+
+// runDocstringFixtureCase evaluates one fixture file in a fresh git repository and checks the report.
+func runDocstringFixtureCase(t *testing.T, tc docstringFixtureCase) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", tc.fixture))
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", tc.fixture, err)
+	}
+	dir := newDocstringTestRepo(t, map[string]string{"pkg/seed.go": "package pkg\n"})
+	writeTestFile(t, dir, tc.targetPath, string(raw))
+	runGitCmd(t, dir, "add", ".")
+	rep, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
+	assertDocstringReport(t, tc.name, rep, err, tc.passed, tc.counted, tc.covered)
+	if tc.uncoveredName != "" {
+		if len(rep.Uncovered) == 0 || rep.Uncovered[0].Name != tc.uncoveredName || rep.Uncovered[0].Line != tc.uncoveredLine {
+			t.Fatalf("%s: want first uncovered %s:%d, got %+v", tc.name, tc.uncoveredName, tc.uncoveredLine, rep.Uncovered)
+		}
+	}
+}
+
+// TestCheck_RustMultilineSignaturesAndAttributes_3D verifies positive, negative, and boundary
+// docstring detection for Rust wrapped signatures, where clauses, and multi-line attributes.
+func TestCheck_RustMultilineSignaturesAndAttributes_3D(t *testing.T) {
+	cases := []docstringFixtureCase{
+		{"a_two_functions", "rust_a_two_functions.rs", "src/lib.rs", true, 2, 2, "", 0},
+		{"b_multiline_attr_oneline_fn", "rust_b_multiline_attr_oneline_fn.rs", "src/lib.rs", true, 1, 1, "", 0},
+		{"c_multiline_attr_wrapped_fn", "rust_c_multiline_attr_wrapped_fn.rs", "src/lib.rs", true, 1, 1, "", 0},
+		{"d_wrapped_where_clause", "rust_d_wrapped_where_clause.rs", "src/lib.rs", true, 1, 1, "", 0},
+		{"e1_wrapped_no_comment", "rust_e1_wrapped_no_comment.rs", "src/lib.rs", false, 1, 0, "wrapped_undoc", 1},
+		{"e2_wrapped_blank_line_separated", "rust_e2_wrapped_blank_line_separated.rs", "src/lib.rs", false, 2, 1, "wrapped_after_blank", 7},
+		{"e3_wrapped_param_comment_only", "rust_e3_wrapped_param_comment_only.rs", "src/lib.rs", false, 1, 0, "wrapped_param_comment", 1},
+		{"f_unclosed_attr_bound", "rust_f_unclosed_attr_bound.rs", "src/lib.rs", false, 2, 0, "unclosed_attr", 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runDocstringFixtureCase(t, tc)
+		})
+	}
+}
+
+// TestCheck_WrappedSignaturesAcrossLanguages_3D verifies wrapped function signatures across Go,
+// Python (with a multi-line decorator), TypeScript, and C (with the brace on its own line).
+func TestCheck_WrappedSignaturesAcrossLanguages_3D(t *testing.T) {
+	cases := []docstringFixtureCase{
+		{"go_positive", "go_wrapped_pos.go", "pkg/wrapped.go", true, 1, 1, "", 0},
+		{"go_negative", "go_wrapped_neg.go", "pkg/wrapped.go", false, 1, 0, "CombineUndoc", 3},
+		{"python_positive", "python_wrapped_pos.py", "app/wrapped.py", true, 1, 1, "", 0},
+		{"python_negative", "python_wrapped_neg.py", "app/wrapped.py", false, 1, 0, "combine_undoc", 5},
+		{"typescript_positive", "ts_wrapped_pos.ts", "web/wrapped.ts", true, 1, 1, "", 0},
+		{"typescript_negative", "ts_wrapped_neg.ts", "web/wrapped.ts", false, 1, 0, "combineUndoc", 1},
+		{"c_positive", "c_wrapped_pos.c", "src/wrapped.c", true, 1, 1, "", 0},
+		{"c_negative", "c_wrapped_neg.c", "src/wrapped.c", false, 1, 0, "combine_undoc", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runDocstringFixtureCase(t, tc)
+		})
+	}
+}
+
+// TestCheck_Boundary_MaxAttributeLines_3D verifies the exact 32-line scalar bound on attribute
+// skipping: a 32-line balanced attribute passes, a 33-line attribute fails as undocumented, and
+// quoted brackets or trailing // comments inside attributes do not desynchronise the delimiter walk.
+func TestCheck_Boundary_MaxAttributeLines_3D(t *testing.T) {
+	dir := newDocstringTestRepo(t, map[string]string{"pkg/seed.go": "package pkg\n"})
+
+	// Boundary positive: 32 attribute lines total (#[cfg_attr( + 30 inner lines + )]).
+	exact32 := "/// Documented at the exact 32-line attribute bound.\n#[cfg_attr(\n" +
+		strings.Repeat("    feature = \"a)]\", // trailing )]\n", 30) +
+		")]\npub fn at_bound(\n    a: u32,\n) -> u32 {\n    a\n}\n"
+	writeTestFile(t, dir, "src/lib.rs", exact32)
+	runGitCmd(t, dir, "add", ".")
+	repAt, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
+	assertDocstringReport(t, "exact 32-line attribute", repAt, err, true, 1, 1)
+
+	// Boundary negative: 33 attribute lines total (#[cfg_attr( + 31 inner lines + )]).
+	over33 := "/// Documented above a 33-line attribute exceeding the bound.\n#[cfg_attr(\n" +
+		strings.Repeat("    feature = \"a\",\n", 31) +
+		")]\npub fn over_bound(\n    a: u32,\n) -> u32 {\n    a\n}\n"
+	writeTestFile(t, dir, "src/lib.rs", over33)
+	repOver, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
+	assertDocstringReport(t, "33-line attribute exceeds bound", repOver, err, false, 1, 0)
 }
