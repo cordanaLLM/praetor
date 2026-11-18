@@ -194,6 +194,57 @@ func TestScanTemplateActionUsesBoundary(t *testing.T) {
 	}
 }
 
+// TestScanTemplateActionUsesEscapedKey refuses a uses key spelled with YAML escapes: the text
+// "uses" never appears on the line, yet the parser decodes the key as uses.
+func TestScanTemplateActionUsesEscapedKey(t *testing.T) {
+	prefix := "{{if .Enabled}}\nsteps:\n"
+	for _, text := range []string{
+		`  - "u\x73es": actions/checkout@v4`, `  - "\u0075ses": ./local`, `  - {"u\x73es": ./local}`,
+		`  - ? "u\x73es"` + "\n    : ./local", `  - "u\x73es": {{ .Action }}`,
+	} {
+		_, uses, err := ScanTemplateActionUses(prefix+text+"\n{{end}}", 10)
+		if err == nil || !strings.Contains(err.Error(), "unsupported uses") {
+			t.Errorf("%q: want unsupported uses error, got %+v, %v", text, uses, err)
+		}
+	}
+	// Negative: lines whose keys and values hold no uses key stay readable beside a plain pin.
+	text := prefix + `  - "na\x6de": x` + "\n  - run: echo \"a\\nb\" {{ .X }}\n  - uses: ./local\n{{end}}"
+	if _, uses, err := ScanTemplateActionUses(text, 10); err != nil || len(uses) != 1 || uses[0].Value != "./local" {
+		t.Fatalf("plain pin beside escaped non-uses keys = %+v, %v", uses, err)
+	}
+}
+
+// TestScanActionUsesQuotedAcrossBreaks keeps every line break outside a rewritten quoted scalar:
+// the next sequence entry stays on its own line for LF, CRLF, CR, NEL, LS and PS.
+func TestScanActionUsesQuotedAcrossBreaks(t *testing.T) {
+	for name, sep := range map[string]string{"LF": "\n", "CRLF": "\r\n", "CR": "\r", "NEL": "\u0085", "LS": "\u2028", "PS": "\u2029"} {
+		assertQuotedRewriteKeepsBreak(t, name, sep)
+	}
+}
+
+// assertQuotedRewriteKeepsBreak rewrites a quoted uses value joined with sep and checks the break survives.
+func assertQuotedRewriteKeepsBreak(t *testing.T, name, sep string) {
+	t.Helper()
+	workflow := strings.Join([]string{"steps:", "  - uses: 'actions/checkout@v4'", "  - uses: ./local", ""}, sep)
+	_, uses, err := ScanActionUses(workflow, 10)
+	if err != nil || len(uses) != 2 || workflow[uses[0].Start:uses[0].End] != "'actions/checkout@v4'" {
+		t.Errorf("%s: uses = %+v, %v", name, uses, err)
+		return
+	}
+	replacement, err := uses[0].Replacement("actions/checkout@v7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := workflow[:uses[0].Start] + replacement + workflow[uses[0].End:]
+	_, after, err := ScanActionUses(rewritten, 10)
+	if err != nil || len(after) != 2 || after[0].Value != "actions/checkout@v7" || after[1].Value != "./local" || after[1].Line != 2 {
+		t.Errorf("%s: rewritten %q: uses = %+v, %v", name, rewritten, after, err)
+	}
+	if !strings.Contains(rewritten, replacement+sep+"  - uses: ./local") {
+		t.Errorf("%s: separator lost in %q", name, rewritten)
+	}
+}
+
 // assertActionUseRewrite checks the source span and retains scalar properties after replacement.
 func assertActionUseRewrite(t *testing.T, workflow string, use ActionUse) {
 	t.Helper()

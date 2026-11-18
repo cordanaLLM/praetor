@@ -171,7 +171,7 @@ func actionScalarEnd(workflow string, start int, value *yaml.Node) (int, error) 
 // encodedActionScalarEnd finds a complete scalar prefix by decoding candidates at YAML boundaries.
 func encodedActionScalarEnd(source string, start int, value string) (int, error) {
 	for size := 1; size <= len(source) && size <= maxActionScalarBytes; size++ {
-		if size < len(source) && !strings.ContainsRune(" \t\r\n,]}#", rune(source[size])) {
+		if size < len(source) && yamlBreakWidth(source[size:]) == 0 && !strings.ContainsRune(" \t,]}#", rune(source[size])) {
 			continue
 		}
 		if matchesActionScalar(source[:size], value) {
@@ -218,7 +218,7 @@ func ScanTemplateActionUses(workflow string, maxLines int) ([]string, []ActionUs
 	uses = nil
 	for i := 0; i < len(source.lines) && i < maxLines; i++ {
 		line := strings.TrimSpace(source.content(i))
-		if !strings.Contains(line, "uses") || strings.HasPrefix(line, "#") {
+		if !templateUsesCandidate(line) {
 			continue
 		}
 		use, parseErr := templateActionLine(source, i)
@@ -230,6 +230,27 @@ func ScanTemplateActionUses(workflow string, maxLines int) ([]string, []ActionUs
 		uses = append(uses, use)
 	}
 	return source.lines, uses, nil
+}
+
+// templateUsesCandidate reports whether a template line may declare a uses key. A line naming
+// uses is one. Any other line is decoded by the YAML parser, which reads an escaped key such as
+// "u\x73es" as uses; a line the parser cannot read that opens with a double-quoted key holding an
+// escape is refused as a candidate too, because its key cannot be decoded.
+func templateUsesCandidate(line string) bool {
+	if line == "" || strings.HasPrefix(line, "#") {
+		return false
+	}
+	if strings.Contains(line, "uses") {
+		return true
+	}
+	if _, found, err := ScanActionUses(line, 1); err == nil {
+		return len(found) > 0
+	}
+	key := line
+	for i := 0; i < 2; i++ {
+		key = strings.TrimLeft(strings.TrimPrefix(strings.TrimPrefix(key, "-"), "?"), " \t")
+	}
+	return strings.HasPrefix(key, `"`) && strings.Contains(key, `\`)
 }
 
 // templateActionLine requires a plain block key and delegates its scalar parsing to YAML. It refuses
