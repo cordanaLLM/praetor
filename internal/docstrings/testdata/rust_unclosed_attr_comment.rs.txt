@@ -1,0 +1,6 @@
+/// Doc comment above an attribute that is never closed.
+#[cfg_attr(
+    feature = "x",
+    // a note inside an unclosed attribute
+    inline
+pub fn run() {}

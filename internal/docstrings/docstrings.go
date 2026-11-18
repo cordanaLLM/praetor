@@ -395,18 +395,31 @@ func skipAttributesAbove(lines []string, idx int, language string) (int, bool) {
 // Forward scanning preserves multiline literal state and detects trailing items.
 func stepAttributeGroup(lines []string, idx, remaining int, language string) (int, int, bool) {
 	for step := 0; step < remaining && idx-step >= 0; step++ {
-		trimmed := strings.TrimSpace(lines[idx-step])
-		if isAttributeBoundary(trimmed) {
+		lineIdx := idx - step
+		trimmed := strings.TrimSpace(lines[lineIdx])
+		if isAttributeBoundary(trimmed) && !insideOpenAttribute(lines, lineIdx, remaining-step, language) {
 			return -1, 0, false
 		}
 		if isAttributeOrDecorator(trimmed) {
-			if standaloneAttribute(lines[idx-step:idx+1], language) {
-				return idx - step - 1, step + 1, true
+			if standaloneAttribute(lines[lineIdx:idx+1], language) {
+				return lineIdx - 1, step + 1, true
 			}
 			return -1, 0, false
 		}
 	}
 	return -1, 0, false
+}
+
+// insideOpenAttribute reports whether lineIdx lies inside an attribute or decorator
+// opened on an earlier line within remaining lookback lines whose delimiters are unbalanced.
+func insideOpenAttribute(lines []string, lineIdx, remaining int, language string) bool {
+	for step := 1; step < remaining && lineIdx-step >= 0; step++ {
+		start := lineIdx - step
+		if isAttributeOrDecorator(strings.TrimSpace(lines[start])) {
+			return hasUnclosedAttribute(lines[start:lineIdx+1], language)
+		}
+	}
+	return false
 }
 
 // isAttributeBoundary stops lookback at blank lines and standalone comments,
@@ -430,45 +443,62 @@ func standaloneAttribute(lines []string, language string) bool {
 	if !ok {
 		return false
 	}
-	return standaloneAttributeText(strings.Join(stripped, "\n"))
+	closed, valid := walkAttributeText(strings.Join(stripped, "\n"))
+	return closed && valid
 }
 
-// standaloneAttributeText reports whether stripped text consists of 1..maxLineAttributes
-// complete annotations with balanced delimiters, separated and followed only by whitespace.
-func standaloneAttributeText(text string) bool {
-	text = strings.TrimSpace(text)
+// hasUnclosedAttribute strips literals and comments via the HISS scanner and reports
+// whether lines start a valid annotation sequence whose delimiters remain unbalanced.
+func hasUnclosedAttribute(lines []string, language string) bool {
+	stripped, _ := hiss.StripLiterals(lines, language)
+	closed, valid := walkAttributeText(strings.Join(stripped, "\n"))
+	return !closed && valid
+}
+
+// walkAttributeText consumes 1..maxLineAttributes annotations from stripped text,
+// reporting whether all annotations closed and whether the text is a valid annotation sequence.
+func walkAttributeText(text string) (bool, bool) {
+	text = trimHorizontal(text)
 	if text == "" {
-		return false
+		return false, false
 	}
 	for count := 0; count < maxLineAttributes; count++ {
-		rest, ok := consumeOneAttribute(text)
-		if !ok {
-			return false
+		rest, closed, valid := consumeOneAttribute(text)
+		if !valid {
+			return false, false
 		}
-		text = strings.TrimSpace(rest)
+		if !closed {
+			return false, true
+		}
+		text = trimHorizontal(rest)
 		if text == "" {
-			return true
+			return true, true
 		}
 	}
-	return false
+	return false, false
 }
 
-// consumeOneAttribute consumes one complete annotation from the start of stripped text.
-// Bare named decorators have no delimiter; all other annotations require a balanced one.
-func consumeOneAttribute(text string) (string, bool) {
+// trimHorizontal trims spaces, tabs, and carriage returns while keeping newline boundaries intact.
+func trimHorizontal(text string) string {
+	return strings.Trim(text, " \t\r")
+}
+
+// consumeOneAttribute consumes one annotation from the start of stripped text, reporting
+// the remaining text, whether its delimiters closed, and whether the prefix is a valid annotation.
+func consumeOneAttribute(text string) (string, bool, bool) {
 	name := attributeName.FindString(text)
-	body := strings.TrimSpace(strings.TrimPrefix(text, name))
+	body := trimHorizontal(strings.TrimPrefix(text, name))
 	if strings.HasPrefix(name, "@") && !strings.HasPrefix(body, "(") {
-		return body, true
+		return body, true, true
 	}
 	if !opensAttributeBody(name, body) {
-		return "", false
+		return "", false, false
 	}
-	end, ok := attributeDelimiterEnd(body)
-	if !ok {
-		return "", false
+	end, closed, valid := attributeDelimiterEnd(body)
+	if !valid {
+		return "", false, false
 	}
-	return body[end:], true
+	return body[end:], closed, true
 }
 
 // opensAttributeBody reports whether name and body open a delimited attribute or decorator.
@@ -487,7 +517,7 @@ func opensAttributeBody(name, body string) bool {
 
 // attributeDelimiterEnd finds the first balanced closing delimiter in stripped text.
 // Its stack and byte walk are bounded by the caller's at-most-32-line source slice.
-func attributeDelimiterEnd(text string) (int, bool) {
+func attributeDelimiterEnd(text string) (int, bool, bool) {
 	stack := make([]byte, 0, len(text))
 	for i := 0; i < len(text); i++ {
 		ch := text[i]
@@ -496,15 +526,15 @@ func attributeDelimiterEnd(text string) (int, bool) {
 			stack = append(stack, ch)
 		case strings.ContainsRune(")]}", rune(ch)):
 			if len(stack) == 0 || !matchingAttributeDelimiter(stack[len(stack)-1], ch) {
-				return 0, false
+				return 0, false, false
 			}
 			stack = stack[:len(stack)-1]
 			if len(stack) == 0 {
-				return i + 1, true
+				return i + 1, true, true
 			}
 		}
 	}
-	return 0, false
+	return len(text), false, len(stack) > 0
 }
 
 // matchingAttributeDelimiter reports whether open and close are a matching bracket pair.

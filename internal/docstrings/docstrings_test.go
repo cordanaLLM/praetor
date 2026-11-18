@@ -673,6 +673,15 @@ func TestCheck_AttributeLiteralRegressions_3D(t *testing.T) {
 		{"ts_template_multiline", "ts_template_multiline.ts.txt", "web/run.ts", true, 1, 1, "", 0},
 		{"ts_unclosed_template", "ts_unclosed_template.ts.txt", "web/run.ts", false, 1, 0, "run", 4},
 		{"ts_unclosed_regex_class", "ts_unclosed_regex_class.ts.txt", "web/run.ts", false, 1, 0, "run", 4},
+		{"rust_multiline_attr_line_comment", "rust_multiline_attr_line_comment.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"rust_multiline_attr_block_comment", "rust_multiline_attr_block_comment.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"ts_multiline_decorator_comment", "ts_multiline_decorator_comment.ts.txt", "web/run.ts", true, 1, 1, "", 0},
+		{"python_multiline_decorator_comment", "python_multiline_decorator_comment.py.txt", "app/run.py", true, 1, 1, "", 0},
+		{"cpp_multiline_attribute_comment", "cpp_multiline_attribute_comment.cpp.txt", "src/lib.cpp", true, 1, 1, "", 0},
+		{"rust_blank_above_attribute", "rust_blank_above_attribute.rs.txt", "src/lib.rs", false, 1, 0, "run", 7},
+		{"rust_comment_after_attribute", "rust_comment_after_attribute.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"rust_unclosed_attr_comment", "rust_unclosed_attr_comment.rs.txt", "src/lib.rs", false, 1, 0, "run", 6},
+		{"rust_multiline_attr_blank_line", "rust_multiline_attr_blank_line.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
 	}
 	for i := 0; i < len(cases); i++ {
 		tc := cases[i]
@@ -746,15 +755,19 @@ func TestStripLiterals_3D(t *testing.T) {
 // expectedFixtureSpans returns the pinned function spans for every fixture in testdata.
 func expectedFixtureSpans() map[string][]hiss.FunctionSpan {
 	run3 := []hiss.FunctionSpan{{Name: "run", Start: 3, End: 3}}
-	run4 := []hiss.FunctionSpan{{Name: "run", Start: 4, End: 4}}
+	run5 := []hiss.FunctionSpan{{Name: "run", Start: 5, End: 5}}
+	run6 := []hiss.FunctionSpan{{Name: "run", Start: 6, End: 6}}
+	run7 := []hiss.FunctionSpan{{Name: "run", Start: 7, End: 7}}
 	prevNext := []hiss.FunctionSpan{{Name: "previous", Start: 2, End: 2}, {Name: "next", Start: 3, End: 5}}
-	return map[string][]hiss.FunctionSpan{
+	spans := map[string][]hiss.FunctionSpan{
 		"c_previous_inline.c.txt":                     {{Name: "__attribute__", Start: 2, End: 2}, {Name: "next", Start: 3, End: 5}},
 		"c_wrapped_neg.c.txt":                         {{Name: "combine_undoc", Start: 1, End: 6}},
 		"c_wrapped_pos.c.txt":                         {{Name: "combine", Start: 2, End: 7}},
+		"cpp_multiline_attribute_comment.cpp.txt":     run5,
 		"cpp_two_attributes.cpp.txt":                  run3,
 		"go_wrapped_neg.go.txt":                       {{Name: "CombineUndoc", Start: 3, End: 8}},
 		"go_wrapped_pos.go.txt":                       {{Name: "Combine", Start: 4, End: 9}},
+		"python_multiline_decorator_comment.py.txt":   {{Name: "run", Start: 6, End: 8}},
 		"python_single_decorator.py.txt":              {{Name: "run", Start: 2, End: 4}},
 		"python_triple_decorator.py.txt":              {{Name: "run", Start: 5, End: 7}},
 		"python_wrapped_neg.py.txt":                   {{Name: "combine_undoc", Start: 5, End: 9}},
@@ -766,40 +779,54 @@ func expectedFixtureSpans() map[string][]hiss.FunctionSpan {
 		"rust_attribute_multi_comment.rs.txt":         run3,
 		"rust_attribute_trailing_code.rs.txt":         run3,
 		"rust_b_multiline_attr_oneline_fn.rs.txt":     {{Name: "one_line", Start: 6, End: 8}},
+		"rust_blank_above_attribute.rs.txt":           run7,
 		"rust_c_multiline_attr_wrapped_fn.rs.txt":     {{Name: "wrapped", Start: 6, End: 11}},
 		"rust_char_attribute.rs.txt":                  run3,
+		"rust_comment_after_attribute.rs.txt":         run6,
 		"rust_d_wrapped_where_clause.rs.txt":          {{Name: "clone_where", Start: 2, End: 9}},
 		"rust_e1_wrapped_no_comment.rs.txt":           {{Name: "wrapped_undoc", Start: 1, End: 6}},
 		"rust_e2_wrapped_blank_line_separated.rs.txt": {{Name: "previous_item", Start: 2, End: 4}, {Name: "wrapped_after_blank", Start: 7, End: 12}},
 		"rust_e3_wrapped_param_comment_only.rs.txt":   {{Name: "wrapped_param_comment", Start: 1, End: 7}},
 		"rust_f_unclosed_attr_bound.rs.txt":           {{Name: "unclosed_attr", Start: 3, End: 5}, {Name: "over_bound_attr", Start: 43, End: 45}},
 		"rust_inline_self.rs.txt":                     {{Name: "run", Start: 2, End: 2}},
-		"rust_lifetime_attribute.rs.txt":              {{Name: "run", Start: 5, End: 5}},
+		"rust_lifetime_attribute.rs.txt":              run5,
+		"rust_multiline_attr_blank_line.rs.txt":       run7,
+		"rust_multiline_attr_block_comment.rs.txt":    run7,
+		"rust_multiline_attr_line_comment.rs.txt":     run7,
 		"rust_previous_inline.rs.txt":                 prevNext,
 		"rust_string_lifetime.rs.txt":                 run3,
 		"rust_three_attributes.rs.txt":                run3,
 		"rust_two_attributes.rs.txt":                  run3,
 		"rust_two_attributes_previous_inline.rs.txt":  prevNext,
-		"ts_double_bracket.ts.txt":                    run4,
-		"ts_previous_inline.ts.txt":                   {{Name: "next", Start: 4, End: 6}},
-		"ts_regex_paren.ts.txt":                       run4,
-		"ts_regex_quote.ts.txt":                       run4,
-		"ts_single_bracket.ts.txt":                    run4,
-		"ts_single_multiline.ts.txt":                  {{Name: "run", Start: 6, End: 6}},
-		"ts_single_url.ts.txt":                        run4,
-		"ts_template_block_comment.ts.txt":            run4,
-		"ts_template_bracket.ts.txt":                  run4,
-		"ts_template_line_comment.ts.txt":             run4,
-		"ts_template_multiline.ts.txt":                {{Name: "run", Start: 5, End: 5}},
-		"ts_template_substitution.ts.txt":             run4,
-		"ts_two_decorators.ts.txt":                    run4,
-		"ts_unclosed_decorator.ts.txt":                run4,
-		"ts_unclosed_quote.ts.txt":                    run4,
-		"ts_unclosed_regex_class.ts.txt":              run4,
-		"ts_unclosed_template.ts.txt":                 run4,
-		"ts_wrapped_neg.ts.txt":                       {{Name: "combineUndoc", Start: 1, End: 6}},
-		"ts_wrapped_pos.ts.txt":                       {{Name: "combine", Start: 2, End: 7}},
+		"rust_unclosed_attr_comment.rs.txt":           run6,
 	}
+	addTypeScriptFixtureSpans(spans)
+	return spans
+}
+
+// addTypeScriptFixtureSpans populates the pinned function spans for TypeScript fixtures.
+func addTypeScriptFixtureSpans(spans map[string][]hiss.FunctionSpan) {
+	run4 := []hiss.FunctionSpan{{Name: "run", Start: 4, End: 4}}
+	spans["ts_double_bracket.ts.txt"] = run4
+	spans["ts_multiline_decorator_comment.ts.txt"] = []hiss.FunctionSpan{{Name: "run", Start: 8, End: 8}}
+	spans["ts_previous_inline.ts.txt"] = []hiss.FunctionSpan{{Name: "next", Start: 4, End: 6}}
+	spans["ts_regex_paren.ts.txt"] = run4
+	spans["ts_regex_quote.ts.txt"] = run4
+	spans["ts_single_bracket.ts.txt"] = run4
+	spans["ts_single_multiline.ts.txt"] = []hiss.FunctionSpan{{Name: "run", Start: 6, End: 6}}
+	spans["ts_single_url.ts.txt"] = run4
+	spans["ts_template_block_comment.ts.txt"] = run4
+	spans["ts_template_bracket.ts.txt"] = run4
+	spans["ts_template_line_comment.ts.txt"] = run4
+	spans["ts_template_multiline.ts.txt"] = []hiss.FunctionSpan{{Name: "run", Start: 5, End: 5}}
+	spans["ts_template_substitution.ts.txt"] = run4
+	spans["ts_two_decorators.ts.txt"] = run4
+	spans["ts_unclosed_decorator.ts.txt"] = run4
+	spans["ts_unclosed_quote.ts.txt"] = run4
+	spans["ts_unclosed_regex_class.ts.txt"] = run4
+	spans["ts_unclosed_template.ts.txt"] = run4
+	spans["ts_wrapped_neg.ts.txt"] = []hiss.FunctionSpan{{Name: "combineUndoc", Start: 1, End: 6}}
+	spans["ts_wrapped_pos.ts.txt"] = []hiss.FunctionSpan{{Name: "combine", Start: 2, End: 7}}
 }
 
 // TestFixtureScannerSpansAndFindings_3D verifies that every existing and new fixture in testdata
