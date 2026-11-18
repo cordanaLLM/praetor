@@ -685,7 +685,7 @@ func TestArchiveWindowsPathUnits(t *testing.T) {
 	}
 }
 
-// TestArchivePathStatLength distinguishes an absent candidate from a name rejected by stat.
+// TestArchivePathStatLength archives absent candidates at either side of a common component limit.
 func TestArchivePathStatLength(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -693,33 +693,45 @@ func TestArchivePathStatLength(t *testing.T) {
 	}
 	for _, size := range []int{255, 256} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
-			testArchivePathStatLength(t, root, size, os.Stat)
+			testArchivePathStatLength(t, root, size)
 		})
 	}
-	t.Run("255-short-fs", func(t *testing.T) {
-		testArchivePathStatLength(t, root, 255, func(path string) (os.FileInfo, error) {
-			return nil, &os.PathError{Op: "stat", Path: path, Err: syscall.ENAMETOOLONG}
-		})
-	})
 }
 
-// testArchivePathStatLength runs one stat-length probe and skips when the host filesystem limit differs.
-func testArchivePathStatLength(t *testing.T, root string, size int, stat func(string) (os.FileInfo, error)) {
+// testArchivePathStatLength proves native missing and too-long answers both discharge the done row.
+func testArchivePathStatLength(t *testing.T, root string, size int) {
 	t.Helper()
 	path := filepath.Join(root, strings.Repeat("a", size))
-	_, statErr := stat(path)
-	if size == 256 && !archivePathTooLong(statErr) {
-		t.Skipf("filesystem does not report ENAMETOOLONG for a 256-byte component: %v", statErr)
+	_, statErr := os.Stat(path)
+	if !errors.Is(statErr, os.ErrNotExist) && !archivePathTooLong(statErr) {
+		t.Fatalf("%d-byte absent candidate stat = %v; want missing or too long", size, statErr)
 	}
-	if size == 255 && archivePathTooLong(statErr) {
-		t.Skipf("filesystem reports ENAMETOOLONG for a 255-byte component: %v", statErr)
-	}
-	if size == 255 && !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("255-byte absent candidate stat = %v", statErr)
-	}
+	t.Logf("%d-byte native stat = %v", size, statErr)
 	result, err := lookupArchivePath(t.Context(), path)
 	if err != nil || result.exists || result.notDirectory || result.path != filepath.Clean(path) {
 		t.Fatalf("absent archive path = %+v, %v", result, err)
+	}
+	testArchiveAbsentPathRow(t, root, path)
+}
+
+// testArchiveAbsentPathRow verifies an absent candidate moves from OPEN.md to BACKLOG.md.
+func testArchiveAbsentPathRow(t *testing.T, root, path string) {
+	t.Helper()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	row := fmt.Sprintf("- [x] path: %s | done\n", path)
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	writeIntegrityFile(t, open, row)
+	ops := defaultArchiveWorktreeOps()
+	ops.list = func(context.Context, string) ([]worktree.WorktreeInfo, error) { return nil, nil }
+	if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); err != nil || count != 1 {
+		t.Fatalf("absent candidate archive = %d, %v; want one discharged row", count, err)
+	}
+	assertIntegrityFile(t, open, "")
+	backlog, err := contextopt.ReadSnapshot(t.Context(), filepath.Join(root, WorkingDirName, "BACKLOG.md"))
+	if err != nil || !strings.Contains(string(backlog), row) {
+		t.Fatalf("archived candidate missing from backlog: %s, %v", backlog, err)
 	}
 }
 
