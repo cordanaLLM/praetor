@@ -62,7 +62,11 @@ func TestSyncRegisterBlockPositive(t *testing.T) {
 		t.Fatalf("compile: %v", err)
 	}
 	for _, file := range res.Files {
-		if strings.Count(file.Content, config.RegisterBlockStart) != 0 || strings.Count(file.Content, config.RegisterBlockHeading) != 0 {
+		wantCopies := 0
+		if fullContentProjection(file.RelativePath) {
+			wantCopies = 1
+		}
+		if strings.Count(file.Content, config.RegisterBlockStart) != wantCopies || strings.Count(file.Content, config.RegisterBlockHeading) != wantCopies {
 			t.Errorf("%s copied the canonical register block", file.RelativePath)
 		}
 	}

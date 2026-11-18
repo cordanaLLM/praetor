@@ -104,16 +104,16 @@ func appendConfigLine(parts []string, origin, prevOrigin band, line string) ([]s
 	return append(parts, line), origin
 }
 
-// splitBands collects only section's owned lines in their bands. Vendor lines always join
-// the config band; shared lines stay in AGENTS.md. An empty section selects shared lines,
+// splitBands collects section's owned lines and shared lines when requested. Vendor lines join
+// the config band. An empty section selects shared lines,
 // so HeadBand still inspects the canonical head. This is the one place the band
 // membership of a line is decided (HISS-19): layoutBands and HeadBand both read it.
-func splitBands(lines, owners []string, bands []band, section string) [bandCount][]string {
+func splitBands(lines, owners []string, bands []band, section string, shared bool) [bandCount][]string {
 	var parts [bandCount][]string
 	prevConfigOrigin := bandMarker
 	for i, line := range lines {
 		b := bands[i]
-		if b == bandMarker || owners[i] != section || blankAfterMarker(lines, bands, i) {
+		if b == bandMarker || !ownsContextLine(owners[i], section, shared) || blankAfterMarker(lines, bands, i) {
 			continue
 		}
 		if owners[i] != "" {
@@ -133,8 +133,8 @@ func splitBands(lines, owners []string, bands []band, section string) [bandCount
 // the bands are joined by one blank line, so an edit inside a band moves no byte of an
 // earlier band. The output ends with a newline exactly when the source does, whichever bands
 // are present.
-func layoutBands(lines, owners []string, bands []band, section string) string {
-	parts := splitBands(lines, owners, bands, section)
+func layoutBands(lines, owners []string, bands []band, section string, shared bool) string {
+	parts := splitBands(lines, owners, bands, section, shared)
 	out := make([]string, 0, bandCount)
 	for _, part := range parts {
 		if text := trimBlankEdges(part); text != "" {
@@ -181,7 +181,11 @@ func HeadBand(content string) (string, bool, error) {
 	if !marked {
 		return "", false, nil
 	}
-	return trimBlankEdges(splitBands(lines, owners, bands, "")[bandHead]), true, nil
+	return trimBlankEdges(splitBands(lines, owners, bands, "", false)[bandHead]), true, nil
+}
+
+func ownsContextLine(owner, section string, shared bool) bool {
+	return owner == section || shared && owner == ""
 }
 
 // VolatileToken is one piece of head text that changes between runs.

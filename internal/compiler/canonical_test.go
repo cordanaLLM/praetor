@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 )
 
 // TestCompilePreservesCanonicalBody leaves canonical policy at its source instead of copying it.
@@ -15,7 +17,7 @@ func TestCompilePreservesCanonicalBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, file := range result.Files {
-		if strings.Contains(file.Content, "DEV_MCP_PREFLIGHT_SENTINEL") {
+		if strings.Contains(file.Content, "DEV_MCP_PREFLIGHT_SENTINEL") != fullContentProjection(file.RelativePath) {
 			t.Errorf("%s copied canonical source body", file.RelativePath)
 		}
 		if strings.Contains(file.Content, "make verify-all") {
@@ -30,6 +32,12 @@ func TestVerifyAcceptsCanonicalBodyChange(t *testing.T) {
 	source := filepath.Join(root, "AGENTS.md")
 	writeCanonicalFixture(t, source, "# Fixture\n\nOriginal policy.\n\n## Claude Code\nOriginal client policy.\n")
 	compiler := NewTranspiler()
+	compiler.Clients = []string{}
+	for _, target := range agentcontext.AllVendorTargets() {
+		if !target.FullContent {
+			compiler.Clients = append(compiler.Clients, target.Client)
+		}
+	}
 	result, err := compiler.Compile(source)
 	if err != nil {
 		t.Fatal(err)

@@ -11,6 +11,15 @@ import (
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 )
 
+func fullContentProjection(path string) bool {
+	for _, target := range agentcontext.AllVendorTargets() {
+		if target.Path == path {
+			return target.FullContent
+		}
+	}
+	return false
+}
+
 // TestVerifyRejectsCopiedCanonical plants the old copy form without using the renderer.
 func TestVerifyRejectsCopiedCanonical(t *testing.T) {
 	root := t.TempDir()

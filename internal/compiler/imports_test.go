@@ -152,3 +152,39 @@ func TestCompileContextProjectionsRefusesImportBeforeWrites(t *testing.T) {
 func codexProjectionBytes() int {
 	return len(strings.TrimRight(agentcontext.ProjectionFrame(".codex/rules.md"), "\n") + "\n")
 }
+
+// TestProjectDocLineCapIncludesNestedChain counts the deepest loaded path, never sibling sums.
+func TestProjectDocLineCapIncludesNestedChain(t *testing.T) {
+	for _, total := range []int{299, 300, 301} {
+		t.Run(fmt.Sprint(total), func(t *testing.T) {
+			projection := strings.TrimRight(agentcontext.ProjectionFrame(".codex/rules.md"), "\n") + "\n"
+			rootLines := strings.Count(lintTerseAgents, "\n") + 1
+			projectionLines := strings.Count(projection, "\n") + 1
+			nestedLines := total - rootLines - projectionLines
+			root := nestedRepo(t, map[string]string{
+				"a/AGENTS.md":     strings.Repeat("x\n", 99),
+				"a/b/AGENTS.md":   strings.Repeat("y\n", nestedLines-101),
+				"other/AGENTS.md": strings.Repeat("z", 10000),
+			})
+			tr := NewTranspiler()
+			tr.Clients = []string{"codex"}
+			source := filepath.Join(root, "AGENTS.md")
+			res, err := tr.CompileContext(t.Context(), source)
+			if total > MaxLineBudget {
+				assertCompilerImportError(t, err, "max line budget (301 > 300)", "a/b/AGENTS.md")
+				_, err = tr.VerifyCompiled(t.Context(), source, root)
+				assertCompilerImportError(t, err, "max line budget (301 > 300)")
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tr.WriteOutputsContext(t.Context(), res, root); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tr.VerifyCompiled(t.Context(), source, root); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

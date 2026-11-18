@@ -50,6 +50,10 @@ type Transpiler struct {
 	ReadImport func(string) (string, error)
 	// ProjectDocBytes counts the bytes of the largest tracked nested AGENTS.md chain known to the compiler.
 	ProjectDocBytes int
+	// ProjectDocLines counts the largest nested chain by physical lines, independently of bytes.
+	ProjectDocLines int
+	// ProjectDocLineChain names the deepest file of the largest chain by lines.
+	ProjectDocLineChain string
 	// ProjectDocChain names the deepest file of that chain, for the refusal.
 	ProjectDocChain string
 	// Clients selects the projections CompileContent emits, by agent client id. nil emits
@@ -69,7 +73,8 @@ func NewTranspiler() *Transpiler {
 
 // vendorTarget pairs a compiled file with the agent client that reads it and the AGENTS.md
 // `## <Vendor>` heading that belongs to that file alone. Every line outside such a section is
-// shared by all targets. Client ids reuse internal/clientid where the client is known there;
+// shared by all clients, with fullContent targets receiving it in their projection.
+// Client ids reuse internal/clientid where the client is known there;
 // Cursor, Copilot and Windsurf have a projection but no client setup adapter. personaDir is
 // the directory the client reads agent personas from (compiler.CompileAgentSurfaces copies
 // .agents/agents there); Cursor and Windsurf read none. skillDir is the directory the client
@@ -86,16 +91,16 @@ type vendorTarget struct {
 	skillDir     string
 	importDepth  int
 	nativeAgents bool
+	fullContent  bool
 }
 
 // Canonical loading mechanisms fetched 2026-11-15 from official client documentation:
 // Claude Code: https://code.claude.com/docs/en/memory (@file, relative to containing file,
 // four hops). Keep the import even where optional native AGENTS.md loading is available.
 // Cursor: https://cursor.com/docs/rules (native AGENTS.md; @mentions are not imports).
-// Copilot agents: https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions
-// (native AGENTS.md for the coding agent only; this does not promise AGENTS.md support in every
-// Copilot feature, so the projection carries the pointer sentence for the surfaces that read only
-// copilot-instructions.md).
+// Copilot: https://docs.github.com/en/copilot/reference/custom-instructions-support
+// (checked 2026-11-18: IDE chat and code review include surfaces without AGENTS.md support;
+// copilot-instructions.md must carry shared and Copilot-owned instructions in full).
 // Windsurf: https://docs.windsurf.com/llms-full.txt, AGENTS.md section (native, root always-on;
 // the standalone /windsurf/cascade/agents-md page redirected to an inaccessible page).
 // Gemini CLI: https://geminicli.com/docs/cli/gemini-md/ (@file, file-relative) and
@@ -105,7 +110,7 @@ type vendorTarget struct {
 var vendorTargets = [6]vendorTarget{
 	{client: string(clientid.Claude), path: "CLAUDE.md", section: "Claude Code", personaDir: ".claude/agents", skillDir: ".claude/skills", importDepth: 4},
 	{client: "cursor", path: ".cursor/rules/hiss-invariants.mdc", section: "Cursor", prefix: cursorFrontmatter, nativeAgents: true},
-	{client: "copilot", path: ".github/copilot-instructions.md", section: "GitHub Copilot", personaDir: ".github/agents"},
+	{client: "copilot", path: ".github/copilot-instructions.md", section: "GitHub Copilot", personaDir: ".github/agents", fullContent: true},
 	{client: "windsurf", path: ".windsurfrules", section: "Windsurf", nativeAgents: true},
 	{client: string(clientid.Gemini), path: ".gemini/GEMINI.md", section: "Gemini", personaDir: ".gemini/agents", importDepth: 5},
 	{client: string(clientid.Codex), path: ".codex/rules.md", section: "Codex", personaDir: ".codex/agents", nativeAgents: true},
@@ -287,8 +292,11 @@ func targetPaths(targets []vendorTarget) []string {
 // VendorTarget is one compiled vendor context file: its slash-separated path relative to the
 // repository root and the name of the AGENTS.md `## <Vendor>` section that belongs to it alone.
 type VendorTarget struct {
-	Path    string
-	Section string
+	Path        string `json:"path"`
+	Section     string `json:"section"`
+	Client      string `json:"client"`
+	FullContent bool   `json:"full_content"`
+	PointerText string `json:"pointer_text"`
 }
 
 // VendorTargets returns the files CompileContent writes for a client selection, in compile
@@ -314,13 +322,14 @@ func AllVendorTargets() []VendorTarget {
 func exportTargets(selected []vendorTarget) []VendorTarget {
 	targets := make([]VendorTarget, 0, len(selected))
 	for _, target := range selected {
-		targets = append(targets, VendorTarget{Path: target.path, Section: target.section})
+		targets = append(targets, VendorTarget{Path: target.path, Section: target.section,
+			Client: target.client, FullContent: target.fullContent, PointerText: ProjectionFrame(target.path)})
 	}
 	return targets
 }
 
 // CompileContent synthesizes vendor-specific files directly from in-memory markdown content.
-// Each target points at AGENTS.md and keeps only its own `## <Vendor>` section.
+// Pointer targets keep their own `## <Vendor>` section; fullContent targets also copy shared text.
 // Native AGENTS.md readers need no pointer beyond the generated notice.
 // A source in one consistent line-ending style compiles as its LF form, so a CRLF checkout of
 // AGENTS.md yields the projections of its LF blob rather than LF headers above CRLF lines; a
@@ -342,11 +351,11 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 		return nil, err
 	}
 	bands, layered := scanBands(lines)
-	files, err := selected.renderTargets(targets, func(section string) string {
+	files, err := selected.renderTargets(targets, func(target vendorTarget) string {
 		if layered {
-			return layoutBands(lines, owners, bands, section)
+			return layoutBands(lines, owners, bands, target.section, target.fullContent)
 		}
-		return selectVendorLines(lines, owners, section)
+		return selectVendorLines(lines, owners, target.section, target.fullContent)
 	})
 	if err != nil {
 		return nil, err
@@ -390,12 +399,12 @@ func (t *Transpiler) checkCanonicalSize(target vendorTarget, contentBytes int) e
 
 // renderTargets renders every target through body, visiting them in the order the render env
 // chooses and returning the files in registry order whatever that order was.
-func (t *Transpiler) renderTargets(targets []vendorTarget, body func(section string) string) ([]TargetFile, error) {
+func (t *Transpiler) renderTargets(targets []vendorTarget, body func(vendorTarget) string) ([]TargetFile, error) {
 	files := make([]TargetFile, len(targets))
 	for _, i := range t.Env.order(len(targets)) {
 		target := targets[i]
 		text := target.prefix + generatedHeader + target.canonicalReference()
-		if own := strings.Trim(body(target.section), "\n"); own != "" {
+		if own := strings.Trim(body(target), "\n"); own != "" {
 			if target.canonicalReference() != "" {
 				text += "\n"
 			}
@@ -414,9 +423,12 @@ func (t *Transpiler) renderTargets(targets []vendorTarget, body func(section str
 	return files, nil
 }
 
-// canonicalReference selects imports first, native loading second, and a sentence otherwise.
+// canonicalReference omits full-content references, then selects imports, native loading or a sentence.
 // Imports remain root-relative until prepareImports validates and relocates them.
 func (target vendorTarget) canonicalReference() string {
+	if target.fullContent {
+		return ""
+	}
 	if target.importDepth > 0 {
 		return "@" + CanonicalFile + "\n"
 	}
@@ -453,11 +465,11 @@ func ownVendorLines(content string) ([]string, []string, error) {
 	return lines, owners, nil
 }
 
-// selectVendorLines rejoins only the lines owned by section; shared lines stay canonical.
-func selectVendorLines(lines, owners []string, section string) string {
+// selectVendorLines selects owned lines and, for full-content projections, shared lines.
+func selectVendorLines(lines, owners []string, section string, shared bool) string {
 	kept := make([]string, 0, len(lines))
 	for i := range lines {
-		if owners[i] == section {
+		if ownsContextLine(owners[i], section, shared) {
 			kept = append(kept, lines[i])
 		}
 	}

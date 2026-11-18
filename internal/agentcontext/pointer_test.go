@@ -8,6 +8,42 @@ import (
 	"testing"
 )
 
+// TestProjectionLoadingContract pins policy delivery per client independently of registry flags.
+func TestProjectionLoadingContract(t *testing.T) {
+	const policy = "- Planted shared instruction."
+	result, err := NewTranspiler().CompileContent("# Harness\n" + policy + "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, target := range vendorTargets {
+		if got, want := strings.Contains(result.Files[i].Content, policy), target.client == "copilot"; got != want {
+			t.Errorf("%s: shared instruction present=%v, want %v", target.client, got, want)
+		}
+	}
+}
+
+// TestCopilotLoadedLineBudget counts its emitted policy once, without loading AGENTS.md again.
+func TestCopilotLoadedLineBudget(t *testing.T) {
+	tr := NewTranspiler()
+	tr.Clients = []string{"copilot"}
+	source := "# Harness\n- Shared.\n\n## GitHub Copilot\n- Copilot only.\n\n## Claude Code\n- Other client.\n"
+	result, err := tr.CompileContent(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := result.Files[0]
+	if !strings.Contains(file.Content, "- Shared.") || !strings.Contains(file.Content, "- Copilot only.") || strings.Contains(file.Content, "Other client") {
+		t.Fatalf("Copilot policy selection: %q", file.Content)
+	}
+	tr.MaxLines = file.LineCount
+	if _, err := tr.CompileContent(source); err != nil {
+		t.Fatalf("exact emitted line cap: %v", err)
+	}
+	tr.MaxLines--
+	_, err = tr.CompileContent(source)
+	assertImportError(t, err, ".github/copilot-instructions.md", "max line budget")
+}
+
 // TestPointerProjections keeps shared policy exclusively in the canonical file.
 func TestPointerProjections(t *testing.T) {
 	source := "# Harness\n- Shared policy must stay canonical.\n"
@@ -20,19 +56,20 @@ func TestPointerProjections(t *testing.T) {
 	}
 	for i, file := range result.Files {
 		want := testFrontmatterFor(file.RelativePath) + testHeader
+		if vendorTargets[i].fullContent {
+			want += "# Harness\n- Shared policy must stay canonical.\n\n"
+		}
 		switch file.RelativePath {
 		case "CLAUDE.md":
 			want += "@AGENTS.md\n\n"
 		case ".gemini/GEMINI.md":
 			want += "@../AGENTS.md\n\n"
-		case ".github/copilot-instructions.md":
-			want += "Read AGENTS.md for canonical agent instructions.\n\n"
 		}
 		want += "## " + vendorTargets[i].section + "\n- Only " + vendorTargets[i].section + ".\n"
 		if file.Content != want {
 			t.Errorf("%s: got %q, want %q", file.RelativePath, file.Content, want)
 		}
-		if strings.Contains(file.Content, "Shared policy") {
+		if strings.Contains(file.Content, "Shared policy") != vendorTargets[i].fullContent {
 			t.Errorf("%s repeats canonical policy", file.RelativePath)
 		}
 	}
@@ -59,8 +96,6 @@ func testReferenceFor(path string) string {
 		return "@AGENTS.md\n"
 	case ".gemini/GEMINI.md":
 		return "@../AGENTS.md\n"
-	case ".github/copilot-instructions.md":
-		return "Read AGENTS.md for canonical agent instructions.\n"
 	}
 	return ""
 }
@@ -78,7 +113,7 @@ func vendorSections(body string) string {
 func TestUnknownClientPointer(t *testing.T) {
 	tr := NewTranspiler().withCanonical("policy\n")
 	target := vendorTarget{path: "UNKNOWN.md", section: "Unknown"}
-	files, err := tr.renderTargets([]vendorTarget{target}, func(string) string { return "" })
+	files, err := tr.renderTargets([]vendorTarget{target}, func(vendorTarget) string { return "" })
 	want := generatedHeader + "Read AGENTS.md for canonical agent instructions.\n"
 	if err != nil || len(files) != 1 || files[0].Content != want {
 		t.Fatalf("fallback: files=%v error=%v", files, err)

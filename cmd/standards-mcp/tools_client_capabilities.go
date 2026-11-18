@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/clientsetup"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 )
@@ -23,9 +24,15 @@ func (s *Server) clientCapabilities(ctx context.Context, args map[string]any) (*
 	if err != nil {
 		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
-	data, err := json.Marshal(report)
+	data, err := json.Marshal(contextCapabilityReport{CapabilityReport: report, ContextProjections: agentcontext.AllVendorTargets()})
 	if err != nil {
 		return nil, fmt.Errorf("encode client capabilities: %w", err)
 	}
 	return mcpTextResult(string(data), mcpTextStructuredJSON), nil
+}
+
+// contextCapabilityReport exposes instruction loading from the renderer's registry.
+type contextCapabilityReport struct {
+	*clientsetup.CapabilityReport
+	ContextProjections []agentcontext.VendorTarget `json:"context_projections"`
 }

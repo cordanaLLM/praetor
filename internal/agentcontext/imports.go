@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/cordanaLLM/praetor/internal/clientid"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -97,10 +98,20 @@ func (t *Transpiler) checkLoadedSize(target vendorTarget, size contextSize) erro
 	if err := t.checkCanonicalSize(target, size.bytes); err != nil {
 		return err
 	}
+	if target.client == string(clientid.Codex) {
+		size.lines += t.ProjectDocLines
+	}
 	if size.lines > t.MaxLines {
-		return fmt.Errorf("target file %s exceeds max line budget (%d > %d)", target.path, size.lines, t.MaxLines)
+		return fmt.Errorf("target file %s exceeds max line budget (%d > %d)%s", target.path, size.lines, t.MaxLines, t.lineChainNote(target))
 	}
 	return nil
+}
+
+func (t *Transpiler) lineChainNote(target vendorTarget) string {
+	if target.client == string(clientid.Codex) && t.ProjectDocLineChain != "" {
+		return "; largest nested line chain ends at " + t.ProjectDocLineChain
+	}
+	return ""
 }
 
 // contextSize records byte, Unicode character and line counts from the same expansion walk.
@@ -131,13 +142,11 @@ type importFrame struct {
 // Native and sentence readers load both files without expanding canonical imports.
 // The active visited set detects cycles; independent repeated imports still count.
 func (t *Transpiler) expandedSize(target vendorTarget, text string, refs []contextImport) (contextSize, string, error) {
+	if target.importDepth == 0 {
+		return t.directSize(target, text)
+	}
 	var size contextSize
 	size.add(text)
-	if target.importDepth == 0 {
-		data, err := t.loadImport(CanonicalFile)
-		size.add(data)
-		return size, CanonicalFile, err
-	}
 	stack := []importFrame{{path: target.path, refs: refs}}
 	visited := map[string]bool{target.path: true}
 	via := CanonicalFile
@@ -179,6 +188,18 @@ func (t *Transpiler) expandedSize(target vendorTarget, text string, refs []conte
 		return contextSize{}, "", fmt.Errorf("import %s exceeds traversal bound (%d imports)", via, maxImportVisits)
 	}
 	return size, via, nil
+}
+
+// directSize counts full projections once and native or sentence projections with canonical text.
+func (t *Transpiler) directSize(target vendorTarget, text string) (contextSize, string, error) {
+	var size contextSize
+	size.add(text)
+	if target.fullContent {
+		return size, target.path, nil
+	}
+	data, err := t.loadImport(CanonicalFile)
+	size.add(data)
+	return size, CanonicalFile, err
 }
 
 func importPath(raw string, depth, limit int, visited map[string]bool) (string, error) {

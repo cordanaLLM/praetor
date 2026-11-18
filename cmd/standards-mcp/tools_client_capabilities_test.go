@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/clientsetup"
 )
 
@@ -17,7 +18,7 @@ func TestClientCapabilitiesToolMatchesSharedRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(want)
+	data, err := json.Marshal(contextCapabilityReport{CapabilityReport: want, ContextProjections: agentcontext.AllVendorTargets()})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
@@ -27,12 +28,14 @@ type Transpiler struct {
 	Clients  []string
 	Env      *agentcontext.RenderEnv
 	// Bound overrides DefaultAgentBound for Compile, WriteOutputs and Verify when positive.
-	Bound           time.Duration
-	writeTarget     func(ctx context.Context, root, rel string, data []byte) error
-	readTarget      func(ctx context.Context, root, rel string) ([]byte, error)
-	readImport      func(string) (string, error)
-	projectDocBytes int
-	projectDocChain string
+	Bound               time.Duration
+	writeTarget         func(ctx context.Context, root, rel string, data []byte) error
+	readTarget          func(ctx context.Context, root, rel string) ([]byte, error)
+	readImport          func(string) (string, error)
+	projectDocBytes     int
+	projectDocChain     string
+	projectDocLines     int
+	projectDocLineChain string
 }
 
 func NewTranspiler() *Transpiler {
@@ -111,11 +114,12 @@ func (t *Transpiler) forRepository(ctx context.Context, root string) (*Transpile
 		data, err := readConfinedText(ctx, root, rel)
 		return string(data), err
 	}
-	size, chain, err := largestNestedProjectDocChain(ctx, root)
+	size, err := largestNestedProjectDocChain(ctx, root)
 	if err != nil {
 		return nil, err
 	}
-	selected.projectDocBytes, selected.projectDocChain = size, chain
+	selected.projectDocBytes, selected.projectDocChain = size.bytes, size.byteChain
+	selected.projectDocLines, selected.projectDocLineChain = size.lines, size.lineChain
 	return &selected, nil
 }
 
@@ -151,50 +155,62 @@ func declaredAgentClients(ctx context.Context, root string) ([]string, error) {
 // CompileContent delegates pure rendering to the shared leaf renderer.
 func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	leaf := agentcontext.Transpiler{MaxLines: t.MaxLines, Clients: t.Clients, Env: t.Env,
-		ReadImport: t.readImport, ProjectDocBytes: t.projectDocBytes, ProjectDocChain: t.projectDocChain}
+		ReadImport: t.readImport, ProjectDocBytes: t.projectDocBytes, ProjectDocChain: t.projectDocChain,
+		ProjectDocLines: t.projectDocLines, ProjectDocLineChain: t.projectDocLineChain}
 	return leaf.CompileContent(content)
 }
 
 // maxContextChainDepth bounds ancestor directory traversal for one nested context file (HISS-02).
 const maxContextChainDepth = 64
 
-// largestNestedProjectDocChain returns the bytes of the largest chain of tracked nested AGENTS.md
-// files on one path down from the project root, and the deepest file of that chain. A client
+type projectDocSize struct {
+	bytes, lines         int
+	byteChain, lineChain string
+}
+
+// largestNestedProjectDocChain independently finds the byte and line maxima of tracked nested
+// AGENTS.md chains, with their deepest files. A client
 // loads the root file and the files on the path to its working directory, never a sibling
 // package's (Codex: codex-rs/core/src/agents_md.rs, rust-v0.165.0), so siblings do not add up
 // (order engine-golusoris-gate-skew-20261030). Files removed from the working tree contribute
-// no bytes, matching the nested context lint.
-func largestNestedProjectDocChain(ctx context.Context, root string) (int, string, error) {
+// no bytes or lines, matching the nested context lint.
+func largestNestedProjectDocChain(ctx context.Context, root string) (projectDocSize, error) {
 	paths, err := ListNestedContextFiles(ctx, root)
 	if err != nil {
-		return 0, "", err
+		return projectDocSize{}, err
 	}
-	sizes := make(map[string]int, len(paths))
+	sizes := make(map[string]projectDocSize, len(paths))
 	for i := 0; i < len(paths) && i < MaxNestedContextFiles; i++ {
 		data, err := readConfinedText(ctx, root, paths[i])
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return 0, "", fmt.Errorf("read project document %s: %w", paths[i], err)
+			return projectDocSize{}, fmt.Errorf("read project document %s: %w", paths[i], err)
 		}
-		sizes[paths[i]] = len(data)
+		sizes[paths[i]] = projectDocSize{bytes: len(data), lines: strings.Count(string(data), "\n") + 1}
 	}
-	largest, deepest := 0, ""
+	var largest projectDocSize
 	for i := 0; i < len(paths) && i < MaxNestedContextFiles; i++ {
-		if chain := projectDocChainBytes(paths[i], sizes); chain > largest {
-			largest, deepest = chain, paths[i]
+		chain := projectDocChainSize(paths[i], sizes)
+		if chain.bytes > largest.bytes {
+			largest.bytes, largest.byteChain = chain.bytes, paths[i]
+		}
+		if chain.lines > largest.lines {
+			largest.lines, largest.lineChain = chain.lines, paths[i]
 		}
 	}
-	return largest, deepest, nil
+	return largest, nil
 }
 
-// projectDocChainBytes sums the nested AGENTS.md files from rel's directory up to the root.
-func projectDocChainBytes(rel string, sizes map[string]int) int {
-	chain := 0
+// projectDocChainSize sums the nested AGENTS.md files from rel's directory up to the root.
+func projectDocChainSize(rel string, sizes map[string]projectDocSize) projectDocSize {
+	var chain projectDocSize
 	dir := path.Dir(rel)
 	for depth := 0; depth < maxContextChainDepth && dir != "." && dir != "/"; depth++ {
-		chain += sizes[path.Join(dir, contextFileName)]
+		size := sizes[path.Join(dir, contextFileName)]
+		chain.bytes += size.bytes
+		chain.lines += size.lines
 		dir = path.Dir(dir)
 	}
 	return chain

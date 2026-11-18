@@ -40,6 +40,9 @@ func TestCompileContentGoldenAndBudget(t *testing.T) {
 func requireGoldenProjection(t *testing.T, index int, file TargetFile) {
 	t.Helper()
 	want := testHeader + testReferenceFor(file.RelativePath)
+	if testFullContentFor(file.RelativePath) {
+		want += "# Fixture\nCanonical policy only.\n"
+	}
 	if index == 1 {
 		want = testFrontmatter + want
 	}
@@ -98,7 +101,7 @@ func TestCompileContentKeepsOnlyOwnVendorSection(t *testing.T) {
 func requireVendorOwnership(t *testing.T, file TargetFile, shared []string, owned map[string][]string) {
 	t.Helper()
 	for _, want := range shared {
-		if strings.Contains(file.Content, want) {
+		if strings.Contains(file.Content, want) != testFullContentFor(file.RelativePath) {
 			t.Fatalf("%s copied shared line %q", file.RelativePath, want)
 		}
 	}
@@ -158,7 +161,7 @@ func TestCompileContentNestedFenceOpensNoVendorSection(t *testing.T) {
 	}
 	for _, file := range result.Files {
 		for _, shared := range []string{"# Harness", "## Shared Appendix", "Everyone reads this."} {
-			if strings.Contains(file.Content, shared) {
+			if strings.Contains(file.Content, shared) != testFullContentFor(file.RelativePath) {
 				t.Fatalf("%s copied the shared line %q", file.RelativePath, shared)
 			}
 		}

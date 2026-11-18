@@ -46,8 +46,8 @@ func TestBandsEmitHeadConfigTailInOrderForEveryVendorFile(t *testing.T) {
 		if !strings.HasPrefix(file.Content, frame) {
 			t.Fatalf("%s: missing frame: %q", file.RelativePath, file.Content)
 		}
-		for _, shared := range []string{"Head text.", "Config text.", "Tail text.", "praetor:"} {
-			if strings.Contains(file.Content, shared) {
+		for _, shared := range []string{"Head text.", "Config text.", "Tail text."} {
+			if strings.Contains(file.Content, shared) != testFullContentFor(file.RelativePath) {
 				t.Fatalf("%s: copied shared band %q", file.RelativePath, shared)
 			}
 		}
@@ -186,26 +186,26 @@ func TestEnvOrderIsAPermutation(t *testing.T) {
 	}
 }
 
-// TestHeadEditChangesOnlyHeadBytes leaves every pointer unchanged after a shared head edit.
+// TestHeadEditChangesOnlyHeadBytes changes full-content projections after a shared head edit.
 func TestHeadEditChangesOnlyHeadBytes(t *testing.T) {
 	edited := strings.Replace(bandFixture, "Head text.", "Head text, edited longer.", 1)
 	before := compileFixture(t, bandFixture)
 	after := compileFixture(t, edited)
 	for i := range before.Files {
-		if before.Files[i] != after.Files[i] {
-			t.Fatalf("%s: shared head edit changed pointer", before.Files[i].RelativePath)
+		if changed := before.Files[i] != after.Files[i]; changed != testFullContentFor(before.Files[i].RelativePath) {
+			t.Fatalf("%s: shared head edit changed=%v", before.Files[i].RelativePath, changed)
 		}
 	}
 }
 
-// TestConfigEditLeavesHeadBytesAlone leaves every pointer unchanged after a shared config edit.
+// TestConfigEditLeavesHeadBytesAlone changes full-content projections after a shared config edit.
 func TestConfigEditLeavesHeadBytesAlone(t *testing.T) {
 	edited := strings.Replace(bandFixture, "Config text.", "Config text, edited.", 1)
 	before := compileFixture(t, bandFixture)
 	after := compileFixture(t, edited)
 	for i := range before.Files {
-		if before.Files[i] != after.Files[i] {
-			t.Fatalf("%s: shared config edit changed pointer", before.Files[i].RelativePath)
+		if changed := before.Files[i] != after.Files[i]; changed != testFullContentFor(before.Files[i].RelativePath) {
+			t.Fatalf("%s: shared config edit changed=%v", before.Files[i].RelativePath, changed)
 		}
 	}
 }
@@ -452,5 +452,9 @@ func canonicalBandLayout(t *testing.T, source string) string {
 		t.Fatal(err)
 	}
 	bands, _ := scanBands(lines)
-	return layoutBands(lines, owners, bands, "")
+	return layoutBands(lines, owners, bands, "", false)
+}
+
+func testFullContentFor(path string) bool {
+	return path == ".github/copilot-instructions.md"
 }

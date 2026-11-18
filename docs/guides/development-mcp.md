@@ -21,7 +21,8 @@ provenance with defect evidence. A source change during the build or probe fails
 the run; retry against the completed edit.
 
 The probe checks checkout symbol inspection, canonical context compilation with
-all six outputs read back, verification drift, invalid arguments, path escape,
+all outputs read back against the renderer's client registry (exposed by
+`standards_client_capabilities.context_projections`), verification drift, invalid arguments, path escape,
 unknown tools, corrupt memory, and malformed locks. It also audits a valid fixture
 before checking changed pinned content, invariant violations, and incomplete scans
 that must fail without changing the baseline. `standards_audit` runs the release-token
@@ -30,6 +31,19 @@ and release end-to-end evidence gates (`cmd/standards-mcp/audit_tools.go`,
 lockfile, HISS ratchet, context sync, branch protection, supply chain, and workflow
 checks. All mutations use disposable
 fixtures. A discovered tool name alone does not prove working behavior.
+
+Pointer projections must match their registry-declared pointer text while
+`AGENTS.md` retains the fixture policy. Full-content projections must contain that
+policy themselves. The probe plants an invalid projection and missing canonical
+policy to prove both false-success cases fail (`scripts/dev_mcp_probe.py`).
+Copilot keeps shared and Copilot-specific policy in `.github/copilot-instructions.md`:
+GitHub's [custom instructions support table](https://docs.github.com/en/copilot/reference/custom-instructions-support)
+(read 2026-11-18) lists IDE chat and code review surfaces without agent-instruction
+support. A pointer sentence cannot guarantee policy delivery on those surfaces.
+`TestProjectionLoadingContract` in `internal/agentcontext/pointer_test.go` pins the
+per-client rule. `TestProjectDocLineCapIncludesNestedChain` in
+`internal/compiler/imports_test.go` checks Codex's complete loaded line budget at
+299, 300 and 301 lines, with nested byte and line maxima measured independently.
 
 `standards_audit` also runs the CLI's `editor-selection`,
 `renovate-engine-bumps`, `rust-msrv` and `bestpractices-claims` checks. Each
