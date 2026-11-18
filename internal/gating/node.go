@@ -416,8 +416,13 @@ func runNodeSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	return manager + " audit passed", nil
 }
 
-// judgeNodeAudit preserves command failures while allowing covered, structured advisory findings.
-func judgeNodeAudit(ctx, aCtx context.Context, root, manager, what, out string, runErr error) error {
+// judgeNodeAudit preserves command failures and enforces the deadline on every advisory verdict.
+func judgeNodeAudit(ctx, aCtx context.Context, root, manager, what, out string, runErr error) (err error) {
+	defer func() {
+		if deadlineErr := aCtx.Err(); deadlineErr != nil {
+			err = handleAuditError(ctx, aCtx, manager, what, out, errors.Join(deadlineErr, runErr))
+		}
+	}()
 	if runErr != nil && (!isNodeAuditFindingsExit(aCtx, runErr) || isAuditNetworkFailure(manager, out, runErr)) {
 		return handleAuditError(ctx, aCtx, manager, what, out, runErr)
 	}

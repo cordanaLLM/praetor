@@ -13,6 +13,8 @@ import (
 	"os"
 	"strings"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/cordanaLLM/praetor/internal/nodemanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -26,10 +28,52 @@ type nodeAuditLegacyConfig struct {
 	IgnoreCVEs  []string `json:"ignoreCves" yaml:"ignoreCves"`
 }
 
+const (
+	// maxNodeAuditIncludes caps include entries examined before resolving any source.
+	maxNodeAuditIncludes = 64
+	// maxNodeAuditWildcardFiles caps wildcard policy files read per workspace.
+	maxNodeAuditWildcardFiles = 16
+)
+
 type nodeAuditSettings struct {
-	Include     map[string][]string    `json:"-" yaml:"include"`
-	Audit       *nodeAuditPolicy       `json:"audit" yaml:"audit"`
-	AuditConfig *nodeAuditLegacyConfig `json:"auditConfig" yaml:"auditConfig"`
+	Include      yaml.Node              `json:"-" yaml:"include"`
+	Audit        *nodeAuditPolicy       `json:"audit" yaml:"audit"`
+	AuditConfig  *nodeAuditLegacyConfig `json:"auditConfig" yaml:"auditConfig"`
+	auditDefined bool
+}
+
+type nodeAuditYAMLDocument struct {
+	Include     yaml.Node `yaml:"include"`
+	Audit       yaml.Node `yaml:"audit"`
+	AuditConfig yaml.Node `yaml:"auditConfig"`
+}
+
+type nodeAuditInclude struct {
+	path     string
+	wildcard bool
+	audit    bool
+}
+
+// decodeNodeAuditSettings preserves defined null settings and include presence while decoding one document.
+func decodeNodeAuditSettings(data []byte) (nodeAuditSettings, error) {
+	var document nodeAuditYAMLDocument
+	var settings nodeAuditSettings
+	if err := util.DecodeYAMLDocument(data, &document, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
+		return settings, err
+	}
+	settings.Include = document.Include
+	settings.auditDefined = document.Audit.Kind != 0 || document.AuditConfig.Kind != 0
+	if document.Audit.Kind != 0 {
+		if err := document.Audit.Decode(&settings.Audit); err != nil {
+			return settings, fmt.Errorf("decode audit: %w", err)
+		}
+	}
+	if document.AuditConfig.Kind != 0 {
+		if err := document.AuditConfig.Decode(&settings.AuditConfig); err != nil {
+			return settings, fmt.Errorf("decode auditConfig: %w", err)
+		}
+	}
+	return settings, nil
 }
 
 // nodeAuditIgnored reads repository-local pnpm audit policy without querying any user config.
@@ -72,7 +116,8 @@ func readNodeAuditSettingsIn(dir *os.Root) (nodeAuditSettings, error) {
 	var settings nodeAuditSettings
 	data, err := util.ReadLimitedIn(dir, "pnpm-workspace.yaml", nodemanifest.MaxManifestBytes)
 	if err == nil {
-		if err := util.DecodeYAMLDocument(data, &settings, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
+		settings, err = decodeNodeAuditSettings(data)
+		if err != nil {
 			return settings, fmt.Errorf("parse pnpm-workspace.yaml audit policy: %w", err)
 		}
 		if err := resolveNodeAuditIncludes(dir, &settings); err != nil {
@@ -95,79 +140,177 @@ func readNodeAuditSettingsIn(dir *os.Root) (nodeAuditSettings, error) {
 	return settings, nil
 }
 
-// resolveNodeAuditIncludes resolves pnpm 12.15+ workspace include delegations for audit settings.
+// resolveNodeAuditIncludes reserves list owners before reading audit owners and bounded wildcard files.
 func resolveNodeAuditIncludes(dir *os.Root, settings *nodeAuditSettings) error {
-	auditOwner, configOwner, err := findNodeAuditIncludeOwners(settings)
+	includes, err := decodeNodeAuditIncludes(settings.Include)
 	if err != nil {
 		return err
 	}
-	if auditOwner != "" {
-		included, err := readIncludedNodeAuditFile(dir, auditOwner)
-		if err != nil {
-			return err
-		}
-		settings.Audit = included.Audit
+	owner, err := findNodeAuditIncludeOwner(settings, includes)
+	if err != nil {
+		return err
 	}
-	if configOwner != "" {
-		included, err := readIncludedNodeAuditFile(dir, configOwner)
-		if err != nil {
+	for i := 0; i < len(includes) && i < maxNodeAuditIncludes; i++ {
+		entry := includes[i]
+		if !entry.wildcard && !entry.audit {
+			continue
+		}
+		if err := applyNodeAuditInclude(dir, entry, settings, &owner); err != nil {
 			return err
 		}
-		settings.AuditConfig = included.AuditConfig
 	}
 	return nil
 }
 
-// findNodeAuditIncludeOwners enforces pnpm's single-owner rule for delegated audit and auditConfig keys.
-func findNodeAuditIncludeOwners(settings *nodeAuditSettings) (string, string, error) {
-	var auditOwner, configOwner string
-	paths := util.SortedKeys(settings.Include)
-	for i := 0; i < len(paths) && i < maxNodeAdvisories; i++ {
-		path := paths[i]
-		fields := settings.Include[path]
-		for j := 0; j < len(fields) && j < maxNodeAdvisories; j++ {
-			if err := assignNodeAuditIncludeOwner(fields[j], path, settings, &auditOwner, &configOwner); err != nil {
-				return "", "", err
+// applyNodeAuditInclude merges one readable audit owner after enforcing wildcard ownership.
+func applyNodeAuditInclude(dir *os.Root, entry nodeAuditInclude, settings *nodeAuditSettings, owner *string) error {
+	included, err := readIncludedNodeAuditFile(dir, entry.path)
+	if err != nil {
+		return err
+	}
+	if entry.wildcard && !included.auditDefined {
+		return nil
+	}
+	if err := assignNodeAuditIncludeOwner(entry.path, owner); err != nil {
+		return err
+	}
+	settings.Audit, settings.AuditConfig = included.Audit, included.AuditConfig
+	return nil
+}
+
+// decodeNodeAuditIncludes bounds the decoded source mapping before examining any delegation.
+func decodeNodeAuditIncludes(node yaml.Node) ([]nodeAuditInclude, error) {
+	if node.Kind == 0 {
+		return nil, nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("pnpm-workspace.yaml include must be a source mapping")
+	}
+	var sources map[string]yaml.Node
+	if err := node.Decode(&sources); err != nil {
+		return nil, fmt.Errorf("decode pnpm-workspace.yaml include: %w", err)
+	}
+	if len(sources) > maxNodeAuditIncludes {
+		return nil, fmt.Errorf("pnpm-workspace.yaml include exceeds %d entries", maxNodeAuditIncludes)
+	}
+	paths := util.SortedKeys(sources)
+	includes := make([]nodeAuditInclude, 0, len(paths))
+	wildcards := 0
+	for i := 0; i < len(paths) && i < maxNodeAuditIncludes; i++ {
+		entry, err := parseNodeAuditInclude(paths[i], sources[paths[i]])
+		if err != nil {
+			return nil, err
+		}
+		if entry.wildcard {
+			wildcards++
+		}
+		if wildcards > maxNodeAuditWildcardFiles {
+			return nil, fmt.Errorf("pnpm-workspace.yaml include exceeds %d '*' files at %q", maxNodeAuditWildcardFiles, entry.path)
+		}
+		includes = append(includes, entry)
+	}
+	return includes, nil
+}
+
+// parseNodeAuditInclude accepts only a string wildcard or a list of string setting names.
+func parseNodeAuditInclude(path string, node yaml.Node) (nodeAuditInclude, error) {
+	entry := nodeAuditInclude{path: path}
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!str" && node.Value == "*" {
+		entry.wildcard = true
+	} else {
+		audit, err := nodeAuditIncludeList(path, node)
+		if err != nil {
+			return entry, err
+		}
+		entry.audit = audit
+	}
+	if err := validateNodeAuditIncludeSource(path, entry.wildcard); err != nil {
+		return entry, err
+	}
+	return entry, nil
+}
+
+// nodeAuditIncludeList validates every delegated name without YAML scalar-to-string coercion.
+// The workspace byte limit also bounds the number of list items in its YAML nodes.
+func nodeAuditIncludeList(path string, node yaml.Node) (bool, error) {
+	if node.Kind != yaml.SequenceNode {
+		return false, fmt.Errorf("pnpm-workspace.yaml include %q: expected a list of setting names or '*'", path)
+	}
+	audit := false
+	for i := 0; i < len(node.Content) && i < nodemanifest.MaxManifestBytes; i++ {
+		field := node.Content[i]
+		if field.Kind != yaml.ScalarNode || field.Tag != "!!str" {
+			return false, fmt.Errorf("pnpm-workspace.yaml include %q: setting names must be strings", path)
+		}
+		if field.Value == "audit" || field.Value == "auditConfig" {
+			audit = true
+		}
+	}
+	return audit, nil
+}
+
+// isLocalNodeAuditInclude identifies pnpm's two relative file-source prefixes.
+func isLocalNodeAuditInclude(path string) bool {
+	return strings.HasPrefix(path, "./") || strings.HasPrefix(path, "../")
+}
+
+// validateNodeAuditIncludeSource checks local file syntax without reading unrelated list delegations.
+func validateNodeAuditIncludeSource(path string, wildcard bool) error {
+	if !isLocalNodeAuditInclude(path) {
+		if wildcard {
+			return fmt.Errorf("pnpm-workspace.yaml include %q: '*' requires a local .yaml or .yml file starting with ./ or ../", path)
+		}
+		return nil
+	}
+	if !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
+		return fmt.Errorf("pnpm-workspace.yaml include %q must name a .yaml or .yml file", path)
+	}
+	if strings.ContainsAny(path, "*?[]") {
+		return fmt.Errorf("pnpm-workspace.yaml include %q must name one local file, not a glob", path)
+	}
+	return nil
+}
+
+// findNodeAuditIncludeOwner reserves audit and its deprecated auditConfig spelling for one source.
+func findNodeAuditIncludeOwner(settings *nodeAuditSettings, includes []nodeAuditInclude) (string, error) {
+	owner := ""
+	if settings.auditDefined {
+		owner = "pnpm-workspace.yaml"
+	}
+	for i := 0; i < len(includes) && i < maxNodeAuditIncludes; i++ {
+		if includes[i].audit {
+			if err := assignNodeAuditIncludeOwner(includes[i].path, &owner); err != nil {
+				return "", err
 			}
 		}
 	}
-	return auditOwner, configOwner, nil
+	return owner, nil
 }
 
-// assignNodeAuditIncludeOwner records one delegated setting owner and rejects duplicate or inline conflicts.
-func assignNodeAuditIncludeOwner(field, path string, settings *nodeAuditSettings, auditOwner, configOwner *string) error {
-	switch field {
-	case "audit":
-		if settings.Audit != nil || *auditOwner != "" {
-			return fmt.Errorf("pnpm-workspace.yaml audit setting must have a single owner")
-		}
-		*auditOwner = path
-	case "auditConfig":
-		if settings.AuditConfig != nil || *configOwner != "" {
-			return fmt.Errorf("pnpm-workspace.yaml auditConfig setting must have a single owner")
-		}
-		*configOwner = path
+// assignNodeAuditIncludeOwner rejects different sources claiming either spelling of the audit setting.
+func assignNodeAuditIncludeOwner(path string, owner *string) error {
+	if *owner != "" && *owner != path {
+		return fmt.Errorf("pnpm-workspace.yaml audit/auditConfig setting must have a single owner: %q and %q", *owner, path)
 	}
+	*owner = path
 	return nil
 }
 
-// readIncludedNodeAuditFile reads one repository-local included YAML file through the pinned root handle.
+// readIncludedNodeAuditFile reads one repository-local single-document YAML file through the pinned root.
 func readIncludedNodeAuditFile(dir *os.Root, path string) (nodeAuditSettings, error) {
 	var included nodeAuditSettings
-	if !strings.HasPrefix(path, "./") && !strings.HasPrefix(path, "../") {
-		return included, fmt.Errorf("pnpm-workspace.yaml include %q must name a local repository file starting with ./", path)
-	}
-	if !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
-		return included, fmt.Errorf("pnpm-workspace.yaml include %q must name a .yaml or .yml file", path)
+	if !isLocalNodeAuditInclude(path) {
+		return included, fmt.Errorf("pnpm audit policy is delegated to config dependency %q, which the gate does not read; use a local policy file", path)
 	}
 	data, err := util.ReadLimitedIn(dir, strings.TrimPrefix(path, "./"), nodemanifest.MaxManifestBytes)
 	if err != nil {
 		return included, fmt.Errorf("read included pnpm audit policy %s: %w", path, err)
 	}
-	if err := util.DecodeYAMLDocument(data, &included, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
+	included, err = decodeNodeAuditSettings(data)
+	if err != nil {
 		return included, fmt.Errorf("parse included pnpm audit policy %s: %w", path, err)
 	}
-	if included.Include != nil {
+	if included.Include.Kind != 0 {
 		return included, fmt.Errorf("included pnpm audit policy %s must not define include", path)
 	}
 	return included, nil

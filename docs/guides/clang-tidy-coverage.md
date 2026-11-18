@@ -282,10 +282,20 @@ accepted. A zero gap still permits listed advisories with live exceptions.
 
 For pnpm 12, declare ignores in `pnpm-workspace.yaml`, using `auditConfig.ignoreGhsas`
 or its newer replacement `audit.ignore`; the latter takes precedence, including an empty
-list. When `pnpm-workspace.yaml` delegates `audit` or `auditConfig` to a repository-local
-`.yaml` or `.yml` file under `include` ([pnpm config includes](https://pnpm.io/config-includes)),
-the engine resolves that file under the single-owner and no-nested-`include` rules. The engine
-also reads the legacy `pnpm.auditConfig.ignoreGhsas` in `package.json` when no workspace file
+list. For pnpm 12.15 and later, `include` accepts a list of setting names or the string `'*'`
+([pnpm config includes](https://pnpm.io/config-includes)). A list reserves its settings even
+when its file omits them; a local `'*'` file owns the settings it defines. The engine reads
+files delegated `audit` or `auditConfig` and every `'*'` file, leaving unrelated list
+delegations unread. Local sources must start with `./` or `../`, name one `.yaml` or `.yml`
+file, and stay inside the repository. Different sources cannot own `audit` and its deprecated
+`auditConfig` spelling; both forms in one source retain the precedence above. The engine
+refuses malformed include values, duplicate audit owners, nested `include`, invalid or escaping
+paths, unreadable or oversized files, and multiple YAML documents, naming the source where
+applicable. Config dependencies may own unrelated settings, but delegating audit policy to
+one fails with a diagnostic naming the dependency: the engine does not read dependency policy.
+At most 64 include entries and 16 `'*'` files are accepted; exceeding either bound fails
+before any include file is read. The engine also reads the legacy
+`pnpm.auditConfig.ignoreGhsas` in `package.json` when no workspace file
 exists. Every policy file is read through a pinned `os.Root` handle (`util.ReadLimitedIn`),
 refusing symlinks or paths that escape the repository root; `pnpm-workspace.yaml` and any
 included YAML policy file must decode as a single YAML document (`util.DecodeYAMLDocument`),

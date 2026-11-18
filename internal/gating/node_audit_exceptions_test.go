@@ -225,8 +225,6 @@ func stageNodeAuditFiles(t *testing.T, root, manager, standards, workspace strin
 func applyNodeAuditWorkspace(t *testing.T, root string, files map[string]string, workspace string) {
 	t.Helper()
 	switch {
-	case workspace == "EMPTY_WORKSPACE":
-		files["pnpm-workspace.yaml"] = ""
 	case workspace == "ESCAPING_PACKAGE_SYMLINK":
 		delete(files, "package.json")
 		stageEscapingNodeAuditSymlink(t, filepath.Join(root, "package.json"), `{"pnpm":{"auditConfig":{"ignoreGhsas":["GHSA-fc5q-39xc-vjpf"]}}}`)
@@ -237,10 +235,147 @@ func applyNodeAuditWorkspace(t *testing.T, root string, files map[string]string,
 		parts := strings.SplitN(strings.TrimPrefix(workspace, "FILE:"), "|", 3)
 		files["pnpm-workspace.yaml"] = parts[0]
 		files[parts[1]] = parts[2]
+	case strings.HasPrefix(workspace, "FILES:"):
+		applyNodeAuditIncludeFiles(t, root, files, workspace)
+	default:
+		applyPlainNodeAuditWorkspace(files, workspace)
+	}
+}
+
+// applyPlainNodeAuditWorkspace stages inline workspace or legacy manifest policy.
+func applyPlainNodeAuditWorkspace(files map[string]string, workspace string) {
+	switch {
+	case workspace == "EMPTY_WORKSPACE":
+		files["pnpm-workspace.yaml"] = ""
 	case strings.HasPrefix(workspace, "{"):
 		files["package.json"] = workspace
 	case workspace != "":
 		files["pnpm-workspace.yaml"] = workspace
+	}
+}
+
+// applyNodeAuditIncludeFiles stages bounded multiple-file include and escaping symlink fixtures.
+func applyNodeAuditIncludeFiles(t *testing.T, root string, files map[string]string, workspace string) {
+	t.Helper()
+	parts := strings.SplitN(strings.TrimPrefix(workspace, "FILES:"), "|", 131)
+	files["pnpm-workspace.yaml"] = parts[0]
+	for i := 1; i+1 < len(parts) && i < 130; i += 2 {
+		if parts[i+1] == "ESCAPING_SYMLINK" {
+			stageEscapingNodeAuditSymlink(t, filepath.Join(root, parts[i]), "audit: {}\n")
+			continue
+		}
+		files[parts[i]] = parts[i+1]
+	}
+}
+
+// TestNodeAuditIncludeConfiguration exercises documented include forms and named refusals.
+func TestNodeAuditIncludeConfiguration(t *testing.T) {
+	const ignored = "audit:\n  ignore: [GHSA-fc5q-39xc-vjpf]\n"
+	cases := []struct{ name, report, policy, want string }{
+		{"a wildcard unrelated inline ignores", "pnpm-ignored.json", "FILE:include:\n  ./security.yaml: '*'\nauditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n|security.yaml|minimumReleaseAge: 1440\n", ""},
+		{"b wildcard audit ignores", "pnpm-ignored.json", "FILE:include:\n  ./audit.yaml: '*'\n|audit.yaml|" + ignored, ""},
+		{"b wildcard auditConfig ignores", "pnpm-ignored.json", "FILE:include:\n  ./audit.yaml: '*'\n|audit.yaml|auditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", ""},
+		{"c wildcard inline conflict", "legacy-clean.json", "FILE:include:\n  ./audit.yaml: '*'\naudit: {}\n|audit.yaml|audit: {}\n", "single owner"},
+		{"c wildcard reserved conflict", "legacy-clean.json", "FILES:include:\n  ./a.yaml: '*'\n  ./b.yaml: [audit]\n|a.yaml|audit: {}\n|b.yaml|", "single owner"},
+		{"c two wildcards conflict", "legacy-clean.json", "FILES:include:\n  ./a.yaml: '*'\n  ./b.yaml: '*'\n|a.yaml|audit: {}\n|b.yaml|audit: {}\n", "single owner"},
+		{"d omitted reserved audit", "legacy-clean.json", "FILE:include:\n  ./audit.yaml: [audit]\n|audit.yaml|", ""},
+		{"d inline reserved audit", "legacy-clean.json", "FILE:include:\n  ./audit.yaml: [audit]\naudit: {}\n|audit.yaml|", "single owner"},
+		{"e dependency audit", "legacy-clean.json", "configDependencies:\n  '@acme/pnpm-policy': 3.1.0\ninclude:\n  '@acme/pnpm-policy': [audit]\n", "audit policy is delegated to config dependency \"@acme/pnpm-policy\", which the gate does not read"},
+		{"e dependency auditConfig", "legacy-clean.json", "configDependencies:\n  '@acme/pnpm-policy': 3.1.0\ninclude:\n  '@acme/pnpm-policy': [auditConfig]\n", "audit policy is delegated to config dependency \"@acme/pnpm-policy\", which the gate does not read"},
+		{"e dependency unrelated", "legacy-clean.json", "configDependencies:\n  '@acme/pnpm-policy': 3.1.0\ninclude:\n  '@acme/pnpm-policy': [minimumReleaseAge, trustPolicy]\n", ""},
+		{"e dependency wildcard", "legacy-clean.json", "include:\n  '@acme/pnpm-policy': '*'\n", "include \"@acme/pnpm-policy\": '*' requires a local"},
+		{"f number", "legacy-clean.json", "include:\n  ./bad.yaml: 42\n", "include \"./bad.yaml\": expected a list of setting names or '*'"},
+		{"f mapping", "legacy-clean.json", "include:\n  ./bad.yaml: {audit: true}\n", "include \"./bad.yaml\": expected a list of setting names or '*'"},
+		{"f non-string list", "legacy-clean.json", "include:\n  ./bad.yaml: [audit, 42]\n", "include \"./bad.yaml\": setting names must be strings"},
+		{"f unrelated missing files", "legacy-clean.json", "include:\n  ./catalog.yaml: [catalog]\n  ./packages.yml: [packages]\n", ""},
+		{"g parent escape", "legacy-clean.json", "include:\n  ../audit.yaml: '*'\n", "read included pnpm audit policy ../audit.yaml"},
+		{"g wildcard symlink escape", "legacy-clean.json", "FILES:include:\n  ./audit.yaml: '*'\n|audit.yaml|ESCAPING_SYMLINK", "read included pnpm audit policy ./audit.yaml"},
+		{"h nested include", "legacy-clean.json", "FILE:include:\n  ./audit.yaml: '*'\n|audit.yaml|include: {}\n", "included pnpm audit policy ./audit.yaml must not define include"},
+		{"h second document", "legacy-clean.json", "FILE:include:\n  ./audit.yaml: '*'\n|audit.yaml|{}\n---\n{}\n", "parse included pnpm audit policy ./audit.yaml"},
+		{"h oversized file", "legacy-clean.json", "FILE:include:\n  ./audit.yaml: '*'\n|audit.yaml|#" + strings.Repeat("x", 2<<20), "read included pnpm audit policy ./audit.yaml"},
+		{"i audit aliases separate owners", "legacy-clean.json", "FILES:include:\n  ./a.yaml: [audit]\n  ./b.yaml: [auditConfig]\n|a.yaml|audit: {}\n|b.yaml|auditConfig: {}\n", "single owner"},
+		{"i wildcard alias inline conflict", "legacy-clean.json", "FILE:include:\n  ./audit.yaml: '*'\naudit: {}\n|audit.yaml|auditConfig: {}\n", "single owner"},
+		{"c null inline owner", "legacy-clean.json", "FILE:include:\n  ./audit.yaml: '*'\naudit: null\n|audit.yaml|audit: {}\n", "single owner"},
+		{"f non-string boolean", "legacy-clean.json", "include:\n  ./bad.yaml: [true]\n", "include \"./bad.yaml\": setting names must be strings"},
+		{"f non-wildcard scalar", "legacy-clean.json", "include:\n  ./bad.yaml: audit\n", "include \"./bad.yaml\": expected a list of setting names or '*'"},
+		{"f local glob unrelated", "legacy-clean.json", "include:\n  ./*.yaml: [catalog]\n", "include \"./*.yaml\" must name one local file, not a glob"},
+		{"h null nested include", "legacy-clean.json", "FILE:include:\n  ./audit.yaml: '*'\n|audit.yaml|include: null\n", "included pnpm audit policy ./audit.yaml must not define include"},
+		{"i same file aliases", "pnpm-ignored.json", "FILE:include:\n  ./audit.yml: [audit, auditConfig]\n|audit.yml|audit: {}\nauditConfig:\n  ignoreGhsas: [GHSA-fc5q-39xc-vjpf]\n", ""},
+	}
+	for i := 0; i < len(cases) && i < 64; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			err := runNodeAuditFixture(t, "pnpm", nodeAuditFixture(t, tc.report), nodeAuditStandards(t, 1), tc.policy, false)
+			checkNodeAuditExceptionError(t, tc.report, tc.want, err)
+		})
+	}
+}
+
+// TestNodeAuditIncludeBounds checks exact and exceeded entry and wildcard-read limits.
+func TestNodeAuditIncludeBounds(t *testing.T) {
+	cases := []struct {
+		name     string
+		count    int
+		wildcard bool
+		want     string
+	}{
+		{"64 entries", 64, false, ""},
+		{"65 entries", 65, false, "include exceeds 64 entries"},
+		{"16 wildcard files", 16, true, ""},
+		{"17 wildcard files", 17, true, "include exceeds 16 '*' files"},
+		{"64 merged entries", 64, false, ""},
+		{"65 merged entries", 65, false, "include exceeds 64 entries"},
+	}
+	for i := 0; i < len(cases) && i < 8; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			policy, files := "FILES:include:\n", ""
+			for j := 0; j < tc.count && j < 65; j++ {
+				path, value := fmt.Sprintf("part%d.yaml", j), "[catalog]"
+				if tc.wildcard {
+					value = "'*'"
+					files += "|" + path + "|{}\n"
+				}
+				policy += "  ./" + path + ": " + value + "\n"
+			}
+			if strings.Contains(tc.name, "merged") {
+				policy = strings.Replace(policy, "FILES:include:\n", "FILES:delegations: &delegations\n", 1) + "include:\n  <<: *delegations\n"
+			}
+			err := runNodeAuditFixture(t, "pnpm", nodeAuditFixture(t, "legacy-clean.json"), nodeAuditStandards(t, 1), policy+files, false)
+			checkNodeAuditExceptionError(t, "", tc.want, err)
+		})
+	}
+}
+
+// TestNodeAuditExpiredRunner rejects clean and covered reports returned after the audit deadline.
+func TestNodeAuditExpiredRunner(t *testing.T) {
+	cases := []struct {
+		name, manager, report string
+		runErr                error
+	}{
+		{"clean nil pnpm", "pnpm", "legacy-clean.json", nil},
+		{"covered findings pnpm", "pnpm", "pnpm-listed.json", nodeAuditExitError(1)},
+		{"clean nil npm", "npm", "legacy-clean.json", nil},
+		{"clean nil yarn", "yarn", "legacy-clean.json", nil},
+	}
+	for i := 0; i < len(cases) && i < 4; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			stageNodeAuditFiles(t, root, tc.manager, nodeAuditStandards(t, 1), "")
+			aCtx, cancel := context.WithTimeout(t.Context(), time.Nanosecond)
+			defer cancel()
+			runner := func(ctx context.Context) (string, error) {
+				<-ctx.Done()
+				return nodeAuditFixture(t, tc.report), tc.runErr
+			}
+			out, runErr := runner(aCtx)
+			err := judgeNodeAudit(t.Context(), aCtx, root, tc.manager, tc.manager+" audit", out, runErr)
+			checkNodeAuditExceptionError(t, "", "did not finish within its 3m0s bound", err)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("deadline cause lost: %v", err)
+			}
+		})
 	}
 }
 
@@ -458,13 +593,19 @@ func checkNodeAuditExceptionError(t *testing.T, report, want string, err error) 
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("want %q; got %v", want, err)
 	}
+	checkNodeAuditReportError(t, report, want, err)
+	t.Log(err)
+}
+
+// checkNodeAuditReportError preserves filtering and deduplication assertions for shared reports.
+func checkNodeAuditReportError(t *testing.T, report, want string, err error) {
+	t.Helper()
 	if (report == "npm-two-advisories.json" || report == "npm-shared-two.json") && strings.Contains(err.Error(), "GHSA-fc5q-39xc-vjpf") {
 		t.Fatalf("excepted advisory reported: %v", err)
 	}
 	if (report == "npm-shared.json" || report == "npm-diamond.json") && strings.Count(err.Error(), want) != 1 {
 		t.Fatalf("shared advisory must be named once: %v", err)
 	}
-	t.Log(err)
 }
 
 // TestNodeAuditIgnoreConfiguration covers pnpm policy locations, precedence and fail-closed gaps.
