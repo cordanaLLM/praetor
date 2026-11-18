@@ -141,6 +141,9 @@ func ScanWorkflowActions(ctx context.Context, repoPath string) ([]ActionCandidat
 	return candidates, deprecations, nil
 }
 
+// parseWorkflowFile reads one workflow YAML file and returns its remote action candidates and
+// runtime deprecations, refusing a workflow that declares more than maxActionRefsPerWorkflow
+// remote action references.
 func parseWorkflowFile(ctx context.Context, repoPath, fileName string, seen map[string]bool) ([]ActionCandidate, []DeprecationWarning, error) {
 	content, err := readManifest(ctx, repoPath, filepath.Join(".github", "workflows", fileName))
 	if err != nil {
@@ -150,14 +153,25 @@ func parseWorkflowFile(ctx context.Context, repoPath, fileName string, seen map[
 	if err != nil {
 		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
 	}
+	return collectWorkflowActionCandidates(uses, fileName, seen)
+}
+
+// collectWorkflowActionCandidates filters uses to remote references, enforces maxActionRefsPerWorkflow
+// on remote references only, and builds deduplicated candidates and deprecation warnings.
+func collectWorkflowActionCandidates(uses []util.ActionUse, fileName string, seen map[string]bool) ([]ActionCandidate, []DeprecationWarning, error) {
 	var candidates []ActionCandidate
 	var deprecations []DeprecationWarning
+	remoteRefs := 0
 
-	for i := 0; i < len(uses) && i < maxActionRefsPerWorkflow; i++ {
+	for i := 0; i < len(uses) && i < maxWorkflowLines; i++ {
 		use := uses[i]
 		action, version, remote := remoteActionUse(use)
 		if !remote {
 			continue
+		}
+		remoteRefs++
+		if remoteRefs > maxActionRefsPerWorkflow {
+			return nil, nil, fmt.Errorf("workflow %s exceeds %d remote action references", fileName, maxActionRefsPerWorkflow)
 		}
 		pin := use.Pin
 		key := action + "@" + version + "@" + pin.SHA + ":" + fileName

@@ -150,6 +150,7 @@ func TestScanActionUsesStructuralValues(t *testing.T) {
 		"steps:\n  - run: |\n      uses: ./local\n  - uses: actions/checkout@v4",
 		"steps:\n  - uses: &checkout actions/checkout@v4",
 		"steps:\n  - uses: !!str actions/checkout@v4",
+		"steps:\n  - &k uses: actions/checkout@v4",
 	} {
 		_, uses, err := ScanActionUses(workflow, 10)
 		if err != nil || len(uses) != 1 || uses[0].Value != "actions/checkout@v4" {
@@ -159,11 +160,22 @@ func TestScanActionUsesStructuralValues(t *testing.T) {
 	}
 }
 
-// TestScanActionUsesRefusals rejects invalid documents and never treats quoted scalar content as a comment.
+// TestScanActionUsesRefusals rejects invalid documents, non-scalar mapping keys, and never treats quoted scalar content as a comment.
 func TestScanActionUsesRefusals(t *testing.T) {
 	for _, text := range []string{"uses: [", "uses: {}", "uses: [./local]", "uses: *missing", "uses: ./local\n---\nuses: actions/checkout@v4"} {
 		if _, _, err := ScanActionUses(text, 10); err == nil {
 			t.Errorf("unsupported YAML accepted: %q", text)
+		}
+	}
+	for _, text := range []string{
+		"steps:\n  - &k uses: ./local\n  - ? *k\n    : actions/checkout@main\n",
+		"steps:\n  - ? [uses]\n    : actions/checkout@main\n",
+		"steps:\n  - ? {uses: 1}\n    : actions/checkout@main\n",
+		"steps:\n  - name: &k [uses]\n  - ? *k\n    : actions/checkout@main\n",
+		"steps:\n  - name: &k {uses: 1}\n  - ? *k\n    : actions/checkout@main\n",
+	} {
+		if _, _, err := ScanActionUses(text, 10); err == nil || !strings.Contains(err.Error(), "unsupported uses mapping key") {
+			t.Errorf("non-scalar mapping key = %v; want unsupported uses mapping key error for %q", err, text)
 		}
 	}
 	text := `uses: "actions/checkout@` + pinTestSHA + `  # v7.0.1"`
@@ -194,8 +206,9 @@ func TestScanTemplateActionUsesBoundary(t *testing.T) {
 	}
 }
 
-// TestScanTemplateActionUsesEscapedKey refuses a uses key spelled with YAML escapes: the text
-// "uses" never appears on the line, yet the parser decodes the key as uses.
+// TestScanTemplateActionUsesEscapedKey refuses a uses key spelled with YAML escapes or split across
+// template lines: the text "uses" never appears on a single line, yet nothing outside the closed
+// list of plain block template lines may pass silently.
 func TestScanTemplateActionUsesEscapedKey(t *testing.T) {
 	prefix := "{{if .Enabled}}\nsteps:\n"
 	for _, text := range []string{
@@ -205,6 +218,18 @@ func TestScanTemplateActionUsesEscapedKey(t *testing.T) {
 		_, uses, err := ScanTemplateActionUses(prefix+text+"\n{{end}}", 10)
 		if err == nil || !strings.Contains(err.Error(), "unsupported uses") {
 			t.Errorf("%q: want unsupported uses error, got %+v, %v", text, uses, err)
+		}
+	}
+	for _, body := range []string{
+		"<% if .Enabled %>\nsteps:\n  - {\"u\\x73es\":\n      actions/checkout@main }\n<% end %>\n",
+		"<% if .Enabled %>\nsteps:\n  - {\n      name: x, \"u\\x73es\": actions/checkout@main\n    }\n<% end %>\n",
+		"<% if .Enabled %>\nsteps: [\n  {\"u\\x73es\":\n    actions/checkout@main}\n]\n<% end %>\n",
+		"<% if .Enabled %>\nsteps:\n  - \"us\n    es\": actions/checkout@main\n<% end %>\n",
+		"<% if .Enabled %>\nsteps:\n  - 'us\n    es': actions/checkout@main\n<% end %>\n",
+	} {
+		_, uses, err := ScanTemplateActionUses(body, 10)
+		if err == nil || !strings.Contains(err.Error(), "unsupported uses") {
+			t.Errorf("%q: want unsupported uses error, got %+v, %v", body, uses, err)
 		}
 	}
 	// Negative: lines whose keys and values hold no uses key stay readable beside a plain pin.

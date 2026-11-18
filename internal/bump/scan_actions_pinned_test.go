@@ -163,3 +163,34 @@ func TestScanWorkflowActionsSHAPinsBoundary(t *testing.T) {
 		t.Fatal("a workflow over the line bound was rewritten")
 	}
 }
+
+// TestScanWorkflowActionsRemoteRefBound counts only remote action references toward
+// maxActionRefsPerWorkflow and returns an error naming the workflow and the bound when exceeded.
+func TestScanWorkflowActionsRemoteRefBound(t *testing.T) {
+	var localThenRemote strings.Builder
+	localThenRemote.WriteString("name: CI\njobs:\n  test:\n    steps:\n")
+	for i := 0; i < maxActionRefsPerWorkflow; i++ {
+		fmt.Fprintf(&localThenRemote, "      - uses: ./local-%d\n", i)
+	}
+	localThenRemote.WriteString("      - uses: docker://alpine:3\n      - uses: actions/checkout@v4\n")
+	repo := writePagesWorkflow(t, localThenRemote.String())
+	got, _, err := ScanWorkflowActions(t.Context(), repo)
+	if err != nil || len(got) != 1 || got[0].Action != "actions/checkout" {
+		t.Errorf("local uses before remote = %+v, %v; want actions/checkout candidate", got, err)
+	}
+
+	var atBound strings.Builder
+	atBound.WriteString("name: CI\njobs:\n  test:\n    steps:\n")
+	for i := 0; i < maxActionRefsPerWorkflow; i++ {
+		fmt.Fprintf(&atBound, "      - uses: actions/checkout@v%d\n", i+1)
+	}
+	if got, _, err := ScanWorkflowActions(t.Context(), writePagesWorkflow(t, atBound.String())); err != nil || len(got) != maxActionRefsPerWorkflow {
+		t.Errorf("at remote bound = %d candidates, %v; want %d", len(got), err, maxActionRefsPerWorkflow)
+	}
+
+	overBound := atBound.String() + "      - uses: actions/setup-go@v7\n"
+	_, _, err = ScanWorkflowActions(t.Context(), writePagesWorkflow(t, overBound))
+	if err == nil || !strings.Contains(err.Error(), "pages.yml") || !strings.Contains(err.Error(), fmt.Sprintf("%d", maxActionRefsPerWorkflow)) {
+		t.Errorf("over remote bound error = %v; want workflow name and bound %d", err, maxActionRefsPerWorkflow)
+	}
+}

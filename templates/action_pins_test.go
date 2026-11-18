@@ -149,11 +149,25 @@ func TestTemplateActionPinYAMLKeyForms(t *testing.T) {
 	}
 }
 
-// TestTemplateActionPinQuotedScalar refuses floating actions beside uses-like scalar content.
+// TestTemplateActionPinQuotedScalar refuses floating actions beside uses-like scalar content,
+// non-scalar mapping keys, and multiline unrendered template constructs.
 func TestTemplateActionPinQuotedScalar(t *testing.T) {
-	text := "steps:\n  - {uses: actions/checkout@v4, name: \"example, uses: ./local\"}\n"
-	if findings := actionPinFindings(text); len(findings) != 1 {
-		t.Fatalf("findings = %v; want one floating-action finding", findings)
+	for _, text := range []string{
+		"steps:\n  - {uses: actions/checkout@v4, name: \"example, uses: ./local\"}\n",
+		"steps:\n  - &k uses: ./local\n  - ? *k\n    : actions/checkout@main\n",
+	} {
+		if findings := actionPinFindings(text); len(findings) != 1 {
+			t.Errorf("%q: findings = %v; want one finding", text, findings)
+		}
+	}
+	for _, body := range []string{
+		"steps:\n  - &k uses: ./local\n  - ? *k\n    : actions/checkout@main\n",
+		"<% if .Enabled %>\nsteps:\n  - {\"u\\x73es\":\n      actions/checkout@main }\n<% end %>\n",
+	} {
+		tree := fstest.MapFS{"fixture/ci.yml.tmpl": {Data: []byte(body)}}
+		if findings, err := templateActionPinFindings(tree); err != nil || len(findings) != 1 {
+			t.Errorf("%q: findings = %v, err = %v; want one finding", body, findings, err)
+		}
 	}
 }
 

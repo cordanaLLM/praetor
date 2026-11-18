@@ -5,6 +5,7 @@ package util
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -42,7 +43,7 @@ func walkActionUses(source actionSource, root *yaml.Node) ([]ActionUse, error) {
 	return uses, nil
 }
 
-// mappingActionUses reads every uses key in a mapping, including flow mapping entries.
+// mappingActionUses reads every uses key in a mapping, refusing any non-scalar mapping key.
 func mappingActionUses(source actionSource, node *yaml.Node) ([]ActionUse, error) {
 	if node.Kind != yaml.MappingNode {
 		return nil, nil
@@ -50,7 +51,10 @@ func mappingActionUses(source actionSource, node *yaml.Node) ([]ActionUse, error
 	var uses []ActionUse
 	for i := 0; i+1 < len(node.Content) && i < maxActionYAMLNodes; i += 2 {
 		key, value := node.Content[i], node.Content[i+1]
-		if key.Kind != yaml.ScalarNode || key.Value != "uses" {
+		if key.Kind != yaml.ScalarNode {
+			return nil, fmt.Errorf("line %d: unsupported uses mapping key: expected scalar, got YAML kind %d", key.Line, key.Kind)
+		}
+		if key.Value != "uses" {
 			continue
 		}
 		use, err := parsedActionUse(source, value, node.LineComment)
@@ -204,8 +208,17 @@ func actionCommentGap(source actionSource, line int, comment string) string {
 	return prefix[len(strings.TrimRight(prefix, " \t")):] + strings.TrimRight(comment, " \t\r")
 }
 
-// ScanTemplateActionUses parses YAML first, then refuses ambiguous uses-like template lines.
-// Unrendered Go templates support only plain block uses: lines parsed independently as YAML.
+// templateDirectivePlaceholder replaces inline template value directives during single-line YAML checks.
+const templateDirectivePlaceholder = "praetorTemplateValue"
+
+// templateLineState tracks multiline template comments and structural YAML block scalar bodies.
+type templateLineState struct {
+	commentClose string
+	blockIndent  int
+}
+
+// ScanTemplateActionUses parses YAML first, then reads unrendered templates through a closed
+// list of single-line block shapes, refusing any other line by name.
 func ScanTemplateActionUses(workflow string, maxLines int) ([]string, []ActionUse, error) {
 	lines, uses, err := ScanActionUses(workflow, maxLines)
 	if err == nil {
@@ -215,51 +228,244 @@ func ScanTemplateActionUses(workflow string, maxLines int) ([]string, []ActionUs
 	if len(source.lines) > maxLines {
 		return nil, nil, err
 	}
-	uses = nil
-	for i := 0; i < len(source.lines) && i < maxLines; i++ {
-		line := strings.TrimSpace(source.content(i))
-		if !templateUsesCandidate(line) {
-			continue
-		}
-		use, parseErr := templateActionLine(source, i)
-		if parseErr != nil {
-			return nil, nil, parseErr
-		}
-		use.Start += source.starts[i]
-		use.End += source.starts[i]
-		uses = append(uses, use)
+	uses, parseErr := scanTemplateActionLines(source, maxLines)
+	if parseErr != nil {
+		return nil, nil, parseErr
 	}
 	return source.lines, uses, nil
 }
 
-// templateUsesCandidate reports whether a template line may declare a uses key. A line naming
-// uses is one. Any other line is decoded by the YAML parser, which reads an escaped key such as
-// "u\x73es" as uses; a line the parser cannot read that opens with a double-quoted key holding an
-// escape is refused as a candidate too, because its key cannot be decoded.
-func templateUsesCandidate(line string) bool {
-	if line == "" || strings.HasPrefix(line, "#") {
-		return false
+// scanTemplateActionLines walks an unrendered template line by line against the closed list of
+// accepted block YAML and template directive shapes.
+func scanTemplateActionLines(source actionSource, maxLines int) ([]ActionUse, error) {
+	state := templateLineState{blockIndent: -1}
+	var uses []ActionUse
+	for i := 0; i < len(source.lines) && i < maxLines; i++ {
+		use, hasUse, err := stepTemplateActionLine(source, i, &state)
+		if err != nil {
+			return nil, err
+		}
+		if hasUse {
+			uses = append(uses, use)
+		}
 	}
-	if strings.Contains(line, "uses") {
+	if state.commentClose != "" {
+		return nil, fmt.Errorf("line %d: unsupported uses line in unrendered template: unclosed template comment", len(source.lines))
+	}
+	return uses, nil
+}
+
+// stepTemplateActionLine classifies one template line against the closed list of accepted shapes.
+func stepTemplateActionLine(source actionSource, index int, state *templateLineState) (ActionUse, bool, error) {
+	raw := source.content(index)
+	neutralised, nextClose, ok := neutraliseTemplateLine(raw, state.commentClose)
+	if !ok {
+		return ActionUse{}, false, fmt.Errorf("line %d: unsupported uses line in unrendered template: unclosed template directive", index+1)
+	}
+	state.commentClose = nextClose
+	if isIgnorableTemplateLine(neutralised, state) {
+		return ActionUse{}, false, nil
+	}
+	if strings.Contains(raw, "uses") {
+		use, err := templateActionLine(source, index)
+		use.Start += source.starts[index]
+		use.End += source.starts[index]
+		return use, err == nil, err
+	}
+	blockIndent, err := templateNonUsesLine(neutralised, raw, index)
+	state.blockIndent = blockIndent
+	return ActionUse{}, false, err
+}
+
+// isIgnorableTemplateLine reports whether a directive-neutralised line is blank, a comment,
+// inside an active YAML block scalar body, or a YAML document boundary.
+func isIgnorableTemplateLine(neutralised string, state *templateLineState) bool {
+	trimmed := strings.TrimSpace(neutralised)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 		return true
 	}
-	if _, found, err := ScanActionUses(line, 1); err == nil {
-		return len(found) > 0
+	if inTemplateBlockScalar(neutralised, state) {
+		return true
 	}
-	key := line
-	for i := 0; i < 2; i++ {
-		key = strings.TrimLeft(strings.TrimPrefix(strings.TrimPrefix(key, "-"), "?"), " \t")
+	return trimmed == "---" || trimmed == "..."
+}
+
+// inTemplateBlockScalar reports whether neutralised is indented inside an active block scalar body,
+// closing the block scalar state once indentation returns to or above the owning key column.
+func inTemplateBlockScalar(neutralised string, state *templateLineState) bool {
+	if state.blockIndent < 0 {
+		return false
 	}
-	return strings.HasPrefix(key, `"`) && strings.Contains(key, `\`)
+	indent := len(neutralised) - len(strings.TrimLeft(neutralised, " "))
+	if indent > state.blockIndent {
+		return true
+	}
+	state.blockIndent = -1
+	return false
+}
+
+// templateNonUsesLine verifies that a non-uses template line decodes as a single-line block
+// mapping entry or sequence scalar without a decoded uses key, returning any new block scalar indent.
+func templateNonUsesLine(neutralised, raw string, index int) (int, error) {
+	var root yaml.Node
+	if err := DecodeYAMLDocument([]byte(neutralised), &root, YAMLDocumentOptions{}); err != nil {
+		return -1, fmt.Errorf("line %d: unsupported uses line in unrendered template: %w", index+1, err)
+	}
+	found, err := walkActionUses(newActionSource(neutralised), &root)
+	if err != nil {
+		return -1, fmt.Errorf("line %d: unsupported uses line in unrendered template: %w", index+1, err)
+	}
+	blockIndent, ok := templateBlockNode(&root, neutralised)
+	if len(found) > 0 || !ok {
+		return -1, fmt.Errorf("line %d: unsupported uses-like form %q in unrendered template: only plain block uses: lines supported", index+1, strings.TrimSpace(raw))
+	}
+	return blockIndent, nil
+}
+
+// templateBlockNode checks that root is a single-line block sequence scalar or block mapping
+// entry with a scalar key and scalar value, returning the key indentation for block scalar headers.
+func templateBlockNode(root *yaml.Node, line string) (int, bool) {
+	if root.Kind != yaml.DocumentNode || len(root.Content) != 1 {
+		return -1, false
+	}
+	node := root.Content[0]
+	if node.Kind == yaml.SequenceNode {
+		if node.Style != 0 || node.Anchor != "" || len(node.Content) != 1 {
+			return -1, false
+		}
+		node = node.Content[0]
+		if node.Kind == yaml.ScalarNode {
+			return -1, isPlainTemplateScalar(node)
+		}
+	}
+	return templateMappingNode(node, line)
+}
+
+// isPlainTemplateScalar reports whether a sequence item scalar is a non-empty inline scalar without anchors.
+func isPlainTemplateScalar(node *yaml.Node) bool {
+	return node.Style != yaml.LiteralStyle && node.Style != yaml.FoldedStyle &&
+		node.Anchor == "" && node.ShortTag() != "!!null" && node.Value != ""
+}
+
+// templateMappingNode checks a single block mapping pair with an inline scalar key and scalar value.
+func templateMappingNode(node *yaml.Node, line string) (int, bool) {
+	trimmed := strings.TrimLeft(strings.TrimPrefix(strings.TrimLeft(line, " \t"), "-"), " \t")
+	if node.Kind != yaml.MappingNode || node.Style != 0 || node.Anchor != "" || len(node.Content) != 2 || strings.HasPrefix(trimmed, "?") {
+		return -1, false
+	}
+	key, value := node.Content[0], node.Content[1]
+	if !isTemplateMappingKey(key) || value.Kind != yaml.ScalarNode || value.Anchor != "" {
+		return -1, false
+	}
+	if value.Style == yaml.LiteralStyle || value.Style == yaml.FoldedStyle {
+		return key.Column - 1, true
+	}
+	return -1, true
+}
+
+// isTemplateMappingKey reports whether key is a non-empty, unanchored scalar key without template directives.
+func isTemplateMappingKey(key *yaml.Node) bool {
+	return key.Kind == yaml.ScalarNode && key.Anchor == "" && key.ShortTag() != "!!null" &&
+		key.Value != "" && key.Value != "uses" && !strings.Contains(key.Value, templateDirectivePlaceholder)
+}
+
+// neutraliseTemplateLine strips template comments and replaces inline directives with a scalar placeholder.
+func neutraliseTemplateLine(line, commentClose string) (string, string, bool) {
+	var out strings.Builder
+	rest := line
+	for steps := 0; rest != "" && steps < maxActionScalarBytes; steps++ {
+		if commentClose != "" {
+			after, closed := closeTemplateComment(rest, commentClose)
+			if !closed {
+				return out.String(), commentClose, true
+			}
+			rest, commentClose = after, ""
+			continue
+		}
+		var ok bool
+		rest, commentClose, ok = stepTemplateDirective(&out, rest)
+		if !ok {
+			return "", "", false
+		}
+	}
+	return out.String(), commentClose, true
+}
+
+// closeTemplateComment advances past the closing delimiter of a template block comment on rest.
+func closeTemplateComment(rest, closeDelim string) (string, bool) {
+	closeIdx := strings.Index(rest, closeDelim)
+	if closeIdx < 0 {
+		return "", false
+	}
+	before := strings.TrimRight(strings.TrimSuffix(rest[:closeIdx], "-"), " \t")
+	if !strings.HasSuffix(before, "*/") {
+		return "", false
+	}
+	return rest[closeIdx+len(closeDelim):], true
+}
+
+// stepTemplateDirective processes the next template directive in rest and writes the neutralised prefix to out.
+func stepTemplateDirective(out *strings.Builder, rest string) (string, string, bool) {
+	openIdx, openDelim, closeDelim := nextTemplateDirective(rest)
+	if openIdx < 0 {
+		out.WriteString(rest)
+		return "", "", true
+	}
+	out.WriteString(rest[:openIdx])
+	body := rest[openIdx+len(openDelim):]
+	if strings.HasPrefix(strings.TrimLeft(strings.TrimPrefix(body, "-"), " \t"), "/*") {
+		return body, closeDelim, true
+	}
+	closeIdx := strings.Index(body, closeDelim)
+	if closeIdx < 0 {
+		return "", "", false
+	}
+	inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(body[:closeIdx], "-"), "-"))
+	after := body[closeIdx+len(closeDelim):]
+	if !shouldStripTemplateDirective(out.String(), inner, after) {
+		out.WriteString(templateDirectivePlaceholder)
+	}
+	return after, "", true
+}
+
+// templateControlKeywords are the Go template control keywords that may lead an indented line.
+var templateControlKeywords = []string{"if", "else", "end", "range", "with", "define", "template", "block"}
+
+// shouldStripTemplateDirective reports whether a directive stands alone on the line or leads indentation as a control branch.
+func shouldStripTemplateDirective(prefix, inner, after string) bool {
+	if strings.TrimSpace(prefix) != "" {
+		return false
+	}
+	if strings.TrimSpace(after) == "" {
+		return true
+	}
+	word, _, _ := strings.Cut(inner, " ")
+	return slices.Contains(templateControlKeywords, word) && (after[0] == ' ' || after[0] == '\t')
+}
+
+// nextTemplateDirective locates the earliest Go template opening delimiter ("<%" or non-expression "{{") in text.
+func nextTemplateDirective(text string) (int, string, string) {
+	for i := 0; i+1 < len(text) && i < maxActionScalarBytes; i++ {
+		if text[i] == '<' && text[i+1] == '%' {
+			return i, "<%", "%>"
+		}
+		if text[i] == '{' && text[i+1] == '{' && (i == 0 || text[i-1] != '$') {
+			return i, "{{", "}}"
+		}
+	}
+	return -1, "", ""
 }
 
 // templateActionLine requires a plain block key and delegates its scalar parsing to YAML. It refuses
-// a header whose value is null or empty, or continues on the next line, rather than read an empty
-// reference that would drop the action from the inventory without an error.
+// a header whose value is null or empty, carries a template directive, or continues on the next line,
+// rather than read an empty reference that would drop the action from the inventory without an error.
 func templateActionLine(source actionSource, index int) (ActionUse, error) {
 	line := source.content(index)
 	if !strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(line), "- "), "uses:") {
 		return ActionUse{}, fmt.Errorf("line %d: unsupported uses-like form %q in unrendered template: only plain block uses: lines supported", index+1, strings.TrimSpace(line))
+	}
+	if openIdx, _, _ := nextTemplateDirective(line); openIdx >= 0 {
+		return ActionUse{}, fmt.Errorf("line %d: unsupported uses line in unrendered template: template directives are not supported in uses values", index+1)
 	}
 	_, found, err := ScanActionUses(line, 1)
 	if err != nil {
@@ -278,7 +484,7 @@ func templateActionLine(source actionSource, index int) (ActionUse, error) {
 // templateContinues reports whether the next non-blank, non-comment line after a uses header is
 // indented deeper than its key, which continues the header's value on that line.
 func templateContinues(source actionSource, index, keyIndent int) bool {
-	for next := index + 1; next < len(source.lines); next++ {
+	for next := index + 1; next < len(source.lines) && next-index <= maxActionYAMLNodes; next++ {
 		text := source.content(next)
 		trimmed := strings.TrimSpace(text)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
