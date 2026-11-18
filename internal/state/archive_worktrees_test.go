@@ -737,16 +737,41 @@ func testArchiveAbsentPathRow(t *testing.T, root, path string) {
 
 // TestArchiveInvalidPathStatPreservesRows keeps every row on a real invalid-name stat error.
 func TestArchiveInvalidPathStatPreservesRows(t *testing.T) {
+	shortNUL := filepath.Join(t.TempDir(), "invalid\x00name")
+	longNUL := "/" + strings.Repeat("a/", 2048) + "bad\x00name"
+	longPlain := "/" + strings.Repeat("a/", 2048) + "badname"
+	proseNUL := "completed prose with\x00nul and no path field"
+	for _, format := range []string{"- [x] path: %s | done\n", "| DONE | %s |\n"} {
+		t.Run("over-limit-nul/"+format, func(t *testing.T) {
+			testArchiveInvalidPathPreservesRows(t, longNUL, format)
+		})
+		t.Run("over-limit-plain/"+format, func(t *testing.T) {
+			testArchiveDischargedRow(t, fmt.Sprintf(format, longPlain))
+		})
+		t.Run("short-nul/"+format, func(t *testing.T) {
+			testArchiveInvalidPathPreservesRows(t, shortNUL, format)
+		})
+	}
+	for _, format := range []string{"- [x] %s\n", "| DONE | %s |\n"} {
+		t.Run("prose-nul/"+format, func(t *testing.T) {
+			testArchiveProseNULRow(t, fmt.Sprintf(format, proseNUL))
+		})
+	}
+}
+
+// testArchiveInvalidPathPreservesRows verifies an invalid path candidate aborts archiving without writes.
+func testArchiveInvalidPathPreservesRows(t *testing.T, candidate, format string) {
+	t.Helper()
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "invalid\x00name")
-	_, statErr := os.Stat(path)
-	if statErr == nil || errors.Is(statErr, os.ErrNotExist) || archivePathTooLong(statErr) {
-		t.Fatalf("invalid-name fixture stat = %v; want another error", statErr)
+	_, statErr := os.Stat(candidate)
+	var pathErr *os.PathError
+	if !errors.As(statErr, &pathErr) || errors.Is(statErr, os.ErrNotExist) || archivePathTooLong(statErr) {
+		t.Fatalf("invalid-name fixture stat = %v; want non-absence PathError", statErr)
 	}
-	body := "- [x] path: " + path + " | done\n- [x] unrelated\n"
+	body := fmt.Sprintf(format, candidate) + "- [x] unrelated\n"
 	open := filepath.Join(root, WorkingDirName, openLedgerName)
 	backlog := filepath.Join(root, WorkingDirName, "BACKLOG.md")
 	writeIntegrityFile(t, open, body)
@@ -758,6 +783,55 @@ func TestArchiveInvalidPathStatPreservesRows(t *testing.T) {
 	}
 	assertIntegrityFile(t, open, body)
 	assertIntegrityFile(t, backlog, "unchanged backlog\n")
+	if _, err := planTaskArchive(t.Context(), body, ops); !errors.Is(err, pathErr.Err) || !strings.Contains(err.Error(), candidate) {
+		t.Fatalf("invalid-name plan = %v; want %v naming %q", err, pathErr.Err, candidate)
+	}
+}
+
+// testArchiveDischargedRow verifies a completed row with no live worktree path moves to BACKLOG.md.
+func testArchiveDischargedRow(t *testing.T, row string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	writeIntegrityFile(t, open, row+"- [ ] pending\n")
+	ops := defaultArchiveWorktreeOps()
+	ops.list = func(context.Context, string) ([]worktree.WorktreeInfo, error) { return nil, nil }
+	if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); err != nil || count != 1 {
+		t.Fatalf("archive = %d, %v; want one discharged row", count, err)
+	}
+	assertIntegrityFile(t, open, "- [ ] pending\n")
+	backlog, err := contextopt.ReadSnapshot(t.Context(), filepath.Join(root, WorkingDirName, "BACKLOG.md"))
+	if err != nil || !strings.Contains(string(backlog), row) {
+		t.Fatalf("discharged row missing from backlog: %s, %v", backlog, err)
+	}
+}
+
+// testArchiveProseNULRow verifies non-candidate prose with NUL is archived by the row planner while rejected as a disk snapshot.
+func testArchiveProseNULRow(t *testing.T, row string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	body := row + "- [ ] pending\n"
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	backlog := filepath.Join(root, WorkingDirName, "BACKLOG.md")
+	writeIntegrityFile(t, open, body)
+	writeIntegrityFile(t, backlog, "unchanged backlog\n")
+	ops := defaultArchiveWorktreeOps()
+	ops.list = func(context.Context, string) ([]worktree.WorktreeInfo, error) { return nil, nil }
+	if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); count != 0 || err == nil {
+		t.Fatalf("snapshot with NUL archive = %d, %v; want snapshot refusal", count, err)
+	}
+	assertIntegrityFile(t, open, body)
+	assertIntegrityFile(t, backlog, "unchanged backlog\n")
+	remaining, completed, err := splitCompletedTasks(t.Context(), root, body)
+	if err != nil || len(completed) != 1 || completed[0] != strings.TrimSpace(row) || strings.Join(remaining, "\n") != "- [ ] pending\n" {
+		t.Fatalf("prose NUL split = %q, %q, %v; want one archived prose row", remaining, completed, err)
+	}
 }
 
 // TestArchivePermissionDeniedStatPreservesRows keeps every row when stat is refused for permission.

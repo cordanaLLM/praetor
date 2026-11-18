@@ -168,7 +168,11 @@ func archiveRowPaths(ctx context.Context, row string) ([]string, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if path := archivePathField(fields[i]); path != "" {
+		path, err := archivePathField(fields[i])
+		if err != nil {
+			return nil, err
+		}
+		if path != "" {
 			paths = append(paths, path)
 		}
 	}
@@ -188,16 +192,24 @@ func archiveRawPathField(field string) string {
 
 // archivePathField unwraps and cleans before rejecting only impossible total argument lengths.
 // Component limits and equivalent spellings are decided by the bounded filesystem inspection.
-func archivePathField(field string) string {
-	path := archiveRawPathField(field)
+func archivePathField(field string) (string, error) {
+	return archiveCleanPath(archiveRawPathField(field))
+}
+
+// archiveCleanPath rejects embedded NUL bytes before lexical cleaning and total-length bounds.
+func archiveCleanPath(path string) (string, error) {
 	if path == "" {
-		return ""
+		return "", nil
+	}
+	if strings.IndexByte(path, 0) >= 0 {
+		_, err := statArchivePath(path)
+		return "", err
 	}
 	cleaned := filepath.Clean(filepath.FromSlash(path))
 	if !archivePathWithinBounds(cleaned) {
-		return ""
+		return "", nil
 	}
-	return cleaned
+	return cleaned, nil
 }
 
 // archiveUnwrapPath removes only paired wrappers immediately surrounding the whole path.
@@ -328,9 +340,9 @@ func existingArchiveWorktree(ctx context.Context, entry worktree.WorktreeInfo, o
 		}
 		path = decoded
 	}
-	cleaned := filepath.Clean(filepath.FromSlash(path))
-	if !archivePathWithinBounds(cleaned) {
-		return "", nil
+	cleaned, err := archiveCleanPath(path)
+	if err != nil || cleaned == "" {
+		return "", err
 	}
 	result, err := ops.inspect(ctx, cleaned)
 	if err != nil {

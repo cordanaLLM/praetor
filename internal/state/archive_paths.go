@@ -65,14 +65,23 @@ func boundedArchivePath(ctx context.Context, path string, lookup func(string) (a
 // lookupArchivePath keeps the cleaned spelling on resolution errors; only stat can prove absence.
 func lookupArchivePath(ctx context.Context, path string) (archivePath, error) {
 	result := archivePath{path: filepath.Clean(filepath.FromSlash(path))}
-	info, err := os.Stat(result.path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) && !archivePathTooLong(err) {
-		return result, fmt.Errorf("inspect archive worktree %s: %w", path, err)
+	info, err := statArchivePath(result.path)
+	if err != nil {
+		return result, err
 	}
-	result.exists = err == nil && info.IsDir()
-	result.notDirectory = err == nil && !info.IsDir()
+	result.exists = info != nil && info.IsDir()
+	result.notDirectory = info != nil && !info.IsDir()
 	if resolved, err := util.ResolveExistingPath(ctx, result.path); err == nil {
 		result.path = filepath.Clean(resolved)
 	}
 	return result, nil
+}
+
+// statArchivePath treats missing and overlong names as absent and wraps other stat errors.
+func statArchivePath(path string) (os.FileInfo, error) {
+	info, err := os.Stat(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) && !archivePathTooLong(err) {
+		return nil, fmt.Errorf("inspect archive worktree %s: %w", path, err)
+	}
+	return info, nil
 }
