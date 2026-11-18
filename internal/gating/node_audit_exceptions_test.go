@@ -212,6 +212,7 @@ func stageNodeAuditFiles(t *testing.T, root, manager, standards, workspace strin
 	applyNodeAuditWorkspace(t, root, files, workspace)
 	for name, body := range files {
 		target := filepath.Join(root, name)
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- the fixture writes files into this directory, which needs the owner search bit.
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			t.Fatal(err)
 		}
