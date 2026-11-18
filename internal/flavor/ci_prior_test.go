@@ -9,6 +9,8 @@ package flavor_test
 // edited copy until --force.
 
 import (
+	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path"
@@ -20,6 +22,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"go.yaml.in/yaml/v3"
 )
 
 // ciWorkflowPath is where every flavor scaffolds its CI workflow.
@@ -28,6 +31,52 @@ const ciWorkflowPath = ".github/workflows/ci.yml"
 // ciPriorFixtures holds every CI workflow text earlier releases scaffolded, one directory per
 // template directory under templates/ and one file per text.
 const ciPriorFixtures = "testdata/ci-prior"
+
+// TestCIWorkflowPriorFixturesUseDataExtension keeps historical texts out of workflow analysis.
+func TestCIWorkflowPriorFixturesUseDataExtension(t *testing.T) {
+	root := openFixtureRoot(t, ciPriorFixtures)
+	remaining := 1024
+	err := fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk CI prior fixture %s: %w", name, walkErr)
+		}
+		if remaining == 0 {
+			return fmt.Errorf("CI prior fixture walk exceeds 1024 entries")
+		}
+		remaining--
+		if !entry.IsDir() {
+			if ext := path.Ext(name); ext != flavor.CIWorkflowPriorExtension {
+				t.Errorf("CI prior fixture %s has extension %s, want %s", name, ext, flavor.CIWorkflowPriorExtension)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("inspect CI prior fixtures: %v", err)
+	}
+}
+
+// TestCIWorkflowPriorFixturesHaveNoCodacyExclusions keeps historical texts in analysis scope.
+func TestCIWorkflowPriorFixturesHaveNoCodacyExclusions(t *testing.T) {
+	body, err := openFixtureRoot(t, "../..").ReadFile(".codacy.yml")
+	if err != nil {
+		t.Fatalf("read Codacy configuration: %v", err)
+	}
+	var config struct {
+		ExcludePaths []string `yaml:"exclude_paths"`
+	}
+	if err := yaml.Unmarshal(body, &config); err != nil {
+		t.Fatalf("parse Codacy configuration: %v", err)
+	}
+	if len(config.ExcludePaths) > 1024 {
+		t.Fatal("Codacy exclusions exceed 1024 entries")
+	}
+	for i := 0; i < len(config.ExcludePaths) && i < 1024; i++ {
+		if excluded := config.ExcludePaths[i]; strings.Contains(excluded, "internal/flavor/"+ciPriorFixtures) {
+			t.Errorf("CI prior fixtures excluded from Codacy: %s", excluded)
+		}
+	}
+}
 
 // ciWorkflowFlavors maps each flavor that scaffolds a CI workflow to its template's directory
 // under templates/, which names its fixtures under ciPriorFixtures.

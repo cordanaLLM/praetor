@@ -4,6 +4,9 @@
 
 package flavor
 
+// CIWorkflowPriorExtension keeps frozen CI renderings identifiable as data rather than workflows.
+const CIWorkflowPriorExtension = ".txt"
+
 // The CI workflow templates moved to the hosted gate shape (#817): they run on a push to the
 // default branch and on the pull request activities that can change what merges, and fail a
 // draft in their first step instead of running it (templates/hostedgate.go). Every text the
