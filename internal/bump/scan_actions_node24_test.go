@@ -195,7 +195,16 @@ func TestEngineWorkflowsCarryNoDeprecatedActionPins(t *testing.T) {
 // engineWorkflowCandidates reads engine templates and actions through the shared YAML reader.
 func engineWorkflowCandidates(t *testing.T, root, rel string) ([]ActionCandidate, []DeprecationWarning) {
 	t.Helper()
-	content, err := os.ReadFile(filepath.Join(root, rel))
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatalf("open repository root: %v", err)
+	}
+	defer func() {
+		if err := dir.Close(); err != nil {
+			t.Errorf("close repository root: %v", err)
+		}
+	}()
+	content, err := dir.ReadFile(rel)
 	if err != nil {
 		t.Fatalf("read %s: %v", rel, err)
 	}

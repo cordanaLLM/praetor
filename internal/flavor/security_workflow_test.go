@@ -223,9 +223,9 @@ func TestSecurityWorkflow_Positive_UneditedPriorIsRefreshed(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				got, err := os.ReadFile(workflow)
+				got, err := openFixtureRoot(t, repo).ReadFile(filepath.FromSlash(securityWorkflowPath))
 				if err != nil {
-					t.Fatal(err)
+					t.Fatalf("read %s: %v", securityWorkflowPath, err)
 				}
 				if string(got) != renderedSecurityWorkflow(t, declared) || !slices.Contains(report.RefreshedTemplates, securityWorkflowPath) {
 					t.Fatalf("unedited prior was not refreshed: refreshed %v\n%s", report.RefreshedTemplates, got)
@@ -251,9 +251,9 @@ func TestSecurityWorkflow_Negative_EditedPriorIsKeptAndReported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(workflow)
+	got, err := openFixtureRoot(t, repo).ReadFile(filepath.FromSlash(securityWorkflowPath))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read %s: %v", securityWorkflowPath, err)
 	}
 	if string(got) != edited || !slices.Contains(report.SkippedTemplates, securityWorkflowPath) {
 		t.Fatalf("edited workflow changed or was not reported skipped: skipped %v\n%s", report.SkippedTemplates, got)
@@ -281,9 +281,9 @@ func TestSecurityWorkflow_Positive_ApplySelectsBothManagedRenderings(t *testing.
 			if err != nil || len(report.UnmetTemplates) != 0 {
 				t.Fatalf("apply: %v, unmet %v", err, report.UnmetTemplates)
 			}
-			body, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(securityWorkflowPath)))
+			body, err := openFixtureRoot(t, repo).ReadFile(filepath.FromSlash(securityWorkflowPath))
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("read %s: %v", securityWorkflowPath, err)
 			}
 			declared := name == "declared scanners"
 			if string(body) != renderedSecurityWorkflow(t, declared) {
