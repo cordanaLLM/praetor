@@ -131,6 +131,207 @@ func TestVerifyAgentContext_PersonaDriftAndLint(t *testing.T) {
 	assertHarnessPillarsClean(t, rep)
 }
 
+// TestVerifyAgentContext_CappedPersonaDrift keeps a read-only rejection after eighty
+// persona copy failures exhaust expansion beside canonical lint.
+func TestVerifyAgentContext_CappedPersonaDrift(t *testing.T) {
+	root := contextVerificationFixture(t, true)
+	plantPersonaDrifts(t, root)
+	plantReadOnlyTarget(t, root, "drift")
+	rep := runContextVerification(t, root)
+	step := stepOutcome(t, rep, "agent-harness")
+	if step.Status != StepFailed || len(step.Errors) == 0 || len(step.Warnings) != 0 {
+		t.Fatalf("read-only rejection lost: report errors=%d step=%+v", len(rep.Errors), step)
+	}
+	if !strings.Contains(strings.Join(step.Errors, "\n"), compiler.ReadOnlyFile) {
+		t.Errorf("read-only target absent: %v", step.Errors)
+	}
+	t.Logf("read-only rejection: %v", step.Errors)
+}
+
+// plantPersonaDrifts writes twenty valid canonical personas and eighty drifted selected copies.
+func plantPersonaDrifts(t *testing.T, root string) {
+	t.Helper()
+	dirs, _, err := compiler.SelectPersonaDirs(t.Context(), root)
+	if err != nil || len(dirs) != 4 {
+		t.Fatalf("persona selection: dirs=%v err=%v", dirs, err)
+	}
+	for i := 0; i < 20; i++ {
+		name := fmt.Sprintf("helper-%02d.md", i)
+		mustWrite(t, filepath.Join(root, compiler.CanonicalAgentsRel, name), customHelperText)
+		for j := 0; j < len(dirs) && j < 4; j++ {
+			mustWrite(t, filepath.Join(root, dirs[j], name), "drifted\n")
+		}
+	}
+}
+
+// TestVerifyAgentContext_ExpansionBound checks report status, errors and warnings at the
+// expansion limit. The root join consumes one step, leaving maxVerifyFailures-1 opened causes.
+func TestVerifyAgentContext_ExpansionBound(t *testing.T) {
+	drift := errors.New("target AGENTS.readonly.md is out of sync")
+	cases := []struct {
+		name     string
+		causes   []error
+		stopping bool
+		want     string
+	}{
+		{"at bound lint last", repeatedVerifyLint(maxVerifyFailures - 1), false, ""},
+		{"one over lint only", repeatedVerifyLint(maxVerifyFailures), true, "1 pending failures"},
+		{"one over target last", append(repeatedVerifyLint(maxVerifyFailures-1), drift), true, compiler.ReadOnlyFile},
+		{"canonical remainder", append(repeatedVerifyLint(maxVerifyFailures-1), drift, compiler.ErrContextProse), true, compiler.ReadOnlyFile},
+		{"persona remainder", append(repeatedVerifyLint(maxVerifyFailures-1), drift, compiler.ErrAgentTextProse), true, compiler.ReadOnlyFile},
+		{"nested remainder", append(repeatedVerifyLint(maxVerifyFailures-1), drift, compiler.ErrNestedContextProse), true, compiler.ReadOnlyFile},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := verificationFailureReport(errors.Join(tc.causes...))
+			assertVerificationBoundReport(t, rep, "agent-harness", tc.stopping, tc.want)
+		})
+	}
+}
+
+// TestVerifyAgentContext_OpenedWarnings preserves ordinary persona and nested prose warnings.
+func TestVerifyAgentContext_OpenedWarnings(t *testing.T) {
+	cases := []struct {
+		cause error
+		owner string
+	}{
+		{compiler.ErrAgentTextProse, "agent-definitions"},
+		{compiler.ErrNestedContextProse, "agent-harness"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.owner, func(t *testing.T) {
+			rep := verificationFailureReport(errors.Join(tc.cause))
+			step := stepOutcome(t, rep, tc.owner)
+			if step.Status != StepCompleted || len(rep.Errors) != 0 || len(step.Errors) != 0 {
+				t.Fatalf("opened prose stopped owner: report=%v step=%+v", rep.Errors, step)
+			}
+			if len(rep.Warnings) != 1 || len(step.Warnings) != 1 {
+				t.Fatalf("opened prose warning lost: report=%v step=%+v", rep.Warnings, step)
+			}
+		})
+	}
+}
+
+// repeatedVerifyLint supplies bounded canonical lint causes, whose opened forms are skipped.
+func repeatedVerifyLint(count int) []error {
+	causes := make([]error, count)
+	for i := 0; i < count && i < maxVerifyFailures*2; i++ {
+		causes[i] = compiler.ErrContextProse
+	}
+	return causes
+}
+
+// verificationFailureReport uses the production classifier with completed owner steps.
+func verificationFailureReport(err error) *AdoptReport {
+	rep := &AdoptReport{Steps: []StepOutcome{
+		{Name: "agent-harness", Status: StepCompleted},
+		{Name: "agent-definitions", Status: StepCompleted},
+		{Name: "git-ignore", Status: StepCompleted},
+	}}
+	recordContextVerification(rep, err)
+	return rep
+}
+
+// assertVerificationBoundReport requires unopened aggregates to stop their owner without warnings.
+func assertVerificationBoundReport(t *testing.T, rep *AdoptReport, owner string, stopping bool, want string) {
+	t.Helper()
+	step := stepOutcome(t, rep, owner)
+	if len(rep.Warnings) != 0 || len(step.Warnings) != 0 {
+		t.Fatalf("unopened lint downgraded: report=%v step=%+v", rep.Warnings, step)
+	}
+	if !stopping {
+		assertOpenedLintReport(t, rep, step)
+		return
+	}
+	if step.Status != StepFailed || len(step.Errors) != 1 || len(rep.Errors) != 1 {
+		t.Fatalf("unopened remainder not stopping: report=%v step=%+v", rep.Errors, step)
+	}
+	for _, text := range []string{verifyRejection, "bound reached", want} {
+		if !strings.Contains(step.Errors[0], text) {
+			t.Errorf("stopping error lacks %q: %s", text, step.Errors[0])
+		}
+	}
+}
+
+// assertOpenedLintReport keeps canonical lint accepted when expansion completed at the bound.
+func assertOpenedLintReport(t *testing.T, rep *AdoptReport, step StepOutcome) {
+	t.Helper()
+	if step.Status != StepCompleted || len(rep.Errors) != 0 || len(step.Errors) != 0 {
+		t.Fatalf("opened lint stopped step: report=%v step=%+v", rep.Errors, step)
+	}
+}
+
+// TestVerifyAgentContext_DepthBound checks that depth exhaustion cannot suppress or warn drift.
+func TestVerifyAgentContext_DepthBound(t *testing.T) {
+	drift := errors.New("target AGENTS.readonly.md is out of sync")
+	cases := []struct {
+		name     string
+		depth    int
+		cause    error
+		stopping bool
+	}{
+		{"at bound lint", maxVerifyDepth, errors.Join(compiler.ErrContextProse), false},
+		{"over bound lint", maxVerifyDepth + 1, errors.Join(compiler.ErrContextProse), true},
+		{"over bound canonical", maxVerifyDepth + 1, errors.Join(drift, compiler.ErrContextProse), true},
+		{"over bound persona", maxVerifyDepth + 1, errors.Join(drift, compiler.ErrAgentTextProse), true},
+		{"over bound nested", maxVerifyDepth + 1, errors.Join(drift, compiler.ErrNestedContextProse), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped := tc.cause
+			for i := 0; i < tc.depth && i <= maxVerifyDepth; i++ {
+				wrapped = fmt.Errorf("file: %w", wrapped)
+			}
+			rep := verificationFailureReport(wrapped)
+			assertVerificationBoundReport(t, rep, "agent-harness", tc.stopping, "file:")
+		})
+	}
+}
+
+// TestVerifyAgentContext_SurfaceRemainder retains wrapper diagnostics and surface ownership.
+func TestVerifyAgentContext_SurfaceRemainder(t *testing.T) {
+	causes := append(repeatedVerifyLint(maxVerifyFailures-1), errors.New("target drift"), compiler.ErrAgentTextProse)
+	wrapped := verifyFailurePart{prefix: "persona copies: ", suffix: " [surface]", cause: errors.Join(causes...), surface: true}
+	rep := verificationFailureReport(wrapped)
+	assertVerificationBoundReport(t, rep, "agent-definitions", true, "persona copies:")
+	step := stepOutcome(t, rep, "agent-definitions")
+	for _, text := range []string{"target drift", "[surface]", "2 pending failures"} {
+		if !strings.Contains(step.Errors[0], text) {
+			t.Errorf("surface diagnostic lacks %q: %v", text, step.Errors)
+		}
+	}
+	got := verifyFailures(wrapped)
+	if !errors.Is(got[len(got)-1], compiler.ErrAgentSurface) {
+		t.Fatal("surface marker lost from remainder")
+	}
+}
+
+// TestVerifyAgentContext_PendingFrontier keeps late targets when nested joins leave more
+// pending entries than one expansion budget can visit.
+func TestVerifyAgentContext_PendingFrontier(t *testing.T) {
+	inner := errors.Join(repeatedVerifyLint(maxVerifyFailures)...)
+	causes := append([]error{inner}, repeatedVerifyLint(maxVerifyFailures-2)...)
+	causes = append(causes, errors.New("target AGENTS.readonly.md is out of sync"))
+	rep := verificationFailureReport(errors.Join(causes...))
+	assertVerificationBoundReport(t, rep, "agent-harness", true, compiler.ReadOnlyFile)
+}
+
+// TestVerifyAgentContext_OpaqueWrapper keeps an aggregate whose wrapper cannot be split safely.
+func TestVerifyAgentContext_OpaqueWrapper(t *testing.T) {
+	err := opaqueVerifyWrapper{cause: errors.Join(errors.New("target drift"), compiler.ErrContextProse)}
+	rep := verificationFailureReport(err)
+	assertVerificationBoundReport(t, rep, "agent-harness", true, "opaque wrapper")
+}
+
+// opaqueVerifyWrapper exposes causes without including them in its diagnostic text.
+type opaqueVerifyWrapper struct{ cause error }
+
+// Error supplies context that substituting child text must not discard.
+func (opaqueVerifyWrapper) Error() string { return "opaque wrapper" }
+
+// Unwrap exposes the hidden aggregate to the bounded walk.
+func (e opaqueVerifyWrapper) Unwrap() error { return e.cause }
+
 // TestVerifyFailures_WrappedJoin separates each cause through two wrappers, retaining context.
 func TestVerifyFailures_WrappedJoin(t *testing.T) {
 	drift := errors.New("target missing")
@@ -204,8 +405,9 @@ func TestVerifyFailures_DepthBoundary(t *testing.T) {
 		t.Fatalf("join at depth limit not opened: %v", got)
 	}
 	beyond := fmt.Errorf("beyond: %w", wrapped)
-	if got := verifyFailures(beyond); len(got) != 1 || !errors.Is(got[0], beyond) || got[0].Error() != beyond.Error() {
-		t.Fatalf("join beyond depth limit changed: %v", got)
+	if got := verifyFailures(beyond); len(got) != 1 || !errors.Is(got[0], beyond) ||
+		got[0].bound != "depth" || !strings.Contains(got[0].Error(), beyond.Error()) {
+		t.Fatalf("join beyond depth limit not marked unopened: %v", got)
 	}
 }
 
