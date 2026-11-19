@@ -118,6 +118,9 @@ func verifyFailures(err error) []verifyFailure {
 func wrappedVerifyFailures(failure verifyFailure) ([]verifyFailure, verifyFailure) {
 	next := failure.cause
 	surface := failure.surface
+	if failure.cursor != nil {
+		next = failure.cursor
+	}
 	for depth := 0; next != nil && depth <= maxVerifyDepth; depth++ {
 		if joined, ok := next.(interface{ Unwrap() []error }); ok {
 			return prefixVerifyFailures(failure.cause, next, joined.Unwrap(), surface), failure
@@ -148,6 +151,7 @@ func prefixVerifyFailures(original, joined error, causes []error, surface bool) 
 			part.cause = errors.Join(causes[i:]...)
 			part.bound, part.count = "expansion", len(causes)-i
 		}
+		part.cursor = part.cause
 		part.cause = verifyFailurePart{prefix: prefix, suffix: suffix, cause: part.cause, surface: surface}
 		parts = append(parts, part)
 	}
@@ -156,8 +160,10 @@ func prefixVerifyFailures(original, joined error, causes []error, surface bool) 
 
 // verifyFailure distinguishes an opened cause from an aggregate left unopened at a bound.
 // count records immediate pending failures; their nested failure count can remain unknown.
+// cursor selects the input cause without charging the diagnostic envelope to the depth bound.
 type verifyFailure struct {
 	cause   error
+	cursor  error
 	bound   string
 	count   int
 	surface bool

@@ -282,8 +282,16 @@ func TestVerifyAgentContext_DepthBound(t *testing.T) {
 			for i := 0; i < tc.depth && i <= maxVerifyDepth; i++ {
 				wrapped = fmt.Errorf("file: %w", wrapped)
 			}
-			rep := verificationFailureReport(wrapped)
-			assertVerificationBoundReport(t, rep, "agent-harness", tc.stopping, "file:")
+			for _, nested := range []bool{false, true} {
+				t.Run(fmt.Sprintf("outer_join=%t", nested), func(t *testing.T) {
+					err := wrapped
+					if nested {
+						err = errors.Join(err)
+					}
+					rep := verificationFailureReport(err)
+					assertVerificationBoundReport(t, rep, "agent-harness", tc.stopping, "file:")
+				})
+			}
 		})
 	}
 }
@@ -401,12 +409,28 @@ func TestVerifyFailures_DepthBoundary(t *testing.T) {
 	for i := 0; i < maxVerifyDepth; i++ {
 		wrapped = fmt.Errorf("layer: %w", wrapped)
 	}
-	if got := verifyFailures(wrapped); len(got) != 2 || !errors.Is(got[0], first) || !errors.Is(got[1], second) {
+	beyond := fmt.Errorf("beyond: %w", wrapped)
+	for _, nested := range []bool{false, true} {
+		t.Run(fmt.Sprintf("outer_join=%t", nested), func(t *testing.T) {
+			at, over := wrapped, beyond
+			if nested {
+				at, over = errors.Join(at), errors.Join(over)
+			}
+			assertVerifyDepthBoundary(t, at, over, beyond, first, second)
+		})
+	}
+}
+
+// assertVerifyDepthBoundary requires both selected causes at eight wrappers and a stopping
+// aggregate at nine, retaining diagnostic text and identities through an outer join.
+func assertVerifyDepthBoundary(t *testing.T, at, over, unopened, first, second error) {
+	t.Helper()
+	if got := verifyFailures(at); len(got) != 2 || got[0].bound != "" || got[1].bound != "" ||
+		!errors.Is(got[0], first) || !errors.Is(got[1], second) {
 		t.Fatalf("join at depth limit not opened: %v", got)
 	}
-	beyond := fmt.Errorf("beyond: %w", wrapped)
-	if got := verifyFailures(beyond); len(got) != 1 || !errors.Is(got[0], beyond) ||
-		got[0].bound != "depth" || !strings.Contains(got[0].Error(), beyond.Error()) {
+	if got := verifyFailures(over); len(got) != 1 || !errors.Is(got[0], unopened) ||
+		got[0].bound != "depth" || !strings.Contains(got[0].Error(), unopened.Error()) {
 		t.Fatalf("join beyond depth limit not marked unopened: %v", got)
 	}
 }
