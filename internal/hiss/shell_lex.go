@@ -399,6 +399,7 @@ type HereDoc struct {
 	nested     bool
 	data       bool
 	appendFile bool
+	pipedWrite bool
 	// executes marks a forwarding pipe or a literal file invoked later.
 	executes bool
 	// targets and offset retain literal output names and their definition boundary.
@@ -530,8 +531,17 @@ func hereDocOwner(line string, spans [][2]int, index int) HereDoc {
 	start, end, nested := hereDocOwnerBounds(line, spans[index][0])
 	shape := readHereDocShape(line, spans, start, end)
 	doc := classifyHereDoc(shape, index, line[end:])
-	doc.offset, doc.codeStart, doc.nested = end, start, nested
+	doc.offset, doc.codeStart, doc.nested = hereDocDefinitionEnd(line, end, doc.pipedWrite), start, nested
 	return doc
+}
+
+// hereDocDefinitionEnd places piped file definitions at the end of their receiving stage.
+func hereDocDefinitionEnd(line string, end int, piped bool) int {
+	if !piped || end >= len(line) {
+		return end
+	}
+	_, recvEnd := hereDocCommandBounds(line[end+1:], 0)
+	return end + 1 + recvEnd
 }
 
 // hereDocCommandBounds selects the unquoted command boundaries around one redirect.

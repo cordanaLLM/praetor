@@ -72,7 +72,19 @@ func hereDocDoubleWord(text string) (string, int, bool) {
 	return "", 0, false
 }
 
-// hereDocLiteralCommand reads an assignment-prefixed command with the shared tokenizer.
+var (
+	sudoValuelessLong = map[string]bool{
+		"--askpass": true, "--background": true, "--preserve-env": true, "--set-home": true,
+		"--reset-timestamp": true, "--remove-timestamp": true, "--non-interactive": true,
+		"--preserve-groups": true, "--stdin": true,
+	}
+	sudoValueLong = map[string]bool{
+		"--user": true, "--group": true, "--close-from": true, "--host": true,
+		"--prompt": true, "--chroot": true, "--command-timeout": true, "--other-user": true,
+	}
+)
+
+// hereDocLiteralCommand reads an assignment-prefixed command and unwraps privilege wrappers.
 func hereDocLiteralCommand(text string) (string, []string) {
 	match := hereDocCommand.FindStringSubmatchIndex(text)
 	if len(match) < 4 {
@@ -82,7 +94,142 @@ func hereDocLiteralCommand(text string) (string, []string) {
 	if err != nil {
 		return "", nil
 	}
-	return literalHereDocWord(text[match[2]:match[3]]), args
+	return hereDocUnwrapCommand(literalHereDocWord(text[match[2]:match[3]]), args)
+}
+
+// hereDocUnwrapCommand strips privilege wrappers whose non-command options are proven.
+func hereDocUnwrapCommand(program string, args []string) (string, []string) {
+	for depth := 0; depth < maxShellWrappers && hereDocWrapper(program); depth++ {
+		next, rest, ok := hereDocStepWrapper(hereDocBase(program), args)
+		if !ok || next == "cd" || next == "pushd" {
+			return program, args
+		}
+		program, args = next, rest
+	}
+	return program, args
+}
+
+// hereDocWrapper names the privilege and environment launchers around an owner command.
+func hereDocWrapper(program string) bool {
+	switch hereDocBase(program) {
+	case "sudo", "doas", "env":
+		return true
+	}
+	return false
+}
+
+// hereDocStepWrapper consumes one wrapper's non-command options and environment assignments.
+func hereDocStepWrapper(wrapper string, args []string) (string, []string, bool) {
+	for i := 0; i < len(args) && i < MaxShellFields; i++ {
+		word := literalHereDocWord(args[i])
+		if word == "--" {
+			return hereDocNextProgram(wrapper, args[i+1:])
+		}
+		if strings.HasPrefix(word, "-") {
+			step, ok := hereDocWrapperOption(wrapper, word, args[i+1:])
+			if !ok {
+				return "", nil, false
+			}
+			i += step
+			continue
+		}
+		if hereDocWrapperAssignment(wrapper, word) {
+			continue
+		}
+		return word, args[i+1:], word != ""
+	}
+	return "", nil, false
+}
+
+// hereDocNextProgram reads the literal command word after a wrapper's option terminator.
+func hereDocNextProgram(wrapper string, args []string) (string, []string, bool) {
+	for i := 0; i < len(args) && i < MaxShellFields; i++ {
+		word := literalHereDocWord(args[i])
+		if hereDocWrapperAssignment(wrapper, word) {
+			continue
+		}
+		return word, args[i+1:], word != "" && !strings.HasPrefix(word, "-")
+	}
+	return "", nil, false
+}
+
+// hereDocWrapperAssignment recognizes wrapper-level environment assignments outside doas.
+func hereDocWrapperAssignment(wrapper, word string) bool {
+	return wrapper != "doas" && shellAssignment.MatchString(word)
+}
+
+// hereDocWrapperOption validates one non-command wrapper flag and its value arity.
+func hereDocWrapperOption(wrapper, option string, rest []string) (int, bool) {
+	switch wrapper {
+	case "sudo":
+		return hereDocSudoOption(option, rest)
+	case "doas":
+		if strings.HasPrefix(option, "--") {
+			return 0, false
+		}
+		return hereDocShortOption(option, "nL", "uCa", rest)
+	case "env":
+		return hereDocEnvOption(option, rest)
+	}
+	return 0, false
+}
+
+// hereDocSudoOption admits non-command sudo options documented in sudo(8).
+func hereDocSudoOption(option string, rest []string) (int, bool) {
+	if !strings.HasPrefix(option, "--") {
+		return hereDocShortOption(option, "ABEHkKnPS", "ughCpRTU", rest)
+	}
+	if sudoValuelessLong[option] {
+		return 0, true
+	}
+	if sudoValueLong[option] {
+		return hereDocOptionValue(rest)
+	}
+	name, value, ok := strings.Cut(option, "=")
+	return 0, ok && value != "" && (sudoValueLong[name] || name == "--preserve-env")
+}
+
+// hereDocEnvOption admits non-command env options documented in env(1).
+func hereDocEnvOption(option string, rest []string) (int, bool) {
+	if option == "-" || option == "--ignore-environment" || option == "--null" {
+		return 0, true
+	}
+	if option == "--unset" {
+		return hereDocOptionValue(rest)
+	}
+	if value, ok := strings.CutPrefix(option, "--unset="); ok {
+		return 0, value != ""
+	}
+	if strings.HasPrefix(option, "--") {
+		return 0, false
+	}
+	return hereDocShortOption(option, "i0", "u", rest)
+}
+
+// hereDocShortOption parses a short option cluster with optional trailing value letter.
+func hereDocShortOption(option, flags, values string, rest []string) (int, bool) {
+	for i := 1; i < len(option) && i < maxHereDocLineBytes; i++ {
+		c := rune(option[i])
+		if strings.ContainsRune(flags, c) {
+			continue
+		}
+		if !strings.ContainsRune(values, c) {
+			return 0, false
+		}
+		if i+1 < len(option) {
+			return 0, true
+		}
+		return hereDocOptionValue(rest)
+	}
+	return 0, len(option) > 1
+}
+
+// hereDocOptionValue consumes one literal option argument from rest.
+func hereDocOptionValue(rest []string) (int, bool) {
+	if len(rest) == 0 || literalHereDocWord(rest[0]) == "" {
+		return 0, false
+	}
+	return 1, true
 }
 
 // hereDocFileTargets admits only commands that copy exactly stdin into literal files.
@@ -308,9 +455,8 @@ func (f *hereDocFileFlow) define(start, end int) {
 func (f *hereDocFileFlow) defineTarget(index int, target string) {
 	doc := &f.docs[index]
 	file := hereDocResolvedFile(target, f.dir)
-	if doc.appendFile && len(f.definitions[file]) == 0 {
-		doc.Reason = "unproven append without file definition"
-		f.uncertain = doc.Reason
+	if doc.pipedWrite {
+		f.definitions[file] = []int{index}
 		return
 	}
 	if !doc.appendFile {
@@ -325,7 +471,7 @@ func (f *hereDocFileFlow) invoke(file string, start int) error {
 		return nil
 	}
 	indices := f.definitions[file]
-	if len(indices) == 0 {
+	if len(indices) == 0 || f.unprovenDefinition(indices) {
 		return nil
 	}
 	if len(indices) > maxShellHeredocs {
@@ -347,6 +493,21 @@ func (f *hereDocFileFlow) invoke(file string, start int) error {
 	f.written = start
 	f.growth += body.Len()
 	return nil
+}
+
+// unprovenDefinition declines script execution when the base definition came from a pipe or bare append.
+func (f *hereDocFileFlow) unprovenDefinition(indices []int) bool {
+	if i := indices[0]; f.docs[i].appendFile && !f.docs[i].pipedWrite {
+		f.docs[i].Reason = "unproven append without file definition"
+		return true
+	}
+	for j := 0; j < len(indices) && j < maxShellHeredocs; j++ {
+		if i := indices[j]; f.docs[i].pipedWrite {
+			f.docs[i].Reason = "unproven piped file definition"
+			return true
+		}
+	}
+	return false
 }
 
 // hereDocResolvedFile resolves only literal paths against a known lexical directory.

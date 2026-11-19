@@ -52,10 +52,14 @@ func TestSplitHereDocsShellPipes(t *testing.T) {
 		code    bool
 	}{
 		{"cat <<'EOF' | bash", true},
+		{"cat <<'EOF' | sh", true},
+		{"cat <<'EOF' | sudo bash", true},
 		{"cat <<'EOF' | /bin/sh -s", true},
 		{"tee notes <<'EOF' | dash", true},
 		{"cat <<'EOF' | FOO=1 ash", true},
 		{"cat <<'EOF' | tee file", false},
+		{"cat <<'EOF' | tee -a -i file", false},
+		{"cat <<'EOF' | sudo tee file", false},
 		{"cat > notes <<'EOF' | bash", false},
 		{"cat <<'EOF' | bash -c true", false},
 		{"cat <<'EOF' | bash script.sh", false},
@@ -391,6 +395,31 @@ func TestHereDocDefinitionBound(t *testing.T) {
 			}
 			if err != nil || strings.Count(code, "echo sentinel") != tc.copies-1 {
 				t.Fatalf("exact definition cap: %q, %v", code, err)
+			}
+		})
+	}
+}
+
+// TestSplitHereDocsRound4Wrappers pins proven data wrappers and keeps wrapped shells non-data.
+func TestSplitHereDocsRound4Wrappers(t *testing.T) {
+	for _, tc := range []struct {
+		name, header       string
+		wantCode, wantData bool
+	}{
+		{"sudo tee data", "sudo tee out.md <<'EOF'", false, true},
+		{"doas tee data", "doas -u root tee -a out.md <<'EOF'", false, true},
+		{"env cat data", "env -i -u OLD FOO=1 cat <<'EOF'", false, true},
+		{"cat pipe tee data", "cat <<'EOF' | tee -a file", false, true},
+		{"sudo sh command", "sudo sh -c 'tee out.md' <<'EOF'", false, false},
+		{"sudo user bash", "sudo -u x bash <<'EOF'", true, false},
+		{"env bash", "env FOO=1 bash <<'EOF'", true, false},
+		{"cat pipe sh", "cat <<'EOF' | sh", true, false},
+		{"cat pipe sudo bash", "cat <<'EOF' | sudo bash", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, docs, err := SplitHereDocs(tc.header + "\necho sentinel\nEOF\n")
+			if err != nil || len(docs) != 1 || strings.Contains(code, "echo sentinel") != tc.wantCode || docs[0].Data() != tc.wantData {
+				t.Fatalf("wrapper classification: code %q, docs %#v, err %v", code, docs, err)
 			}
 		})
 	}

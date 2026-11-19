@@ -21,7 +21,14 @@ func TestShellFields(t *testing.T) {
 		{"cat heredoc data", "cat <<'EOF'\nreviewer's\nEOF", []string{"cat", ";"}},
 		{"assignment cat data", "FOO=1 cat > out.md <<'EOF'\nreviewer's\nEOF", []string{"FOO=1", "cat", ">", "out.md", ";"}},
 		{"absolute cat data", "/usr/bin/cat <<'EOF'\nreviewer's\nEOF", []string{"/usr/bin/cat", ";"}},
-		{"sudo tee code", "sudo tee out.md <<'EOF'\ngh pr view 1\nEOF", []string{"sudo", "tee", "out.md", ";", "gh", "pr", "view", "1", ";"}},
+		{"sudo tee code", "sudo tee out.md <<'EOF'\ngh pr view 1\nEOF", []string{"sudo", "tee", "out.md", ";"}},
+		{"doas tee data", "doas -u root tee -a out.md <<'EOF'\ngh pr view 1\nEOF", []string{"doas", "-u", "root", "tee", "-a", "out.md", ";"}},
+		{"env cat data", "env -u BAR FOO=1 cat <<'EOF'\ngh pr view 1\nEOF", []string{"env", "-u", "BAR", "FOO=1", "cat", ";"}},
+		{"piped tee options data", "cat <<'EOF' | tee -a -i file\ngh pr view 1\nEOF", []string{"cat", "|", "tee", "-a", "-i", "file", ";"}},
+		{"sudo user bash code", "sudo -u x bash <<'EOF'\ngh pr view 1\nEOF", []string{"sudo", "-u", "x", "bash", ";", "gh", "pr", "view", "1", ";"}},
+		{"env bash code", "env FOO=1 bash <<'EOF'\ngh pr view 1\nEOF", []string{"env", "FOO=1", "bash", ";", "gh", "pr", "view", "1", ";"}},
+		{"piped sh code", "cat <<'EOF' | sh\ngh pr view 1\nEOF", []string{"cat", "|", "sh", ";", "gh", "pr", "view", "1", ";"}},
+		{"piped sudo bash code", "cat <<'EOF' | sudo bash\ngh pr view 1\nEOF", []string{"cat", "|", "sudo", "bash", ";", "gh", "pr", "view", "1", ";"}},
 		{"heredoc", "cat <<'EOF'\nreviewer's note\nEOF\ngh pr view 1", []string{"cat", ";", "gh", "pr", "view", "1"}},
 		{"two heredocs", "cat <<A <<-B\none\nA\n\ttwo\n\tB\n", []string{"cat", ";"}},
 		{"delimiter trailing space", "cat <<EOF\nEOF \nreviewer's\nEOF\n", []string{"cat", ";"}},
@@ -55,6 +62,7 @@ func TestShellFieldsBoundaries(t *testing.T) {
 		strings.Repeat("x ", maxRunScriptFields) + "x",
 		strings.Repeat("x ", maxRunScriptFields+1), `git -C "unclosed`, "cat <<EOF\nmissing\n", `cat <<<'it's'`,
 		"bash <<EOF\nreviewer's\nEOF\n",
+		"sudo sh -c 'tee out.md' <<'EOF'\ngh pr view 1\nEOF\n",
 	} {
 		if got, err := ShellFields(script); err == nil || got != nil {
 			t.Errorf("unreadable script accepted: %d fields, %v", len(got), err)

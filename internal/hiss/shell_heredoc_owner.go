@@ -190,11 +190,11 @@ func hereDocDataOwner(shape hereDocShape, doc HereDoc, args []string, tail strin
 		doc.Reason = "unproven tee arguments or file operand"
 		return doc
 	}
+	doc.targets, doc.appendFile = hereDocFileTargets(shape), shape.appendFile || hereDocTeeAppend(doc.Command, args)
 	doc.executes = hereDocPipeShell(shape, tail)
 	if !doc.executes {
-		doc.Reason = hereDocPipeReason(tail)
+		return hereDocPipeData(shape, doc, tail)
 	}
-	doc.targets, doc.appendFile = hereDocFileTargets(shape), shape.appendFile || hereDocTeeAppend(doc.Command, args)
 	return doc
 }
 
@@ -277,21 +277,28 @@ func hereDocTeeAppend(program string, args []string) bool {
 	return false
 }
 
-// hereDocPipeReason names receivers outside the proven forwarding allow-list.
-func hereDocPipeReason(tail string) string {
+// hereDocPipeData admits a proven data sink at the end of a single forwarding pipe.
+func hereDocPipeData(source hereDocShape, doc HereDoc, tail string) HereDoc {
 	if !strings.HasPrefix(tail, "|") || strings.HasPrefix(tail, "||") {
-		return ""
+		return doc
+	}
+	if source.output || !hereDocForwards(source.command) {
+		doc.Reason = "unproven pipe receiver, forwarding stage or shell stdin arguments"
+		return doc
 	}
 	command, err := normalizeShellCode(tail[1:])
 	if err != nil {
-		return "unproven pipe receiver fields"
+		doc.Reason = "unproven pipe receiver fields"
+		return doc
 	}
 	_, end := hereDocCommandBounds(command, 0)
-	program, _ := hereDocLiteralCommand(command[:end])
-	if hereDocDataReader(program) && end == len(command) {
-		return hereDocPipeDataReason(command, program, end)
+	sink := readHereDocShape(command, nil, 0, end)
+	program, args := hereDocLiteralCommand(sink.command)
+	if !hereDocDataReader(program) || end != len(command) {
+		doc.Reason = "unproven pipe receiver, forwarding stage or shell stdin arguments"
+		return doc
 	}
-	return "unproven pipe receiver, forwarding stage or shell stdin arguments"
+	return hereDocPipeSink(doc, sink, program, args)
 }
 
 // hereDocTeeArgs proves literal file operands and the tee options documented to copy stdin.
@@ -309,11 +316,37 @@ func hereDocTeeArgs(args []string) bool {
 	return true
 }
 
-// hereDocPipeDataReason declines file writes beyond the proven single-stage file walker.
-func hereDocPipeDataReason(command, program string, end int) string {
-	shape := readHereDocShape(command, nil, 0, end)
-	if shape.output || shape.reason != "" || hereDocBase(program) == "tee" {
+// hereDocPipeSink validates a data sink's redirects and operands and records piped file targets.
+func hereDocPipeSink(doc HereDoc, sink hereDocShape, program string, args []string) HereDoc {
+	doc.Reason = hereDocPipeDataReason(sink, program, args)
+	if doc.Reason != "" {
+		return doc
+	}
+	if targets := hereDocFileTargets(sink); len(targets) > 0 {
+		doc.targets = append(doc.targets, targets...)
+		doc.pipedWrite = true
+	}
+	return doc
+}
+
+// hereDocPipeDataReason checks a piped data sink's redirects and argument allow-list.
+func hereDocPipeDataReason(sink hereDocShape, program string, args []string) string {
+	if sink.reason != "" {
 		return "unproven piped file definition"
+	}
+	switch hereDocBase(program) {
+	case "tee":
+		if sink.output || !hereDocTeeArgs(args) {
+			return "unproven tee arguments or file operand"
+		}
+	case "cat":
+		if !hereDocForwards(sink.command) {
+			return "unproven cat stdin operands"
+		}
+	case "gh":
+		if sink.output {
+			return "unproven piped file definition"
+		}
 	}
 	return ""
 }
