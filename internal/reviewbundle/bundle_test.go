@@ -603,3 +603,179 @@ func TestBundleReviewJSONBytes(t *testing.T) {
 		}
 	}
 }
+
+// bundleInventoryBuild requires a complete, valid inventory with the exact expected file states.
+func bundleInventoryBuild(t *testing.T, dir string, opts Options, want []File, omitted []string) Bundle {
+	t.Helper()
+	b, err := Build(t.Context(), dir, "target", "topic", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(b.Files, want) || !slices.Equal(b.Cut, omitted) || !slices.Equal(b.OmittedPaths, omitted) {
+		t.Fatalf("inventory: files=%+v cut=%q omitted=%q; want files=%+v omitted=%q", b.Files, b.Cut, b.OmittedPaths, want, omitted)
+	}
+	if err := Validate(b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// bundleInventoryRepo prepares changed paths inside and outside a caller's subdirectory.
+func bundleInventoryRepo(t *testing.T) (string, []File) {
+	t.Helper()
+	dir := bundleRepo(t)
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- Temporary fixture directory needs owner traversal permission.
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bundleGit(t, dir, "checkout", "-q", "target")
+	bundleWrite(t, dir, ".gitattributes", "shared.txt diff=inventory\nrenamed.txt diff=inventory\nsub/inside.txt -diff\n")
+	bundleCommit(t, dir)
+	bundleGit(t, dir, "checkout", "-qB", "topic", "target")
+	want := []File{{Path: "shared.txt", Content: "topic outside\n"}, {Path: "sub/inside.txt", Content: "topic inside\n"}, {Path: "é.txt", Content: "unicode\n"}}
+	for i := 0; i < len(want); i++ {
+		bundleWrite(t, dir, want[i].Path, want[i].Content)
+	}
+	bundleCommit(t, dir)
+	return dir, want
+}
+
+// TestBundleInventoryRelative keeps root-relative content, including paths outside the caller's directory.
+func TestBundleInventoryRelative(t *testing.T) {
+	cases := []struct {
+		name, subdir string
+		relative     bool
+	}{{"root-control", "", false}, {"root-relative", "", true}, {"subdirectory-control", "sub", false}, {"subdirectory-relative", "sub", true}}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			dir, want := bundleInventoryRepo(t)
+			control := bundleInventoryBuild(t, dir, Options{}, want, nil)
+			if tc.relative {
+				bundleGit(t, dir, "config", "diff.relative", "true")
+			}
+			got := bundleInventoryBuild(t, filepath.Join(dir, tc.subdir), Options{}, want, nil)
+			if !reflect.DeepEqual(got, control) {
+				t.Fatalf("repository preference changed bundle: got %+v, control %+v", got, control)
+			}
+		})
+	}
+}
+
+// bundleGitlinkRepo moves a cached gitlink between existing commits without fetching a submodule.
+func bundleGitlinkRepo(t *testing.T) (string, []File) {
+	t.Helper()
+	dir := bundleRepo(t)
+	first := bundleGit(t, dir, "rev-parse", "target")
+	bundleWrite(t, dir, "seed.txt", "second existing commit\n")
+	bundleCommit(t, dir)
+	second := bundleGit(t, dir, "rev-parse", "topic")
+	bundleGit(t, dir, "checkout", "-q", "target")
+	bundleWrite(t, dir, ".gitmodules", "[submodule \"module\"]\n\tpath = module\n")
+	bundleGit(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+first+",module")
+	bundleCommit(t, dir)
+	bundleGit(t, dir, "checkout", "-qB", "topic", "target")
+	bundleWrite(t, dir, "a.txt", "topic blob\n")
+	bundleGit(t, dir, "update-index", "--cacheinfo", "160000,"+second+",module")
+	bundleCommit(t, dir)
+	return dir, []File{{Path: "a.txt", Content: "topic blob\n"}, {Path: "module", Binary: true}}
+}
+
+// TestBundleInventoryGitlink retains changed gitlinks despite repository-local ignore preferences.
+func TestBundleInventoryGitlink(t *testing.T) {
+	cases := []struct{ name, key, value string }{
+		{"control", "", ""}, {"all", "diff.ignoreSubmodules", "all"},
+		{"dirty", "diff.ignoreSubmodules", "dirty"}, {"untracked", "diff.ignoreSubmodules", "untracked"},
+		{"submodule-all", "submodule.module.ignore", "all"},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			dir, want := bundleGitlinkRepo(t)
+			control := bundleInventoryBuild(t, dir, Options{}, want, nil)
+			if tc.key != "" {
+				bundleGit(t, dir, "config", tc.key, tc.value)
+			}
+			got := bundleInventoryBuild(t, dir, Options{}, want, nil)
+			if !reflect.DeepEqual(got, control) {
+				t.Fatalf("gitlink preference changed bundle: got %+v, control %+v", got, control)
+			}
+			cut := bundleInventoryBuild(t, dir, Options{MaxFiles: 1}, want[:1], []string{"module"})
+			cut.Cut = nil
+			if err := Validate(cut); err == nil {
+				t.Fatal("unmarked gitlink omission accepted")
+			}
+		})
+	}
+}
+
+// TestBundleInventoryPreferences checks each presentation preference against an unconfigured control.
+func TestBundleInventoryPreferences(t *testing.T) {
+	cases := []struct{ name, key, value string }{
+		{"control", "", ""}, {"copies", "diff.renames", "copies"}, {"order", "diff.orderFile", ".git/reverse-order"},
+		{"no-prefix", "diff.noprefix", "true"}, {"source-prefix", "diff.srcPrefix", "source/"},
+		{"destination-prefix", "diff.dstPrefix", "destination/"}, {"mnemonic-prefix", "diff.mnemonicPrefix", "true"},
+		{"quote-path", "core.quotePath", "true"}, {"external", "diff.external", "inventory-driver-must-not-run"},
+		{"driver", "diff.inventory.command", "inventory-driver-must-not-run"},
+		{"textconv", "diff.inventory.textconv", "inventory-converter-must-not-run"},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			dir, want := bundleInventoryRepo(t)
+			bundleGit(t, dir, "restore", "--source=target", "--staged", "--worktree", "--", "shared.txt")
+			original, err := contextopt.ReadSnapshot(t.Context(), filepath.Join(dir, "shared.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			bundleGit(t, dir, "mv", "shared.txt", "renamed.txt")
+			bundleCommit(t, dir)
+			want = []File{{Path: "renamed.txt", Content: string(original)}, {Path: "shared.txt", Deleted: true}, want[1], want[2]}
+			control := bundleInventoryBuild(t, dir, Options{}, want, nil)
+			if err := os.WriteFile(filepath.Join(dir, ".git", "reverse-order"), []byte("é.txt\nsub/*\nshared.txt\nrenamed.txt\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tc.key != "" {
+				bundleGit(t, dir, "config", tc.key, tc.value)
+			}
+			got := bundleInventoryBuild(t, dir, Options{}, want, nil)
+			if !reflect.DeepEqual(got, control) {
+				t.Fatalf("presentation preference changed bundle: got %+v, control %+v", got, control)
+			}
+			bundleInventoryBuild(t, dir, Options{MaxFiles: 1}, want[:1], []string{"shared.txt", "sub/inside.txt", "é.txt"})
+		})
+	}
+}
+
+// TestBundleInventoryIndexState ignores sparse checkout and uncommitted index or working-tree state.
+func TestBundleInventoryIndexState(t *testing.T) {
+	cases := []string{"control", "sparse", "index"}
+	for i := 0; i < len(cases); i++ {
+		name := cases[i]
+		t.Run(name, func(t *testing.T) {
+			dir, want := bundleInventoryRepo(t)
+			control := bundleInventoryBuild(t, dir, Options{}, want, nil)
+			switch name {
+			case "sparse":
+				bundleGit(t, dir, "config", "core.sparseCheckout", "true")
+				bundleGit(t, dir, "config", "core.sparseCheckoutCone", "true")
+				bundleGit(t, dir, "config", "index.sparse", "true")
+				if err := os.WriteFile(filepath.Join(dir, ".git", "info", "sparse-checkout"), []byte("/*\n!/*/\n/sub/\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				bundleGit(t, dir, "read-tree", "-mu", "HEAD")
+			case "index":
+				bundleGit(t, dir, "update-index", "--skip-worktree", "shared.txt")
+				bundleGit(t, dir, "update-index", "--assume-unchanged", "é.txt")
+				if err := os.WriteFile(filepath.Join(dir, "uncommitted.txt"), []byte("not in either tree\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				bundleGit(t, dir, "add", "-N", "uncommitted.txt")
+			}
+			got := bundleInventoryBuild(t, filepath.Join(dir, "sub"), Options{}, want, nil)
+			if !reflect.DeepEqual(got, control) {
+				t.Fatalf("index state changed bundle: got %+v, control %+v", got, control)
+			}
+		})
+	}
+}

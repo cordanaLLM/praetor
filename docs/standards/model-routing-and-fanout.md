@@ -17,7 +17,7 @@ standardsctl models bundle --repo . --target origin/main --head feature/topic --
 
 The command provides three guarantees, exercised by `internal/reviewbundle/bundle_test.go` and `cmd/standardsctl/models_bundle_test.go`:
 
-- It pins both refs and reads the predicted merge tree for paths the head changed since the merge base. Newer target edits survive in the review content; unchanged target-only paths are excluded.
+- It pins both refs and reads the predicted merge tree for paths that differ between the target tip and that tree. Newer target edits survive in the review content; unchanged target-only paths are excluded.
 - It reports conflicts with their paths and Git classifications while still returning a bundle and exit status 0. Invalid arguments or refs return status 2 with a reason.
 - It bounds retained content to 64 KiB per file, 200 files, and 2 MiB total by default. `--max-file-bytes` and `--max-files` adjust the first two limits. Every shortened or omitted path appears in `cut`; text output marks each file `TRUNCATED: yes|no` and each cut path `TRUNCATED: yes`. Deleted and binary files carry no content. Total bytes count content, excluding metadata; binary detection samples Git's first 8000 bytes for NULs.
 

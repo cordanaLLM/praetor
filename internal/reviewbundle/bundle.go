@@ -7,6 +7,7 @@ package reviewbundle
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -100,7 +101,10 @@ func Build(ctx context.Context, repo, target, head string, opts Options) (Bundle
 	if err := predictMerge(ctx, repo, &b); err != nil {
 		return Bundle{}, err
 	}
-	paths, err := util.RunGitProbe(ctx, repo, util.MaxCommandOutputBytes, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", b.Target, b.Tree, "--")
+	// Plumbing and explicit overrides keep root-relative names in bytewise path order.
+	paths, err := util.RunGitProbe(ctx, repo, util.MaxCommandOutputBytes,
+		"diff-tree", "-r", "--no-commit-id", "--name-only", "-z", "--no-renames", "--no-relative",
+		"--ignore-submodules=none", "--no-ext-diff", "--no-textconv", "-O", os.DevNull, b.Target, b.Tree, "--")
 	if err != nil {
 		return Bundle{}, fmt.Errorf("merge changed paths: %w", err)
 	}
