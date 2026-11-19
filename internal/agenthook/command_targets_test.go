@@ -191,6 +191,7 @@ func TestCommandTargetsEmptyCommand(t *testing.T) {
 func TestCommandTargetForms(t *testing.T) {
 	governed, plain := repository(t, true), repository(t, false)
 	nested := filepath.Join(governed, "nested space")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal; 0o700 grants no group or other access
 	if err := os.Mkdir(nested, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -295,4 +296,16 @@ func TestCommandTargetsPreserveWorkspacePrecedence(t *testing.T) {
 	if _, verdict, ok := resolveGovernedRoot(t.Context(), Registration{Event: EventPreTool}, canonical, in); ok || verdict.Outcome != Deny {
 		t.Fatalf("payload probe errors must deny: %+v %v", verdict, ok)
 	}
+}
+
+// TestWorkspaceTargetsHereDocs derives a governed target only from executing bodies.
+func TestWorkspaceTargetsHereDocs(t *testing.T) {
+	governed, plain := repository(t, true), repository(t, false)
+	checkAgentHereDocReader(t, "git -C '"+governed+"' status", func(script string) bool {
+		got, err := commandTargetRoot(t.Context(), script, plain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got == governed
+	})
 }

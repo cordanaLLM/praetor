@@ -237,3 +237,14 @@ func TestSBOMWorkflowHereDocs(t *testing.T) {
 		})
 	}
 }
+
+// TestSBOMReaderHereDocs sees an executing generator and ignores data.
+func TestSBOMReaderHereDocs(t *testing.T) {
+	checkHereDocReader(t, "syft dir:. -o sbom.json", func(script string) bool {
+		fields, err := scriptFields(script)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return runInvokesSBOMGenerator(fields)
+	})
+}

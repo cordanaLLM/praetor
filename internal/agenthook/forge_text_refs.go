@@ -98,22 +98,12 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 	if baseDir == "" {
 		baseDir = root
 	}
-	calls, err := collectGHWriteCalls(canonical.Command, baseDir)
-	if err != nil {
-		return forgeTextDeny("shell reader: "+err.Error(), false)
-	}
-	_, bodies, err := hiss.SplitHereDocs(canonical.Command)
-	if err != nil {
-		return forgeTextDeny("shell reader: "+err.Error(), false)
-	}
-	if verdict := judgeHiddenHereDocs(ctx, bodies, baseDir, in); verdict.Outcome != Allow {
-		return verdict
-	}
-	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
-		calls[i].bodies = bodies
+	calls, hidden := prepareForgeTextCalls(ctx, canonical.Command, baseDir, in)
+	if hidden.Outcome != Allow {
+		return hidden
 	}
 	dirPolicies := make(map[string]ghDirPolicy, len(calls))
-	var notices []string
+	notices := appendUniqueNotice(nil, hidden.Notice)
 	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
 		dirPolicy, ok := dirPolicies[calls[i].dir]
 		if !ok {
@@ -127,6 +117,27 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 		notices = appendUniqueNotice(notices, verdict.Notice)
 	}
 	return Verdict{Outcome: Allow, Notice: strings.Join(notices, "; ")}
+}
+
+// prepareForgeTextCalls attaches data prose and preserves the hidden-body verdict notice.
+// Executing bodies already enter collectGHWriteCalls through the shared shell reader.
+func prepareForgeTextCalls(ctx context.Context, command, baseDir string, in Invocation) ([]ghWriteCall, Verdict) {
+	calls, err := collectGHWriteCalls(command, baseDir)
+	if err != nil {
+		return nil, forgeTextDeny("shell reader: "+err.Error(), false)
+	}
+	_, bodies, err := hiss.SplitHereDocs(command)
+	if err != nil {
+		return nil, forgeTextDeny("shell reader: "+err.Error(), false)
+	}
+	hidden := judgeHiddenHereDocs(ctx, bodies, baseDir, in)
+	if hidden.Outcome != Allow {
+		return nil, hidden
+	}
+	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
+		calls[i].bodies = bodies
+	}
+	return calls, hidden
 }
 
 // judgeHiddenHereDocs applies the base policy to write-shaped data bodies.

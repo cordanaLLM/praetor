@@ -317,3 +317,12 @@ func TestPolicyLeaseSHAExistingRefusals(t *testing.T) {
 		})
 	}
 }
+
+// TestLiteralCommitHereDocs inspects commit operands only in executing bodies.
+func TestLiteralCommitHereDocs(t *testing.T) {
+	dir, _ := leaseRepository(t)
+	checkAgentHereDocReader(t, "git show "+strings.Repeat("a", 40), func(script string) bool {
+		verdict := judgeLiteralCommitSHAs(t.Context(), script, dir)
+		return verdict.Outcome == Deny && strings.Contains(verdict.Reason, "local commit resolution failed")
+	})
+}

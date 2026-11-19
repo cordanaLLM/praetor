@@ -68,7 +68,8 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 	devRoot := filepath.Join(resolvedBase, "dev-root")
 	repoDir := filepath.Join(devRoot, "acme", "praetor")
 	initWorktreeTestRepo(t, repoDir)
-	if err := os.MkdirAll(filepath.Join(devRoot, topology.WorktreesContainer), 0o750); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal; 0o700 grants no group or other access
+	if err := os.MkdirAll(filepath.Join(devRoot, topology.WorktreesContainer), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(topology.DevRootEnv, devRoot)
@@ -79,7 +80,8 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 func initWorktreeTestRepo(t *testing.T, repoDir string) {
 	t.Helper()
 	gitDir := filepath.Join(repoDir, ".git")
-	if err := os.MkdirAll(gitDir, 0o750); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal; 0o700 grants no group or other access
+	if err := os.MkdirAll(gitDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
@@ -128,7 +130,8 @@ func TestWorktrees_Positive_DeclaredDevRootWorktreeAllowed(t *testing.T) {
 	// through GitCommonDir parent.
 	linkedWT := filepath.Join(fx.devRoot, topology.WorktreesContainer, "praetor-existing")
 	linkedGit := filepath.Join(fx.repoDir, ".git", topology.WorktreesContainer, "existing")
-	if err := os.MkdirAll(linkedGit, 0o750); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal; 0o700 grants no group or other access
+	if err := os.MkdirAll(linkedGit, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(linkedGit, "HEAD"), []byte("ref: refs/heads/existing\n"), 0o600); err != nil {
@@ -137,7 +140,8 @@ func TestWorktrees_Positive_DeclaredDevRootWorktreeAllowed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(linkedGit, "commondir"), []byte("../..\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(linkedWT, 0o750); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal; 0o700 grants no group or other access
+	if err := os.MkdirAll(linkedWT, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(linkedWT, ".git"), []byte("gitdir: "+linkedGit+"\n"), 0o600); err != nil {
@@ -236,7 +240,8 @@ func TestWorktrees_Negative_SymlinkedParentEscapingRootRefused(t *testing.T) {
 
 	outsideDir := t.TempDir()
 	claudeWorktrees := filepath.Join(fx.repoDir, ".claude", topology.WorktreesContainer)
-	if err := os.MkdirAll(claudeWorktrees, 0o750); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal; 0o700 grants no group or other access
+	if err := os.MkdirAll(claudeWorktrees, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	escapeLink := filepath.Join(claudeWorktrees, "escaped-parent")
@@ -348,4 +353,13 @@ func TestWorktrees_Negative_UnparsableWorktreeAddFailsClosed(t *testing.T) {
 			t.Fatalf("command %q: got %+v, want deny containing %q", tc.cmd, verdict, tc.want)
 		}
 	}
+}
+
+// TestWorktreeLocationsHereDocs refuses malformed worktree adds only in executing bodies.
+func TestWorktreeLocationsHereDocs(t *testing.T) {
+	policy := enforcingWorktreePolicy(t, t.TempDir())
+	checkAgentHereDocReader(t, "git worktree add --unknown-flag elsewhere", func(script string) bool {
+		verdict := policy.Command(script)
+		return verdict.Outcome == Deny && strings.Contains(verdict.Reason, "unknown option")
+	})
 }

@@ -392,14 +392,17 @@ func (l *shellLexer) arith(text string, i int, frame *shellFrame, b *strings.Bui
 type HereDoc struct {
 	Text    string
 	Command string
-	// shellPipe marks a data command whose output feeds a supported shell.
-	shellPipe bool
+	// executes marks a forwarding pipe or a literal file invoked later.
+	executes bool
+	// targets and offset retain literal output names and their definition boundary.
+	targets []string
+	offset  int
 }
 
 // Data reports whether the body remains data rather than code fed to a shell.
 func (h HereDoc) Data() bool {
 	word := hereDocBase(h.Command)
-	return !h.shellPipe && (word == "cat" || word == "tee" || word == "gh")
+	return !h.executes && (word == "cat" || word == "tee" || word == "gh")
 }
 
 // hereDocStdinArgs admits stdin-reading shell options, never -c or a script file.
@@ -419,7 +422,7 @@ type hereDocSplit struct {
 }
 
 // SplitHereDocs removes redirects and data bodies while retaining code bodies,
-// including data commands piped directly to a supported shell interpreter.
+// including forwarding pipes and literal files invoked later by the same script.
 func SplitHereDocs(script string) (string, []HereDoc, error) {
 	if len(script) > 1<<20 {
 		return "", nil, fmt.Errorf("here-document reader exceeds byte limit")
@@ -440,13 +443,22 @@ func SplitHereDocs(script string) (string, []HereDoc, error) {
 		}
 		script = script[end:]
 	}
-	if len(split.lexer.bodies) > 0 {
+	return split.finish()
+}
+
+// finish validates the final delimiter and follows bounded literal file invocations.
+func (s *hereDocSplit) finish() (string, []HereDoc, error) {
+	if len(s.lexer.bodies) > 0 {
 		return "", nil, fmt.Errorf("unterminated here-document")
 	}
-	for i := 0; i < len(split.docs) && i < maxShellHeredocs; i++ {
-		split.docs[i].Text = split.bodies[i].String()
+	for i := 0; i < len(s.docs) && i < maxShellHeredocs; i++ {
+		s.docs[i].Text = s.bodies[i].String()
 	}
-	return split.code.String(), split.docs, nil
+	code, err := followHereDocFiles(s.code.String(), s.docs)
+	if err != nil {
+		return "", nil, err
+	}
+	return code, s.docs, nil
 }
 
 // line passes each physical line through the existing lexer and preserves its newline.
@@ -495,7 +507,9 @@ func (s *hereDocSplit) codeLine(line string) error {
 	filtered.WriteString(line[pos:])
 	text := filtered.String()
 	for i := 0; i < len(s.lexer.spans) && i < maxShellHeredocs; i++ {
-		s.docs = append(s.docs, hereDocOwner(line, s.lexer.spans, i))
+		doc := hereDocOwner(line, s.lexer.spans, i)
+		doc.offset = s.code.Len() + hereDocCodeOffset(s.lexer.spans, doc.offset)
+		s.docs = append(s.docs, doc)
 		s.bodies = append(s.bodies, strings.Builder{})
 	}
 	s.code.WriteString(text)
@@ -504,19 +518,7 @@ func (s *hereDocSplit) codeLine(line string) error {
 
 // hereDocOwner finds the redirect's command word and whether its pipe feeds a shell.
 func hereDocOwner(line string, spans [][2]int, index int) HereDoc {
-	start, end := 0, len(line)
-	var quote QuoteStepper
-	for i := 0; i < len(line) && i < maxHereDocLineBytes; i++ {
-		if !quote.Open() && strings.ContainsRune(";&|()", rune(line[i])) {
-			if i < spans[index][0] {
-				start = i + 1
-			} else {
-				end = i
-				break
-			}
-		}
-		i = quote.Step(line, i)
-	}
+	start, end := hereDocCommandBounds(line, spans[index][0])
 	var command strings.Builder
 	pos := start
 	for i := 0; i < len(spans) && i < maxShellHeredocs; i++ {
@@ -532,7 +534,37 @@ func hereDocOwner(line string, spans [][2]int, index int) HereDoc {
 	if len(word) < 2 {
 		return HereDoc{}
 	}
-	return HereDoc{Command: word[1], shellPipe: hereDocPipeShell(command.String(), line[end:])}
+	return HereDoc{Command: word[1], executes: hereDocPipeShell(command.String(), line[end:]),
+		targets: hereDocFileTargets(command.String()), offset: end}
+}
+
+// hereDocCommandBounds selects the unquoted command boundaries around one redirect.
+func hereDocCommandBounds(line string, offset int) (int, int) {
+	start, end := 0, len(line)
+	var quote QuoteStepper
+	for i := 0; i < len(line) && i < maxHereDocLineBytes; i++ {
+		if !quote.Open() && strings.ContainsRune(";&|()", rune(line[i])) {
+			if i < offset {
+				start = i + 1
+			} else {
+				end = i
+				break
+			}
+		}
+		i = quote.Step(line, i)
+	}
+	return start, end
+}
+
+// hereDocCodeOffset discounts removed redirect spans before a definition boundary.
+func hereDocCodeOffset(spans [][2]int, end int) int {
+	removed := 0
+	for i := 0; i < len(spans) && i < maxShellHeredocs; i++ {
+		if spans[i][1] <= end {
+			removed += spans[i][1] - spans[i][0]
+		}
+	}
+	return end - removed
 }
 
 // hereDocPipeShell recognizes a direct pipe to an interpreter already supported by the lexer.

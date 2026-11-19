@@ -155,3 +155,11 @@ func TestAuditWorkflowTriggers_FullTree_PreCommitAction(t *testing.T) {
 		t.Errorf("scoped pre-commit/action must pass:\n%s", out)
 	}
 }
+
+// TestFullTreeHereDocs sees a full-tree command only when its body executes.
+func TestFullTreeHereDocs(t *testing.T) {
+	checkHereDocReader(t, "pre-commit run --all-files", func(script string) bool {
+		_, got := findFullTreeStepCommand(script)
+		return got
+	})
+}

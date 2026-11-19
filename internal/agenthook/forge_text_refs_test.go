@@ -605,3 +605,100 @@ func TestForgeTextRefsBodyFileOverwrite(t *testing.T) {
 		})
 	}
 }
+
+// TestForgeTextRefsExecutingHereDocs judges executing bodies like direct write commands.
+func TestForgeTextRefsExecutingHereDocs(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "foreign.md"), "outside-org/project#42")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "clean.md"), "own-org/project#42")
+	cases := []struct {
+		name, body, span string
+		deny             bool
+	}{
+		{"foreign file", "gh pr comment 9 --body-file foreign.md", "outside-org/project#42", true},
+		{"missing file", "gh pr comment 9 --body-file missing.md", "missing.md", true},
+		{"concatenated foreign", "gh pr comment 9 --body 'outside-org'/project#42", "outside-org/project#42", true},
+		{"continued foreign", "gh pr comment 9 --body outside-org/proj\\\nect#42", "outside-org/project#42", true},
+		{"clean file", "gh pr comment 9 --body-file clean.md", "", false},
+		{"existing file", "gh pr comment 9 --body-file clean.md", "", false},
+		{"concatenated own", "gh pr comment 9 --body 'own-org'/project#42", "", false},
+		{"continued own", "gh pr comment 9 --body own-org/proj\\\nect#42", "", false},
+	}
+	for i := 0; i < len(cases) && i < 8; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) { checkExecutingForgeBody(t, root, tc.body, tc.span, tc.deny) })
+	}
+}
+
+// checkExecutingForgeBody compares bounded code paths with the direct command verdict.
+func checkExecutingForgeBody(t *testing.T, root, body, span string, deny bool) {
+	t.Helper()
+	for _, tc := range []struct{ name, script string }{
+		{"direct", "cd sub\n" + body},
+		{"shell stdin", "cd sub\nbash <<'EOF'\n" + body + "\nEOF\n"},
+		{"cat pipe", "cd sub\ncat <<'EOF' | bash\n" + body + "\nEOF\n"},
+		{"tee pipe", "cd sub\ntee copy <<'EOF' | bash\n" + body + "\nEOF\n"},
+		{"script file", "cat > run.sh <<'EOF'\n" + body + "\nEOF\ncd sub\nbash ../run.sh\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := runPreToolCommand(t, root, tc.script, nil)
+			if deny {
+				assertForgeTextDenied(t, response, span)
+			} else if response.ExitCode != 0 {
+				t.Fatalf("allowed body refused: %s", response.Stderr)
+			}
+		})
+	}
+}
+
+// checkAgentHereDocReader compares execution visibility across bounded body flows.
+func checkAgentHereDocReader(t *testing.T, body string, read func(string) bool) {
+	t.Helper()
+	for _, tc := range []struct {
+		name, script string
+		want         bool
+	}{
+		{"cat pipe", "cat <<'EOF' | bash\n" + body + "\nEOF\n", true},
+		{"tee pipe", "tee copy <<'EOF' | bash\n" + body + "\nEOF\n", true},
+		{"shell stdin", "bash <<'EOF'\n" + body + "\nEOF\n", true},
+		{"data", "cat > note <<'EOF'\n" + body + "\nEOF\n", false},
+		{"script file", "cat > run.sh <<'EOF'\n" + body + "\nEOF\nbash run.sh\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := read(tc.script); got != tc.want {
+				t.Fatalf("reader got %v; want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestForgeTextRefsHereDocData retains raw prose checks without inspecting hypothetical files.
+func TestForgeTextRefsHereDocData(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	writeTestFixtureFile(t, filepath.Join(root, "foreign.md"), "outside-org/project#42")
+	writeTestFixtureFile(t, filepath.Join(root, "clean.md"), "own-org/project#42")
+	for _, tc := range []struct {
+		body string
+		deny bool
+	}{
+		{"gh pr comment 9 --body-file foreign.md", false},
+		{"gh pr comment 9 --body-file missing.md", false},
+		{"gh pr comment 9 --body 'outside-org'/project#42", false},
+		{"gh pr comment 9 --body outside-org/proj\\\nect#42", false},
+		{"gh pr comment 9 --body-file clean.md", false},
+		{"gh pr comment 9 --body 'own-org'/project#42", false},
+		{"gh pr comment 9 --body own-org/proj\\\nect#42", false},
+		{"gh pr comment 9 --body outside-org/project#42", true},
+	} {
+		response := runPreToolCommand(t, root, "cat > note <<'EOF'\n"+tc.body+"\nEOF\n", nil)
+		if tc.deny {
+			assertForgeTextDenied(t, response, "outside-org/project#42")
+		} else if response.ExitCode != 0 {
+			t.Errorf("data refused: %s", response.Stderr)
+		}
+	}
+	response := runPreToolCommand(t, root, "cat > $SCRIPT <<'EOF'\ngh pr comment 9 --body-file missing.md\nEOF\nbash $SCRIPT\n", nil)
+	if response.ExitCode != 0 {
+		t.Fatalf("dynamic filename known data limit: %s", response.Stderr)
+	}
+}

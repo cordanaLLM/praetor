@@ -120,3 +120,24 @@ func TestShellFields_NestedQuoteErrors(t *testing.T) {
 		t.Fatalf("nesting overflow must return ErrShellReadLimit, got: %v", err)
 	}
 }
+
+// checkHereDocReader exercises shared execution and data paths in a reader's own tests.
+func checkHereDocReader(t *testing.T, body string, read func(string) bool) {
+	t.Helper()
+	for _, tc := range []struct {
+		name, script string
+		want         bool
+	}{
+		{"cat pipe", "cat <<'EOF' | bash\n" + body + "\nEOF\n", true},
+		{"tee pipe", "tee copy <<'EOF' | bash\n" + body + "\nEOF\n", true},
+		{"shell stdin", "bash <<'EOF'\n" + body + "\nEOF\n", true},
+		{"data", "cat > note <<'EOF'\n" + body + "\nEOF\n", false},
+		{"script file", "cat > run.sh <<'EOF'\n" + body + "\nEOF\nbash run.sh\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := read(tc.script); got != tc.want {
+				t.Fatalf("reader got %v; want %v", got, tc.want)
+			}
+		})
+	}
+}

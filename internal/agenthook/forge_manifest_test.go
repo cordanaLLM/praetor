@@ -223,3 +223,19 @@ func TestForgeManifestOutsideRepositoryIgnored(t *testing.T) {
 		t.Fatalf("expected plain note outside repo without manifest finding, got exit=%d stderr=%q", resp.ExitCode, string(resp.Stderr))
 	}
 }
+
+// TestForgeManifestHereDocNotices retains and deduplicates notices without an outer write.
+func TestForgeManifestHereDocNotices(t *testing.T) {
+	root := repositoryWithManifest(t, brokenForgeManifest)
+	for _, prefix := range []string{"cat > note <<'EOF'", "cat <<'EOF' | bash", "bash <<'EOF'"} {
+		for _, outer := range []string{"", "gh pr comment 9 --body 'Outer repair'\n"} {
+			t.Run(prefix+outer, func(t *testing.T) {
+				script := prefix + "\ngh pr comment 9 --body 'Repair ready'\nEOF\n" + outer
+				response := runPreToolCommand(t, root, script, nil)
+				if count := strings.Count(string(response.Stderr), "manifest finding"); response.ExitCode != 0 || count != 1 {
+					t.Fatalf("want allow with one notice: %+v; count=%d", response, count)
+				}
+			})
+		}
+	}
+}

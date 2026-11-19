@@ -445,3 +445,10 @@ func TestCommandRunsTool_WrapperPrograms(t *testing.T) {
 		})
 	}
 }
+
+// TestDeclaredLintersHereDocs sees a declared linter in executing bodies only.
+func TestDeclaredLintersHereDocs(t *testing.T) {
+	checkHereDocReader(t, "golangci-lint run", func(script string) bool {
+		return scriptRunsTool(t.Context(), script, "golangci-lint", nil, nil)
+	})
+}
