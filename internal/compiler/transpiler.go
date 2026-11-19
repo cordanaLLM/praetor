@@ -255,6 +255,7 @@ func (t *Transpiler) VerifyContext(ctx context.Context, agentsMdPath, targetDir 
 
 // VerifyCompiled is VerifyContext returning the result it verified, so a caller can name the
 // projections it checked and the ones the client selection left out.
+// Every independent target check runs; read failures and drift are joined.
 func (t *Transpiler) VerifyCompiled(ctx context.Context, agentsMdPath, targetDir string) (*CompileResult, error) {
 	res, err := t.CompileContext(ctx, agentsMdPath)
 	if err != nil {
@@ -262,15 +263,20 @@ func (t *Transpiler) VerifyCompiled(ctx context.Context, agentsMdPath, targetDir
 	}
 	bound := t.bound()
 	read := t.targetReader()
+	var errs []error
 	for _, f := range res.Files {
 		existing, err := read(ctx, targetDir, f.RelativePath)
 		if err := verifyTargetReadError(ctx, bound, f.RelativePath, err); err != nil {
-			return nil, err
+			errs = append(errs, err)
+			continue
 		}
 		if equal, strict := projectionMatches(existing, []byte(f.Content)); !equal {
-			return nil, fmt.Errorf("target %s is out of sync with %s%s; run 'praetorctl compile-context' to reconcile",
-				f.RelativePath, agentsMdPath, util.ByteExactNote(strict))
+			errs = append(errs, fmt.Errorf("target %s is out of sync with %s%s; run 'praetorctl compile-context' to reconcile",
+				f.RelativePath, agentsMdPath, util.ByteExactNote(strict)))
 		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
 	}
 	return res, nil
 }

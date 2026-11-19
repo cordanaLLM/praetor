@@ -73,7 +73,7 @@ func VerifyCompiledContext(ctx context.Context, w io.Writer, tr *Transpiler, sou
 	}
 	verified, surfaceErr := verifyAgentSurfaces(ctx, sw, targetDir)
 	stableErr := prefixError("context verification failed", VerifyStableContext(ctx, sw.w, tr, source))
-	if err := errors.Join(vendorErr, readOnlyErr, errors.Join(lintErrs...), surfaceErr, stableErr); err != nil {
+	if err := errors.Join(vendorErr, surfaceErr, readOnlyErr, errors.Join(lintErrs...), stableErr); err != nil {
 		return err
 	}
 	sw.printf("All agent context targets are 100%% in sync with canonical AGENTS.md (%d persona projections verified).\n", verified)

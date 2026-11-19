@@ -253,8 +253,8 @@ func TestVerifyFailures(t *testing.T) {
 	if len(bounded) != maxVerifyFailures {
 		t.Fatalf("bounded = %d entries, want %d", len(bounded), maxVerifyFailures)
 	}
-	if rest, ok := bounded[len(bounded)-1].(interface{ Unwrap() []error }); !ok || len(rest.Unwrap()) != 3 {
-		t.Fatalf("the unopened rest must stay joined in the last entry: %v", bounded[len(bounded)-1])
+	if rest := bounded[len(bounded)-1]; rest.bound == "" || strings.Count(rest.Error(), "check") != 3 {
+		t.Fatalf("the unopened rest must stay marked in the last entry: %v", rest)
 	}
 }
 

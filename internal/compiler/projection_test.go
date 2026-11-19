@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -14,6 +15,228 @@ import (
 // fixtureSource is a canonical AGENTS.md without a text register section, so a write that gets
 // as far as the splice changes it.
 const fixtureSource = "# Policy\n"
+
+// TestVerifyCompiledContext_IndependentTargetFailures checks that unreadable vendor output
+// cannot mask another vendor's drift, or read-only drift combined with lint failure.
+func TestVerifyCompiledContext_IndependentTargetFailures(t *testing.T) {
+	root := t.TempDir()
+	content := "# Policy\n\n" + strings.Repeat(lintProseAgents, 8)
+	source := writeRegisterFixture(t, root, "AGENTS.md", content)
+	tr := NewTranspiler()
+	res, err := tr.CompileContext(t.Context(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Files) < 2 {
+		t.Fatal("fixture needs at least two vendor targets")
+	}
+	if err := tr.WriteOutputsContext(t.Context(), res, root); err != nil {
+		t.Fatal(err)
+	}
+	missing, drift := res.Files[0].RelativePath, res.Files[1].RelativePath
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(missing))); err != nil {
+		t.Fatal(err)
+	}
+	writeRegisterFixture(t, root, drift, "drifted\n")
+	writeRegisterFixture(t, root, ReadOnlyFile, "drifted\n")
+	err = VerifyCompiledContext(t.Context(), io.Discard, tr, source, root)
+	if !errors.Is(err, ErrContextProse) || err == nil {
+		t.Fatalf("want lint failure: %v", err)
+	}
+	for _, want := range []string{missing, "target " + drift + " is out of sync", "target " + ReadOnlyFile + " is out of sync"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing independent failure %s: %v", want, err)
+		}
+	}
+}
+
+// Each changed verifier's drift survives its canonical lint failure, before the lint text.
+func TestVerifyCompiledContext_SiblingDriftAndLint(t *testing.T) {
+	cases := []struct{ name, canonical, target, header string }{
+		{"vendor", "AGENTS.md", "CLAUDE.md", "# Policy\n"},
+		{"persona", CanonicalAgentsRel + "/reviewer.md", ".claude/agents/reviewer.md",
+			"---\nname: reviewer\ndescription: Review.\nmodel: pro\n---\n# Reviewer\n"},
+		{"plugin entry", CanonicalSkillRel("hiss-audit"), SkillEntryRel(PluginSkillsRel, "hiss-audit"),
+			"---\nname: hiss-audit\ndescription: Audit.\n---\n# Audit\n"},
+		{"plugin licence", CanonicalSkillRel("hiss-audit"), SkillLicenseRel(PluginSkillsRel, "hiss-audit"),
+			"---\nname: hiss-audit\ndescription: Audit.\n---\n# Audit\n"},
+		{"client skill", CanonicalSkillRel("caveman"), SkillEntryRel(".claude/skills", "caveman"),
+			"---\nname: caveman\ndescription: Format.\n---\n# Format\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runSiblingDriftAndLint(t, tc.canonical, tc.target, tc.header)
+		})
+	}
+}
+
+// runSiblingDriftAndLint runs one verifier over the four combinations of a drifted target and a failing lint.
+func runSiblingDriftAndLint(t *testing.T, canonical, target, header string) {
+	t.Helper()
+	cases := []struct {
+		name        string
+		drift, lint bool
+	}{
+		{name: "clean"},
+		{name: "drift only", drift: true},
+		{name: "lint only", lint: true},
+		{name: "drift and lint", drift: true, lint: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := skillFixture(t)
+			writeRegisterSkill(t, root, "caveman")
+			writeRegisterFixture(t, root, CanonicalSkillLicenseRel("hiss-audit"), "licence\n")
+			writeRegisterFixture(t, root, "AGENTS.md", "# Policy\n")
+			content := header
+			if tc.lint {
+				content += strings.Repeat(lintProseAgents, 8)
+			}
+			writeRegisterFixture(t, root, canonical, content)
+			source := filepath.Join(root, "AGENTS.md")
+			if _, err := CompileVendorTargets(t.Context(), io.Discard, NewTranspiler(), source, root); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := CompileAgentSurfaces(t.Context(), io.Discard, root); err != nil {
+				t.Fatal(err)
+			}
+			if tc.drift {
+				writeRegisterFixture(t, root, target, "drifted\n")
+			}
+			err := VerifyCompiledContext(t.Context(), io.Discard, NewTranspiler(), source, root)
+			assertSiblingDriftAndLint(t, err, target, tc.drift, tc.lint)
+		})
+	}
+}
+
+// assertSiblingDriftAndLint checks that a clean tree passes and that drift and lint each stay in the error, drift first.
+func assertSiblingDriftAndLint(t *testing.T, err error, target string, drift, lint bool) {
+	t.Helper()
+	if !drift && !lint {
+		if err != nil {
+			t.Fatalf("clean projections: %v", err)
+		}
+		return
+	}
+	lintErr := ErrAgentTextProse
+	prefix := ErrAgentProjectionDrift.Error() + ": " + target
+	if target == "CLAUDE.md" {
+		lintErr = ErrContextProse
+		prefix = "target " + target + " is out of sync"
+	}
+	if err == nil || errors.Is(err, lintErr) != lint {
+		t.Fatalf("lint chain: %v; want lint=%v drift=%v", err, lint, drift)
+	}
+	driftAt := strings.Index(err.Error(), prefix)
+	if (driftAt >= 0) != drift {
+		t.Fatalf("drift diagnostic %q: %v; want drift=%v", prefix, err, drift)
+	}
+	if lint && driftAt > strings.Index(err.Error(), lintErr.Error()) {
+		t.Errorf("drift must precede lint: %v", err)
+	}
+}
+
+// Matching targets return the complete compiled result to callers.
+func TestVerifyCompiled_Positive_MatchingTargets(t *testing.T) {
+	root := t.TempDir()
+	source := writeRegisterFixture(t, root, "AGENTS.md", "# Policy\n")
+	tr := NewTranspiler()
+	want, err := tr.CompileContext(t.Context(), source)
+	if err != nil || len(want.Files) == 0 {
+		t.Fatalf("compile: %v, %v", want, err)
+	}
+	if err := tr.WriteOutputsContext(t.Context(), want, root); err != nil {
+		t.Fatal(err)
+	}
+	res, err := tr.VerifyCompiled(t.Context(), source, root)
+	if err != nil || res == nil {
+		t.Fatalf("matching targets: %v, %v", res, err)
+	}
+	if len(res.Files) != len(want.Files) || res.SourcePath != source {
+		t.Errorf("verified result = %+v; want %d files from %s", res, len(want.Files), source)
+	}
+}
+
+// Compile and source failures forbid every target read, even when all targets would drift.
+func TestVerifyCompiled_Boundary_UpstreamFailure(t *testing.T) {
+	cases := []struct {
+		name, content string
+		missing       bool
+		maxLines      int
+	}{
+		{name: "missing source", missing: true},
+		{name: "invalid text", content: "\xff"},
+		{name: "empty source"},
+		{name: "compile budget", content: "# Policy\n\nRun checks.\n", maxLines: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "AGENTS.md")
+			if !tc.missing {
+				writeRegisterFixture(t, root, "AGENTS.md", tc.content)
+			}
+			tr := NewTranspiler()
+			if tc.maxLines > 0 {
+				tr.MaxLines = tc.maxLines
+			}
+			reads := 0
+			tr.readTarget = func(context.Context, string, string) ([]byte, error) {
+				reads++
+				return []byte("drifted\n"), nil
+			}
+			res, err := tr.VerifyCompiled(t.Context(), source, root)
+			if res != nil || err == nil || reads != 0 {
+				t.Fatalf("upstream failure: result=%v reads=%d err=%v", res, reads, err)
+			}
+		})
+	}
+}
+
+// The complete selected target set remains observable after any first failure.
+func TestVerifyCompiled_Boundary_AllTargetsFail(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		name := "all drifted"
+		if missing {
+			name = "all missing"
+		}
+		t.Run(name, func(t *testing.T) {
+			verifyAllVendorTargetsFail(t, missing)
+		})
+	}
+}
+
+// verifyAllVendorTargetsFail checks that VerifyCompiled reads every vendor target and names each one that is missing or drifted.
+func verifyAllVendorTargetsFail(t *testing.T, missing bool) {
+	t.Helper()
+	root := t.TempDir()
+	source := writeRegisterFixture(t, root, "AGENTS.md", "# Policy\n")
+	tr := NewTranspiler()
+	want, err := tr.CompileContext(t.Context(), source)
+	if err != nil || len(want.Files) == 0 {
+		t.Fatalf("compile: %v, %v", want, err)
+	}
+	var reads []string
+	tr.readTarget = func(_ context.Context, _, rel string) ([]byte, error) {
+		reads = append(reads, rel)
+		if missing {
+			return nil, os.ErrNotExist
+		}
+		return []byte("drifted\n"), nil
+	}
+	res, err := tr.VerifyCompiled(t.Context(), source, root)
+	if res != nil || err == nil || len(reads) != len(want.Files) {
+		t.Fatalf("result=%v reads=%v err=%v", res, reads, err)
+	}
+	for _, file := range want.Files {
+		if !strings.Contains(err.Error(), "target "+file.RelativePath+" ") {
+			t.Errorf("missing target diagnostic: %s", file.RelativePath)
+		}
+	}
+	if errors.Is(err, os.ErrNotExist) != missing {
+		t.Errorf("missing chain: %v; want %v", err, missing)
+	}
+}
 
 // compileFixture runs CompileContextProjections over root, the write the CLI's compile-context
 // and the MCP standards_compile_context tool run, with root/AGENTS.md as the source. It writes

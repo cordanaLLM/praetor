@@ -11,6 +11,119 @@ import (
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 )
 
+// TestVerifyReadOnlyContext_IndependentFailures checks drift, lint and missing targets together
+// and separately, including drift-first ordering and the original error chains.
+func TestVerifyReadOnlyContext_IndependentFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		lint    bool
+		drift   bool
+		missing bool
+	}{
+		{name: "clean"},
+		{name: "drift only", drift: true},
+		{name: "lint only", lint: true},
+		{name: "drift and lint", drift: true, lint: true},
+		{name: "missing target", missing: true},
+		{name: "missing target and lint", missing: true, lint: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := verifyReadOnlyFixture(t, tt.lint, tt.drift, tt.missing)
+			assertReadOnlyFailures(t, err, tt.lint, tt.drift, tt.missing)
+			if tt.name == "clean" && err != nil {
+				t.Errorf("clean projection: %v", err)
+			}
+		})
+	}
+}
+
+// verifyReadOnlyFixture plants independent lint, drift and missing-target failures below a
+// temporary root, then invokes the production verifier.
+func verifyReadOnlyFixture(t *testing.T, lint, drift, missing bool) error {
+	t.Helper()
+	root := t.TempDir()
+	content := "# Policy\n\nRun checks.\n"
+	if lint {
+		content += strings.Repeat(lintProseAgents, 8)
+	}
+	source := writeRegisterFixture(t, root, "AGENTS.md", content)
+	if !missing {
+		if err := CompileReadOnlyContext(t.Context(), source, root); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if drift {
+		writeRegisterFixture(t, root, ReadOnlyFile, "drifted\n")
+	}
+	return VerifyReadOnlyContext(t.Context(), source, root)
+}
+
+// assertReadOnlyFailures checks independent error chains and drift-first diagnostics.
+func assertReadOnlyFailures(t *testing.T, err error, lint, drift, missing bool) {
+	t.Helper()
+	if errors.Is(err, ErrContextProse) != lint || errors.Is(err, os.ErrNotExist) != missing {
+		t.Errorf("error chains: %v; want lint=%v missing=%v", err, lint, missing)
+	}
+	text := ""
+	if err != nil {
+		text = err.Error()
+	}
+	const driftPrefix = "target " + ReadOnlyFile + " is out of sync"
+	if strings.Contains(text, driftPrefix) != drift {
+		t.Errorf("drift=%v: %v", drift, err)
+	}
+	if drift && !strings.HasPrefix(text, driftPrefix) {
+		t.Errorf("drift must precede lint: %v", err)
+	}
+}
+
+// Upstream failures end verification before target comparison or lint.
+func TestVerifyReadOnlyContext_Boundary_UpstreamFailure(t *testing.T) {
+	cases := []struct {
+		name, content, prefix string
+		missing               bool
+	}{
+		{name: "missing source", missing: true, prefix: "read source "},
+		{name: "invalid source text", content: "\xff", prefix: "read source "},
+		{name: "empty source", prefix: "compile read-only projection: "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "AGENTS.md")
+			if !tc.missing {
+				writeRegisterFixture(t, root, "AGENTS.md", tc.content)
+			}
+			writeRegisterFixture(t, root, ReadOnlyFile, "drifted\n")
+			err := VerifyReadOnlyContext(t.Context(), source, root)
+			if err == nil || !strings.HasPrefix(err.Error(), tc.prefix) {
+				t.Fatalf("upstream failure = %v; want %q", err, tc.prefix)
+			}
+			if strings.Contains(err.Error(), "target "+ReadOnlyFile) || errors.Is(err, ErrContextProse) {
+				t.Fatalf("comparison or lint after upstream failure: %v", err)
+			}
+			if errors.Is(err, os.ErrNotExist) != tc.missing {
+				t.Errorf("missing-source chain = %v; want %v", err, tc.missing)
+			}
+		})
+	}
+}
+
+// Checkout normalization remains valid at the comparison boundary.
+func TestVerifyReadOnlyContext_Boundary_EquivalentCheckout(t *testing.T) {
+	root := t.TempDir()
+	source := writeRegisterFixture(t, root, "AGENTS.md", "# Policy\n\nRun checks.\n")
+	if err := CompileReadOnlyContext(t.Context(), source, root); err != nil {
+		t.Fatal(err)
+	}
+	content := readFixtureText(t, filepath.Join(root, ReadOnlyFile))
+	writeRegisterFixture(t, root, ReadOnlyFile, "\r\n"+strings.ReplaceAll(content, "\n", "\r\n")+"\r\n")
+	if err := VerifyReadOnlyContext(t.Context(), source, root); err != nil {
+		t.Fatalf("equivalent checkout: %v", err)
+	}
+}
+
 func TestCompileReadOnlyContext_Positive(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "AGENTS.md")

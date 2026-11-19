@@ -260,6 +260,7 @@ func pluginSkillProjections(ctx context.Context, rootDir string) ([]projectionFi
 // and every shipped skill is one the repository declares. Checking only the first direction
 // lets a stale copy survive indefinitely, which is how six orphaned personas came to sit in
 // this plugin with one of them holding an absolute developer path.
+// Independent skill and orphan checks all run; their failures are joined.
 func VerifyPluginSkills(ctx context.Context, rootDir string) (int, error) {
 	if !shipsPlugin(rootDir) {
 		return 0, nil
@@ -269,34 +270,35 @@ func VerifyPluginSkills(ctx context.Context, rootDir string) (int, error) {
 		return 0, err
 	}
 	verified := 0
+	var errs []error
 	for i := 0; i < len(names); i++ {
 		if err := verifyPluginSkill(ctx, rootDir, names[i]); err != nil {
-			return verified, err
+			errs = append(errs, err)
+			continue
 		}
 		verified++
 	}
-	return verified, rejectOrphanSkills(ctx, rootDir, names)
+	return verified, errors.Join(append(errs, rejectOrphanSkills(ctx, rootDir, names))...)
 }
 
 // verifyPluginSkill checks the plugin copy of one canonical skill: its SKILL.md and, when the
 // canonical skill carries one, its LICENSE. When canonical carries no LICENSE, it verifies that
 // no stale LICENSE copy remains in the plugin.
+// Entry verification and licence verification run independently and return joined failures.
 func verifyPluginSkill(ctx context.Context, rootDir, name string) error {
 	want, err := readCanonicalSkill(ctx, rootDir, name)
 	if err != nil {
 		return err
 	}
-	if err := verifyProjection(ctx, rootDir, SkillEntryRel(PluginSkillsRel, name), want); err != nil {
-		return err
-	}
+	entryErr := verifyProjection(ctx, rootDir, SkillEntryRel(PluginSkillsRel, name), want)
 	license, exists, err := ReadCanonicalSkillLicense(ctx, rootDir, name)
 	if err != nil {
-		return err
+		return errors.Join(entryErr, err)
 	}
 	if exists {
-		return verifyProjection(ctx, rootDir, SkillLicenseRel(PluginSkillsRel, name), license)
+		return errors.Join(entryErr, verifyProjection(ctx, rootDir, SkillLicenseRel(PluginSkillsRel, name), license))
 	}
-	return verifyStaleLicense(ctx, rootDir, SkillLicenseRel(PluginSkillsRel, name))
+	return errors.Join(entryErr, verifyStaleLicense(ctx, rootDir, SkillLicenseRel(PluginSkillsRel, name)))
 }
 
 // rejectOrphanSkills fails when the plugin ships a skill the repository does not declare.
@@ -487,6 +489,7 @@ func pendingOr(pending map[string][]byte, name string, read func() ([]byte, bool
 // canonical SKILL.md and LICENSE (verifyProjection), and that no stale LICENSE copy remains.
 // It returns the number of copies verified. A directory the selection leaves out is neither
 // required nor read.
+// Independent copy and stale-licence checks all run; their failures are joined.
 func VerifyClientSkills(ctx context.Context, rootDir string) (int, error) {
 	dirs, _, err := SelectSkillDirs(ctx, rootDir)
 	if err != nil {
@@ -496,15 +499,16 @@ func VerifyClientSkills(ctx context.Context, rootDir string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	verified := 0
+	var errs []error
 	for i := range files {
 		if err := verifyProjection(ctx, rootDir, files[i].rel, files[i].data); err != nil {
-			return i, err
+			errs = append(errs, err)
+			continue
 		}
+		verified++
 	}
-	if err := verifyStaleClientLicenses(ctx, rootDir, dirs); err != nil {
-		return len(files), err
-	}
-	return len(files), nil
+	return verified, errors.Join(append(errs, verifyStaleClientLicenses(ctx, rootDir, dirs))...)
 }
 
 // verifyStaleLicense checks that rel below rootDir does not exist. An existing copy is a drift:
