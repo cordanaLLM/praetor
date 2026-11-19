@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -226,5 +228,231 @@ func TestForgeCheckMessage_Boundary_EmptyAndOversizedMessages(t *testing.T) {
 	if err := dispatchCommand("forge", []string{"check-message", manyLines}); err == nil ||
 		!strings.Contains(err.Error(), "lines before the scissors line") {
 		t.Fatalf("a message past the line bound: %v", err)
+	}
+}
+
+// commitExcludeFixture builds 301 commits without hooks or ambient Git configuration.
+// Lane isolation permits only stripping GIT_* and null global/no-system configuration.
+func commitExcludeFixture(t *testing.T) (context.Context, string, []string) {
+	t.Helper()
+	dir := t.TempDir()
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(entry), "GIT_") {
+			env = append(env, entry)
+		}
+	}
+	env = append(env, "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	t.Cleanup(cancel)
+	ctx, err := util.WithCommandEnvironment(ctx, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := util.RunGit(ctx, dir, "init", "-q", "-b", "main"); err != nil {
+		t.Fatal(err)
+	}
+	stdinCtx, err := util.WithCommandStdin(ctx, commitExcludeImport())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := util.RunGit(stdinCtx, dir, "fast-import", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	refs := make([]string, 300)
+	for i := 0; i < len(refs); i++ {
+		refs[i] = fmt.Sprintf("refs/heads/excluded-%d", i+1)
+	}
+	return ctx, dir, refs
+}
+
+// commitExcludeImport renders 300 independent exclusions merged into one outgoing head.
+func commitExcludeImport() []byte {
+	var input strings.Builder
+	for i := 0; i <= 300; i++ {
+		branch := "base"
+		if i > 0 {
+			branch = fmt.Sprintf("excluded-%d", i)
+		}
+		message := fmt.Sprintf("chore: exclude fixture %d", i)
+		fmt.Fprintf(&input, "commit refs/heads/%s\nmark :%d\ncommitter Test <test@example.invalid> 1700000000 +0000\ndata %d\n%s\n", branch, i+1, len(message), message)
+		if i > 0 {
+			input.WriteString("from :1\n")
+		}
+		input.WriteString("\n")
+	}
+	message := "chore: own outgoing commit"
+	fmt.Fprintf(&input, "commit refs/heads/range\ncommitter Test <test@example.invalid> 1700000000 +0000\ndata %d\n%s\nfrom :1\n", len(message), message)
+	for mark := 2; mark <= 301; mark++ {
+		fmt.Fprintf(&input, "merge :%d\n", mark)
+	}
+	input.WriteString("\n")
+	return []byte(input.String())
+}
+
+// chunkedExcludeRange intersects small raw-argv Git walks as an independent union-exclusion oracle.
+func chunkedExcludeRange(t *testing.T, ctx context.Context, dir string, refs []string) []string {
+	t.Helper()
+	var result []string
+	for offset := 0; offset < len(refs) && offset < 300; offset += 100 {
+		args := []string{"log", "--format=%H%x1f%B%x00", "refs/heads/base..refs/heads/range", "--not"}
+		args = append(args, refs[offset:min(offset+100, len(refs))]...)
+		out, err := util.RunGit(ctx, dir, append(args, "--")...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		messages, err := parseCommitRecords(strings.Split(out, commitRecordSep))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if offset == 0 {
+			result = messages
+		} else {
+			result = slices.DeleteFunc(result, func(message string) bool { return !slices.Contains(messages, message) })
+		}
+	}
+	return result
+}
+
+// TestForgeCheckCommits_ExcludeFile300 proves the file path and Git stdin preserve range semantics.
+func TestForgeCheckCommits_ExcludeFile300(t *testing.T) {
+	ctx, dir, refs := commitExcludeFixture(t)
+	path := writeFixtureFile(t, t.TempDir(), "excludes", strings.Join(refs, "\n")+"\n")
+	loaded, err := loadCommitExcludes(ctx, path, nil)
+	if err != nil || !slices.Equal(loaded, refs) {
+		t.Fatalf("load 300 revisions: %v, %v", loaded, err)
+	}
+	got, err := commitRange(ctx, dir, "refs/heads/base", "refs/heads/range", loaded)
+	if err != nil || len(got) != 1 || !slices.Equal(got, chunkedExcludeRange(t, ctx, dir, refs)) {
+		t.Fatalf("stdin range differs from chunked argv: %v, %v", got, err)
+	}
+	out, err := captureStdout(t, func() error {
+		return runForgeCheckCommits(ctx, []string{"--repo=" + dir, "--base=refs/heads/base", "--head=refs/heads/range", "--exclude-file=" + path})
+	})
+	if err != nil || !strings.Contains(out, "300 commit(s)") || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("300 excluded commits must pass and report left out: %v\n%s", err, out)
+	}
+}
+
+// TestForgeCheckCommits_ExcludeFileCommandForms exercises the new source through the public command.
+func TestForgeCheckCommits_ExcludeFileCommandForms(t *testing.T) {
+	ctx, dir, _ := commitExcludeFixture(t)
+	for _, tc := range []struct {
+		name, text string
+		flags      []string
+		count      int
+	}{
+		{name: "empty", count: 301},
+		{name: "blank", text: "\n \n\r\n", count: 301},
+		{name: "duplicate", text: "refs/heads/excluded-1\nrefs/heads/excluded-1\n", count: 300},
+		{name: "merged", text: "refs/heads/excluded-2\n", flags: []string{"--exclude=refs/heads/excluded-1"}, count: 299},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeFixtureFile(t, t.TempDir(), "excludes", tc.text)
+			args := []string{"--repo=" + dir, "--base=refs/heads/base", "--head=refs/heads/range", "--exclude-file=" + path}
+			out, err := captureStdout(t, func() error { return runForgeCheckCommits(ctx, append(args, tc.flags...)) })
+			want := fmt.Sprintf("Commit Message Policy: %d commit(s)", tc.count)
+			if err != nil || !strings.Contains(out, want) {
+				t.Fatalf("want %s: %v\n%s", want, err, out)
+			}
+		})
+	}
+}
+
+// TestForgeCheckCommits_ExcludeFileForms covers empty, blank, duplicate, merged and CRLF input.
+func TestForgeCheckCommits_ExcludeFileForms(t *testing.T) {
+	for _, tc := range []struct {
+		name, text    string
+		initial, want []string
+	}{
+		{name: "empty"},
+		{name: "blank", text: "\n \n\r\n"},
+		{name: "duplicate", text: "HEAD\nHEAD\n", want: []string{"HEAD", "HEAD"}},
+		{name: "merged", text: "HEAD~1\r\n", initial: []string{"HEAD"}, want: []string{"HEAD", "HEAD~1"}},
+		{name: "no final newline", text: "HEAD", want: []string{"HEAD"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeFixtureFile(t, t.TempDir(), "excludes", tc.text)
+			got, err := loadCommitExcludes(t.Context(), path, tc.initial)
+			if err != nil || !slices.Equal(got, tc.want) {
+				t.Fatalf("got %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestForgeCheckCommits_ExcludeFileRefusals pins line, count, byte and source diagnostics.
+func TestForgeCheckCommits_ExcludeFileRefusals(t *testing.T) {
+	for _, tc := range []struct{ name, text, want string }{
+		{"invalid", "HEAD\n--all\n", "line 2: invalid git revision"},
+		{"control", "HEAD\nHE\x00AD\n", "line 2: invalid git revision"},
+		{"long line", strings.Repeat("x", util.MaxExecArgLen+1), "line 1 exceeds revision line bound"},
+		{"revision overflow", strings.Repeat("HEAD\n", maxCommitExcludeRevisions+1), "maxCommitExcludeRevisions"},
+		{"byte overflow", strings.Repeat("\n", maxCommitExcludeFileBytes+1), "maxCommitExcludeFileBytes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeFixtureFile(t, t.TempDir(), "excludes", tc.text)
+			_, err := loadCommitExcludes(t.Context(), path, nil)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), path) {
+				t.Fatalf("want --exclude-file path and %q, got %v", tc.want, err)
+			}
+		})
+	}
+	path := filepath.Join(t.TempDir(), "missing")
+	if _, err := loadCommitExcludes(t.Context(), path, nil); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("unreadable source must name path: %v", err)
+	}
+}
+
+// TestForgeCheckCommits_ExcludeFileSourceErrors refuses nonregular sources and expired reads.
+func TestForgeCheckCommits_ExcludeFileSourceErrors(t *testing.T) {
+	path := t.TempDir()
+	if _, err := loadCommitExcludes(t.Context(), path, nil); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("directory source must name its path: %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := loadCommitExcludes(ctx, path, nil); err == nil || !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("expired read must fail: %v", err)
+	}
+}
+
+// TestForgeCheckCommits_ExcludeFileBounds accepts exact bounds and refuses merged overflow.
+func TestForgeCheckCommits_ExcludeFileBounds(t *testing.T) {
+	ctx := t.Context()
+	for _, text := range []string{strings.Repeat("HEAD\n", maxCommitExcludeRevisions), strings.Repeat("\n", maxCommitExcludeFileBytes), strings.Repeat("x", util.MaxExecArgLen)} {
+		path := writeFixtureFile(t, t.TempDir(), "excludes", text)
+		if _, err := loadCommitExcludes(ctx, path, nil); err != nil {
+			t.Fatalf("exact boundary refused: %v", err)
+		}
+	}
+	path := writeFixtureFile(t, t.TempDir(), "excludes", strings.Repeat("HEAD\n", maxCommitExcludeRevisions))
+	if _, err := loadCommitExcludes(ctx, path, []string{"HEAD"}); err == nil || !strings.Contains(err.Error(), "maxCommitExcludeRevisions") {
+		t.Fatalf("merged revision overflow must fail: %v", err)
+	}
+}
+
+// TestForgeCheckCommits_RealArgvCap preserves exactly 256 tokens and rejects 257 or 300 excludes.
+func TestForgeCheckCommits_RealArgvCap(t *testing.T) {
+	for _, count := range []int{256, 257, 300} {
+		fs := newQuietFlagSet("cap")
+		var excludes repeatedStringFlag
+		fs.Var(&excludes, "exclude", "")
+		args := make([]string, count)
+		for i := 0; i < count; i++ {
+			args[i] = "--exclude=HEAD"
+		}
+		_, err := parseInterspersed(fs, args)
+		if count == 256 {
+			if err != nil || len(excludes) != count {
+				t.Fatalf("256 args refused: %v", err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("too many arguments: %d exceeds the 256-argument limit", count)) {
+			t.Fatalf("%d argv tokens must fail by name: %v", count, err)
+		}
+	}
+	args := append([]string{"--base=HEAD"}, slices.Repeat([]string{"--exclude=HEAD"}, 300)...)
+	if err := runForgeCheckCommits(t.Context(), args); err == nil || !strings.Contains(err.Error(), "too many arguments: 301 exceeds the 256-argument limit") {
+		t.Fatalf("public command must preserve cap: %v", err)
 	}
 }

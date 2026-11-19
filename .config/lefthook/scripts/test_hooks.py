@@ -2097,17 +2097,21 @@ print("fixture hook self-tests passed")
         finally:
             os.chdir(original)
 
-    def test_check_commit_message_range_carries_one_exclude_per_tracking_ref(self):
-        """check_commit_message_range invokes forge check-commits with one --exclude per tracking ref."""
+    def test_check_commit_message_range_carries_exclude_file(self):
+        """Tracking object names reach check-commits through one file argument."""
+        refs = ["1" * 40, "2" * 40]
+        received = []
+
+        def capture(args, **kwargs):
+            """Read the temporary revision file while the tool owns it."""
+            received.append(Path(args[-1].removeprefix("--exclude-file=")).read_text())
+            self.assertEqual(kwargs, {"capture": False, "timeout": 180})
+
         with mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
-                mock.patch("hooks.other_remote_refs", return_value=["1111111111111111111111111111111111111111",
-                                                                     "2222222222222222222222222222222222222222"]), \
-                mock.patch("hooks.run") as mock_run:
+                mock.patch("hooks.other_remote_refs", return_value=refs), \
+                mock.patch("hooks.run", side_effect=capture):
             hooks.check_commit_message_range("base_sha", "head_sha", remote="origin")
-        self.assertTrue(mock_run.called)
-        called_args = mock_run.call_args[0][0]
-        self.assertIn("--exclude=1111111111111111111111111111111111111111", called_args)
-        self.assertIn("--exclude=2222222222222222222222222222222222222222", called_args)
+        self.assertEqual(received, ["\n".join(refs) + "\n"])
 
     def test_commit_message_range_single_remote_fixture_keeps_existing_behaviour(self):
         """A single-remote fixture retains today's behaviour: unskipped range checking."""
@@ -2380,14 +2384,10 @@ print("fixture hook self-tests passed")
         """The range bound MAX_SIGNATURE_COMMITS still applies to the remaining commits."""
         lines = [f"{i:040x} G" for i in range(hooks.MAX_SIGNATURE_COMMITS + 1)]
         log_output = "\n".join(lines) + "\n"
-        with mock.patch("hooks.run", return_value=b"true\n"), \
+        with mock.patch("hooks.run", side_effect=[b"true\n", log_output.encode()]), \
                 mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
                 mock.patch("hooks.other_remote_refs", return_value=["upstream-sha"]), \
-                mock.patch("hooks.git", side_effect=[
-                    log_output.encode(),
-                    b"",
-                    b"600\n",
-                ]), \
+                mock.patch("hooks.git", side_effect=[b"", b"600\n"]), \
                 self.assertRaises(HookError) as ctx:
             hooks.check_signature_range("base-sha", "head-sha", remote="origin")
         self.assertIn("exceeds", str(ctx.exception))
@@ -2396,20 +2396,16 @@ print("fixture hook self-tests passed")
     def test_signature_check_excludes_commits_from_other_remotes(self):
         """When other remotes exist, their tracking refs are excluded from git log via --not."""
         log_output = "aaaa000000000000000000000000000000000000 G\n"
-        with mock.patch("hooks.run", return_value=b"true\n"), \
+        with mock.patch("hooks.run", side_effect=[b"true\n", log_output.encode()]) as run_cmd, \
                 mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
                 mock.patch("hooks.other_remote_refs", return_value=["1111111111111111111111111111111111111111"]), \
-                mock.patch("hooks.git", side_effect=[
-                    log_output.encode(),
-                    b"",
-                    b"2\n",
-                ]) as git_cmd, \
+                mock.patch("hooks.git", side_effect=[b"", b"2\n"]), \
                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             hooks.check_signature_range("base-sha", "head-sha", remote="origin")
-        git_cmd.assert_any_call(
-            "log", f"--max-count={hooks.MAX_SIGNATURE_COMMITS + 1}",
-            "--format=%H %G?", "base-sha..head-sha", "--not",
-            "1111111111111111111111111111111111111111", "--",
+        run_cmd.assert_any_call(
+            ["git", "log", f"--max-count={hooks.MAX_SIGNATURE_COMMITS + 1}",
+             "--format=%H %G?", "base-sha..head-sha", "--stdin", "--"],
+            data=b"--not\n1111111111111111111111111111111111111111\n", timeout=180,
         )
         self.assertIn("1 published commit(s) in", out.getvalue())
         self.assertIn("1111111111111111111111111111111111111111", out.getvalue())
@@ -2516,6 +2512,93 @@ print("fixture hook self-tests passed")
         self.assertNotEqual(self.hook("post-rewrite", data=b"bad\n").returncode, 0)
 
 
+class CommitExcludeTransport(unittest.TestCase):
+    """Revision transport without hooks, credentials, remotes or subprocesses."""
+
+    def test_300_refs_use_one_file_in_order(self):
+        """The planted 300-ref regression stays below the real argv cap."""
+        refs = [f"{i:040x}" for i in range(300)]
+        received = []
+
+        def capture(args, **kwargs):
+            """Assert bounded argv and read the exact ordered exclusion payload."""
+            self.assertLess(len(args), 256)
+            self.assertFalse(any(arg.startswith("--exclude=") for arg in args))
+            self.assertTrue(args[-1].startswith("--exclude-file="))
+            path = Path(args[-1].removeprefix("--exclude-file="))
+            self.assertEqual(path.read_text(encoding="utf-8").splitlines(), refs)
+            self.assertEqual(kwargs, {"capture": False, "timeout": 180})
+            received.append(path)
+
+        with mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
+                mock.patch("hooks.other_remote_refs", return_value=refs), \
+                mock.patch("hooks.praetorctl_path", return_value="praetorctl"), \
+                mock.patch("hooks.run", side_effect=capture):
+            hooks.check_commit_message_range("base", "head", remote="origin")
+        self.assertEqual(len(received), 1)
+        self.assertFalse(received[0].exists())
+
+    def test_zero_refs_preserve_command(self):
+        """An empty snapshot retains the existing exact command and timeout."""
+        with mock.patch("hooks.praetorctl_path", return_value="praetorctl"), \
+                mock.patch("hooks.run") as run_cmd:
+            hooks.check_commit_message_range("base", "head")
+        run_cmd.assert_called_once_with(
+            ["praetorctl", "forge", "check-commits", "--base=base", "--head=head"],
+            capture=False, timeout=180,
+        )
+
+    def test_failed_tool_removes_source_and_propagates(self):
+        """A refused command cannot leave its revision source behind."""
+        paths = []
+
+        def refuse(args, **kwargs):
+            """Retain the source name before reporting a tool failure."""
+            paths.append(Path(args[-1].removeprefix("--exclude-file=")))
+            raise HookError("planted failure")
+
+        with mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
+                mock.patch("hooks.other_remote_refs", return_value=["1" * 40]), \
+                mock.patch("hooks.praetorctl_path", return_value="praetorctl"), \
+                mock.patch("hooks.run", side_effect=refuse), \
+                self.assertRaisesRegex(HookError, "planted failure"):
+            hooks.check_commit_message_range("base", "head", remote="origin")
+        self.assertFalse(paths[0].exists())
+
+    def test_unwritable_exclude_source_names_failure(self):
+        """An unavailable temporary source refuses the check with context."""
+        with mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
+                mock.patch("hooks.other_remote_refs", return_value=["1" * 40]), \
+                mock.patch("hooks.praetorctl_path", return_value="praetorctl"), \
+                mock.patch("hooks.tempfile.TemporaryDirectory", side_effect=OSError("planted source failure")), \
+                self.assertRaisesRegex(HookError, "exclude file: planted source failure"):
+            hooks.check_commit_message_range("base", "head", remote="origin")
+
+    def test_signature_refs_use_stdin_at_bound(self):
+        """Signature exclusions avoid argv at 300 and the hook's 500-ref bound."""
+        args = ["--max-count=501", "--format=%H %G?", "base..head"]
+        for count in (300, hooks.MAX_COMMIT_MESSAGE_COMMITS):
+            refs = [f"{i:064x}" for i in range(count)]
+            with self.subTest(count=count), mock.patch("hooks.run", return_value=b"log") as run_cmd:
+                self.assertEqual(hooks.signature_excluded_log(args, refs), b"log")
+            run_cmd.assert_called_once_with(
+                ["git", "log", *args, "--stdin", "--"],
+                data=("--not\n" + "\n".join(refs) + "\n").encode(), timeout=180,
+            )
+
+    def test_signature_zero_refs_preserve_git_call(self):
+        """An empty signature exclude set uses the original Git seam."""
+        with mock.patch("hooks.git", return_value=b"log") as git_cmd:
+            self.assertEqual(hooks.signature_excluded_log(["base..head"], []), b"log")
+        git_cmd.assert_called_once_with("log", "base..head", "--")
+
+    def test_signature_stdin_failure_propagates(self):
+        """A failed stdin-backed signature query fails closed."""
+        with mock.patch("hooks.run", side_effect=HookError("planted failure")), \
+                self.assertRaisesRegex(HookError, "planted failure"):
+            hooks.signature_excluded_log(["base..head"], ["1" * 40])
+
+
 class SignaturePublished(unittest.TestCase):
     """Signature and ref regressions without installing hooks or changing process config."""
 
@@ -2534,7 +2617,13 @@ class SignaturePublished(unittest.TestCase):
                 return f"{total}\n".encode()
             self.fail(f"unexpected git call: {args}")
 
-        with mock.patch("hooks.run", return_value=b"true\n"), \
+        def fake_run(args, **kwargs):
+            """Record stdin-backed Git logs on the same query seam."""
+            if args[:2] == ["git", "log"]:
+                return git_cmd(*args[1:], **kwargs)
+            return b"true\n"
+
+        with mock.patch("hooks.run", side_effect=fake_run), \
                 mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
                 mock.patch("hooks.other_remote_refs", return_value=["published-sha"]), \
                 mock.patch("hooks.git", side_effect=fake_git) as git_cmd, \
@@ -2640,24 +2729,27 @@ class SignaturePublished(unittest.TestCase):
         with self.signature_fixture(email=b"", total=1) as (out, git_cmd), \
                 mock.patch("hooks.other_remote_refs", side_effect=[["old"], ["new"], ["new"], ["new"]]):
             hooks.check_signature_range("base", "head", remote="origin")
-        logs = [call.args for call in git_cmd.call_args_list if call.args[0] == "log"]
+        logs = [call for call in git_cmd.call_args_list if call.args[0] == "log"]
         self.assertEqual(len(logs), 2)
-        self.assertIn("old", logs[0])
-        self.assertIn("new", logs[1])
+        self.assertEqual(logs[0].kwargs["data"], b"--not\nold\n")
+        self.assertEqual(logs[1].kwargs["data"], b"--not\nnew\n")
         self.assertEqual(out.getvalue().count("published commit(s)"), 1)
 
     def test_commit_message_ref_snapshot_retry_updates_exclusions(self):
         """Commit message checking uses the same retry with the latest object names."""
+        received = []
+
+        def capture(args, **kwargs):
+            """Capture snapshot bytes before the temporary source is removed."""
+            received.append(Path(args[-1].removeprefix("--exclude-file=")).read_text())
+            self.assertEqual(kwargs, {"capture": False, "timeout": 180})
+
         with mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
                 mock.patch("hooks.other_remote_refs", side_effect=[["old"], ["new"], ["new"], ["new"]]), \
                 mock.patch("hooks.praetorctl_path", return_value="praetorctl"), \
-                mock.patch("hooks.run") as run_cmd:
+                mock.patch("hooks.run", side_effect=capture):
             hooks.check_commit_message_range("base", "head", remote="origin")
-        self.assertEqual(run_cmd.call_args_list, [
-            mock.call(["praetorctl", "forge", "check-commits", "--base=base", "--head=head",
-                       f"--exclude={ref}"], capture=False, timeout=180)
-            for ref in ("old", "new")
-        ])
+        self.assertEqual(received, ["old\n", "new\n"])
 
     def test_commit_message_ref_snapshot_retry_discards_stale_failure(self):
         """A newly published commit may resolve the failure from the previous snapshot."""
@@ -2685,6 +2777,13 @@ class SignaturePublished(unittest.TestCase):
                 """Run only local Git plumbing, without hooks or process config changes."""
                 return common.git(*args, cwd=repo, **kwargs)
 
+            def fixture_run(args, **kwargs):
+                """Answer the signing query; every other command is real Git in the fixture."""
+                if args[:3] == ["git", "config", "--get"]:
+                    return b"true\n"
+                self.assertEqual(args[0], "git")
+                return common.run(args, cwd=repo, **kwargs)
+
             fixture_git("init", "-q", "-b", "main")
             fixture_git("config", "user.name", "Signature Test")
             fixture_git("config", "user.email", "local@example.test")
@@ -2698,7 +2797,7 @@ class SignaturePublished(unittest.TestCase):
                               "--no-gpg-sign", "-m", "own").decode().strip()
             fixture_git("update-ref", "refs/remotes/upstream/main", own)
             with mock.patch("hooks.git", side_effect=fixture_git), \
-                    mock.patch("hooks.run", return_value=b"true\n"), \
+                    mock.patch("hooks.run", side_effect=fixture_run), \
                     contextlib.redirect_stdout(io.StringIO()) as out:
                 hooks.check_signature_range(base, upstream, remote="origin")
                 self.assertIn("1 published commit(s)", out.getvalue())

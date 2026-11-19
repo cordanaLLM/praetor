@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -280,6 +281,14 @@ def check_merge_range(base, head):
     cli(["merge-check", f"--range={base}..{head}"])
 
 
+def signature_excluded_log(args, other_refs):
+    """Keep bounded tracking object IDs off Git's argv, preserving log timeout."""
+    if not other_refs:
+        return git("log", *args, "--")
+    data = ("--not\n" + "\n".join(other_refs) + "\n").encode()
+    return run(["git", "log", *args, "--stdin", "--"], data=data, timeout=180)
+
+
 def signature_log_lines(base, head, remote):
     """Return bounded signature logs, retaining own commits even when published elsewhere.
 
@@ -291,9 +300,7 @@ def signature_log_lines(base, head, remote):
     def collect(other_refs):
         """Collect one snapshot without printing diagnostics from a discarded attempt."""
         args = [limit, "--format=%H %G?", f"{base}..{head}"]
-        if other_refs:
-            args.extend(["--not", *other_refs])
-        lines = git("log", *args, "--").decode().splitlines()
+        lines = signature_excluded_log(args, other_refs).decode().splitlines()
         email, total = None, None
         if other_refs:
             email = git("config", "--get", "user.email", allowed=(0, 1)).decode().strip()
@@ -473,9 +480,16 @@ def check_commit_message_range(base, head, remote=None):
     def check(other_refs):
         """Check commit messages against one remote ref snapshot."""
         cmd = [praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"]
-        for ref in other_refs:
-            cmd.append(f"--exclude={ref}")
-        run(cmd, capture=False, timeout=180)
+        if not other_refs:
+            run(cmd, capture=False, timeout=180)
+            return
+        try:
+            with tempfile.TemporaryDirectory(prefix="praetor-commit-excludes-") as directory:
+                path = Path(directory) / "revisions"
+                path.write_text("\n".join(other_refs) + "\n", encoding="utf-8", newline="\n")
+                run([*cmd, f"--exclude-file={path}"], capture=False, timeout=180)
+        except OSError as exc:
+            raise HookError(f"Commit message check: exclude file: {exc}") from exc
 
     with_stable_remote_refs(other_push_remotes(remote), check)
 
