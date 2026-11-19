@@ -69,6 +69,7 @@ func evaluateAgentHandback(ctx context.Context, row Registration, canonical Cano
 	if verdict.Outcome != Allow {
 		return verdict
 	}
+	classification := reviewOutcomeVerdict(canonical.Return, injection)
 	if injection {
 		canonical.Return, err = deliverReviewHandback(canonical, entry.Task, &verdict)
 		if err != nil {
@@ -76,7 +77,7 @@ func evaluateAgentHandback(ctx context.Context, row Registration, canonical Cano
 		}
 	}
 	if err := store.markHandbackValidated(ctx, row.Client, canonical.ConversationID, canonical.AgentID,
-		canonical.ToolUseID, canonical.Return); err != nil {
+		canonical.ToolUseID, canonical.Return, classification); err != nil {
 		return trafficDenied(err)
 	}
 	return verdict

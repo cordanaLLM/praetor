@@ -25,7 +25,7 @@ func reviewOutcomeVerdict(text string, injection bool) string {
 
 // deliverReviewHandback prepends the finding to the dispatcher's message and preserves every other tool operand.
 func deliverReviewHandback(canonical Canonical, task string, verdict *Verdict) (string, error) {
-	input, err := decodeObject(canonical.DispatchInput)
+	input, err := decodeJSONObject(canonical.DispatchInput)
 	if err != nil {
 		return "", fmt.Errorf("read review handback input: %w", err)
 	}
@@ -119,6 +119,9 @@ func reviewInjectionField(line string) (string, bool) {
 	return strings.TrimSpace(value), found && strings.EqualFold(strings.TrimSpace(key), "prompt_injection")
 }
 
+// reviewFenceIndent bounds Markdown fence indentation in physical columns.
+const reviewFenceIndent = 3
+
 // reviewTextScanner tracks disabled regions while delegating code fences to the shared Markdown tracker.
 type reviewTextScanner struct {
 	fence   util.MarkdownFence
@@ -127,23 +130,36 @@ type reviewTextScanner struct {
 }
 
 // active returns text outside blockquotes, comments, disabled regions and fences; quotes are literal.
-func (s *reviewTextScanner) active(line string) string {
+func (s *reviewTextScanner) active(line string, lineStart bool) string {
+	original := line
 	line = strings.TrimSpace(line)
 	if s.off {
-		s.off = line != caveman.OnMarker
+		if lineStart {
+			s.off = line != caveman.OnMarker
+		}
 		return ""
 	}
-	if s.comment == "" {
-		if line == "" || strings.HasPrefix(line, ">") || s.fence.Inside(line) {
-			return ""
-		}
-		if line == caveman.OffMarker {
-			s.off = true
-			return ""
-		}
+	if s.comment == "" && s.inactive(original, lineStart) {
+		return ""
 	}
 	line, s.comment = util.StripComments(line, util.CommentSyntax{Block: [][2]string{{"<!--", "-->"}}, Unquoted: true}, s.comment)
 	return line
+}
+
+// inactive advances line-start markers while keeping fenced and disabled content inactive.
+func (s *reviewTextScanner) inactive(line string, lineStart bool) bool {
+	if lineStart {
+		fenceLine := strings.TrimLeft(line, " ")
+		if len(line)-len(fenceLine) <= reviewFenceIndent && s.fence.Inside(strings.TrimRight(fenceLine, " \t\r")) {
+			return true
+		}
+	}
+	if s.fence.Open() || !lineStart {
+		return s.fence.Open()
+	}
+	line = strings.TrimSpace(line)
+	s.off = line == caveman.OffMarker
+	return s.off || strings.HasPrefix(line, ">")
 }
 
 // activeReviewText protects code-span comment openers before scanning inactive regions.
@@ -152,7 +168,7 @@ func activeReviewText(lines []string) string {
 	lines = strings.Split(text, "\n")
 	var scanner reviewTextScanner
 	for index := 0; index < len(lines) && index < util.MaxMarkedBlockLines; index++ {
-		lines[index] = scanner.active(lines[index])
+		lines[index] = scanner.active(lines[index], true)
 	}
 	return maskReviewParagraphs(strings.Join(lines, "\n"), false)
 }
@@ -180,23 +196,18 @@ func protectReviewCodeComments(text string, scanner *reviewTextScanner) string {
 		spans := util.MarkdownCodeSpans(text[position:], 1)
 		if len(spans) == 0 {
 			out.WriteString(text[position:])
-			scanReviewRegions(text[position:], scanner)
+			scanReviewRegions(text, position, len(text), scanner)
 			break
 		}
 		start, end := position+spans[0].Start, position+spans[0].End
 		out.WriteString(text[position:start])
-		scanReviewRegions(text[position:start], scanner)
-		if scanner.comment != "" {
-			end = len(text)
-			if closer := strings.Index(text[start:], scanner.comment); closer >= 0 {
-				end = start + closer + len(scanner.comment)
-			}
-		}
+		scanReviewRegions(text, position, start, scanner)
+		end = reviewRegionFragmentEnd(text, start, end, scanner)
 		part := text[start:end]
 		if scanner.comment == "" && !scanner.off && !scanner.fence.Open() {
 			part = strings.ReplaceAll(part, "<!--", "    ")
 		} else {
-			scanReviewRegions(part, scanner)
+			scanReviewRegions(text, start, end, scanner)
 		}
 		out.WriteString(part)
 		position = end
@@ -204,11 +215,42 @@ func protectReviewCodeComments(text string, scanner *reviewTextScanner) string {
 	return out.String()
 }
 
-// scanReviewRegions advances the existing region scanner without retaining declaration text.
-func scanReviewRegions(text string, scanner *reviewTextScanner) {
-	lines := strings.Split(text, "\n")
+// reviewRegionFragmentEnd resumes span protection after an inactive line or a real comment closer.
+func reviewRegionFragmentEnd(text string, start, end int, scanner *reviewTextScanner) int {
+	if scanner.comment != "" {
+		if closer := strings.Index(text[start:], scanner.comment); closer >= 0 {
+			return start + closer + len(scanner.comment)
+		}
+		return len(text)
+	}
+	if scanner.off || scanner.fence.Open() {
+		if newline := strings.IndexByte(text[start:], '\n'); newline >= 0 {
+			return start + newline + 1
+		}
+		return len(text)
+	}
+	return end
+}
+
+// reviewFragmentLine restores permitted physical indentation split off before a code span.
+func reviewFragmentLine(text string, start int, line string) (string, bool) {
+	beginning := start
+	for width := 0; beginning > 0 && width < reviewFenceIndent && text[beginning-1] == ' '; width++ {
+		beginning--
+	}
+	if beginning == 0 || text[beginning-1] == '\n' {
+		return text[beginning:start] + line, true
+	}
+	return line, false
+}
+
+// scanReviewRegions recognizes markers only at physical line starts after format-permitted indentation.
+func scanReviewRegions(text string, start, end int, scanner *reviewTextScanner) {
+	lines := strings.Split(text[start:end], "\n")
 	for index := 0; index < len(lines) && index < util.MaxMarkedBlockLines; index++ {
-		scanner.active(lines[index])
+		line, lineStart := reviewFragmentLine(text, start, lines[index])
+		scanner.active(line, lineStart)
+		start += len(lines[index]) + 1
 	}
 }
 

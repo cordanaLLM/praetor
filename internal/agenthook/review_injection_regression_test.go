@@ -9,6 +9,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/router"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // seedReviewCorrelation binds a review task to the same isolated handback fixture.
@@ -504,4 +505,156 @@ func TestReviewInjectionDispatchPrompt(t *testing.T) {
 			t.Fatalf("rewritten launch rejected: %s", got.String())
 		}
 	}
+}
+
+// TestReviewInjectionPhysicalLines checks region markers against original physical line starts.
+func TestReviewInjectionPhysicalLines(t *testing.T) {
+	cases := []struct {
+		name, text, reason string
+	}{
+		{"midline-duplicate", "prompt_injection: false\nnote: `x` ~~~\ninfo: `<!--`\nprompt_injection: true", "exactly once"},
+		{"midline-tilde", "note: `x` ~~~\ninfo: `<!--`\nprompt_injection: true", ""},
+		{"midline-backtick", "note: `x` ```\ninfo: `<!--`\nprompt_injection: true", ""},
+		{"midline-disabled", "note: `x` <!-- caveman:off -->\ninfo: `<!--`\nprompt_injection: true", ""},
+		{"tilde-fence", "~~~\nprompt_injection: false\n~~~\nprompt_injection: true", ""},
+		{"backtick-fence", "```\nprompt_injection: false\n```\nprompt_injection: true", ""},
+		{"indented-longer-closer", "```\nnote: `x`\n   ````\ninfo: `<!--`\nprompt_injection: true\nother: ````literal````", ""},
+		{"inline-comment", "info: `<!--`\nprompt_injection: true", ""},
+		{"inline-same-line", "`<!--` prompt_injection: true", ""},
+		{"one-space-fence", " ~~~\nprompt_injection: false\n ~~~\nprompt_injection: true", ""},
+		{"two-space-fence", "  ~~~\nprompt_injection: false\n  ~~~\nprompt_injection: true", ""},
+		{"three-space-fence", "   ~~~\nprompt_injection: false\n   ~~~\nprompt_injection: true", ""},
+		{"four-space-fence", "    ~~~\nprompt_injection: false\n    ~~~\nprompt_injection: true", "exactly once"},
+		{"three-space-backticks", "   ```\nprompt_injection: false\n   ```\nprompt_injection: true", ""},
+		{"four-space-backticks", "    ```\ninfo: `<!--`\nprompt_injection: true", ""},
+		{"indented-disabled", "   <!-- caveman:off -->\nprompt_injection: false\n   <!-- caveman:on -->\nprompt_injection: true", ""},
+		{"crlf", "note: `x` ~~~\r\ninfo: `<!--`\r\nprompt_injection: true\r\n", ""},
+		{"crlf-tilde-fence", "   ~~~\r\nprompt_injection: false\r\n   ~~~\r\nprompt_injection: true\r\n", ""},
+		{"crlf-backtick-fence", "   ```\r\nprompt_injection: false\r\n   ```\r\nprompt_injection: true\r\n", ""},
+		{"crlf-disabled", "<!-- caveman:off -->\r\nprompt_injection: false\r\n<!-- caveman:on -->\r\nprompt_injection: true\r\n", ""},
+		{"crlf-duplicate", "prompt_injection: false\r\nnote: `x` ~~~\r\ninfo: `<!--`\r\nprompt_injection: true\r\n", "exactly once"},
+	}
+	for index := 0; index < len(cases) && index < 32; index++ {
+		tc := cases[index]
+		t.Run(tc.name, func(t *testing.T) {
+			flag, err := validateReviewInjection(tc.text)
+			if tc.reason != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.reason) {
+					t.Fatalf("flag=%v err=%v; want %s", flag, err, tc.reason)
+				}
+			} else if err != nil || !flag {
+				t.Fatalf("active true declaration lost: flag=%v err=%v", flag, err)
+			}
+		})
+	}
+}
+
+// TestReviewInjectionPhysicalHandback refuses duplicate fields and delivers active findings after fragments.
+func TestReviewInjectionPhysicalHandback(t *testing.T) {
+	cases := []struct {
+		name, prefix, marker string
+		outcome              Outcome
+	}{
+		{"duplicate", "prompt_injection: false\n", "~~~", Deny},
+		{"single-true", "", "~~~", Allow},
+		{"disabled-midline", "", "<!-- caveman:off -->", Allow},
+	}
+	for index := 0; index < len(cases) && index < 3; index++ {
+		tc := cases[index]
+		t.Run(tc.name, func(t *testing.T) {
+			text := validReturn + tc.prefix + "note: `x` " + tc.marker + "\ninfo: `<!--`\nprompt_injection: true"
+			checkReviewBoundHandback(t, text, true, tc.outcome, "exactly once")
+		})
+	}
+}
+
+// TestReviewInjectionHandbackBounds checks original report limits independently of the added notice.
+func TestReviewInjectionHandbackBounds(t *testing.T) {
+	cases := []struct {
+		name, flag string
+		lines      bool
+		excess     int
+	}{
+		{"lines-true-exact", "true", true, 0}, {"lines-false-exact", "false", true, 0},
+		{"bytes-true-exact", "true", false, 0}, {"bytes-false-exact", "false", false, 0},
+		{"lines-true-over", "true", true, 1}, {"lines-false-over", "false", true, 1},
+		{"bytes-true-over", "true", false, 1}, {"bytes-false-over", "false", false, 1},
+	}
+	for index := 0; index < len(cases) && index < 8; index++ {
+		tc := cases[index]
+		t.Run(tc.name, func(t *testing.T) {
+			text := reviewReturn(tc.flag)
+			reason := "byte bound"
+			if tc.lines {
+				text += strings.Repeat("\n", util.MaxMarkedBlockLines-strings.Count(text, "\n")-1+tc.excess)
+				reason = "line bound"
+			} else {
+				text += strings.Repeat(" ", MaxInputBytes-len(text)+tc.excess)
+			}
+			want := Allow
+			if tc.excess > 0 {
+				want = Deny
+			}
+			checkReviewBoundHandback(t, text, tc.flag == "true", want, reason)
+		})
+	}
+}
+
+// checkReviewBoundHandback checks verdict, notice, stored outcome and exact rewritten receipt binding.
+func checkReviewBoundHandback(t *testing.T, text string, injection bool, want Outcome, reason string) {
+	t.Helper()
+	root, state := repository(t, true), t.TempDir()
+	store := seedReviewCorrelation(t, root, state, "review")
+	canonical := Canonical{ConversationID: "s", AgentID: "agent", ToolUseID: "handback", Return: text,
+		DispatchInput: commandPayload(t, map[string]any{"message": text})}
+	row, in := Registration{Client: "claude"}, Invocation{CorrelationDir: state}
+	got := evaluateAgentHandback(t.Context(), row, canonical, root, in)
+	if got.Outcome != want {
+		t.Fatalf("handback outcome=%v reason=%q notice=%q; want %v", got.Outcome, got.Reason, got.Notice, want)
+	}
+	if want == Deny {
+		if !strings.Contains(got.Reason, reason) || got.Notice != "" {
+			t.Fatalf("refusal reason=%q notice=%q; want %s", got.Reason, got.Notice, reason)
+		}
+		return
+	}
+	checkReviewBoundReceipt(t, store, canonical, got, injection)
+}
+
+// checkReviewBoundReceipt checks stored classification and refuses changed delivery bytes.
+func checkReviewBoundReceipt(t *testing.T, store correlationStore, canonical Canonical, got Verdict, injection bool) {
+	t.Helper()
+	text := canonical.Return
+	message := reviewBoundMessage(t, text, got, injection)
+	row, in := Registration{Client: "claude"}, Invocation{CorrelationDir: store.dir}
+	if err := store.markHandbackDelivered(t.Context(), "claude", "s", "agent", "handback", message+"altered"); err == nil {
+		t.Fatal("altered rewritten receipt accepted")
+	}
+	canonical.Return = message
+	if receipt := evaluateHandbackReceipt(t.Context(), row, canonical, "", in); receipt.Outcome != Allow {
+		t.Fatalf("matching receipt denied: %+v", receipt)
+	}
+	entry, err := store.active(t.Context(), "claude", "s", "agent")
+	if err != nil || entry.HandbackVerdict != reviewOutcomeVerdict(text, injection) {
+		t.Fatalf("stored classification=%q err=%v", entry.HandbackVerdict, err)
+	}
+}
+
+// reviewBoundMessage checks notice delivery without imposing report bounds on tool-added text.
+func reviewBoundMessage(t *testing.T, text string, got Verdict, injection bool) string {
+	t.Helper()
+	message := text
+	if injection {
+		message = reviewInjectionNotice("review") + "\n\n" + text
+		var input struct{ Message string }
+		if err := json.Unmarshal(got.UpdatedInput, &input); err != nil {
+			t.Fatal(err)
+		}
+		if input.Message != message || got.Notice != reviewInjectionNotice("review") {
+			t.Fatal("finding notice or rewritten message missing")
+		}
+	} else if got.Notice != "" || got.UpdatedInput != nil {
+		t.Fatal("false report unexpectedly rewritten")
+	}
+	return message
 }
