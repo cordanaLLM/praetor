@@ -131,7 +131,8 @@ no finding:
   (`TestHostedGateFault_Negative_RequiresConcurrency`,
   `TestHostedGateFault_CheckoutCredentials` in `internal/ghworkflow/hostedgate_test.go`).
 - **Updating an adopted copy.** Every text the CI templates rendered before is recorded
-  (`internal/flavor/ci_prior.go`, fixtures in `internal/flavor/testdata/ci-prior`), so a plain
+  (`internal/flavor/ci_prior.go`, `.txt` fixtures in `internal/flavor/testdata/ci-prior` using
+  `flavor.CIWorkflowPriorExtension`), so a plain
   `praetorctl adopt` or `praetorctl flavor apply` refreshes an unedited `ci.yml` without
   `--force` and an edited one stays until `--force`
   (`TestCIWorkflowApply_Positive_RefreshesAnEarlierText`,

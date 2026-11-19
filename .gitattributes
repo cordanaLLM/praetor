@@ -111,6 +111,9 @@ internal/adopt/testdata/** text eol=lf
 # digests (priorGoSecurityDigests) are taken over these exact bytes, so a CRLF checkout must not touch them.
 internal/flavor/testdata/security-prior/** text eol=lf
 
+# Historical CI renderings use a data extension; preserve their frozen bytes on every checkout.
+internal/flavor/testdata/ci-prior/** text eol=lf
+
 # internal/astmerge's corpus test splits testdata/probe_corpus.txt into cases on "\n" and
 # matches its "--- base" section headers exactly, and FuzzASTMerge seeds from the same
 # parse. Under "* text=auto" a Windows checkout writes the corpus CRLF, the first header

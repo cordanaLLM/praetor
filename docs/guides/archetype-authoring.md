@@ -118,7 +118,8 @@ skipped (`internal/flavor/target_write_internal_test.go`). Every recorded text n
 that reproduces its digest, as `TestRustfmtPriorTextsAreEarlierRenderings`
 (`internal/flavor/rustfmt_test.go`) holds for `rustfmt.toml` and
 `TestCIWorkflowPriorTextsAreRecorded` (`internal/flavor/ci_prior_test.go`) for every CI workflow
-template, whose earlier texts sit in `internal/flavor/testdata/ci-prior`.
+template, whose earlier texts sit in `internal/flavor/testdata/ci-prior` with the data extension
+`flavor.CIWorkflowPriorExtension` (`.txt`), keeping frozen workflow bytes out of workflow analysis.
 
 A CI workflow template takes its trigger and draft handling from the hosted gate shape
 (`internal/ghworkflow/hostedgate.go`) through the template functions `hostedGateOn`,

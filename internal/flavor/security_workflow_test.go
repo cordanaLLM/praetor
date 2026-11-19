@@ -202,38 +202,41 @@ func securityRepo(t *testing.T) string {
 	})
 }
 
+// TestSecurityWorkflow_Positive_UneditedPriorIsRefreshed proves every recorded prior rendering is replaced by the current one, with and without a tools module.
 func TestSecurityWorkflow_Positive_UneditedPriorIsRefreshed(t *testing.T) {
-	prior := readPriorFixtures(t, securityPriorDir)["1371.yml"]
-	for _, declared := range []bool{false, true} {
-		t.Run(map[bool]string{false: "fallback", true: "tools-module"}[declared], func(t *testing.T) {
-			repo := securityRepo(t)
-			if !declared {
-				if err := os.RemoveAll(filepath.Join(repo, "tools")); err != nil {
+	for name, prior := range readPriorFixtures(t, securityPriorDir) {
+		for _, declared := range []bool{false, true} {
+			t.Run(name+"/"+map[bool]string{false: "fallback", true: "tools-module"}[declared], func(t *testing.T) {
+				repo := securityRepo(t)
+				if !declared {
+					if err := os.RemoveAll(filepath.Join(repo, "tools")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				workflow := filepath.Join(repo, filepath.FromSlash(securityWorkflowPath))
+				if err := os.MkdirAll(filepath.Dir(workflow), 0o700); err != nil {
 					t.Fatal(err)
 				}
-			}
-			workflow := filepath.Join(repo, filepath.FromSlash(securityWorkflowPath))
-			if err := os.MkdirAll(filepath.Dir(workflow), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(workflow, []byte(prior), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			report, err := flavor.ApplyFlavorWith(t.Context(), repo, "go-service", flavor.ApplyOptions{TemplatesOnly: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := os.ReadFile(workflow)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != renderedSecurityWorkflow(t, declared) || !slices.Contains(report.RefreshedTemplates, securityWorkflowPath) {
-				t.Fatalf("unedited prior was not refreshed: refreshed %v\n%s", report.RefreshedTemplates, got)
-			}
-		})
+				if err := os.WriteFile(workflow, []byte(prior), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				report, err := flavor.ApplyFlavorWith(t.Context(), repo, "go-service", flavor.ApplyOptions{TemplatesOnly: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := openFixtureRoot(t, repo).ReadFile(filepath.FromSlash(securityWorkflowPath))
+				if err != nil {
+					t.Fatalf("read %s: %v", securityWorkflowPath, err)
+				}
+				if string(got) != renderedSecurityWorkflow(t, declared) || !slices.Contains(report.RefreshedTemplates, securityWorkflowPath) {
+					t.Fatalf("unedited prior was not refreshed: refreshed %v\n%s", report.RefreshedTemplates, got)
+				}
+			})
+		}
 	}
 }
 
+// TestSecurityWorkflow_Negative_EditedPriorIsKeptAndReported proves a hand-edited prior rendering is kept byte for byte and named in the report.
 func TestSecurityWorkflow_Negative_EditedPriorIsKeptAndReported(t *testing.T) {
 	fixtures := readPriorFixtures(t, securityPriorDir)
 	prior := fixtures["1371.yml"]
@@ -250,15 +253,16 @@ func TestSecurityWorkflow_Negative_EditedPriorIsKeptAndReported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(workflow)
+	got, err := openFixtureRoot(t, repo).ReadFile(filepath.FromSlash(securityWorkflowPath))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read %s: %v", securityWorkflowPath, err)
 	}
 	if string(got) != edited || !slices.Contains(report.SkippedTemplates, securityWorkflowPath) {
 		t.Fatalf("edited workflow changed or was not reported skipped: skipped %v\n%s", report.SkippedTemplates, got)
 	}
 }
 
+// TestSecurityWorkflow_Positive_ApplySelectsBothManagedRenderings proves apply picks the fallback or the tools-module rendering from the repository's tools module.
 func TestSecurityWorkflow_Positive_ApplySelectsBothManagedRenderings(t *testing.T) {
 	for name, files := range map[string]map[string]string{
 		"no tools module": nil,
@@ -280,9 +284,9 @@ func TestSecurityWorkflow_Positive_ApplySelectsBothManagedRenderings(t *testing.
 			if err != nil || len(report.UnmetTemplates) != 0 {
 				t.Fatalf("apply: %v, unmet %v", err, report.UnmetTemplates)
 			}
-			body, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(securityWorkflowPath)))
+			body, err := openFixtureRoot(t, repo).ReadFile(filepath.FromSlash(securityWorkflowPath))
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("read %s: %v", securityWorkflowPath, err)
 			}
 			declared := name == "declared scanners"
 			if string(body) != renderedSecurityWorkflow(t, declared) {

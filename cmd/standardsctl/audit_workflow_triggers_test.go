@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
@@ -102,9 +103,18 @@ func TestAdoptThenAuditReportsNoFlavorWorkflowTriggerFinding(t *testing.T) {
 		})
 	}
 	root, _ := adoptedRepository(t, flavorFixtures["go-service"])
-	earlier, err := os.ReadFile(filepath.Join("..", "..", "internal", "flavor", "testdata", "ci-prior", "go", "520.yml"))
+	fixtureRoot, err := os.OpenRoot(filepath.Join("..", "..", "internal", "flavor", "testdata", "ci-prior"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open CI prior fixtures: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := fixtureRoot.Close(); err != nil {
+			t.Errorf("close CI prior fixtures: %v", err)
+		}
+	})
+	earlier, err := fixtureRoot.ReadFile(filepath.Join("go", "520"+flavor.CIWorkflowPriorExtension))
+	if err != nil {
+		t.Fatalf("read earlier Go CI fixture: %v", err)
 	}
 	writeFixtureFile(t, root, ".github/workflows/ci.yml", string(earlier))
 	mustContain(t, auditOffline(t, root), "[WARN] Workflow triggers (HISS-18): .github/workflows/ci.yml:", "runs on a draft pull request",

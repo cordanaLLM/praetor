@@ -14,6 +14,7 @@ package flavor_test
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -259,18 +260,23 @@ func TestRustfmtApply_Positive_GlobBelowACheckoutPathWithMetacharacters(t *testi
 	}
 }
 
-// readPriorFixtures returns every earlier scaffold text under dir by its file name, in LF: the
+// readPriorFixtures reads earlier scaffold texts through a rooted handle, by file name, in LF: the
 // texts were written with LF, and a Windows checkout under core.autocrlf may convert the
 // fixtures, which the tests then turn into CRLF themselves where they mean to.
 func readPriorFixtures(t *testing.T, dir string) map[string]string {
 	t.Helper()
-	entries, err := os.ReadDir(dir)
+	root := openFixtureRoot(t, dir)
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		t.Fatalf("read %s: %v", dir, err)
 	}
+	if len(entries) > 1024 {
+		t.Fatalf("%s exceeds 1024 prior fixtures", dir)
+	}
 	priors := make(map[string]string, len(entries))
-	for _, entry := range entries {
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+	for i := 0; i < len(entries) && i < 1024; i++ {
+		entry := entries[i]
+		data, err := root.ReadFile(entry.Name())
 		if err != nil {
 			t.Fatalf("read %s: %v", entry.Name(), err)
 		}

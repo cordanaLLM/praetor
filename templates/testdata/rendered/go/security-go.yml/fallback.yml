@@ -35,13 +35,15 @@ jobs:
 
       - name: Checkout source
         if: github.event.pull_request.draft != true
-        uses: actions/checkout@v7
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
       - name: Setup Go
         if: github.event.pull_request.draft != true
-        uses: actions/setup-go@v7
+        # yamllint disable-line rule:line-length
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: 'go.mod'
           # See ci.yml: setup-go's cache key carries no job name, so every job
@@ -54,7 +56,7 @@ jobs:
       # yamllint disable rule:line-length
       - name: Restore Go module cache
         if: github.event.pull_request.draft != true
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/go/pkg/mod
           key: gomod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
@@ -65,7 +67,7 @@ jobs:
       # other job's.
       - name: Restore Go build cache
         if: github.event.pull_request.draft != true
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/.cache/go-build
           key: gobuild-${{ runner.os }}-${{ runner.arch }}-vulncheck-${{ hashFiles('**/go.sum') }}-${{ github.sha }}

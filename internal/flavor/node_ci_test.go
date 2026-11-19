@@ -10,7 +10,6 @@ package flavor_test
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,6 +23,68 @@ import (
 )
 
 const nodeCIPath = ".github/workflows/ci.yml"
+
+// TestNodeCINonNpmManagersDisableImplicitCache covers conflicting npm devEngines metadata.
+func TestNodeCINonNpmManagersDisableImplicitCache(t *testing.T) {
+	for _, manager := range []string{"pnpm", "bun"} {
+		t.Run(manager, func(t *testing.T) {
+			files := map[string]string{
+				"package.json": `{"packageManager":"` + manager + `@1.0.0","devEngines":{"packageManager":{"name":"npm"}},"scripts":{"test":"vitest"}}`,
+			}
+			if manager == "pnpm" {
+				files["pnpm-lock.yaml"] = pnpmLock
+			} else {
+				files["bun.lock"] = bunLock
+			}
+			repo := gitRepoWithFiles(t, files)
+			report, err := flavor.ApplyFlavor(t.Context(), repo, "typescript-node", false)
+			if err != nil || len(report.Errors) > 0 {
+				t.Fatalf("apply: %v, errors %v", err, report)
+			}
+			body, err := openFixtureRoot(t, repo).ReadFile(nodeCIPath)
+			if err != nil {
+				t.Fatalf("read %s: %v", nodeCIPath, err)
+			}
+			assertNodeCIImplicitCacheDisabled(t, body)
+		})
+	}
+}
+
+// openFixtureRoot confines fixture reads and closes the handle when the test ends.
+func openFixtureRoot(t *testing.T, repo string) *os.Root {
+	t.Helper()
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		t.Fatalf("open fixture root: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close fixture root: %v", err)
+		}
+	})
+	return root
+}
+
+// assertNodeCIImplicitCacheDisabled requires setup-node to opt out of automatic caching.
+func assertNodeCIImplicitCacheDisabled(t *testing.T, body []byte) {
+	t.Helper()
+	var workflow nodeWorkflow
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, step := range workflow.Jobs["test"].Steps {
+		if strings.HasPrefix(step.Uses, "actions/setup-node@") {
+			found = true
+			if step.With["package-manager-cache"] != "false" {
+				t.Errorf("setup-node permits implicit npm caching: %v", step.With)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no setup-node step")
+	}
+}
 
 // npmLock is a package-lock.json npm ci accepts for a package with no dependencies.
 const npmLock = `{"name": "widget", "lockfileVersion": 3, "requires": true, "packages": {"": {"name": "widget"}}}` + "\n"
@@ -116,11 +177,12 @@ func draftSteps(steps []ghworkflow.Step) int {
 	return 0
 }
 
+// newNodeJob builds the expected Node CI job from the fixture's package.json and .yarnrc.yml.
 func newNodeJob(t *testing.T, repo string) *nodeJob {
 	t.Helper()
 	manifest := readFixtureManifest(t, repo)
 	declared, version, _ := strings.Cut(manifest.packageManager, "@")
-	yarnrc, err := os.ReadFile(filepath.Join(repo, ".yarnrc.yml"))
+	yarnrc, err := openFixtureRoot(t, repo).ReadFile(".yarnrc.yml")
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("read .yarnrc.yml: %v", err)
 	}
@@ -268,10 +330,11 @@ type fixtureManifest struct {
 	scripts        map[string]string
 }
 
+// readFixtureManifest reads the fixture's package.json; a missing file yields the zero manifest.
 func readFixtureManifest(t *testing.T, repo string) fixtureManifest {
 	t.Helper()
 	var manifest fixtureManifest
-	data, err := os.ReadFile(filepath.Join(repo, "package.json"))
+	data, err := openFixtureRoot(t, repo).ReadFile("package.json")
 	if os.IsNotExist(err) {
 		return manifest
 	}
@@ -428,7 +491,7 @@ func TestNodeCIJobIsScaffoldedOnlyWhereItRunsAsWritten(t *testing.T) {
 			if err != nil || len(report.Errors) > 0 {
 				t.Fatalf("apply: err %v, recorded %v", err, report.Errors)
 			}
-			data, readErr := os.ReadFile(filepath.Join(repo, nodeCIPath))
+			data, readErr := openFixtureRoot(t, repo).ReadFile(nodeCIPath)
 			if written := readErr == nil; written != (tc.unmet == "") {
 				t.Fatalf("CI job scaffolded = %v, want %v; report %+v", written, tc.unmet == "", report)
 			}
@@ -534,7 +597,7 @@ func TestApplyFlavor_Boundary_ForceNeverWritesAnUnrunnableNodeJob(t *testing.T) 
 	if err != nil || len(report.Errors) > 0 {
 		t.Fatalf("apply --force: err %v, recorded %v", err, report.Errors)
 	}
-	data, err := os.ReadFile(filepath.Join(repo, nodeCIPath))
+	data, err := openFixtureRoot(t, repo).ReadFile(nodeCIPath)
 	if err != nil || string(data) != own {
 		t.Fatalf("--force replaced the repository's workflow: err %v\n%s", err, data)
 	}

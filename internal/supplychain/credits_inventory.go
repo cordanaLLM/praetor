@@ -276,7 +276,18 @@ func featureInventory(rel, text string) ([]InventoryItem, error) {
 // actionInventory lists the owner/repository of every remote action a workflow, a composite
 // action or a CI template uses.
 func actionInventory(rel, text string) ([]InventoryItem, error) {
-	_, uses, err := util.ScanActionUses(text, maxNoticeLines)
+	read := func(text string, limit int) ([]string, []util.ActionUse, error) {
+		return util.ScanActionUses(text, limit)
+	}
+	if templatePath, template := strings.CutSuffix(rel, ".tmpl"); template {
+		if !isYAMLFile(templatePath) {
+			return nil, nil
+		}
+		read = func(text string, limit int) ([]string, []util.ActionUse, error) {
+			return util.ScanTemplateActionUses(text, limit)
+		}
+	}
+	_, uses, err := read(text, maxNoticeLines)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", rel, err)
 	}
