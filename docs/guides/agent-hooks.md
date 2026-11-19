@@ -312,9 +312,27 @@ The list defaults to empty and accepts at most 64 records with `max` from 20 to 
 
 Every registered `pre-tool` client evaluates this operator rule before checkout governance, including ungoverned checkouts. For each `gh pr create` collected by the existing shell reader, the guard reads `--title` or `-t` (separate, attached short or `=VALUE` forms), unquotes it with `unquoteShellWord`, and counts Unicode code points. A title over the target repository's limit is refused with rule `pr-title-limit`, the repository, observed length, limit and title. Exactly the limit passes. Calls without an explicit title, including `--fill` and interactive creation, are not judged. Repositories without a configured limit pass this check.
 
-The target comes from `--repo`/`-R`, then `GH_REPO`, then the command directory's origin remote through `util.ResolveRemoteIdentity`, the identity reader used by the forge-text policy. Directory changes reuse `collectGHWriteCalls`. Settings-read failures deny by name; with configured limits, an unresolved target also denies rather than guessing which limit applies. Static inspection does not evaluate shell substitutions in title or repository arguments.
+The hook selects the target in this order (`resolvePRTitleRepository` in `internal/agenthook/pr_title_limits.go`):
 
-Implementation and boundary evidence: `internal/agenthook/pr_title_limits.go`, `TestPRTitleLimitsPreToolPlants65And64`, `TestPRTitleLimitsResolutionAndForms`, `TestPRTitleLimitsEveryPreToolClient`, and `internal/config/operator_pr_title_limits_test.go`.
+1. Use an explicit repository flag (`--repo VALUE`, `--repo=VALUE`, `-R VALUE`, `-RVALUE` or `-R=VALUE`) before any environment or checkout source. The last parsed repository flag wins. For example, `GH_REPO=example/local gh pr create --repo example/flag --title ok` selects `example/flag`.
+
+2. Use a nonempty command-prefix `GH_REPO` assignment before the inherited environment. A shell assignment or an assignment passed through `env` supplies this value. Process prefix assignments and removals in order; the last one wins. For example, `env GH_REPO=example/local gh pr create --title ok` selects `example/local`, even if the hook inherited `GH_REPO=example/inherited`.
+
+3. An `env` removal of `GH_REPO` suppresses its inherited value; continue at step 6. The reader accepts `-u GH_REPO`, `--unset GH_REPO` and `--unset=GH_REPO`; a later prefix assignment supplies a new value. For example, `env -u GH_REPO gh pr create --title ok` selects the checkout default when one exists, even if the hook inherited `GH_REPO=example/inherited`.
+
+4. An empty command-prefix assignment also suppresses inherited `GH_REPO`; continue at step 6. For example, `GH_REPO='' gh pr create --title ok` selects the checkout default when one exists; it does not reuse the hook's inherited value. `GH_REPO=` has the same meaning.
+
+5. Otherwise, use inherited `GH_REPO` when nonempty, before checkout configuration. For example, with `GH_REPO=example/inherited` already exported to the hook, `gh pr create --title ok` selects `example/inherited` even if the checkout default names another repository.
+
+6. Read the command directory's local `remote.<name>.gh-resolved` keys. Use the first nonempty value: `base` selects that named remote's repository, and any other value names the repository directly. Empty values are ignored. For example, if `git config --local --get remote.origin.gh-resolved` prints `base`, `gh pr create --title ok` selects the repository named by `remote.origin.url`, even if an `upstream` remote names another repository. A value of `example/default` selects that repository instead.
+
+7. Without a default, rank network remotes case-insensitively: `upstream`, then `github`, then `origin`, then other names. Equal ranks keep the first name returned by `git remote`. For example, with no `gh-resolved` default or effective `GH_REPO`, remotes `upstream` → `example/upstream`, `github` → `example/github`, and `origin` → `example/origin` make `gh pr create --title ok` select `example/upstream`. Local-path remotes are ignored; a failed remote read refuses the check.
+
+8. If nothing resolves, refuse an explicit-title creation when any title limits are configured. With no limits, allow this check without resolving the target. For example, in an empty Git checkout with no effective `GH_REPO`, `gh pr create --title ok` is refused if even an unrelated repository has a configured limit, and passes this check when the list is empty.
+
+Directory changes reuse `collectGHWriteCalls`, including `cd`, `pushd` and `env -C`. This title resolver does not use the forge-text policy's origin-only `util.ResolveRemoteIdentity`. Settings-read failures deny by name. Static inspection does not evaluate shell substitutions in title or repository arguments.
+
+Implementation and boundary evidence: `internal/agenthook/pr_title_limits.go`, `TestPRTitleLimitsPreToolPlants65And64`, `TestPRTitleLimitsResolutionAndForms`, `TestPRTitleLimitsRepositoryOrder`, `TestPRTitleLimitsEveryPreToolClient`, and `internal/config/operator_pr_title_limits_test.go`.
 
 ## Clock on every prompt
 

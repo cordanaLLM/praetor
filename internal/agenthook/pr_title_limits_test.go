@@ -16,6 +16,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // TestForgeSettingsSelection preserves selected empty settings and refuses selection errors.
@@ -443,4 +444,139 @@ func TestPRTitleLimitsEnvRemoval(t *testing.T) {
 		})
 	}
 	assertTitleLimitVerdict(t, root, `env -u GH_REPO GH_REPO=example/other gh pr create -t "`+strings.Repeat("x", 65)+`"`, "example/widget", false)
+}
+
+// Guide clauses pin the documented precedence to executable resolution cases.
+const (
+	prTitleGuideFlags      = "1. Use an explicit repository flag (`--repo VALUE`, `--repo=VALUE`, `-R VALUE`, `-RVALUE` or `-R=VALUE`) before any environment or checkout source."
+	prTitleGuidePrefix     = "2. Use a nonempty command-prefix `GH_REPO` assignment before the inherited environment."
+	prTitleGuideRemoval    = "3. An `env` removal of `GH_REPO` suppresses its inherited value; continue at step 6."
+	prTitleGuideEmpty      = "4. An empty command-prefix assignment also suppresses inherited `GH_REPO`; continue at step 6."
+	prTitleGuideInherited  = "5. Otherwise, use inherited `GH_REPO` when nonempty, before checkout configuration."
+	prTitleGuideDefault    = "6. Read the command directory's local `remote.<name>.gh-resolved` keys. Use the first nonempty value: `base` selects that named remote's repository, and any other value names the repository directly."
+	prTitleGuideRemotes    = "7. Without a default, rank network remotes case-insensitively: `upstream`, then `github`, then `origin`, then other names. Equal ranks keep the first name returned by `git remote`."
+	prTitleGuideUnresolved = "8. If nothing resolves, refuse an explicit-title creation when any title limits are configured. With no limits, allow this check without resolving the target."
+)
+
+// prTitleRepositoryCase binds a documented selection step to conflicting policy targets.
+type prTitleRepositoryCase struct {
+	name, command, inherited string
+	remotes                  [][2]string
+	resolved                 [2]string
+	want, guide              string
+	noLimits                 bool
+}
+
+// prTitleRepositoryCases covers every guide step and adjacent precedence boundary.
+func prTitleRepositoryCases() []prTitleRepositoryCase {
+	all := [][2]string{{"upstream", "upstream"}, {"github", "github"}, {"origin", "origin"}, {"another", "another"}}
+	defaults := [2]string{"origin", "example/default"}
+	return []prTitleRepositoryCase{
+		{"flag over prefix", "GH_REPO=example/local gh pr create --repo example/flag", "example/inherited", all, defaults, "example/flag", prTitleGuideFlags, false},
+		{"short flag", "gh pr create -R example/flag", "example/inherited", all, defaults, "example/flag", prTitleGuideFlags, false},
+		{"long equals flag", "gh pr create --repo=example/flag", "example/inherited", all, defaults, "example/flag", prTitleGuideFlags, false},
+		{"attached flag", "gh pr create -Rexample/flag", "example/inherited", all, defaults, "example/flag", prTitleGuideFlags, false},
+		{"short equals flag", "gh pr create -R=example/flag", "example/inherited", all, defaults, "example/flag", prTitleGuideFlags, false},
+		{"prefix over inherited", "GH_REPO=example/local gh pr create", "example/inherited", all, defaults, "example/local", prTitleGuidePrefix, false},
+		{"env prefix", "env GH_REPO=example/local gh pr create", "example/inherited", all, defaults, "example/local", prTitleGuidePrefix, false},
+		{"env removal to default", "env -u GH_REPO gh pr create", "example/inherited", all, defaults, "example/default", prTitleGuideRemoval, false},
+		{"env removal to remotes", "env --unset=GH_REPO gh pr create", "example/inherited", all, [2]string{}, "example/upstream", prTitleGuideRemoval, false},
+		{"empty prefix to default", "GH_REPO= gh pr create", "example/inherited", all, defaults, "example/default", prTitleGuideEmpty, false},
+		{"empty prefix to remotes", "GH_REPO='' gh pr create", "example/inherited", all, [2]string{}, "example/upstream", prTitleGuideEmpty, false},
+		{"inherited over default", "gh pr create", "example/inherited", all, defaults, "example/inherited", prTitleGuideInherited, false},
+		{"default name over ranked", "gh pr create", "", all, defaults, "example/default", prTitleGuideDefault, false},
+		{"default base over ranked", "gh pr create", "", all, [2]string{"origin", "base"}, "example/origin", prTitleGuideDefault, false},
+		{"empty default to ranked", "gh pr create", "", all, [2]string{"origin", ""}, "example/upstream", prTitleGuideDefault, false},
+		{"upstream over github", "gh pr create", "", all, [2]string{}, "example/upstream", prTitleGuideRemotes, false},
+		{"github over origin", "gh pr create", "", all[1:], [2]string{}, "example/github", prTitleGuideRemotes, false},
+		{"origin over other", "gh pr create", "", all[2:], [2]string{}, "example/origin", prTitleGuideRemotes, false},
+		{"other remote", "gh pr create", "", all[3:], [2]string{}, "example/another", prTitleGuideRemotes, false},
+		{"case insensitive rank", "gh pr create", "", [][2]string{{"UPSTREAM", "upstream"}, {"github", "github"}}, [2]string{}, "example/upstream", prTitleGuideRemotes, false},
+		{"equal rank first", "gh pr create", "", [][2]string{{"zeta", "zeta"}, {"alpha", "alpha"}}, [2]string{}, "example/alpha", prTitleGuideRemotes, false},
+		{"unresolved with limits", "gh pr create", "", nil, [2]string{}, "", prTitleGuideUnresolved, false},
+		{"unresolved without limits", "gh pr create", "", nil, [2]string{}, "", prTitleGuideUnresolved, true},
+	}
+}
+
+// TestPRTitleLimitsRepositoryOrder binds the numbered guide to selected repositories and caps.
+func TestPRTitleLimitsRepositoryOrder(t *testing.T) {
+	guide, err := os.ReadFile(filepath.Join("..", "..", "docs", "guides", "agent-hooks.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := prTitleRepositoryCases()
+	for i := 0; i < len(cases) && i < 32; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(string(guide), tc.guide) {
+				t.Errorf("guide missing selection step %q", tc.guide)
+			}
+			assertPRTitleRepositoryCase(t, tc)
+		})
+	}
+}
+
+// assertPRTitleRepositoryCase resolves a real fixture and checks selected and unrelated caps.
+func assertPRTitleRepositoryCase(t *testing.T, tc prTitleRepositoryCase) {
+	t.Helper()
+	root := repository(t, false)
+	for i := 0; i < len(tc.remotes) && i < 8; i++ {
+		remote := tc.remotes[i]
+		testsupport.RunFixtureGit(t, root, []string{"remote", "add", remote[0], "https://github.com/example/" + remote[1] + ".git"})
+	}
+	if tc.resolved[0] != "" {
+		testsupport.RunFixtureGit(t, root, []string{"config", "remote." + tc.resolved[0] + ".gh-resolved", tc.resolved[1]})
+	}
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := tc.command + ` --title="` + strings.Repeat("x", 65) + `"`
+	calls, err := collectGHWriteCalls(command, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates := explicitPRTitleCalls(calls)
+	if len(candidates) != 1 {
+		t.Fatalf("title calls = %d; want 1", len(candidates))
+	}
+	candidate := candidates[0]
+	getenv := titleLimitEnvironment(t, tc.inherited)
+	got, err := resolvePRTitleRepository(ctx, candidate.call, candidate.repo, getenv)
+	if got != tc.want || (err != nil) != (tc.want == "") {
+		t.Fatalf("repository = %q, error %v; want %q", got, err, tc.want)
+	}
+	assertPRTitleRepositoryCaps(t, ctx, candidate, getenv, tc.want)
+	if tc.noLimits {
+		assertPRTitleNoLimits(t, ctx, root, command)
+	}
+}
+
+// assertPRTitleNoLimits checks that empty operator limits bypass target resolution.
+func assertPRTitleNoLimits(t *testing.T, ctx context.Context, root, command string) {
+	t.Helper()
+	got := evaluatePRTitleLimits(ctx, Canonical{Command: command}, Invocation{WorkDir: root, Forge: &config.ForgeSettings{}})
+	if got.Outcome != Allow {
+		t.Fatalf("no limits: %+v", got)
+	}
+}
+
+// assertPRTitleRepositoryCaps proves only the selected repository's limit judges a title.
+func assertPRTitleRepositoryCaps(t *testing.T, ctx context.Context, candidate ghPRTitleCall, getenv func(string) string, want string) {
+	t.Helper()
+	other := config.PRTitleLimit{Repo: "example/unrelated", Max: 20}
+	got := judgePRTitle(ctx, candidate, []config.PRTitleLimit{other}, getenv)
+	if (got.Outcome == Deny) != (want == "") {
+		t.Fatalf("unrelated limit judged target %q: %+v", want, got)
+	}
+	if want == "" {
+		if !strings.Contains(got.Reason, "target repository unavailable") {
+			t.Fatalf("unresolved target not named: %+v", got)
+		}
+		return
+	}
+	got = judgePRTitle(ctx, candidate, []config.PRTitleLimit{other, {Repo: want, Max: 64}}, getenv)
+	if got.Outcome != Deny || !strings.Contains(got.Reason, "repository "+want+": title length 65 exceeds limit 64") {
+		t.Fatalf("selected limit not applied: %+v", got)
+	}
 }
