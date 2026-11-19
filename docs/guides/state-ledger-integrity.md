@@ -255,7 +255,14 @@ worktree named by path in a completed row, an existing unarchived row is kept;
 otherwise the last matching row in document order stays verbatim in `OPEN.md`,
 including its id, path, branch, last step and next step. This retention does not
 reopen a completed task. Rows naming removed worktrees can be archived. A file
-with no archivable rows is unchanged. See `TestArchiveLiveWorktree`,
+with no archivable rows is unchanged. A rooted path whose first component starts
+with a space also stays intact after a standalone leading completion record, such
+as `[DONE]` or `- [DONE — fixture]`. Windows relative fields with spaces before
+the first backslash require paired whole-field wrappers (for example,
+`path: "relative worktree\child"`) or an explicit drive-relative prefix
+(`C:relative worktree\child`); ambiguous unwrapped prose remains excluded.
+See `TestArchiveLeadingSpaceWorktree`, `TestArchivePathCandidatePlatforms`,
+`TestArchiveWindowsRelativeRetention`, `TestArchiveLiveWorktree`,
 `TestArchiveWorktreeExistingRow`, `TestArchiveRemovedWorktree` and
 `TestArchiveNoDoneRowsUnchanged` in `internal/state/archive_worktrees_test.go`.
 

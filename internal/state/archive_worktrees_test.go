@@ -63,6 +63,38 @@ func TestArchiveLiveWorktree(t *testing.T) {
 	}
 }
 
+// TestArchiveLeadingSpaceWorktree retains a rooted field under every completion marker.
+func TestArchiveLeadingSpaceWorktree(t *testing.T) {
+	for _, format := range []string{
+		"- [x] %s\n", "- [X] %s\n", "| DONE | %s |\n", "| DONE — fixture | %s |\n",
+		"[DONE] %s\n", "[DONE fixture] %s\n", "[DONE — fixture] %s\n",
+		"- [DONE] %s\n", "- [DONE fixture] %s\n", "- [DONE — fixture] %s\n",
+	} {
+		t.Run(format, func(t *testing.T) {
+			root := t.TempDir()
+			if err := InitWorkingDir(root); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.FromSlash("/ leading worktree")
+			ops := archiveWorktreeOps{
+				list: func(context.Context, string) ([]worktree.WorktreeInfo, error) {
+					return []worktree.WorktreeInfo{{Path: path}}, nil
+				},
+				inspect: func(_ context.Context, name string) (archivePath, error) {
+					return archivePath{path: name, exists: name == path}, nil
+				},
+			}
+			row := fmt.Sprintf(format, "/ leading worktree")
+			open := filepath.Join(root, WorkingDirName, openLedgerName)
+			writeIntegrityFile(t, open, row+"- [x] unrelated\n")
+			if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); err != nil || count != 1 {
+				t.Fatalf("leading-space archive = %d, %v; want one removed row", count, err)
+			}
+			assertIntegrityFile(t, open, row)
+		})
+	}
+}
+
 // TestArchiveWorktreeExistingRow prefers an unarchived row that already names the live worktree.
 func TestArchiveWorktreeExistingRow(t *testing.T) {
 	root, linked := archiveWorktreeFixture(t)
@@ -1233,6 +1265,15 @@ func TestArchivePathCandidatePlatforms(t *testing.T) {
 		{"slash-prose", strings.ReplaceAll(prose, `\`, "/"), false, false},
 		{"relative", `relative\worktree`, true, false},
 		{"relative-leading-space", `relative\ leading worktree`, true, false},
+		{"quoted-relative-first-space", `path: "relative worktree\child"`, true, false},
+		{"backtick-relative-first-space", "path: `relative worktree\\child`", true, false},
+		{"single-quoted-relative-first-space", `path: 'relative worktree\child'`, true, false},
+		{"parenthesized-relative-first-space", `path: (relative worktree\child)`, true, false},
+		{"bracketed-relative-first-space", `path: [relative worktree\child]`, true, false},
+		{"unwrapped-relative-first-space", `relative worktree\child`, false, false},
+		{"unpaired-relative-first-space", `path: "relative worktree\child`, false, false},
+		{"relative-long-prose", strings.Repeat("long prose with spaces ", 60) + `worktree\child`, false, false},
+		{"record-prose-separator", "- [DONE — fixture] details / more " + strings.Repeat("details ", 60), false, false},
 		{"dot-relative", `.\worktree`, true, false},
 		{"parent-relative", `..\worktree`, true, false},
 		{"label-relative", "path: `relative\\worktree`", true, false},
@@ -1251,6 +1292,7 @@ func TestArchivePathCandidatePlatforms(t *testing.T) {
 		{"checkbox-leading-space", "- [x] / leading worktree", true, true},
 		{"drive-leading-space", `C:\ leading worktree`, true, true},
 		{"drive-relative", `C:relative\worktree`, true, false},
+		{"drive-relative-first-space", `C:relative worktree\child`, true, false},
 		{"unix-backslash-component", `/repo/a\b`, true, true},
 		{"url", "url: https://example.test/repo", false, false},
 	} {
@@ -1269,7 +1311,10 @@ func TestArchivePathCandidatePlatforms(t *testing.T) {
 func TestArchiveWindowsRelativeOffsets(t *testing.T) {
 	for _, tc := range []struct{ field, path string }{
 		{`relative\worktree`, `relative\worktree`},
+		{`path: "relative worktree\child"`, `relative worktree\child"`},
 		{`C:relative\worktree`, `C:relative\worktree`},
+		{`C:relative worktree\child`, `C:relative worktree\child`},
+		{`path: C:relative worktree\child`, `C:relative worktree\child`},
 		{`path: C:relative\worktree`, `C:relative\worktree`},
 		{"path: `C:relative\\worktree`", "C:relative\\worktree`"},
 	} {
@@ -1278,4 +1323,59 @@ func TestArchiveWindowsRelativeOffsets(t *testing.T) {
 			t.Errorf("candidate start for %q = %d; want complete %q", tc.field, start, tc.path)
 		}
 	}
+}
+
+// TestArchiveWindowsRelativeRetention indexes complete Windows fields and retains their live rows on any host.
+func TestArchiveWindowsRelativeRetention(t *testing.T) {
+	for _, tc := range []struct{ field, path string }{
+		{`path: "relative worktree\child"`, `relative worktree\child`},
+		{`C:relative worktree\child`, `C:relative worktree\child`},
+	} {
+		t.Run(tc.field, func(t *testing.T) { testArchiveWindowsRelativeRetention(t, tc.field, tc.path) })
+	}
+}
+
+// testArchiveWindowsRelativeRetention checks one platform-parsed field through indexing and retention.
+func testArchiveWindowsRelativeRetention(t *testing.T, field, want string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	start := archivePathStartForPlatform(field, "windows")
+	if start < 0 {
+		t.Fatalf("Windows field not indexed: %q", field)
+	}
+	path, err := archiveCleanPath(archiveUnwrapPath(field[:start], field[start:]))
+	if err != nil || path != filepath.Clean(want) {
+		t.Fatalf("Windows field = %q, %v; want %q", path, err, want)
+	}
+	ops := archiveWorktreeOps{
+		list: func(context.Context, string) ([]worktree.WorktreeInfo, error) {
+			return []worktree.WorktreeInfo{{Path: want}}, nil
+		},
+		inspect: func(_ context.Context, name string) (archivePath, error) {
+			return archivePath{path: name, exists: true}, nil
+		},
+	}
+	index := archiveRowIndex{rows: make(map[string][]int), normalized: make(map[string]string)}
+	if err := index.add(t.Context(), 0, []string{path}, ops); err != nil {
+		t.Fatal(err)
+	}
+	row := "- [x] " + field
+	content := []byte(row + "\n- [x] unrelated\n")
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	writeIntegrityFile(t, open, string(content))
+	plan := taskArchivePlan{lines: []string{row, "- [x] unrelated", ""}, archive: map[int]bool{0: true, 1: true}, index: index.rows}
+	if err := retainWorktreeRows(t.Context(), root, plan.index, plan.archive, ops); err != nil {
+		t.Fatal(err)
+	}
+	remaining, completed, err := plan.split(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := publishTaskArchive(t.Context(), root, open, "fixture", content, remaining, completed); err != nil || count != 1 {
+		t.Fatalf("Windows archive = %d, %v; want one removed row", count, err)
+	}
+	assertIntegrityFile(t, open, row+"\n")
 }

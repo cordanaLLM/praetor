@@ -137,9 +137,15 @@ func archiveRecordDone(ctx context.Context, line string, statusColumn int) (bool
 	if strings.HasPrefix(line, "|") {
 		return archiveTableDone(ctx, line, statusColumn)
 	}
+	_, done := archiveCompletionRecord(line)
+	return done, nil
+}
+
+// archiveCompletionRecord returns the description after a supported leading completion marker.
+func archiveCompletionRecord(line string) (string, bool) {
 	first := strings.TrimPrefix(line, "- ")
-	marker, _, closed := strings.Cut(first, "]")
-	return closed && (marker == "[DONE" || strings.HasPrefix(marker, "[DONE ")), nil
+	marker, description, closed := strings.Cut(first, "]")
+	return description, closed && (marker == "[DONE" || strings.HasPrefix(marker, "[DONE "))
 }
 
 // archiveTableDone ignores status-looking pipe cells inside the shared Markdown code spans.
@@ -268,10 +274,12 @@ func archiveNativePathStart(field string, separator int, platform string) int {
 	if platform != "windows" || field[separator] != '\\' || archiveFieldBoundary(field, separator) {
 		return separator
 	}
-	start := archiveDrivePathStart(field, strings.LastIndexAny(field[:separator], "`\"'([:=")+1)
+	component := strings.LastIndexAny(field[:separator], "`\"'([:=") + 1
+	start := archiveDrivePathStart(field, component)
 	prefix := field[start:separator]
 	trimmed := strings.TrimLeft(prefix, " \t")
-	if strings.ContainsAny(trimmed, " \t") {
+	explicit := start < component || archiveUnwrapPath(field[:start], field[start:]) != field[start:]
+	if strings.ContainsAny(trimmed, " \t") && !explicit {
 		return -1
 	}
 	return start + len(prefix) - len(trimmed)
@@ -287,6 +295,9 @@ func archivePathSeparatorInProse(field string, separator int) bool {
 	}
 	prefix := strings.TrimSpace(field[:separator])
 	if description, _, checkbox := taskCheckbox(prefix + " "); checkbox && strings.TrimSpace(description) == "" {
+		return false
+	}
+	if description, done := archiveCompletionRecord(prefix); done && strings.TrimSpace(description) == "" {
 		return false
 	}
 	return prefix != "" && !strings.ContainsAny(prefix[len(prefix)-1:], "`\"'([:=")
