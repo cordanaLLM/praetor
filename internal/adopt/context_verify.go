@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
@@ -16,11 +17,12 @@ import (
 // compile-context --verify (cmd/standardsctl/compile_context.go).
 const contextVerifyTimeout = 2 * time.Minute
 
-// maxVerifyFailures bounds the failures one verification lists (HISS-02). VerifyCompiledContext
-// joins at most ten checks (register block, evidence ignore rule, vendor files, four lints,
-// persona, plugin skill and client skill projections), so the bound is never reached by a real
-// run.
+// maxVerifyFailures bounds opened verification failures (HISS-02). Each verifier may join
+// multiple target failures; whatever remains at the bound stays joined in the last entry.
 const maxVerifyFailures = 64
+
+// maxVerifyDepth bounds single-wrapper inspection before a joined verification failure.
+const maxVerifyDepth = 8
 
 // verifyRejection leads every error the verification after the chain records. The verification
 // reads the whole repository, not only what the run wrote: a file the repository placed in a
@@ -80,9 +82,9 @@ func verifyOwner(failure error) string {
 }
 
 // verifyFailures lists the separate failures err joins (errors.Join, or fmt.Errorf with several
-// %w verbs), in order: every error that joins others is opened, and a failure wrapped once stays
-// whole, with its context. At most maxVerifyFailures errors are opened; whatever is left then
-// stays joined in the last entry, so nothing is dropped.
+// %w verbs), in order. Joins beneath up to maxVerifyDepth single wrappers are opened with each
+// wrapper's context and surface ownership retained on each part. A wrapped single cause stays whole.
+// At most maxVerifyFailures errors are opened; the unopened rest stays joined in the last entry.
 func verifyFailures(err error) []error {
 	pending := []error{err}
 	var failures []error
@@ -95,11 +97,70 @@ func verifyFailures(err error) []error {
 		case ok:
 			pending = append(slices.Clone(joined.Unwrap()), pending...)
 		default:
-			failures = append(failures, next)
+			if parts := wrappedVerifyFailures(next); parts != nil {
+				pending = append(parts, pending...)
+			} else {
+				failures = append(failures, next)
+			}
 		}
 	}
 	if rest := errors.Join(pending...); rest != nil {
 		failures = append(failures, rest)
 	}
 	return failures
+}
+
+// wrappedVerifyFailures opens the first join beneath bounded single wrappers, or leaves a
+// single cause intact. Excess children stay joined so expansion never discards a failure.
+func wrappedVerifyFailures(err error) []error {
+	next := err
+	surface := false
+	for depth := 0; next != nil && depth <= maxVerifyDepth; depth++ {
+		if joined, ok := next.(interface{ Unwrap() []error }); ok {
+			return prefixVerifyFailures(err, next, joined.Unwrap(), surface)
+		}
+		if marker, ok := next.(interface{ Is(error) bool }); ok {
+			surface = surface || marker.Is(compiler.ErrAgentSurface)
+		}
+		next = errors.Unwrap(next)
+	}
+	return nil
+}
+
+// prefixVerifyFailures retains the wrapper text around a join on each bounded part. Wrappers
+// that do not include their cause's text stay whole rather than losing diagnostic context.
+func prefixVerifyFailures(original, joined error, causes []error, surface bool) []error {
+	prefix, suffix, found := strings.Cut(original.Error(), joined.Error())
+	if !found {
+		return nil
+	}
+	parts := slices.Clone(causes)
+	if len(parts) > maxVerifyFailures {
+		parts = append(parts[:maxVerifyFailures-1], errors.Join(parts[maxVerifyFailures-1:]...))
+	}
+	for i := 0; i < len(parts) && i < maxVerifyFailures; i++ {
+		parts[i] = verifyFailurePart{prefix: prefix, suffix: suffix, cause: parts[i], surface: surface}
+	}
+	return parts
+}
+
+// verifyFailurePart retains wrapper text and surface ownership while exposing only one cause.
+// Its original join is never exposed through Unwrap or Is, so sibling lint cannot mask drift.
+type verifyFailurePart struct {
+	prefix, suffix string
+	cause          error
+	surface        bool
+}
+
+// Error substitutes the selected cause for the join, keeping the surrounding file and step.
+func (e verifyFailurePart) Error() string {
+	return e.prefix + e.cause.Error() + e.suffix
+}
+
+// Unwrap exposes the selected cause alone for classification and further bounded expansion.
+func (e verifyFailurePart) Unwrap() error { return e.cause }
+
+// Is retains ErrAgentSurface from projection wrappers without visiting joined siblings.
+func (e verifyFailurePart) Is(target error) bool {
+	return e.surface && target == compiler.ErrAgentSurface
 }

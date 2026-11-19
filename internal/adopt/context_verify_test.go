@@ -1,6 +1,7 @@
 package adopt
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,216 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
+
+// TestVerifyAgentContext_ReadOnlyFailures checks adoption's report for independent target and
+// canonical lint failures, including the target's path and owning step.
+func TestVerifyAgentContext_ReadOnlyFailures(t *testing.T) {
+	cases := []struct {
+		name, target string
+		lint         bool
+	}{
+		{name: "clean"},
+		{name: "lint only", lint: true},
+		{name: "missing only", target: "missing"},
+		{name: "drift only", target: "drift"},
+		{name: "missing and lint", target: "missing", lint: true},
+		{name: "drift and lint", target: "drift", lint: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := contextVerificationFixture(t, tc.lint)
+			plantReadOnlyTarget(t, root, tc.target)
+			assertReadOnlyReport(t, runContextVerification(t, root), tc.target != "")
+		})
+	}
+}
+
+// plantReadOnlyTarget leaves the projection synchronized, removes it, or plants drift.
+func plantReadOnlyTarget(t *testing.T, root, state string) {
+	t.Helper()
+	target := filepath.Join(root, compiler.ReadOnlyFile)
+	switch state {
+	case "missing":
+		if err := os.Remove(target); err != nil {
+			t.Fatal(err)
+		}
+	case "drift":
+		mustWrite(t, target, "drifted\n")
+	}
+}
+
+// assertReadOnlyReport requires target failures on their owner without repeating canonical lint.
+func assertReadOnlyReport(t *testing.T, rep *AdoptReport, targetFailure bool) {
+	t.Helper()
+	step := stepOutcome(t, rep, "agent-harness")
+	if len(step.Warnings) != 0 {
+		t.Errorf("canonical lint warning repeated: %v", step.Warnings)
+	}
+	if !targetFailure {
+		if len(rep.Errors) != 0 {
+			t.Fatalf("lint alone must stay accepted: %v", rep.Errors)
+		}
+		return
+	}
+	if len(rep.Errors) != 1 || len(step.Errors) != 1 || step.Status != StepFailed {
+		t.Fatalf("target failure missing from report/owner: errors=%v step=%+v", rep.Errors, step)
+	}
+	if !strings.Contains(step.Errors[0], "context verification failed: target "+compiler.ReadOnlyFile) {
+		t.Errorf("target path or verifier prefix lost: %s", step.Errors[0])
+	}
+}
+
+// contextVerificationFixture prepares synchronized outputs without rejecting canonical prose.
+func contextVerificationFixture(t *testing.T, lint bool) string {
+	t.Helper()
+	root := newTestRepo(t, "context-verification")
+	content := "# Policy\n\n- review diffs\n"
+	if lint {
+		content += strings.Repeat(nestedContextProse, 8)
+	}
+	source := filepath.Join(root, agentsFile)
+	mustWrite(t, source, content)
+	mustWrite(t, filepath.Join(root, ".gitignore"), "/.workingdir/\n")
+	if _, err := compiler.CompileVendorTargets(t.Context(), io.Discard, compiler.NewTranspiler(), source, root); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// runContextVerification replays adoption's final verification through its prepared-step seam.
+func runContextVerification(t *testing.T, root string) *AdoptReport {
+	t.Helper()
+	rep, err := adoptOrStep(t, AdoptOptions{Path: root}, false, func(ctx context.Context, s *adoptSession) error {
+		for _, name := range []string{"agent-harness", "agent-definitions", "git-ignore"} {
+			s.report.recordStep(name, StepCompleted, s.report.mark())
+		}
+		verifyAgentContext(ctx, s, nil)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rep
+}
+
+// TestVerifyAgentContext_PersonaDriftAndLint keeps persona drift on its step and prose warned.
+func TestVerifyAgentContext_PersonaDriftAndLint(t *testing.T) {
+	root := contextVerificationFixture(t, false)
+	canonical := compiler.CanonicalAgentsRel + "/custom-helper.md"
+	mustWrite(t, filepath.Join(root, filepath.FromSlash(canonical)), customHelperText+strings.Repeat(nestedContextProse, 8))
+	if _, err := compiler.CompileAgentSurfaces(t.Context(), io.Discard, root); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(root, filepath.FromSlash(customHelperCopy)), "drifted\n")
+	rep := runContextVerification(t, root)
+	step := stepOutcome(t, rep, "agent-definitions")
+	if len(rep.Errors) != 1 || len(step.Errors) != 1 || step.Status != StepFailed {
+		t.Fatalf("persona drift owner: errors=%v step=%+v", rep.Errors, step)
+	}
+	for _, want := range []string{"agent persona verification failed", customHelperCopy} {
+		if !strings.Contains(step.Errors[0], want) {
+			t.Errorf("persona drift lacks %q: %s", want, step.Errors[0])
+		}
+	}
+	if len(step.Warnings) != 1 || !strings.Contains(step.Warnings[0], canonical) ||
+		!strings.Contains(step.Warnings[0], compiler.ErrAgentTextProse.Error()) {
+		t.Errorf("persona lint must stay warned on its owner: %+v", step)
+	}
+	assertHarnessPillarsClean(t, rep)
+}
+
+// TestVerifyFailures_WrappedJoin separates each cause through two wrappers, retaining context.
+func TestVerifyFailures_WrappedJoin(t *testing.T) {
+	drift := errors.New("target missing")
+	lint := compiler.ErrContextProse
+	joined := fmt.Errorf("step: %w", fmt.Errorf("AGENTS.readonly.md: %w", errors.Join(drift, lint)))
+	got := verifyFailures(joined)
+	if len(got) != 2 {
+		t.Fatalf("joined causes = %v, want two", got)
+	}
+	for i, cause := range []error{drift, lint} {
+		if !errors.Is(got[i], cause) || errors.Is(got[i], []error{lint, drift}[i]) {
+			t.Errorf("cause %d includes sibling or lost identity: %v", i, got[i])
+		}
+		if want := "step: AGENTS.readonly.md: " + cause.Error(); got[i].Error() != want {
+			t.Errorf("cause %d = %q, want %q", i, got[i], want)
+		}
+	}
+}
+
+// TestVerifyFailures_SingleAndNil preserves single causes, their wrapper context, and nil.
+func TestVerifyFailures_SingleAndNil(t *testing.T) {
+	drift := errors.New("target missing")
+	single := fmt.Errorf("file: %w", drift)
+	if got := verifyFailures(single); len(got) != 1 || !errors.Is(got[0], single) || got[0].Error() != single.Error() {
+		t.Errorf("single wrapped cause changed: %v", got)
+	}
+	if got := verifyFailures(drift); len(got) != 1 || !errors.Is(got[0], drift) {
+		t.Errorf("single unwrapped cause changed: %v", got)
+	}
+	if got := verifyFailures(nil); len(got) != 0 {
+		t.Errorf("nil changed: %v", got)
+	}
+}
+
+// TestVerifyFailures_Overflow keeps excess causes joined, both directly and beneath a wrapper.
+func TestVerifyFailures_Overflow(t *testing.T) {
+	causes := make([]error, maxVerifyFailures+2)
+	for i := 0; i < len(causes) && i < maxVerifyFailures+2; i++ {
+		causes[i] = fmt.Errorf("cause %d", i)
+	}
+	for _, err := range []error{errors.Join(causes...), fmt.Errorf("file: %w", errors.Join(causes...))} {
+		got := verifyFailures(err)
+		if len(got) > maxVerifyFailures || len(got) < 2 {
+			t.Fatalf("bounded failure count = %d", len(got))
+		}
+		for i := len(got) - 1; i < len(causes) && i < maxVerifyFailures+2; i++ {
+			if !errors.Is(got[len(got)-1], causes[i]) {
+				t.Errorf("overflow cause %d lost: %v", i, got[len(got)-1])
+			}
+		}
+	}
+}
+
+// TestVerifyFailures_Depth limits single-wrapper inspection and preserves an unopened failure.
+func TestVerifyFailures_Depth(t *testing.T) {
+	wrapped := &countedVerifyWrapper{}
+	got := verifyFailures(wrapped)
+	if len(got) != 1 || !errors.Is(got[0], wrapped) || wrapped.reads > maxVerifyDepth+1 {
+		t.Errorf("depth bound: reads=%d failures=%v", wrapped.reads, got)
+	}
+}
+
+// TestVerifyFailures_DepthBoundary opens a join at the depth limit and preserves one beyond it.
+func TestVerifyFailures_DepthBoundary(t *testing.T) {
+	first, second := errors.New("first"), errors.New("second")
+	wrapped := errors.Join(first, second)
+	for i := 0; i < maxVerifyDepth; i++ {
+		wrapped = fmt.Errorf("layer: %w", wrapped)
+	}
+	if got := verifyFailures(wrapped); len(got) != 2 || !errors.Is(got[0], first) || !errors.Is(got[1], second) {
+		t.Fatalf("join at depth limit not opened: %v", got)
+	}
+	beyond := fmt.Errorf("beyond: %w", wrapped)
+	if got := verifyFailures(beyond); len(got) != 1 || !errors.Is(got[0], beyond) || got[0].Error() != beyond.Error() {
+		t.Fatalf("join beyond depth limit changed: %v", got)
+	}
+}
+
+// countedVerifyWrapper terminates beyond the inspection budget, exposing an unbounded walk.
+type countedVerifyWrapper struct{ reads int }
+
+// Error supplies fixed text without traversing the synthetic wrapper chain.
+func (*countedVerifyWrapper) Error() string { return "deep wrapper" }
+
+// Unwrap records inspection and terminates even if the production depth guard is removed.
+func (e *countedVerifyWrapper) Unwrap() error {
+	e.reads++
+	if e.reads > maxVerifyDepth+2 {
+		return nil
+	}
+	return e
+}
 
 // customHelperCopy is a subagent an adopter wrote by hand into a client persona directory: a file
 // compile-context --verify reads as compiled output that projects no canonical persona.
