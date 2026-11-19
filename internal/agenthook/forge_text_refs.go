@@ -71,13 +71,15 @@ type ghTextFile struct {
 // ghWriteCall holds the raw command text, resolved file arguments and any file-collection
 // refusal for a single scoped gh write invocation, plus arguments and create classification.
 type ghWriteCall struct {
-	raw      string
-	files    []ghTextFile
-	fileErr  string
-	dir      string
-	prCreate bool
-	args     []string
-	repoEnv  *string
+	raw           string
+	files         []ghTextFile
+	fileErr       string
+	dir           string
+	prCreate      bool
+	args          []string
+	repoEnv       *string
+	wrapped       bool
+	prefixUnknown bool
 }
 
 // ghDirPolicy holds the resolved trusted organisations, missing-list flag, diagnostic
@@ -575,7 +577,7 @@ func shellFieldsForGH(command string) ([]string, error) {
 // parseSegmentGHCall inspects one command segment, updates workDir on cd or pushd, and
 // extracts a ghWriteCall when the segment invokes a scoped gh write subcommand, refusing non-gh or unscoped segments.
 func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghWriteCall, string, bool) {
-	word, args, cmdDir, _, _ := walkCommandWords(words, workDir)
+	word, args, cmdDir, _, wrapped := walkCommandWords(words, workDir)
 	if word == "cd" || word == "pushd" {
 		if dirs := changeDirectoryTarget(args, cmdDir); len(dirs) > 0 && dirs[0].dir != "" {
 			return ghWriteCall{}, dirs[0].dir, false
@@ -595,8 +597,8 @@ func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghW
 		raw = fullCommand
 	}
 	prCreate := subcmd == "pr" && unquoteShellWord(args[len(args)-len(rest)-1]) == "create"
-	repoEnv := ghCommandRepository(words[:len(words)-len(args)-1])
-	return ghWriteCall{raw: raw, files: files, fileErr: fileErr, dir: cmdDir, prCreate: prCreate, args: args, repoEnv: repoEnv}, workDir, true
+	repoEnv, prefixUnknown := ghCommandRepository(words[:len(words)-len(args)-1])
+	return ghWriteCall{raw: raw, files: files, fileErr: fileErr, dir: cmdDir, prCreate: prCreate, args: args, repoEnv: repoEnv, wrapped: wrapped, prefixUnknown: prefixUnknown}, workDir, true
 }
 
 // classifyGHCall identifies the gh subcommand and remaining arguments for a scoped write

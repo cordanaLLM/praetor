@@ -25,13 +25,12 @@ func commandDirectories(words []string, base string) []commandTarget {
 	}
 }
 
-// walkCommandWords strips leading variable assignments, subshell/group openers and env
-// wrappers from words, returning the command word, its arguments, the effective working
-// directory and any GIT_DIR/GIT_WORK_TREE or env directory targets.
+// walkCommandWords strips assignments, group openers, env and shared admission wrappers.
+// It returns the command, arguments, working directory, directory targets and wrapper presence.
 func walkCommandWords(words []string, base string) (string, []string, string, []commandTarget, bool) {
 	var targets []commandTarget
 	wrapperSeen := false
-	for i := 0; i < len(words); i++ {
+	for i := 0; i < len(words) && i < maxForgeTextWords; i++ {
 		name, value, assignment := forge.ShellAssignment(words[i])
 		if assignment {
 			if name == "GIT_DIR" || name == "GIT_WORK_TREE" {
@@ -40,20 +39,38 @@ func walkCommandWords(words []string, base string) (string, []string, string, []
 			continue
 		}
 		word := strings.TrimLeft(unquoteTarget(words[i]), "(")
-		switch word {
-		case "", "{":
+		switch {
+		case word == "" || word == "{":
 			continue // A subshell or group opener ahead of the command word.
-		case "env":
+		case commandName(word) == "env":
 			wrapperSeen = true
 			var dirs []commandTarget
 			i, base, dirs = envDirectories(words, i+1, base)
 			targets = append(targets, dirs...)
 			i-- // Continue at the command word after env's options.
 		default:
+			if spec, ok := commandWrapperSpec(commandName(word)); ok {
+				wrapperSeen = true
+				i = commandAfter(words, i, spec) - 1
+				continue
+			}
 			return word, words[i+1:], base, targets, wrapperSeen
 		}
 	}
 	return "", nil, base, targets, wrapperSeen
+}
+
+// commandWrapperSpec reuses admission's launcher inventory and option reader.
+// Admission refuses sudo before walking it; keep its metadata out of the compiled privilege rule.
+func commandWrapperSpec(name string) (wrapperSpec, bool) {
+	if spec, ok := admissionWrappers[name]; ok {
+		return spec, true
+	}
+	if name == "sudo" {
+		return wrapperSpec{values: []string{"-C", "--close-from", "-D", "--chdir", "-g", "--group", "-h", "--host", "-p", "--prompt",
+			"-R", "--chroot", "-T", "--command-timeout", "-U", "--other-user", "-u", "--user"}}, true
+	}
+	return wrapperSpec{}, false
 }
 
 // changeDirectoryTarget resolves the destination directory of a cd or pushd command

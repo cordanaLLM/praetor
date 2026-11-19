@@ -6,7 +6,6 @@ package agenthook
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -22,6 +21,7 @@ type ghPRTitleCall struct {
 	call     ghWriteCall
 	title    string
 	repo     string
+	repoRaw  string
 	argument string
 	explicit bool
 	unknown  string
@@ -29,6 +29,14 @@ type ghPRTitleCall struct {
 
 // evaluatePRTitleLimits checks explicit titles before checkout governance can skip a command.
 func evaluatePRTitleLimits(ctx context.Context, canonical Canonical, in Invocation) Verdict {
+	return evaluatePRTitleLimitsWith(ctx, canonical, in, util.RunGit)
+}
+
+// prTitleGitReader shares the bounded git runner and permits deterministic failure fixtures.
+type prTitleGitReader func(context.Context, string, ...string) (string, error)
+
+// evaluatePRTitleLimitsWith keeps the no-policy fast path ahead of repository inspection.
+func evaluatePRTitleLimitsWith(ctx context.Context, canonical Canonical, in Invocation, runGit prTitleGitReader) Verdict {
 	if canonical.Command == "" {
 		return Verdict{Outcome: Allow}
 	}
@@ -49,14 +57,16 @@ func evaluatePRTitleLimits(ctx context.Context, canonical Canonical, in Invocati
 	if settingsErr != nil {
 		return prTitleLimitDeny("operator forge settings unavailable: " + settingsErr.Error())
 	}
+	var notices []string
 	for i := 0; i < len(candidates) && i < maxForgeTextSegments; i++ {
 		candidate := candidates[i]
-		verdict := judgePRTitle(ctx, candidate, settings.PRTitleLimits, in.Getenv)
+		verdict := judgePRTitle(ctx, candidate, settings.PRTitleLimits, in.Getenv, runGit)
 		if verdict.Outcome != Allow {
 			return verdict
 		}
+		notices = appendUniqueNotice(notices, verdict.Notice)
 	}
-	return Verdict{Outcome: Allow}
+	return Verdict{Outcome: Allow, Notice: strings.Join(notices, "; ")}
 }
 
 // explicitPRTitleCalls selects create calls with an explicit title or unknown shorthand.
@@ -86,8 +96,8 @@ func ghPRTitleOptions(args []string) ghPRTitleCall {
 			candidate.title, candidate.argument, candidate.explicit, i = value, raw, true, next
 			continue
 		}
-		if value, _, next, matched := ghPRDecodedFlag(args, i, "-R", "--repo"); matched {
-			candidate.repo, i = value, next
+		if value, raw, next, matched := ghPRDecodedFlag(args, i, "-R", "--repo"); matched {
+			candidate.repo, candidate.repoRaw, i = value, raw, next
 			continue
 		}
 		word := unquoteShellWord(args[i])
@@ -128,58 +138,103 @@ func ghPRValueFlag(word string) bool {
 	}
 }
 
-// judgePRTitle resolves the target and counts Unicode code points against its configured cap.
-func judgePRTitle(ctx context.Context, candidate ghPRTitleCall, limits []config.PRTitleLimit, getenv func(string) string) Verdict {
-	target, err := resolvePRTitleRepository(ctx, candidate.call, candidate.repo, getenv)
+// judgePRTitle applies the target's cap, or the smallest configured cap on uncertainty.
+func judgePRTitle(ctx context.Context, candidate ghPRTitleCall, limits []config.PRTitleLimit, getenv func(string) string, runGit prTitleGitReader) Verdict {
+	if len(limits) == 0 {
+		return Verdict{Outcome: Allow}
+	}
+	target, err := resolvePRTitleCandidate(ctx, candidate, getenv, runGit)
+	limit, capped := prTitleRepositoryLimit(target, limits, err != nil)
+	if !capped {
+		return Verdict{Outcome: Allow}
+	}
+	label := "repository " + target
 	if err != nil {
-		return prTitleLimitDeny("target repository unavailable: " + err.Error())
+		label = "uncertain target repository"
+	}
+	verdict := judgePRTitleMaximum(candidate, label, limit)
+	if err != nil {
+		notice := "target repository uncertain: " + err.Error() + "; name the repository with the repo flag"
+		if verdict.Outcome == Deny {
+			verdict.Reason += "\n" + notice
+		} else {
+			verdict.Notice = notice
+		}
+	}
+	return verdict
+}
+
+// resolvePRTitleCandidate validates raw flag syntax before using the shared decoded value.
+func resolvePRTitleCandidate(ctx context.Context, candidate ghPRTitleCall, getenv func(string) string, runGit prTitleGitReader) (string, error) {
+	if candidate.repoRaw != "" && (candidate.repo == "" || unresolvedPRTitleArgument(candidate.repoRaw)) {
+		return "", fmt.Errorf("repository flag is empty or contains unresolved shell syntax")
+	}
+	return resolvePRTitleRepository(ctx, candidate.call, candidate.repo, getenv, runGit)
+}
+
+// prTitleRepositoryLimit selects exactly one known cap or the minimum across all caps.
+func prTitleRepositoryLimit(target string, limits []config.PRTitleLimit, uncertain bool) (int, bool) {
+	maximum := limits[0].Max
+	for i := 0; i < len(limits) && i < config.MaxPRTitleLimits; i++ {
+		if !uncertain && strings.EqualFold(target, limits[i].Repo) {
+			return limits[i].Max, true
+		}
+		maximum = min(maximum, limits[i].Max)
+	}
+	return maximum, uncertain
+}
+
+// judgePRTitleMaximum preserves refusal details and refuses unresolved title syntax.
+func judgePRTitleMaximum(candidate ghPRTitleCall, label string, maximum int) Verdict {
+	if candidate.unknown != "" {
+		return prTitleLimitDeny(fmt.Sprintf("%s: unknown shorthand %q in gh pr create option cluster", label, candidate.unknown))
+	}
+	if unresolvedPRTitleArgument(candidate.argument) {
+		return prTitleLimitDeny(fmt.Sprintf("%s: title argument %q contains unresolved shell syntax", label, candidate.argument))
 	}
 	length := utf8.RuneCountInString(candidate.title)
-	for i := 0; i < len(limits) && i < config.MaxPRTitleLimits; i++ {
-		limit := limits[i]
-		if !strings.EqualFold(target, limit.Repo) {
-			continue
-		}
-		if candidate.unknown != "" {
-			return prTitleLimitDeny(fmt.Sprintf("repository %s: unknown shorthand %q in gh pr create option cluster", target, candidate.unknown))
-		}
-		if unresolvedPRTitleArgument(candidate.argument) {
-			return prTitleLimitDeny(fmt.Sprintf("repository %s: title argument %q contains unresolved shell syntax", target, candidate.argument))
-		}
-		if length > limit.Max {
-			return prTitleLimitDeny(fmt.Sprintf("repository %s: title length %d exceeds limit %d Unicode code points: %q", target, length, limit.Max, candidate.title))
-		}
+	if length > maximum {
+		return prTitleLimitDeny(fmt.Sprintf("%s: title length %d exceeds limit %d Unicode code points: %q", label, length, maximum, candidate.title))
 	}
 	return Verdict{Outcome: Allow}
 }
 
-// resolvePRTitleRepository prefers explicit flags, local and inherited GH_REPO, then git defaults.
-func resolvePRTitleRepository(ctx context.Context, call ghWriteCall, repo string, getenv func(string) string) (string, error) {
-	if repo == "" {
-		repo = ghPRRepositoryEnvironment(call.repoEnv, getenv)
-	}
-	if repo == "" {
-		var err error
-		repo, err = ghPRDefaultRepository(ctx, call.dir)
-		if err != nil {
-			return "", err
-		}
+// resolvePRTitleRepository accepts only literal direct targets or a single unchanged remote.
+// Wrappers always make the target uncertain, even when they contain an explicit target.
+func resolvePRTitleRepository(ctx context.Context, call ghWriteCall, repo string, getenv func(string) string, runGit prTitleGitReader) (string, error) {
+	if call.wrapped {
+		return "", fmt.Errorf("wrapper before gh command")
 	}
 	if repo != "" {
-		return normalizePRTitleRepository(repo)
+		return literalPRTitleRepository(repo)
 	}
-	return ghPRRemoteRepository(ctx, call.dir)
+	if call.repoEnv != nil {
+		if unresolvedPRTitleArgument(*call.repoEnv) {
+			return "", fmt.Errorf("repository argument contains unresolved shell syntax")
+		}
+		return literalPRTitleRepository(unquoteShellWord(*call.repoEnv))
+	}
+	if getenv != nil && getenv("GH_REPO") != "" {
+		return "", fmt.Errorf("inherited GH_REPO may be changed by a wrapper")
+	}
+	if call.prefixUnknown {
+		return "", fmt.Errorf("command-prefix environment changes checkout selection")
+	}
+	host := "github.com"
+	if getenv != nil && getenv("GH_HOST") != "" {
+		host = getenv("GH_HOST")
+	}
+	ctx, cancel := context.WithTimeout(ctx, forgeTextReadTimeout)
+	defer cancel()
+	return ghPRRemoteRepository(ctx, call.dir, host, runGit)
 }
 
-// ghPRRepositoryEnvironment preserves an empty command-local override of inherited GH_REPO.
-func ghPRRepositoryEnvironment(local *string, getenv func(string) string) string {
-	if local != nil {
-		return *local
+// literalPRTitleRepository rejects expansions and empty assignments before normalization.
+func literalPRTitleRepository(repo string) (string, error) {
+	if repo == "" || unresolvedPRTitleArgument(repo) {
+		return "", fmt.Errorf("repository argument is empty or contains unresolved shell syntax")
 	}
-	if getenv != nil {
-		return getenv("GH_REPO")
-	}
-	return ""
+	return normalizePRTitleRepository(repo)
 }
 
 // normalizePRTitleRepository accepts gh's URL and host-prefixed forms as owner/repo policy keys.
@@ -204,94 +259,101 @@ func normalizePRTitleRepository(repo string) (string, error) {
 	return owner + "/" + name, nil
 }
 
-// ghPRRemoteRepository follows cli/cli v2.104.0 context/remote.go's remoteNameSortScore.
-// https://github.com/cli/cli/blob/v2.104.0/context/remote.go
-// Invalid network remotes are ignored as TranslateRemotes does; unanswered git reads fail closed.
-func ghPRRemoteRepository(ctx context.Context, dir string) (string, error) {
-	text, err := util.RunGit(ctx, dir, "remote")
+// ghPRRemoteRepository accepts one configured remote only when git reports the same fetch URL.
+// The effective URL is read once through the existing bounded runner, under the caller deadline.
+func ghPRRemoteRepository(ctx context.Context, dir, host string, runGit prTitleGitReader) (string, error) {
+	text, err := runGit(ctx, dir, "config", "--null", "--get-regexp", `^remote\.`)
 	if err != nil {
-		return "", fmt.Errorf("list gh repository remotes: %w", err)
+		return "", fmt.Errorf("read repository remote configuration: %w", err)
 	}
-	names := strings.Fields(text)
-	if len(names) > maxForgeTextWords {
-		return "", fmt.Errorf("gh repository exceeds %d remotes", maxForgeTextWords)
+	remote, err := singlePRTitleRemote(text)
+	if err != nil {
+		return "", err
 	}
-	selected, score := "", -1
-	for i := 0; i < len(names) && i < maxForgeTextWords; i++ {
-		remote, err := util.ReadGitRemote(ctx, dir, names[i])
-		if errors.Is(err, util.ErrGitRemoteNotNetwork) {
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		if rank := ghPRRemoteRank(names[i]); rank > score {
-			selected, score = remote.Owner+"/"+remote.Repo, rank
-		}
+	effective, err := runGit(ctx, dir, "remote", "get-url", "--all", remote.name)
+	if err != nil {
+		return "", fmt.Errorf("read effective fetch URL: %w", err)
 	}
-	if selected == "" {
-		return "", fmt.Errorf("%w: no gh repository remote", util.ErrRepoIdentityUnresolved)
+	if effective != remote.url {
+		return "", fmt.Errorf("effective fetch URL differs from configured URL (rewrite or multiple URLs)")
 	}
-	return selected, nil
+	if remote.marker != "" && remote.marker != "base" {
+		return "", fmt.Errorf("default repository marker selects another target")
+	}
+	return plainPRTitleRemote(effective, host)
 }
 
-// ghPRRemoteRank matches gh's case-insensitive upstream, github, origin, then other ordering.
-func ghPRRemoteRank(name string) int {
-	switch strings.ToLower(name) {
-	case "upstream":
-		return 3
-	case "github":
-		return 2
-	case "origin":
-		return 1
-	default:
-		return 0
+// plainPRTitleRemote requires a plain URL on the selected host with exactly two path segments.
+func plainPRTitleRemote(effective, host string) (string, error) {
+	parsed, err := util.ParseGitRemote(effective)
+	if err != nil || strings.ContainsAny(effective, "?#%\n\r\t") {
+		return "", fmt.Errorf("effective fetch URL does not parse as a plain repository URL")
 	}
+	if !strings.EqualFold(parsed.Host, host) {
+		return "", fmt.Errorf("remote host differs from configured forge host")
+	}
+	owner, name, err := util.SplitGitHubRepository(parsed.Path)
+	if err != nil {
+		return "", fmt.Errorf("effective fetch URL must name one plain owner/repository: %w", err)
+	}
+	return owner + "/" + name, nil
 }
 
-// ghPRDefaultRepository reads gh repo set-default's remote resolution from checkout git config.
-func ghPRDefaultRepository(ctx context.Context, dir string) (string, error) {
-	text, err := util.RunGit(ctx, dir, "config", "--local", "--get-regexp", `^remote\..*\.gh-resolved$`)
-	if err != nil && !util.GitAnsweredUnset(ctx, err) {
-		return "", fmt.Errorf("read gh default repository: %w", err)
+// prTitleRemote retains only the fields needed to validate a single remote, without ranking.
+type prTitleRemote struct{ name, url, marker string }
+
+// singlePRTitleRemote reads git's NUL-delimited key/newline/value records without guessing order.
+func singlePRTitleRemote(text string) (prTitleRemote, error) {
+	var remote prTitleRemote
+	records := strings.Split(strings.TrimSuffix(text, "\x00"), "\x00")
+	if len(records) > maxForgeTextWords {
+		return remote, fmt.Errorf("remote configuration exceeds %d records", maxForgeTextWords)
 	}
-	lines := strings.Split(strings.TrimSpace(text), "\n")
-	for i := 0; i < len(lines) && i < maxForgeTextWords; i++ {
-		key, value, ok := strings.Cut(lines[i], " ")
-		if !ok || value == "" {
-			continue
+	for i := 0; i < len(records) && i < maxForgeTextWords; i++ {
+		key, value, ok := strings.Cut(records[i], "\n")
+		at := strings.LastIndexByte(key, '.')
+		if !ok || at <= len("remote.") {
+			return remote, fmt.Errorf("remote configuration does not parse")
 		}
-		if value != "base" {
-			return value, nil
+		if err := acceptPRTitleRemote(&remote, key[len("remote."):at], key[at+1:], value); err != nil {
+			return remote, err
 		}
-		name := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".gh-resolved")
-		remote, err := util.ReadGitRemote(ctx, dir, name)
-		if err != nil {
-			return "", err
-		}
-		return remote.Owner + "/" + remote.Repo, nil
 	}
-	return "", nil
+	return remote, nil
 }
 
-// ghCommandRepository captures GH_REPO assignments and env removals in the command prefix.
-func ghCommandRepository(words []string) *string {
+// acceptPRTitleRemote refuses a second remote or fetch URL without choosing between them.
+func acceptPRTitleRemote(remote *prTitleRemote, name, field, value string) error {
+	if remote.name != "" && remote.name != name {
+		return fmt.Errorf("multiple remotes; default markers and remote ranking are uncertain")
+	}
+	remote.name = name
+	switch field {
+	case "url":
+		if remote.url != "" {
+			return fmt.Errorf("multiple configured fetch URLs")
+		}
+		remote.url = value
+	case "gh-resolved":
+		remote.marker = value
+	}
+	return nil
+}
+
+// ghCommandRepository retains plain assignment spelling and flags other environment prefixes.
+// Wrapper semantics belong to the shared command walker; this reader never interprets env options.
+func ghCommandRepository(words []string) (*string, bool) {
 	var repo *string
+	unknown := false
 	for i := 0; i < len(words) && i < maxForgeTextWords; i++ {
 		name, value, assigned := forge.ShellAssignment(words[i])
 		if assigned && name == "GH_REPO" {
-			decoded := unquoteShellWord(value)
-			repo = &decoded
-		} else if strings.HasPrefix(unquoteShellWord(words[i]), "-") {
-			option, value, next := directoryOption(words, i)
-			i = next
-			if (option == "-u" || option == "--unset") && unquoteShellWord(value) == "GH_REPO" {
-				empty := ""
-				repo = &empty
-			}
+			repo = &value
+		} else if assigned {
+			unknown = true
 		}
 	}
-	return repo
+	return repo, unknown
 }
 
 // unresolvedPRTitleArgument rejects expansions while preserving quoted and escaped literal data.

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -137,7 +138,7 @@ func assertTitleLimitVerdict(t *testing.T, root, command, inherited string, deny
 	return got
 }
 
-// TestPRTitleLimitsRepositorySources plants each precedence source above a conflicting origin.
+// TestPRTitleLimitsRepositorySources enforces direct targets or the conservative fallback.
 func TestPRTitleLimitsRepositorySources(t *testing.T) {
 	long := ` -t "` + strings.Repeat("x", 65) + `"`
 	for _, tc := range []struct{ name, origin, resolved, inherited, command string }{
@@ -244,7 +245,7 @@ func TestPRTitleLimitsURLAndCommandBoundaries(t *testing.T) {
 		{`gh pr create -t ok; gh pr create -t "` + long + `"`, "example/widget", true},
 		{`gh pr edit 1 --title "` + long + `"`, "example/widget", false},
 		{`gh issue create --title "` + long + `"`, "example/widget", false},
-		{`gh pr create -R invalid -t ok`, "example/widget", true},
+		{`gh pr create -R invalid -t ok`, "example/widget", false},
 		{`gh pr create --title ok -- --title "` + long + `"`, "example/widget", false},
 		{`gh pr create -t "` + long + `" GH_REPO=example/other`, "example/widget", true},
 	} {
@@ -280,7 +281,7 @@ func TestPRTitleLimitsEveryPreToolClient(t *testing.T) {
 	}
 }
 
-// TestPRTitleLimitsReadFailures denies missing settings and unresolved targets by name.
+// TestPRTitleLimitsReadFailures denies missing settings and permits short uncertain titles.
 func TestPRTitleLimitsReadFailures(t *testing.T) {
 	root := repository(t, false)
 	missing := filepath.Join(t.TempDir(), "missing.yaml")
@@ -296,8 +297,8 @@ func TestPRTitleLimitsReadFailures(t *testing.T) {
 		}
 	}
 	response = runPreToolCommand(t, root, `gh pr create -t ok`, titleLimitEnvironment(t, ""))
-	if response.ExitCode != 2 || !strings.Contains(string(response.Stderr), "target repository unavailable") {
-		t.Fatalf("unresolved target: %+v", response)
+	if response.ExitCode != 0 {
+		t.Fatalf("short unresolved target: %+v", response)
 	}
 	response = runPreToolCommand(t, root, `gh pr create -t ok`, noEnvironment)
 	if response.ExitCode != 0 {
@@ -380,34 +381,6 @@ func TestPRTitleLimitsUnknownCluster(t *testing.T) {
 	assertTitleLimitVerdict(t, root, "gh pr create -R example/widget -dz --body ok", "", true)
 }
 
-// TestPRTitleLimitsRemotePrecedence plants conflicting remotes without a gh-resolved default.
-func TestPRTitleLimitsRemotePrecedence(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		remotes [][2]string
-	}{
-		{"upstream before origin", [][2]string{{"origin", "other"}, {"upstream", "widget"}}},
-		{"github before origin", [][2]string{{"origin", "other"}, {"github", "widget"}}},
-		{"upstream before github", [][2]string{{"github", "other"}, {"upstream", "widget"}}},
-		{"case insensitive upstream", [][2]string{{"origin", "other"}, {"UPSTREAM", "widget"}}},
-		{"origin before others", [][2]string{{"another", "other"}, {"origin", "widget"}}},
-		{"other remote", [][2]string{{"another", "widget"}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root := repository(t, false)
-			for _, remote := range tc.remotes {
-				testsupport.RunFixtureGit(t, root, []string{"remote", "add", remote[0], "https://github.com/example/" + remote[1] + ".git"})
-			}
-			assertPRTitleBoundary(t, root, "gh pr create -t ", " --body ok", "")
-		})
-	}
-	root := repository(t, false)
-	testsupport.RunFixtureGit(t, root,
-		[]string{"remote", "add", "origin", "https://github.com/example/widget.git"},
-		[]string{"remote", "add", "upstream", "https://github.com/example/other.git"})
-	assertTitleLimitVerdict(t, root, `gh pr create -t "`+strings.Repeat("x", 65)+`"`, "", false)
-}
-
 // TestPRTitleLimitsNormalizedTargets plants suffix and transport variants at both lengths.
 func TestPRTitleLimitsNormalizedTargets(t *testing.T) {
 	root := repository(t, false)
@@ -426,7 +399,7 @@ func TestPRTitleLimitsNormalizedTargets(t *testing.T) {
 	}
 }
 
-// TestPRTitleLimitsEnvRemoval prevents inherited GH_REPO from returning after env removes it.
+// TestPRTitleLimitsEnvRemoval treats every environment wrapper as an uncertain target.
 func TestPRTitleLimitsEnvRemoval(t *testing.T) {
 	root := repository(t, false)
 	testsupport.RunFixtureGit(t, root, []string{"remote", "add", "origin", "https://github.com/example/widget.git"})
@@ -443,140 +416,233 @@ func TestPRTitleLimitsEnvRemoval(t *testing.T) {
 			assertPRTitleBoundary(t, root, wrapper+" gh pr create -t ", " --body ok", inherited)
 		})
 	}
-	assertTitleLimitVerdict(t, root, `env -u GH_REPO GH_REPO=example/other gh pr create -t "`+strings.Repeat("x", 65)+`"`, "example/widget", false)
+	assertTitleLimitVerdict(t, root, `env -u GH_REPO GH_REPO=example/other gh pr create -t "`+strings.Repeat("x", 65)+`"`, "example/widget", true)
 }
 
-// Guide clauses pin the documented precedence to executable resolution cases.
+// Guide clauses pin the allowed shapes and their conservative default.
 const (
-	prTitleGuideFlags      = "1. Use an explicit repository flag (`--repo VALUE`, `--repo=VALUE`, `-R VALUE`, `-RVALUE` or `-R=VALUE`) before any environment or checkout source."
-	prTitleGuidePrefix     = "2. Use a nonempty command-prefix `GH_REPO` assignment before the inherited environment."
-	prTitleGuideRemoval    = "3. An `env` removal of `GH_REPO` suppresses its inherited value; continue at step 6."
-	prTitleGuideEmpty      = "4. An empty command-prefix assignment also suppresses inherited `GH_REPO`; continue at step 6."
-	prTitleGuideInherited  = "5. Otherwise, use inherited `GH_REPO` when nonempty, before checkout configuration."
-	prTitleGuideDefault    = "6. Read the command directory's local `remote.<name>.gh-resolved` keys. Use the first nonempty value: `base` selects that named remote's repository, and any other value names the repository directly."
-	prTitleGuideRemotes    = "7. Without a default, rank network remotes case-insensitively: `upstream`, then `github`, then `origin`, then other names. Equal ranks keep the first name returned by `git remote`."
-	prTitleGuideUnresolved = "8. If nothing resolves, refuse an explicit-title creation when any title limits are configured. With no limits, allow this check without resolving the target."
+	prTitleGuideCertain   = "Certain targets: a literal repository flag or plain-prefix `GH_REPO` assignment without a wrapper; otherwise, no inherited `GH_REPO` and exactly one remote with an unchanged effective fetch URL on the configured forge host."
+	prTitleGuideUncertain = "Uncertain targets use the smallest configured maximum; titles at that maximum pass, and longer titles are refused with the reason and the remedy: name the repository with the repo flag."
 )
 
-// prTitleRepositoryCase binds a documented selection step to conflicting policy targets.
+// prTitleRepositoryCase binds one shape to the guide and boundary caps.
 type prTitleRepositoryCase struct {
 	name, command, inherited string
-	remotes                  [][2]string
-	resolved                 [2]string
-	want, guide              string
-	noLimits                 bool
+	commands                 [][]string
+	want, reason             string
 }
 
-// prTitleRepositoryCases covers every guide step and adjacent precedence boundary.
-func prTitleRepositoryCases() []prTitleRepositoryCase {
-	all := [][2]string{{"upstream", "upstream"}, {"github", "github"}, {"origin", "origin"}, {"another", "another"}}
-	defaults := [2]string{"origin", "example/default"}
-	return []prTitleRepositoryCase{
-		{"flag over prefix", "GH_REPO=example/local gh pr create --repo example/flag", "example/inherited", all, defaults, "example/flag", prTitleGuideFlags, false},
-		{"short flag", "gh pr create -R example/flag", "example/inherited", all, defaults, "example/flag", prTitleGuideFlags, false},
-		{"long equals flag", "gh pr create --repo=example/flag", "example/inherited", all, defaults, "example/flag", prTitleGuideFlags, false},
-		{"attached flag", "gh pr create -Rexample/flag", "example/inherited", all, defaults, "example/flag", prTitleGuideFlags, false},
-		{"short equals flag", "gh pr create -R=example/flag", "example/inherited", all, defaults, "example/flag", prTitleGuideFlags, false},
-		{"prefix over inherited", "GH_REPO=example/local gh pr create", "example/inherited", all, defaults, "example/local", prTitleGuidePrefix, false},
-		{"env prefix", "env GH_REPO=example/local gh pr create", "example/inherited", all, defaults, "example/local", prTitleGuidePrefix, false},
-		{"env removal to default", "env -u GH_REPO gh pr create", "example/inherited", all, defaults, "example/default", prTitleGuideRemoval, false},
-		{"env removal to remotes", "env --unset=GH_REPO gh pr create", "example/inherited", all, [2]string{}, "example/upstream", prTitleGuideRemoval, false},
-		{"empty prefix to default", "GH_REPO= gh pr create", "example/inherited", all, defaults, "example/default", prTitleGuideEmpty, false},
-		{"empty prefix to remotes", "GH_REPO='' gh pr create", "example/inherited", all, [2]string{}, "example/upstream", prTitleGuideEmpty, false},
-		{"inherited over default", "gh pr create", "example/inherited", all, defaults, "example/inherited", prTitleGuideInherited, false},
-		{"default name over ranked", "gh pr create", "", all, defaults, "example/default", prTitleGuideDefault, false},
-		{"default base over ranked", "gh pr create", "", all, [2]string{"origin", "base"}, "example/origin", prTitleGuideDefault, false},
-		{"empty default to ranked", "gh pr create", "", all, [2]string{"origin", ""}, "example/upstream", prTitleGuideDefault, false},
-		{"upstream over github", "gh pr create", "", all, [2]string{}, "example/upstream", prTitleGuideRemotes, false},
-		{"github over origin", "gh pr create", "", all[1:], [2]string{}, "example/github", prTitleGuideRemotes, false},
-		{"origin over other", "gh pr create", "", all[2:], [2]string{}, "example/origin", prTitleGuideRemotes, false},
-		{"other remote", "gh pr create", "", all[3:], [2]string{}, "example/another", prTitleGuideRemotes, false},
-		{"case insensitive rank", "gh pr create", "", [][2]string{{"UPSTREAM", "upstream"}, {"github", "github"}}, [2]string{}, "example/upstream", prTitleGuideRemotes, false},
-		{"equal rank first", "gh pr create", "", [][2]string{{"zeta", "zeta"}, {"alpha", "alpha"}}, [2]string{}, "example/alpha", prTitleGuideRemotes, false},
-		{"unresolved with limits", "gh pr create", "", nil, [2]string{}, "", prTitleGuideUnresolved, false},
-		{"unresolved without limits", "gh pr create", "", nil, [2]string{}, "", prTitleGuideUnresolved, true},
+// prTitleCertainCases enumerates direct forms and the unchanged single-remote checkout.
+func prTitleCertainCases() []prTitleRepositoryCase {
+	var cases []prTitleRepositoryCase
+	for _, flag := range []string{"--repo example/wide", "--repo=example/wide", "-R example/wide", "-Rexample/wide", "-R=example/wide"} {
+		cases = append(cases, prTitleRepositoryCase{name: flag, command: "gh pr create " + flag, inherited: "example/strict", want: "example/wide"})
 	}
+	return append(cases,
+		prTitleRepositoryCase{name: "plain prefix", command: "GH_REPO=example/wide gh pr create", inherited: "example/strict", want: "example/wide"},
+		prTitleRepositoryCase{name: "quoted prefix", command: "GH_REPO='example/wide' gh pr create", want: "example/wide"},
+		prTitleRepositoryCase{name: "one remote", command: "gh pr create", commands: [][]string{{"remote", "add", "origin", "https://github.com/example/wide.git"}}, want: "example/wide"},
+		prTitleRepositoryCase{name: "one base marker", command: "gh pr create", commands: [][]string{{"remote", "add", "origin", "https://github.com/example/wide.git"}, {"config", "remote.origin.gh-resolved", "base"}}, want: "example/wide"},
+	)
 }
 
-// TestPRTitleLimitsRepositoryOrder binds the numbered guide to selected repositories and caps.
+// prTitleUncertainCases covers ambiguous environments, configurations and malformed URLs.
+func prTitleUncertainCases() []prTitleRepositoryCase {
+	cases := []prTitleRepositoryCase{
+		{name: "env prefix without flag", command: "env GH_REPO=example/wide gh pr create", reason: "wrapper"},
+		{name: "invalid flag", command: "gh pr create -R invalid", reason: "repository"},
+		{name: "expanded flag", command: "gh pr create -R $TARGET", reason: "unresolved shell syntax"},
+		{name: "query URL", command: "gh pr create", commands: [][]string{{"remote", "add", "origin", "https://github.com/example/wide.git?x=1"}}, reason: "does not parse"},
+		{name: "two remotes", command: "gh pr create", commands: [][]string{{"remote", "add", "origin", "https://github.com/example/wide.git"}, {"remote", "add", "upstream", "https://github.com/example/wide.git"}}, reason: "multiple remotes"},
+		{name: "inherited alone", command: "gh pr create", inherited: "example/wide", reason: "inherited GH_REPO"},
+		{name: "other host", command: "gh pr create", commands: [][]string{{"remote", "add", "origin", "https://other.example/example/wide.git"}}, reason: "remote host"},
+		{name: "bad URL", command: "gh pr create", commands: [][]string{{"remote", "add", "origin", "not-a-url"}}, reason: "does not parse"},
+		{name: "nested URL", command: "gh pr create", commands: [][]string{{"remote", "add", "origin", "https://github.com/group/example/wide.git"}}, reason: "plain owner/repository"},
+		{name: "default target marker", command: "gh pr create", commands: [][]string{{"remote", "add", "origin", "https://github.com/example/wide.git"}, {"config", "remote.origin.gh-resolved", "example/strict"}}, reason: "default repository marker"},
+		{name: "empty prefix", command: "GH_REPO= gh pr create", reason: "repository argument"},
+		{name: "expanded prefix", command: "GH_REPO=$TARGET gh pr create", reason: "unresolved shell syntax"},
+		{name: "empty checkout", command: "gh pr create", reason: "remote configuration"},
+	}
+	for _, prefix := range []string{"env GH_REPO=example/wide", "env", "env --", "command", "nohup", "sudo -n", "sudo -u builder", "/usr/bin/env -", "time", "xargs", "nice -n 1", "timeout 1", "env -C . command"} {
+		cases = append(cases, prTitleRepositoryCase{name: prefix, command: prefix + " gh pr create -R example/wide", reason: "wrapper"})
+	}
+	return cases
+}
+
+// TestPRTitleLimitsRepositoryOrder binds the guide to both directions of every shape.
 func TestPRTitleLimitsRepositoryOrder(t *testing.T) {
-	guide, err := os.ReadFile(filepath.Join("..", "..", "docs", "guides", "agent-hooks.md"))
+	ctx, cancel := context.WithTimeout(t.Context(), forgeTextReadTimeout)
+	defer cancel()
+	guide, err := contextopt.ReadSnapshot(ctx, filepath.Join("..", "..", "docs", "guides", "agent-hooks.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cases := prTitleRepositoryCases()
-	for i := 0; i < len(cases) && i < 32; i++ {
-		tc := cases[i]
-		t.Run(tc.name, func(t *testing.T) {
-			if !strings.Contains(string(guide), tc.guide) {
-				t.Errorf("guide missing selection step %q", tc.guide)
+	for _, clause := range []string{prTitleGuideCertain, prTitleGuideUncertain} {
+		if !strings.Contains(string(guide), clause) {
+			t.Fatalf("guide missing clause %q", clause)
+		}
+	}
+	cases := append(prTitleCertainCases(), prTitleUncertainCases()...)
+	cases = append(cases, prTitleReviewCases()...)
+	for i := 0; i < len(cases) && i < 64; i++ {
+		t.Run(cases[i].name, func(t *testing.T) { assertPRTitleRepositoryCase(t, cases[i]) })
+	}
+}
+
+// titleRepositoryContext isolates git reads to a fixture with an explicit deadline.
+func titleRepositoryContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), forgeTextReadTimeout)
+	t.Cleanup(cancel)
+	ctx, err := util.WithCommandEnvironment(ctx, testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctx
+}
+
+// assertPRTitleRepositoryCase checks resolution and the target-specific or minimum cap.
+func assertPRTitleRepositoryCase(t *testing.T, tc prTitleRepositoryCase) {
+	t.Helper()
+	root := repository(t, false)
+	testsupport.RunFixtureGit(t, root, tc.commands...)
+	ctx := titleRepositoryContext(t)
+	getenv := func(key string) string {
+		if key == "GH_REPO" {
+			return tc.inherited
+		}
+		return ""
+	}
+	calls, err := collectGHWriteCalls(tc.command+" -t ok", root)
+	if err != nil || len(calls) != 1 {
+		t.Fatalf("calls = %d; error %v", len(calls), err)
+	}
+	candidate := explicitPRTitleCalls(calls)[0]
+	assertPRTitleCaseResolution(t, ctx, candidate, getenv, tc)
+	maximum := 20
+	if tc.want != "" {
+		maximum = 80
+	}
+	for _, count := range []int{20, 21, maximum, maximum + 1} {
+		candidate.title = strings.Repeat("é", count)
+		candidate.argument = candidate.title
+		assertPRTitleCaseMaximum(t, ctx, candidate, getenv, maximum, tc.reason)
+	}
+}
+
+// assertPRTitleCaseResolution checks both the selected repository and uncertainty cause.
+func assertPRTitleCaseResolution(t *testing.T, ctx context.Context, candidate ghPRTitleCall, getenv func(string) string, tc prTitleRepositoryCase) {
+	t.Helper()
+	got, err := resolvePRTitleCandidate(ctx, candidate, getenv, util.RunGit)
+	if got != tc.want || (err != nil) != (tc.want == "") {
+		t.Fatalf("repository %q, error %v; want %q", got, err, tc.want)
+	}
+	if tc.reason != "" && (err == nil || !strings.Contains(err.Error(), tc.reason)) {
+		t.Fatalf("uncertainty reason %v; want %q", err, tc.reason)
+	}
+}
+
+// assertPRTitleCaseMaximum requires exact boundaries and named uncertain refusals.
+func assertPRTitleCaseMaximum(t *testing.T, ctx context.Context, candidate ghPRTitleCall, getenv func(string) string, maximum int, reason string) {
+	t.Helper()
+	limits := []config.PRTitleLimit{{Repo: "example/wide", Max: 80}, {Repo: "example/strict", Max: 20}}
+	got := judgePRTitle(ctx, candidate, limits, getenv, util.RunGit)
+	length := len([]rune(candidate.title))
+	if (got.Outcome == Deny) != (length > maximum) {
+		t.Fatalf("length %d, maximum %d: %+v", length, maximum, got)
+	}
+	if reason != "" {
+		text := got.Reason + got.Notice
+		for _, want := range []string{reason, "name the repository with the repo flag"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("missing %q: %+v", want, got)
 			}
-			assertPRTitleRepositoryCase(t, tc)
+		}
+	}
+}
+
+// TestPRTitleLimitsGitFailures uses injected runners without starting a forge program.
+func TestPRTitleLimitsGitFailures(t *testing.T) {
+	causes := []error{errors.New("git failed"), context.DeadlineExceeded}
+	for i := 0; i < len(causes) && i < 2; i++ {
+		t.Run(causes[i].Error(), func(t *testing.T) {
+			for stage := 1; stage <= 2; stage++ {
+				for count := 20; count <= 21; count++ {
+					assertPRTitleGitFailure(t, causes[i], stage, count)
+				}
+			}
 		})
 	}
 }
 
-// assertPRTitleRepositoryCase resolves a real fixture and checks selected and unrelated caps.
-func assertPRTitleRepositoryCase(t *testing.T, tc prTitleRepositoryCase) {
+// assertPRTitleGitFailure checks deadline propagation, call count and named read failures.
+func assertPRTitleGitFailure(t *testing.T, cause error, stage, count int) {
 	t.Helper()
-	root := repository(t, false)
-	for i := 0; i < len(tc.remotes) && i < 8; i++ {
-		remote := tc.remotes[i]
-		testsupport.RunFixtureGit(t, root, []string{"remote", "add", remote[0], "https://github.com/example/" + remote[1] + ".git"})
-	}
-	if tc.resolved[0] != "" {
-		testsupport.RunFixtureGit(t, root, []string{"config", "remote." + tc.resolved[0] + ".gh-resolved", tc.resolved[1]})
-	}
-	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := tc.command + ` --title="` + strings.Repeat("x", 65) + `"`
-	calls, err := collectGHWriteCalls(command, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	candidates := explicitPRTitleCalls(calls)
-	if len(candidates) != 1 {
-		t.Fatalf("title calls = %d; want 1", len(candidates))
-	}
-	candidate := candidates[0]
-	getenv := titleLimitEnvironment(t, tc.inherited)
-	got, err := resolvePRTitleRepository(ctx, candidate.call, candidate.repo, getenv)
-	if got != tc.want || (err != nil) != (tc.want == "") {
-		t.Fatalf("repository = %q, error %v; want %q", got, err, tc.want)
-	}
-	assertPRTitleRepositoryCaps(t, ctx, candidate, getenv, tc.want)
-	if tc.noLimits {
-		assertPRTitleNoLimits(t, ctx, root, command)
-	}
-}
-
-// assertPRTitleNoLimits checks that empty operator limits bypass target resolution.
-func assertPRTitleNoLimits(t *testing.T, ctx context.Context, root, command string) {
-	t.Helper()
-	got := evaluatePRTitleLimits(ctx, Canonical{Command: command}, Invocation{WorkDir: root, Forge: &config.ForgeSettings{}})
-	if got.Outcome != Allow {
-		t.Fatalf("no limits: %+v", got)
-	}
-}
-
-// assertPRTitleRepositoryCaps proves only the selected repository's limit judges a title.
-func assertPRTitleRepositoryCaps(t *testing.T, ctx context.Context, candidate ghPRTitleCall, getenv func(string) string, want string) {
-	t.Helper()
-	other := config.PRTitleLimit{Repo: "example/unrelated", Max: 20}
-	got := judgePRTitle(ctx, candidate, []config.PRTitleLimit{other}, getenv)
-	if (got.Outcome == Deny) != (want == "") {
-		t.Fatalf("unrelated limit judged target %q: %+v", want, got)
-	}
-	if want == "" {
-		if !strings.Contains(got.Reason, "target repository unavailable") {
-			t.Fatalf("unresolved target not named: %+v", got)
+	calls := 0
+	runGit := func(ctx context.Context, _ string, args ...string) (string, error) {
+		calls++
+		if _, ok := ctx.Deadline(); !ok {
+			t.Error("git context has no deadline")
 		}
-		return
+		if calls < stage {
+			return "remote.origin.url\nhttps://github.com/example/wide.git\x00", nil
+		}
+		if stage == 2 && !slices.Equal(args, []string{"remote", "get-url", "--all", "origin"}) {
+			t.Errorf("effective URL args %q", args)
+		}
+		return "", cause
 	}
-	got = judgePRTitle(ctx, candidate, []config.PRTitleLimit{other, {Repo: want, Max: 64}}, getenv)
-	if got.Outcome != Deny || !strings.Contains(got.Reason, "repository "+want+": title length 65 exceeds limit 64") {
-		t.Fatalf("selected limit not applied: %+v", got)
+	settings := config.ForgeSettings{PRTitleLimits: []config.PRTitleLimit{{Repo: "example/strict", Max: 20}}}
+	command := `gh pr create -t "` + strings.Repeat("x", count) + `"`
+	got := evaluatePRTitleLimitsWith(t.Context(), Canonical{Command: command}, Invocation{Forge: &settings}, runGit)
+	if calls != stage || (got.Outcome == Deny) != (count == 21) || !strings.Contains(got.Reason+got.Notice, cause.Error()) {
+		t.Fatalf("git calls %d; verdict %+v", calls, got)
+	}
+}
+
+// TestPRTitleLimitsNoLimitsGitCalls proves empty settings inspect neither commands nor git.
+func TestPRTitleLimitsNoLimitsGitCalls(t *testing.T) {
+	calls := 0
+	runGit := func(context.Context, string, ...string) (string, error) {
+		calls++
+		return "", errors.New("unexpected git call")
+	}
+	getenv := func(string) string { t.Error("unexpected environment read"); return "" }
+	got := evaluatePRTitleLimitsWith(t.Context(), Canonical{Command: `env -i gh pr create -t "`}, Invocation{Forge: &config.ForgeSettings{}, Getenv: getenv}, runGit)
+	if got.Outcome != Allow || calls != 0 {
+		t.Fatalf("git calls %d; verdict %+v", calls, got)
+	}
+}
+
+// prTitleReviewCases retains every originally failing review input as a table row.
+func prTitleReviewCases() []prTitleRepositoryCase {
+	return []prTitleRepositoryCase{
+		{"rewrite", "gh pr create", "", [][]string{{"remote", "add", "origin", "https://github.com/example/wide.git"}, {"config", "url.https://github.com/example/strict.insteadOf", "https://github.com/example/wide"}}, "", "effective fetch URL differs"},
+		{"host filter", "gh pr create", "", [][]string{{"remote", "add", "upstream", "https://other.example/example/wide.git"}, {"remote", "add", "origin", "https://github.com/example/strict.git"}}, "", "multiple remotes"},
+		{"env attached unset", "env -uGH_REPO gh pr create", "example/wide", [][]string{{"remote", "add", "origin", "https://github.com/example/strict.git"}}, "", "wrapper"},
+		{"env clean", "env -i gh pr create", "example/wide", [][]string{{"remote", "add", "origin", "https://github.com/example/strict.git"}}, "", "wrapper"},
+		{"env ignore", "env --ignore-environment gh pr create", "example/wide", [][]string{{"remote", "add", "origin", "https://github.com/example/strict.git"}}, "", "wrapper"},
+		{"env dash", "env - gh pr create", "example/wide", [][]string{{"remote", "add", "origin", "https://github.com/example/strict.git"}}, "", "wrapper"},
+		{"marker order", "gh pr create", "", [][]string{{"remote", "add", "origin", "https://github.com/example/wide.git"}, {"config", "remote.origin.gh-resolved", "base"}, {"remote", "add", "upstream", "https://github.com/example/strict.git"}, {"config", "remote.upstream.gh-resolved", "base"}}, "", "multiple remotes"},
+	}
+}
+
+// TestPRTitleLimitsReviewRegressions replays the originally failing rows in both directions.
+func TestPRTitleLimitsReviewRegressions(t *testing.T) {
+	cases := prTitleReviewCases()
+	for i := 0; i < len(cases) && i < 8; i++ {
+		t.Run(cases[i].name, func(t *testing.T) { assertPRTitleRepositoryCase(t, cases[i]) })
+	}
+}
+
+// TestPRTitleLimitsSpacedSubshell preserves group openers while normalizing wrapper names.
+func TestPRTitleLimitsSpacedSubshell(t *testing.T) {
+	settings := config.ForgeSettings{PRTitleLimits: []config.PRTitleLimit{{Repo: "example/strict", Max: 20}, {Repo: "example/wide", Max: 80}}}
+	for count := 80; count <= 81; count++ {
+		command := `( gh pr create -R example/wide -t "` + strings.Repeat("x", count) + `" )`
+		got := evaluatePRTitleLimits(t.Context(), Canonical{Command: command}, Invocation{Forge: &settings})
+		if (got.Outcome == Deny) != (count == 81) {
+			t.Fatalf("length %d: %+v", count, got)
+		}
 	}
 }
