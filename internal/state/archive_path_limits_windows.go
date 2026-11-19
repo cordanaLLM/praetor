@@ -9,10 +9,10 @@ import (
 	"syscall"
 )
 
-// archivePathArgumentLimit returns the Windows extended-path ceiling in UTF-16 units.
+// hostArchivePathArgumentLimit returns the Windows extended-path ceiling in UTF-16 units.
 // https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation
 // Prefix expansion can lower the effective limit; stat decides every argument below this ceiling.
-func archivePathArgumentLimit() int { return 32767 }
+func hostArchivePathArgumentLimit() int { return 32767 }
 
 // archivePathWithinBounds counts native WTF-16, including unpaired surrogates, excluding NUL.
 // Invalid strings proceed to stat so its error preserves all rows.

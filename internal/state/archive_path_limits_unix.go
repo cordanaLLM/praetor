@@ -12,10 +12,10 @@ import (
 	"syscall"
 )
 
-// archivePathArgumentLimit excludes the terminating NUL from the native syscall buffer.
+// hostArchivePathArgumentLimit excludes the terminating NUL from the native syscall buffer.
 // Linux: include/uapi/linux/limits.h PATH_MAX=4096; XNU: bsd/sys/syslimits.h PATH_MAX=1024.
 // Other hosts defer to stat rather than assuming a syscall limit.
-func archivePathArgumentLimit() int {
+func hostArchivePathArgumentLimit() int {
 	switch runtime.GOOS {
 	case "linux":
 		return 4095

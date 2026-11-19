@@ -17,6 +17,12 @@ import (
 // archivePathSlot caps outstanding stat/resolution workers, including stalled syscalls, at one.
 var archivePathSlot = make(chan struct{}, 1)
 
+// archivePathArgumentLimit returns the host's pre-stat total argument ceiling, or 0 when stat decides.
+var archivePathArgumentLimit = hostArchivePathArgumentLimit
+
+// archiveStat is the filesystem stat entry point; tests override it to exercise fail-closed fallbacks.
+var archiveStat = os.Stat
+
 // archivePath carries the canonical spelling and whether its directory exists.
 type archivePath struct {
 	path         string
@@ -79,7 +85,7 @@ func lookupArchivePath(ctx context.Context, path string) (archivePath, error) {
 
 // statArchivePath treats missing and overlong names as absent and wraps other stat errors.
 func statArchivePath(path string) (os.FileInfo, error) {
-	info, err := os.Stat(path)
+	info, err := archiveStat(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) && !archivePathTooLong(err) {
 		return nil, fmt.Errorf("inspect archive worktree %s: %w", path, err)
 	}

@@ -6,6 +6,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -14,6 +15,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
 )
+
+// errInvalidArchivePath fails closed when stat does not reject a NUL-bearing path candidate.
+var errInvalidArchivePath = errors.New("invalid archive worktree path")
 
 // archiveWorktreeOps supplies the listing and context-bounded filesystem inspection.
 type archiveWorktreeOps struct {
@@ -202,8 +206,10 @@ func archiveCleanPath(path string) (string, error) {
 		return "", nil
 	}
 	if strings.IndexByte(path, 0) >= 0 {
-		_, err := statArchivePath(path)
-		return "", err
+		if _, err := statArchivePath(path); err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("inspect archive worktree %s: %w", path, errInvalidArchivePath)
 	}
 	cleaned := filepath.Clean(filepath.FromSlash(path))
 	if !archivePathWithinBounds(cleaned) {

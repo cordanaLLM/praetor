@@ -376,8 +376,19 @@ func testArchiveLongPathError(t *testing.T, root, path string, want error) {
 	assertIntegrityFile(t, backlog, "unchanged backlog\n")
 }
 
+// requireArchivePathArgumentLimit skips pre-stat ceiling assertions on hosts where stat decides total length.
+func requireArchivePathArgumentLimit(t *testing.T) int {
+	t.Helper()
+	limit := archivePathArgumentLimit()
+	if limit == 0 {
+		t.Skip("host has no verified pre-stat total ceiling; native stat decides")
+	}
+	return limit
+}
+
 // TestArchiveCleanedTotalLimit avoids inspection of an impossible whole path with no live worktree.
 func TestArchiveCleanedTotalLimit(t *testing.T) {
+	requireArchivePathArgumentLimit(t)
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
 		t.Fatal(err)
@@ -606,10 +617,7 @@ func TestArchiveCleanedUnmatchedPathDischarged(t *testing.T) {
 
 // TestArchivePathFieldLengthBounds applies only the total limit after lexical cleaning.
 func TestArchivePathFieldLengthBounds(t *testing.T) {
-	limit := archivePathArgumentLimit()
-	if limit == 0 {
-		t.Skip("host has no verified pre-stat total ceiling; native stat decides")
-	}
+	limit := requireArchivePathArgumentLimit(t)
 	boundary := "/" + strings.Repeat("a/", (limit-3)/2) + "aa"
 	for _, tc := range []struct {
 		name, path string
@@ -655,10 +663,7 @@ func testArchivePathFieldBoundary(t *testing.T, path string, candidate bool) {
 
 // TestArchivePathHostBounds pins native total units without imposing a component ceiling.
 func TestArchivePathHostBounds(t *testing.T) {
-	limit := archivePathArgumentLimit()
-	if limit == 0 {
-		t.Skip("host has no verified pre-stat total ceiling")
-	}
+	limit := requireArchivePathArgumentLimit(t)
 	for _, size := range []int{limit - 1, limit, limit + 1} {
 		if got := archivePathWithinBounds(strings.Repeat("a", size)); got != (size <= limit) {
 			t.Fatalf("total %d: within bounds = %v; limit %d", size, got, limit)
@@ -667,6 +672,31 @@ func TestArchivePathHostBounds(t *testing.T) {
 	if !archivePathWithinBounds("/" + strings.Repeat("é", 128)) {
 		t.Fatal("component length must reach native stat")
 	}
+}
+
+// TestArchiveZeroPathLimitDefersToStat verifies zero-limit hosts skip pre-stat ceiling tests and preserve stat verdicts.
+func TestArchiveZeroPathLimitDefersToStat(t *testing.T) {
+	previous := archivePathArgumentLimit
+	archivePathArgumentLimit = func() int { return 0 }
+	t.Cleanup(func() { archivePathArgumentLimit = previous })
+	for _, tc := range []struct {
+		name string
+		fn   func(*testing.T)
+	}{
+		{"cleaned-total-limit", TestArchiveCleanedTotalLimit},
+		{"field-length-bounds", TestArchivePathFieldLengthBounds},
+		{"host-bounds", TestArchivePathHostBounds},
+	} {
+		skipped := false
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(func() { skipped = t.Skipped() })
+			tc.fn(t)
+		})
+		if !skipped {
+			t.Fatalf("%s did not skip when archivePathArgumentLimit is 0", tc.name)
+		}
+	}
+	t.Run("invalid-path-stat", TestArchiveInvalidPathStatPreservesRows)
 }
 
 // TestArchiveWindowsPathUnits checks native UTF-16 boundaries for Unicode and unpaired surrogates.
@@ -737,9 +767,10 @@ func testArchiveAbsentPathRow(t *testing.T, root, path string) {
 
 // TestArchiveInvalidPathStatPreservesRows keeps every row on a real invalid-name stat error.
 func TestArchiveInvalidPathStatPreservesRows(t *testing.T) {
+	repeats := max(2048, archivePathArgumentLimit()/2+1)
 	shortNUL := filepath.Join(t.TempDir(), "invalid\x00name")
-	longNUL := "/" + strings.Repeat("a/", 2048) + "bad\x00name"
-	longPlain := "/" + strings.Repeat("a/", 2048) + "badname"
+	longNUL := "/" + strings.Repeat("a/", repeats) + "bad\x00name"
+	longPlain := "/" + strings.Repeat("a/", repeats) + "badname"
 	proseNUL := "completed prose with\x00nul and no path field"
 	for _, format := range []string{"- [x] path: %s | done\n", "| DONE | %s |\n"} {
 		t.Run("over-limit-nul/"+format, func(t *testing.T) {
@@ -751,12 +782,45 @@ func TestArchiveInvalidPathStatPreservesRows(t *testing.T) {
 		t.Run("short-nul/"+format, func(t *testing.T) {
 			testArchiveInvalidPathPreservesRows(t, shortNUL, format)
 		})
+		t.Run("stat-nil-nul/"+format, func(t *testing.T) {
+			testArchiveNilStatNULPreservesRows(t, shortNUL, format)
+		})
 	}
 	for _, format := range []string{"- [x] %s\n", "| DONE | %s |\n"} {
 		t.Run("prose-nul/"+format, func(t *testing.T) {
 			testArchiveProseNULRow(t, fmt.Sprintf(format, proseNUL))
 		})
 	}
+}
+
+// testArchiveNilStatNULPreservesRows verifies NUL candidates fail closed even if stat returns no error.
+func testArchiveNilStatNULPreservesRows(t *testing.T, candidate, format string) {
+	t.Helper()
+	previous := archiveStat
+	archiveStat = func(string) (os.FileInfo, error) { return nil, nil }
+	t.Cleanup(func() { archiveStat = previous })
+	ops := defaultArchiveWorktreeOps()
+	ops.list = func(context.Context, string) ([]worktree.WorktreeInfo, error) {
+		return []worktree.WorktreeInfo{{Path: fmt.Sprintf("%q", candidate)}}, nil
+	}
+	row := fmt.Sprintf(format, candidate)
+	if _, err := planTaskArchive(t.Context(), row, ops); !errors.Is(err, errInvalidArchivePath) || !strings.Contains(err.Error(), candidate) {
+		t.Fatalf("nil-stat NUL plan = %v; want %v naming %q", err, errInvalidArchivePath, candidate)
+	}
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	const body = "- [x] unrelated\n"
+	open := filepath.Join(root, WorkingDirName, openLedgerName)
+	backlog := filepath.Join(root, WorkingDirName, "BACKLOG.md")
+	writeIntegrityFile(t, open, body)
+	writeIntegrityFile(t, backlog, "unchanged backlog\n")
+	if count, err := archiveCompletedTasks(t.Context(), root, "fixture", ops); count != 0 || !errors.Is(err, errInvalidArchivePath) || !strings.Contains(err.Error(), candidate) {
+		t.Fatalf("nil-stat NUL archive = %d, %v; want %v naming %q", count, err, errInvalidArchivePath, candidate)
+	}
+	assertIntegrityFile(t, open, body)
+	assertIntegrityFile(t, backlog, "unchanged backlog\n")
 }
 
 // testArchiveInvalidPathPreservesRows verifies an invalid path candidate aborts archiving without writes.
