@@ -1,7 +1,7 @@
 # Admission for heavy local steps
 
 `praetorctl admit` holds a heavy local step, such as a full gate, a race-detector test run or a
-large build, until the host has the memory, swap and load headroom it asks for. It then runs the
+large build, until it owns a shared heavy-step slot and the host has the memory, swap and load headroom it asks for. It then runs the
 step in its own memory-limited systemd scope and exits with the step's own status. The policy and
 the scope live in `internal/admission/`, the host readings in `internal/sentinel/`, and the
 command in `cmd/standardsctl/admit.go`.
@@ -29,7 +29,7 @@ Once the host has room, it prints one admission line, runs the step and returns 
 ends:
 
 ```text
-19:09:05 admitted verify-all: available 21.4 GiB, swap free 52.0 GiB, load 9.3
+19:09:05 admitted verify-all: available 21.4 GiB, swap free 52.0 GiB, load 9.3; slot 2 of 3
 ```
 
 An agent runs `praetorctl admit` as a background command. Its client then reports the step's end,
@@ -42,7 +42,10 @@ and the admission line in the output shows when the step started.
 | `--min-available-gib` | `12` | least `MemAvailable` the host must report |
 | `--min-swap-free-gib` | `15` | least `SwapFree` the host must report |
 | `--max-load` | 1.25 per CPU | highest one-minute load average |
-| `--wait` | `6h` | longest the step is held; after it the step is refused |
+| `--max-heavy` | `3` | simultaneous heavy steps per user and workstation; explicit `0` disables counting |
+| `--slots-dir` | runtime directory | shared private directory; overrides `PRAETOR_ADMIT_SLOTS_DIR` |
+| `--slot-poll` | `5s` | time between slot attempts; must be positive |
+| `--wait` | `6h` | one bound covering ticket, slot and host waits; after it the step is refused |
 | `--poll` | `1m` | time between readings while held |
 | `--timeout` | `6h` | longest the step runs once admitted |
 
@@ -50,6 +53,22 @@ A host exactly at a threshold is admitted. A host that stays under one until `--
 refuses the step with `still held after ...`, and the step never starts. A reading that fails
 refuses the step at once, without waiting: the host could not be judged, so the step is not
 admitted.
+
+## Shared heavy-step slots
+
+The order is ticket, slot, host readings, then command. The slot remains locked while the host holds the step and throughout the command. One `--wait` deadline covers the whole admission wait; `--timeout` starts after admission. The implementation is [Slots and Waiter.Acquire](../../internal/admission/slots.go), [the queue](../../internal/admission/slots_unix.go) and [runAdmit](../../cmd/standardsctl/admit.go). `TestAdmitSlots_SingleWaitBoundAndHostFailureRelease` and `TestRunAdmit_HeavyWaitRefusal` cover refusal and cleanup.
+
+The default is three heavy steps. No simultaneous-heavy-step setting exists in the manifest or operator admission schema; `hooks.admission.max_jobs_divisor` caps each command's CPU jobs, not the number of commands ([operator settings](../../internal/config/operator_sections.go)). `--max-heavy 0` explicitly runs uncounted and says `heavy-step count disabled (--max-heavy 0); admitted uncounted`. An unusable directory never selects that mode (`TestAdmitSlots_ExplicitZeroAndValidation`, `TestAdmitSlots_DirectoryRefusals`).
+
+The default directory is `$XDG_RUNTIME_DIR/praetor-admit`. With no runtime directory set, it is a private `praetor-<uid>/praetor-admit` folder below the system temporary directory. `PRAETOR_ADMIT_SLOTS_DIR` overrides that path; `--slots-dir` overrides the environment. Every host session and sandbox must see the same path and filesystem to share a bound. A private sandbox temporary directory cannot coordinate with the host; pass the shared host runtime path in that case. Resolution lives in [defaultSlotsDir](../../internal/admission/slots_unix.go); precedence is covered by `TestAdmitSlots_RuntimeDirectoryResolution`.
+
+Directories are created with mode `0700`; existing directories must also be owned by the caller, directly named without a final symlink, and mode `0700`. Files are private regular files with mode `0600`. Creation, validation and locking errors refuse before the command runs. All callers using a directory must agree on `--max-heavy`: the first caller records the bound in `queue.lock`, and a different requested bound is refused. This prevents callers silently forming different-sized pools ([directory validation](../../internal/util/private_directory_unix.go), [lock validation](../../internal/util/file_lock_unix.go), `TestAdmitSlots_BoundMismatchRefused`). Use one agreed directory and bound for the workstation.
+
+There are at most 4096 live numbered tickets and 4096 slots. Tickets live in the private `tickets/` subdirectory; a scan examines at most 4096 entries, with one extra entry read only to detect overflow. Ticket numbering and scans run under the directory lock. A waiter keeps its ticket locked; the next reader drops a ticket whose lock is free. Only the lowest live ticket can claim a slot. Slot file contents name the holder and start time for diagnostics; the kernel lock decides occupancy. Closing a holder's file without releasing, including process death, makes the slot available ([tickets](../../internal/admission/tickets_unix.go), [holders](../../internal/admission/slot_holders_unix.go), `TestAdmitSlots_DeadHolderAndDeadTicket`, `TestAdmitSlots_Ticket4097Refused`).
+
+A queued step prints one `admission queued` line, then one `admission wait` line per slot poll. Held lines and the final refusal name the occupied slots and queue position, for example `3 of 3 heavy steps running: <holder labels and times>; position 2 of 4`. The admitted line includes `slot 2 of 3`. Nonblocking lock attempts allow cancellation at the shared wait deadline and periodic diagnostics; a blocking flock would hide both ([queue wait](../../internal/admission/slots_unix.go), `TestAdmitSlots_WaitBoundNamesHolders`). The loop also refuses after 100000 attempts; directory and ticket scans have explicit scalar bounds.
+
+The five-step test records the maximum concurrent running count, verifies the fourth waits for an ending step, and verifies fourth-before-fifth arrival order. `TestAdmitSlots_LowestTicketOnly` deliberately lets a later ticket try a free slot before the oldest; `TestAdmitSlots_TwoProcessesShareSlot` checks the same lock across two processes. Both live in [the admission tests](../../internal/admission/slots_unix_test.go) and [the helper-process test](../../internal/admission/slot_process_unix_test.go). No process-table view or user bus participates in counting.
 
 ## Scope limits
 
@@ -201,6 +220,10 @@ manager, a container, macOS, Windows), the step runs without a scope, and a line
 ```text
 admission verify-all: runs unscoped, <reason>
 ```
+
+An unscoped command gets a second line naming its memory and concurrency compensation, for example `admission build: memory.max=2147483648 at /sys/fs/cgroup/.../memory.max; concurrency: slot 2 of 3`. On Linux the reader starts at `/proc/self/cgroup`, checks `memory.max` from the current cgroup upward, and reports the nearest finite value and its path, with at most 32 levels. No finite readable limit produces `no memory bound applies to this step`. That gap is reported without refusal; a slot bounds concurrency, not memory ([cgroup reader](../../internal/admission/cgroup_linux.go), [unscoped line](../../internal/admission/cgroup.go), `TestAdmitCgroup_AncestorNoneAndUnreadable`, `TestAdmitCgroup_WalkBoundAndCompensation`).
+
+Kernel-held slots use the repository's flock helper on Linux, macOS, DragonFly BSD, FreeBSD, NetBSD, OpenBSD and illumos. Other builds explicitly say `heavy-step count is not available on <os>; admitted uncounted` and retain host admission ([supported build](../../internal/admission/slots_unix.go), [stated skip](../../internal/admission/slots_other.go)). Linux-based Android and Darwin-based iOS follow Go's Linux and Darwin build tags. Windows, AIX, Solaris, Plan 9, js/wasm and wasip1 have the stated skip; this change does not supply a flock helper for those targets.
 
 The host readings follow what each platform reports:
 

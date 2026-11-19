@@ -120,23 +120,31 @@ const maxPolls = 100000
 // refuses at once (fail closed); a wait past MaxWait refuses with the last reason.
 func (w Waiter) Wait(ctx context.Context, label string) (Verdict, error) {
 	deadline := time.Now().Add(w.MaxWait)
+	last := Verdict{Reason: "host readings"}
 	for i := 0; i < maxPolls; i++ {
+		if err := ctx.Err(); err != nil {
+			return last, heldRefusal(label, last.Reason, err)
+		}
 		stats, err := w.Read()
 		if err != nil {
 			return Verdict{}, fmt.Errorf("admission %s: host reading failed, refused: %w", label, err)
 		}
 		verdict := Judge(stats, w.Policy)
+		last = verdict
+		if err := ctx.Err(); err != nil {
+			return verdict, heldRefusal(label, verdict.Reason, err)
+		}
 		if verdict.Admit {
 			return verdict, nil
 		}
-		if !time.Now().Add(w.Poll).Before(deadline) {
+		if !time.Now().Before(deadline) {
 			return verdict, fmt.Errorf("admission %s: still held after %s (%s), refused", label, w.MaxWait, verdict.Reason)
 		}
 		if _, err := fmt.Fprintf(w.Log, "%s admission wait %s: %s\n", time.Now().Format("15:04:05"), label, verdict.Reason); err != nil {
 			return verdict, err
 		}
-		if err := w.Sleep(ctx, w.Poll); err != nil {
-			return verdict, fmt.Errorf("admission %s: %w", label, err)
+		if err := w.Sleep(ctx, min(w.Poll, time.Until(deadline))); err != nil {
+			return verdict, heldRefusal(label, verdict.Reason, err)
 		}
 	}
 	return Verdict{}, fmt.Errorf("admission %s: more than %d readings, refused", label, maxPolls)

@@ -54,13 +54,16 @@ type sessionFiles struct {
 
 // newSessionFiles creates private handshake FIFOs and registry paths, cleaning up partial setup on failure.
 func newSessionFiles() (result *sessionFiles, resultErr error) {
-	root := os.Getenv("XDG_RUNTIME_DIR")
-	if root == "" {
-		var err error
-		root, err = privateSessionRoot(os.TempDir())
-		if err != nil {
-			return nil, err
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	return newSessionFilesContext(ctx)
+}
+
+// newSessionFilesContext carries the caller's deadline through runtime-directory resolution.
+func newSessionFilesContext(ctx context.Context) (result *sessionFiles, resultErr error) {
+	root, err := util.UserRuntimeDirectory(ctx, fmt.Sprintf("praetor-testexec-%d", os.Getuid()))
+	if err != nil {
+		return nil, fmt.Errorf("private session directory: %w", err)
 	}
 	dir, err := os.MkdirTemp(root, fmt.Sprintf("praetor-testexec-%d-", os.Getuid()))
 	if err != nil {
@@ -89,24 +92,6 @@ func newSessionFiles() (result *sessionFiles, resultErr error) {
 	}
 	s.info, s.block = files[0], files[1]
 	return s, nil
-}
-
-// privateSessionRoot creates and validates the user's registry directory in the shared temporary root.
-func privateSessionRoot(temp string) (string, error) {
-	path := filepath.Join(temp, fmt.Sprintf("praetor-testexec-%d", os.Getuid()))
-	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- the private directory needs the owner search bit
-	if err := os.Mkdir(path, 0700); err != nil && !errors.Is(err, os.ErrExist) {
-		return "", fmt.Errorf("private session directory: %w", err)
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return "", fmt.Errorf("private session directory: %w", err)
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.IsDir() || info.Mode().Perm() != 0700 || int64(stat.Uid) != int64(os.Getuid()) {
-		return "", errors.New("invalid private session directory")
-	}
-	return path, nil
 }
 
 // closeSessionFiles closes any opened handshake files and combines errors so partial setup can be cleaned up.
@@ -205,7 +190,7 @@ func retrySession(ctx context.Context, attempt func() (bool, error), wait func(c
 
 // runSessionAttempt reserves the sandbox start tick before releasing its handshake and marks it released after the process exits.
 func runSessionAttempt(ctx context.Context, inv Invocation, sh string, command []string, stdin io.Reader, stdout, stderr io.Writer) (collision bool, resultErr error) {
-	files, err := newSessionFiles()
+	files, err := newSessionFilesContext(ctx)
 	if err != nil {
 		return false, err
 	}

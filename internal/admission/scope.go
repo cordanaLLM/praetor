@@ -90,12 +90,14 @@ func ScopesAvailable(ctx context.Context) (bool, string) {
 
 // Step is one admitted command and where its streams go.
 type Step struct {
-	Label  string
-	Argv   []string
-	Limits Limits
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
+	// Concurrency describes the retained heavy-step slot, or the explicit skip.
+	Concurrency string
+	Label       string
+	Argv        []string
+	Limits      Limits
+	Stdin       io.Reader
+	Stdout      io.Writer
+	Stderr      io.Writer
 }
 
 // Run runs the step in its own scope where the host offers scopes, and unscoped otherwise with
@@ -112,9 +114,15 @@ func Run(ctx context.Context, s Step) error {
 	name, args := s.Argv[0], s.Argv[1:]
 	if ok, why := ScopesAvailable(ctx); ok {
 		name, args = "systemd-run", ScopeArgs(unitName(s.Label, time.Now()), s.Limits, s.Argv)
-	} else if _, err := fmt.Fprintf(s.Stderr, "admission %s: runs unscoped, %s\n", s.Label, why); err != nil {
-		return err
+	} else {
+		if _, err := fmt.Fprintf(s.Stderr, "admission %s: runs unscoped, %s\n", s.Label, why); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(s.Stderr, UnscopedBounds(ctx, s.Label, s.Concurrency)); err != nil {
+			return err
+		}
 	}
+
 	return util.RunCommandPassthrough(ctx, "", name, s.Stdin, s.Stdout, s.Stderr, args...)
 }
 

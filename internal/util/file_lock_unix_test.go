@@ -233,3 +233,80 @@ func TestLockPrivateFileReportsMissingLockAndCreatesPrivately(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAdmitPrivateDirectoryRetainsBarriers(t *testing.T) {
+	if util.OwnsFile(nil) {
+		t.Fatal("nil ownership accepted")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	path := filepath.Join(t.TempDir(), "private")
+	root, err := util.PrivateDirectory(ctx, path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := util.PrivateDirectory(ctx, path, func(os.FileInfo) bool { return false }); err == nil {
+		t.Fatal("foreign directory accepted")
+	}
+	link := filepath.Join(t.TempDir(), "symlink")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := util.PrivateDirectory(ctx, link, nil); err == nil {
+		t.Fatal("symlink directory accepted")
+	}
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-fileperm -- planted unsafe directory must be refused
+	if err := os.Chmod(path, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := util.PrivateDirectory(ctx, path, nil); err == nil {
+		t.Fatal("group-writable directory accepted")
+	}
+}
+
+func TestAdmitRuntimeDirectoryResolver(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	runtime := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	got, err := util.UserRuntimeDirectory(ctx, "fallback")
+	if err != nil || got != runtime {
+		t.Fatalf("runtime: %q %v", got, err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("TMPDIR", t.TempDir())
+	got, err = util.UserRuntimeDirectory(ctx, "fallback")
+	if err != nil || got != filepath.Join(os.TempDir(), "fallback") {
+		t.Fatalf("fallback: %q %v", got, err)
+	}
+	info, err := os.Stat(got)
+	if err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("fallback mode: %v %v", info, err)
+	}
+	if _, err := util.UserRuntimeDirectory(ctx, "../escape"); err == nil {
+		t.Fatal("escaping fallback accepted")
+	}
+	canceled, stop := context.WithCancel(ctx)
+	stop()
+	if _, err := util.UserRuntimeDirectory(canceled, "canceled"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled: %v", err)
+	}
+}
+
+func TestAdmitPrivateLockMetadata(t *testing.T) {
+	root, _ := lockRoot(t)
+	file, release, busy, err := util.OpenPrivateLock(root, "metadata", os.O_RDWR|os.O_CREATE, "metadata")
+	if err != nil || busy {
+		t.Fatalf("open metadata: %v %v", busy, err)
+	}
+	if _, err := file.WriteString("holder"); err != nil {
+		t.Fatal(err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+
+}

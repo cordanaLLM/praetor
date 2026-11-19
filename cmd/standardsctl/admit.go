@@ -17,7 +17,7 @@ import (
 
 // admitUsage is the usage line `admit` prints on a malformed call.
 const admitUsage = "usage: praetorctl admit [--label L] [--memory-high 16G] [--memory-max 24G] [--memory-swap-max 4G] [--min-available-gib 12] " +
-	"[--min-swap-free-gib 15] [--max-load N] [--wait 6h] [--timeout 6h] -- <command> [args...]"
+	"[--min-swap-free-gib 15] [--max-load N] [--max-heavy 3] [--slots-dir DIR] [--slot-poll 5s] [--wait 6h] [--timeout 6h] -- <command> [args...]"
 
 // maxAdmitGiB bounds the memory thresholds a call may ask for, far above any workstation.
 const maxAdmitGiB = 1 << 20
@@ -27,6 +27,7 @@ type admitOptions struct {
 	label      string
 	policy     admission.Policy
 	limits     admission.Limits
+	slots      admission.Slots
 	wait, poll time.Duration
 	timeout    time.Duration
 	argv       []string
@@ -36,7 +37,7 @@ type admitOptions struct {
 // load the fleet's rule asks for (internal/admission), then runs it in its own memory-limited
 // systemd scope, and exits with the step's own status (#1131). Run it in the background: it
 // returns when the step ends, and prints one line when it is admitted.
-func runAdmit(args []string) error {
+func runAdmit(args []string) (resultErr error) {
 	opts, err := parseAdmit(args)
 	if err != nil {
 		return err
@@ -45,16 +46,19 @@ func runAdmit(args []string) error {
 	defer cancel()
 	waiter := admission.Waiter{Policy: opts.policy, MaxWait: opts.wait, Poll: opts.poll,
 		Read: admission.HostReader("."), Sleep: admission.SleepContext, Log: os.Stderr}
-	verdict, err := waiter.Wait(ctx, opts.label)
+	lease, verdict, err := waiter.Acquire(ctx, opts.label, opts.slots)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(os.Stderr, "%s admitted %s: %s\n", time.Now().Format("15:04:05"), opts.label, verdict.Reason); err != nil {
+	defer func() { resultErr = errors.Join(resultErr, lease.Close()) }()
+	if _, err := fmt.Fprintf(os.Stderr, "%s admitted %s: %s; %s\n", time.Now().Format("15:04:05"), opts.label, verdict.Reason, lease.Text); err != nil {
 		return err
 	}
 	stepCtx, stepCancel := context.WithTimeout(ctx, opts.timeout)
 	defer stepCancel()
-	return childExitStatus(admission.Run(stepCtx, admission.DefaultStep(opts.label, opts.argv, opts.limits)))
+	step := admission.DefaultStep(opts.label, opts.argv, opts.limits)
+	step.Concurrency = lease.Text
+	return childExitStatus(admission.Run(stepCtx, step))
 }
 
 // parseAdmit reads the flags and the command after `--`; everything past `--` is the command,
@@ -68,6 +72,9 @@ func parseAdmit(args []string) (admitOptions, error) {
 	wait := fs.Duration("wait", 6*time.Hour, "longest the step is held before it is refused")
 	poll := fs.Duration("poll", time.Minute, "time between host readings while held")
 	timeout := fs.Duration("timeout", 6*time.Hour, "longest the step runs once admitted")
+	maxHeavy := fs.Int("max-heavy", admission.DefaultMaxHeavy, "simultaneous heavy steps per user and host (0 explicitly disables count; callers sharing a directory must agree)")
+	slotsDir := fs.String("slots-dir", "", "shared private slot directory (environment PRAETOR_ADMIT_SLOTS_DIR; default $XDG_RUNTIME_DIR/praetor-admit, else per-user system temp directory)")
+	slotPoll := fs.Duration("slot-poll", admission.DefaultSlotPoll, "time between slot attempts while queued (must be positive)")
 	policy := admission.DefaultPolicy()
 	minAvail := fs.Uint64("min-available-gib", policy.MinAvailableBytes>>30, "least MemAvailable, in GiB, the host must report")
 	minSwap := fs.Uint64("min-swap-free-gib", policy.MinSwapFreeBytes>>30, "least SwapFree, in GiB, the host must report")
@@ -87,9 +94,10 @@ func parseAdmit(args []string) (admitOptions, error) {
 	}
 	policy = admission.Policy{MinAvailableBytes: *minAvail << 30, MinSwapFreeBytes: *minSwap << 30, MaxLoad1: *maxLoad}
 	opts := admitOptions{label: *label, policy: policy, limits: admission.Limits{MemoryHigh: *high, MemoryMax: *limit, MemorySwapMax: *swapMax},
-		wait: *wait, poll: *poll, timeout: *timeout, argv: argv}
+		wait: *wait, poll: *poll, timeout: *timeout, argv: argv,
+		slots: admission.Slots{Dir: *slotsDir, MaxHeavy: *maxHeavy, Poll: *slotPoll}}
 	if opts.label == "" {
 		opts.label = argv[0]
 	}
-	return opts, opts.limits.Check()
+	return opts, errors.Join(opts.limits.Check(), opts.slots.Check())
 }

@@ -63,17 +63,28 @@ func LockExclusive(file *os.File, name string) (release func() error, busy bool,
 // os.O_CREATE can tell an absent lock from a broken one. busy and release are those of
 // LockExclusive.
 func LockPrivateFile(root *os.Root, path string, flag int, name string) (release func() error, busy bool, err error) {
+	_, release, busy, err = OpenPrivateLock(root, path, flag, name)
+	return release, busy, err
+}
+
+// OpenPrivateLock is LockPrivateFile with access to the locked file for informational metadata.
+// The returned file belongs to release; callers must not close it separately.
+func OpenPrivateLock(root *os.Root, path string, flag int, name string) (file *os.File, release func() error, busy bool, err error) {
 	if root == nil {
-		return nil, false, fmt.Errorf("open %s lock: %w", name, os.ErrInvalid)
+		return nil, nil, false, fmt.Errorf("open %s lock: %w", name, os.ErrInvalid)
 	}
-	file, err := root.OpenFile(path, flag|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+	file, err = root.OpenFile(path, flag|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
-		return nil, false, fmt.Errorf("open %s lock: %w", name, err)
+		return nil, nil, false, fmt.Errorf("open %s lock: %w", name, err)
 	}
 	if err := checkPrivateLock(root, path, file); err != nil {
-		return nil, false, errors.Join(fmt.Errorf("%s lock %q: %w", name, path, err), file.Close())
+		return nil, nil, false, errors.Join(fmt.Errorf("%s lock %q: %w", name, path, err), file.Close())
 	}
-	return LockExclusive(file, name)
+	release, busy, err = LockExclusive(file, name)
+	if busy || err != nil {
+		return nil, release, busy, err
+	}
+	return file, release, false, nil
 }
 
 // checkPrivateLock accepts file when it is a regular file only its owner can reach and path
