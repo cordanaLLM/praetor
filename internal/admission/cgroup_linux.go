@@ -15,10 +15,16 @@ import (
 
 const noMemoryBound = "no memory bound applies to this step"
 
+// memoryBound reads /proc/self/cgroup and the corresponding /sys/fs/cgroup memory.max ancestry for an
+// unscoped diagnostic. Missing, unreadable, or unbounded data produces the same no-memory-bound
+// message.
 func memoryBound(ctx context.Context) string {
 	return cgroupMemoryBound(ctx, "/proc/self/cgroup", "/sys/fs/cgroup")
 }
 
+// cgroupMemoryBound reads a bounded procPath and accepts only a local unified-cgroup path beneath root
+// before inspecting memory.max. Cancellation, unreadable or malformed membership, and absent unified
+// membership all report no memory bound.
 func cgroupMemoryBound(ctx context.Context, procPath, root string) string {
 	if err := ctx.Err(); err != nil {
 		return noMemoryBound
@@ -47,6 +53,9 @@ func cgroupMemoryBound(ctx context.Context, procPath, root string) string {
 	return noMemoryBound
 }
 
+// walkMemoryBound reads memory.max at dir and at most 31 ancestors, stopping at the first numeric
+// value. All-max ancestry, unreadable or malformed files, cancellation, and traversal exhaustion all
+// report no memory bound.
 func walkMemoryBound(ctx context.Context, root, dir string) string {
 	for level := 0; level < 32; level++ {
 		if err := ctx.Err(); err != nil {

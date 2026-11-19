@@ -14,6 +14,8 @@ import (
 // HeavyCountAvailable reports whether this build has kernel-held heavy slots.
 const HeavyCountAvailable = false
 
+// acquire admits uncounted with an explicit platform diagnostic because this build lacks kernel-held
+// heavy-slot support. A canceled context is still refused.
 func (s Slots) acquire(ctx context.Context, _ string, _ io.Writer) (*Lease, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

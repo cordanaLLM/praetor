@@ -100,6 +100,8 @@ func TestRunAdmit_Boundary_ExitStatusPassesThrough(t *testing.T) {
 	}
 }
 
+// TestParseAdmit_HeavyFlags pins the three-slot default, explicit disabling, and finite count and
+// polling limits; accepting a negative count or zero poll fails the planted invalid-flag cases.
 func TestParseAdmit_HeavyFlags(t *testing.T) {
 	opts, err := parseAdmit([]string{"--", "true"})
 	if err != nil || opts.slots.MaxHeavy != 3 || opts.slots.Poll != 5*time.Second {
@@ -116,6 +118,8 @@ func TestParseAdmit_HeavyFlags(t *testing.T) {
 	}
 }
 
+// TestRunAdmit_HeavyDirectoryRefusal requires an unusable slot path to refuse admission before command
+// execution; a planted missing parent exposes any uncounted fallback.
 func TestRunAdmit_HeavyDirectoryRefusal(t *testing.T) {
 	if !admission.HeavyCountAvailable {
 		t.Skipf("heavy-step count is not available on %s; admitted uncounted", runtime.GOOS)
@@ -127,6 +131,8 @@ func TestRunAdmit_HeavyDirectoryRefusal(t *testing.T) {
 	}
 }
 
+// TestRunAdmit_HeavyWaitRefusal requires a held slot to exhaust the wait budget with its holder label
+// in the refusal; the planted holder exposes admission that skips counting.
 func TestRunAdmit_HeavyWaitRefusal(t *testing.T) {
 	if !admission.HeavyCountAvailable {
 		t.Skipf("heavy-step count is not available on %s; admitted uncounted", runtime.GOOS)
@@ -149,6 +155,8 @@ func TestRunAdmit_HeavyWaitRefusal(t *testing.T) {
 	}
 }
 
+// TestRunAdmit_HeavyExplicitZero requires explicit zero to run uncounted and report that choice; the
+// planted unusable slot path exposes any directory access in disabled mode.
 func TestRunAdmit_HeavyExplicitZero(t *testing.T) {
 	needShell(t)
 	var out string
@@ -166,6 +174,8 @@ func TestRunAdmit_HeavyExplicitZero(t *testing.T) {
 	}
 }
 
+// TestRunAdmit_HeavyLineTexts pins the admitted slot text and its repetition in an unscoped
+// diagnostic; losing concurrency information when scope creation fails breaks the assertion.
 func TestRunAdmit_HeavyLineTexts(t *testing.T) {
 	needShell(t)
 	var runErr error
@@ -190,6 +200,8 @@ func TestRunAdmit_HeavyLineTexts(t *testing.T) {
 	}
 }
 
+// TestParseAdmit_HeavyHelp requires help to stop parsing and explain count, polling, directory
+// overrides, and explicit disabling; omitting any of these help fragments fails the check.
 func TestParseAdmit_HeavyHelp(t *testing.T) {
 	out := captureStderrAdmit(t, func() {
 		if _, err := parseAdmit([]string{"--help"}); err == nil {
@@ -203,6 +215,8 @@ func TestParseAdmit_HeavyHelp(t *testing.T) {
 	}
 }
 
+// captureStderrAdmit redirects process stderr to a test-owned file while run executes and restores it
+// on return. The test framework removes the file; callers must avoid concurrent stderr users.
 func captureStderrAdmit(t *testing.T, run func()) string {
 	t.Helper()
 	file, err := os.CreateTemp(t.TempDir(), "stderr")

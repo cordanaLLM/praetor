@@ -22,6 +22,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// admitContext bounds fixture operations to ten seconds and registers cancellation with the test
+// framework; callers need no separate cancel cleanup.
 func admitContext(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -29,6 +31,8 @@ func admitContext(t *testing.T) context.Context {
 	return ctx
 }
 
+// fixtureSlots creates a private test-owned slot directory with the requested capacity and millisecond
+// polling. Temporary-directory cleanup is registered, but callers must close every acquired lease.
 func fixtureSlots(t *testing.T, count int) Slots {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "slots")
@@ -42,6 +46,8 @@ func fixtureSlots(t *testing.T, count int) Slots {
 	return Slots{Dir: path, MaxHeavy: count, Poll: time.Millisecond}
 }
 
+// closeLease releases a fixture lease and reports cleanup errors without aborting the caller's
+// remaining cleanup.
 func closeLease(t *testing.T, lease *Lease) {
 	t.Helper()
 	if err := lease.Close(); err != nil {
@@ -51,6 +57,8 @@ func closeLease(t *testing.T, lease *Lease) {
 
 type queuedLog struct{ queued chan string }
 
+// Write forwards only the initial queued diagnostic without blocking the admission writer; callers
+// drain the buffered channel to synchronize waiter arrival.
 func (l queuedLog) Write(data []byte) (int, error) {
 	if strings.Contains(string(data), "admission queued") {
 		select {
@@ -70,11 +78,16 @@ type slotScenario struct {
 	maximum atomic.Int32
 }
 
+// newSlotScenario creates a three-slot fixture and buffered result channels for five steps. Callers
+// must release each step's end channel and join all results with finish.
 func newSlotScenario(t *testing.T) *slotScenario {
 	t.Helper()
 	return &slotScenario{slots: fixtureSlots(t, 3), started: make(chan int, 5), results: make(chan error, 5), log: queuedLog{make(chan string, 5)}}
 }
 
+// step holds a lease while recording running and peak counts, then waits for the end signal or
+// deadline. The caller must provide buffered result channels and join the reported lease-release
+// result.
 func (s *slotScenario) step(ctx context.Context, id int, end <-chan struct{}) {
 	lease, err := s.slots.Acquire(ctx, fmt.Sprintf("step-%d", id), s.log)
 	if err != nil {
@@ -99,6 +112,8 @@ func (s *slotScenario) step(ctx context.Context, id int, end <-chan struct{}) {
 	s.results <- errors.Join(err, lease.Close())
 }
 
+// nextStarted waits for the expected step identifier within ctx, failing on overtaking or timeout; the
+// caller still owns termination of the step.
 func nextStarted(t *testing.T, ctx context.Context, started <-chan int, want int) {
 	t.Helper()
 	select {
@@ -111,6 +126,8 @@ func nextStarted(t *testing.T, ctx context.Context, started <-chan int, want int
 	}
 }
 
+// nextQueued requires the named waiter's queued line before any step starts, failing on premature
+// admission or timeout. The caller must later release holders and join the waiter.
 func nextQueued(t *testing.T, ctx context.Context, queued <-chan string, started <-chan int, label string) {
 	t.Helper()
 	select {
@@ -125,6 +142,9 @@ func nextQueued(t *testing.T, ctx context.Context, queued <-chan string, started
 	}
 }
 
+// TestAdmitSlots_FiveStepsBoundAndArrivalOrder pins a maximum of three running steps and FIFO
+// admission for two excess arrivals. Starting an extra step before a holder ends or allowing the later
+// waiter to overtake fails the scenario.
 func TestAdmitSlots_FiveStepsBoundAndArrivalOrder(t *testing.T) {
 	ctx := admitContext(t)
 	s := newSlotScenario(t)
@@ -155,6 +175,8 @@ func TestAdmitSlots_FiveStepsBoundAndArrivalOrder(t *testing.T) {
 	s.finish(t, ctx)
 }
 
+// finish joins exactly five fixture results and requires a peak of three with no unfinished steps.
+// Callers must signal all step end channels before joining.
 func (s *slotScenario) finish(t *testing.T, ctx context.Context) {
 	t.Helper()
 	for id := 0; id < 5; id++ {
@@ -207,6 +229,8 @@ func TestAdmitSlots_LowestTicketOnly(t *testing.T) {
 	closeLease(t, lease)
 }
 
+// fixtureQueue opens a slot root and its matching ticket directory for direct queue attempts,
+// registering queue cleanup with the test. Callers must close any leases returned by those attempts.
 func fixtureQueue(t *testing.T, slots Slots) *slotQueue {
 	t.Helper()
 	root, err := os.OpenRoot(slots.Dir)
@@ -225,6 +249,9 @@ func fixtureQueue(t *testing.T, slots Slots) *slotQueue {
 	return q
 }
 
+// TestAdmitSlots_DeadHolderAndDeadTicket requires stale metadata and an unlocked ticket to stop
+// consuming capacity. A closed holder descriptor and planted unlocked ticket expose liveness checks
+// based on file existence.
 func TestAdmitSlots_DeadHolderAndDeadTicket(t *testing.T) {
 	ctx := admitContext(t)
 	slots := fixtureSlots(t, 1)
@@ -249,6 +276,9 @@ func TestAdmitSlots_DeadHolderAndDeadTicket(t *testing.T) {
 	}
 }
 
+// TestAdmitSlots_WaitBoundNamesHolders requires deadline refusal to name all three planted holders and
+// queue position, with exactly one initial queued line. Ignoring the wait deadline or losing holder
+// metadata fails the assertions.
 func TestAdmitSlots_WaitBoundNamesHolders(t *testing.T) {
 	ctx := admitContext(t)
 	slots := fixtureSlots(t, 3)
@@ -276,6 +306,9 @@ func TestAdmitSlots_WaitBoundNamesHolders(t *testing.T) {
 	}
 }
 
+// TestAdmitSlots_DirectoryRefusals requires unsafe slot roots and queue locks to refuse admission.
+// Planted symlinks, foreign ownership, group access, and missing parents expose any fallback that
+// bypasses directory validation.
 func TestAdmitSlots_DirectoryRefusals(t *testing.T) {
 	for _, kind := range []string{"symlink", "foreign", "group-writable", "create", "lock"} {
 		t.Run(kind, func(t *testing.T) {
@@ -293,6 +326,9 @@ func TestAdmitSlots_DirectoryRefusals(t *testing.T) {
 	}
 }
 
+// unsafeSlots plants one unsafe slot-root or queue-lock condition in a test-owned fixture, including
+// simulated foreign ownership without chown. Temporary paths are cleaned by the test framework;
+// callers must close any unexpected lease.
 func unsafeSlots(t *testing.T, kind string) Slots {
 	t.Helper()
 	slots := fixtureSlots(t, 1)
@@ -320,6 +356,8 @@ func unsafeSlots(t *testing.T, kind string) Slots {
 	return slots
 }
 
+// TestAdmitSlots_Ticket4097Refused holds 4096 planted ticket locks and requires the next waiter to be
+// refused. Removing the ticket-cap check permits an extra ticket and fails this boundary case.
 func TestAdmitSlots_Ticket4097Refused(t *testing.T) {
 	ctx := admitContext(t)
 	slots := fixtureSlots(t, 1)
@@ -345,6 +383,9 @@ func TestAdmitSlots_Ticket4097Refused(t *testing.T) {
 	}
 }
 
+// TestAdmitSlots_ExplicitZeroAndValidation requires explicit zero to avoid creating a slot directory
+// and validates the finite count and positive-poll boundaries. Planted negative, excessive, and zero-poll
+// configurations must be rejected.
 func TestAdmitSlots_ExplicitZeroAndValidation(t *testing.T) {
 	ctx := admitContext(t)
 	path := filepath.Join(t.TempDir(), "not-created")
@@ -367,6 +408,9 @@ func TestAdmitSlots_ExplicitZeroAndValidation(t *testing.T) {
 	}
 }
 
+// TestAdmitSlots_BoundMismatchRefused requires callers sharing a directory to agree on capacity. A
+// planted two-slot request against an initialized one-slot directory exposes independent per-caller
+// bounds.
 func TestAdmitSlots_BoundMismatchRefused(t *testing.T) {
 	ctx := admitContext(t)
 	slots := fixtureSlots(t, 1)
@@ -381,6 +425,9 @@ func TestAdmitSlots_BoundMismatchRefused(t *testing.T) {
 	}
 }
 
+// TestAdmitSlots_RuntimeDirectoryResolution pins explicit-directory precedence over environment and
+// runtime paths, plus the per-user temporary fallback. A planted override must remain untouched when
+// an explicit fixture directory is supplied.
 func TestAdmitSlots_RuntimeDirectoryResolution(t *testing.T) {
 	ctx := admitContext(t)
 	runtime := t.TempDir()
@@ -414,6 +461,9 @@ func TestAdmitSlots_RuntimeDirectoryResolution(t *testing.T) {
 	}
 }
 
+// TestAdmitSlots_SingleWaitBoundAndHostFailureRelease requires host-headroom timeout or read failure
+// to refuse admission and release the reserved slot. Planted low memory and a read error expose a
+// lease retained after host admission fails.
 func TestAdmitSlots_SingleWaitBoundAndHostFailureRelease(t *testing.T) {
 	for _, failure := range []bool{false, true} {
 		t.Run(fmt.Sprint(failure), func(t *testing.T) {
@@ -441,6 +491,9 @@ func TestAdmitSlots_SingleWaitBoundAndHostFailureRelease(t *testing.T) {
 	}
 }
 
+// TestAdmitSlots_LeaseAndContextBoundary pins holder metadata, private slot modes, repeated-close
+// errors, and refusal of deadline-free waits. A planted context without cancellation must not permit
+// an unbounded acquisition.
 func TestAdmitSlots_LeaseAndContextBoundary(t *testing.T) {
 	ctx := admitContext(t)
 	slots := fixtureSlots(t, 3)
@@ -462,6 +515,9 @@ func TestAdmitSlots_LeaseAndContextBoundary(t *testing.T) {
 	}
 }
 
+// requireSlotMetadata requires the fixture's first slot to contain its holder label and an RFC3339Nano
+// timestamp, and all three slot files to have mode 0600. The caller must hold the metadata-holder
+// lease while checking.
 func requireSlotMetadata(t *testing.T, dir string) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, "slot-0001"))
@@ -481,6 +537,9 @@ func requireSlotMetadata(t *testing.T, dir string) {
 
 }
 
+// TestAdmitSlots_TicketDirectoryRefusals requires the ticket directory to pass the same private-path
+// barriers as the slot root. Planted symlinks, foreign ownership, and group access must refuse
+// admission rather than bypass counting.
 func TestAdmitSlots_TicketDirectoryRefusals(t *testing.T) {
 	for _, kind := range []string{"symlink", "foreign", "group-writable"} {
 		t.Run(kind, func(t *testing.T) {
@@ -497,6 +556,9 @@ func TestAdmitSlots_TicketDirectoryRefusals(t *testing.T) {
 	}
 }
 
+// unsafeTicketSlots plants a symlink, simulated foreign owner, or group-accessible ticket directory
+// beneath a test-owned slot root. The test framework removes paths; callers must close any unexpected
+// lease.
 func unsafeTicketSlots(t *testing.T, kind string) Slots {
 	t.Helper()
 	slots := fixtureSlots(t, 1)
@@ -525,6 +587,8 @@ func unsafeTicketSlots(t *testing.T, kind string) Slots {
 	return slots
 }
 
+// TestAdmitSlots_TicketParentIdentity requires the pinned ticket root to match its entry beneath the
+// slot root. Supplying a different fixture's ticket parent must fail the identity check.
 func TestAdmitSlots_TicketParentIdentity(t *testing.T) {
 	ctx := admitContext(t)
 	left := fixtureQueue(t, fixtureSlots(t, 1))

@@ -11,6 +11,9 @@ import (
 	"testing"
 )
 
+// cgroupFixture creates synthetic unified-cgroup membership and a three-level all-max memory.max tree.
+// The test framework removes both temporary roots; callers may alter them without reading host
+// cgroups.
 func cgroupFixture(t *testing.T) (string, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -30,6 +33,9 @@ func cgroupFixture(t *testing.T) (string, string) {
 	return proc, root
 }
 
+// TestAdmitCgroup_AncestorNoneAndUnreadable pins ancestor-limit reporting and the shared no-bound
+// result for absent, unreadable, malformed, or escaping membership data. A planted numeric ancestor
+// must be found, while a removed leaf file must stop traversal.
 func TestAdmitCgroup_AncestorNoneAndUnreadable(t *testing.T) {
 	for _, kind := range []string{"ancestor", "none", "unreadable", "malformed", "escape"} {
 		t.Run(kind, func(t *testing.T) {
@@ -48,6 +54,9 @@ func TestAdmitCgroup_AncestorNoneAndUnreadable(t *testing.T) {
 	}
 }
 
+// TestAdmitCgroup_WalkBoundAndCompensation pins the 32-level walk cap, cancellation result, and
+// concurrency text in unscoped diagnostics. A numeric limit planted beyond the walk cap must remain
+// undiscovered.
 func TestAdmitCgroup_WalkBoundAndCompensation(t *testing.T) {
 	ctx := admitContext(t)
 	proc, root := cgroupFixture(t)
@@ -86,6 +95,9 @@ func TestAdmitCgroup_WalkBoundAndCompensation(t *testing.T) {
 	}
 }
 
+// plantCgroupCase mutates the synthetic membership or memory.max files to select an ancestor limit,
+// unreadable leaf, malformed membership, or escaping path. The caller supplies test-owned paths and
+// relies on their temporary-directory cleanup.
 func plantCgroupCase(t *testing.T, kind, proc, root string) {
 	t.Helper()
 	switch kind {

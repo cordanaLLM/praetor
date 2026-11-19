@@ -19,6 +19,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// trySlots scans at most MaxHeavy locks while the caller holds queue.lock and permits only the lowest
+// live ticket to retain a free slot. A dead holder has released its kernel lock, so stale metadata
+// cannot reserve capacity.
 func (q *slotQueue) trySlots(ctx context.Context, label string, tickets []uint64) (*Lease, string, error) {
 	labels := make([]string, 0, q.slots.MaxHeavy)
 	position := slices.Index(tickets, q.ticket) + 1
@@ -51,6 +54,9 @@ func (q *slotQueue) trySlots(ctx context.Context, label string, tickets []uint64
 	return nil, reason, nil
 }
 
+// claimSlot replaces holder metadata and removes the owning ticket while the caller holds queue.lock
+// and the slot lock. Failure releases the slot; success transfers its lock to the returned lease for
+// the heavy step.
 func (q *slotQueue) claimSlot(file *os.File, release func() error, label string, slot int) (*Lease, string, error) {
 	text := fmt.Sprintf("%s %q", time.Now().UTC().Format(time.RFC3339Nano), label[:min(len(label), 256)])
 	if err := file.Truncate(0); err != nil {
@@ -65,6 +71,9 @@ func (q *slotQueue) claimSlot(file *os.File, release func() error, label string,
 	return &Lease{Text: fmt.Sprintf("slot %d of %d", slot, q.slots.MaxHeavy), file: file, release: release}, "", nil
 }
 
+// holder reads at most 1024 bytes of regular, non-symlink slot metadata while the caller holds
+// queue.lock after observing a busy slot. Empty metadata is reported explicitly and never establishes
+// lock ownership.
 func (q *slotQueue) holder(name string) (label string, resultErr error) {
 	file, err := q.root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {

@@ -19,8 +19,13 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// ticketName uses fixed-width decimal numbering so each positive ticket has one canonical
+// directory-entry name.
 func ticketName(ticket uint64) string { return fmt.Sprintf("ticket-%020d", ticket) }
 
+// entries reads at most MaxTickets plus one entries from the pinned ticket directory and refuses
+// overflow before scanning. The caller holds queue.lock to serialize the snapshot with ticket creation
+// and removal.
 func (q *slotQueue) entries() (entries []os.DirEntry, resultErr error) {
 	dir, err := q.tickets.Open(".")
 	if err != nil {
@@ -37,6 +42,9 @@ func (q *slotQueue) entries() (entries []os.DirEntry, resultErr error) {
 	return entries, nil
 }
 
+// liveTickets validates canonical positive ticket names, reaps unlocked tickets, and returns locked
+// tickets in numeric order while the caller holds queue.lock. Both the directory snapshot and
+// resulting scan are bounded by MaxTickets.
 func (q *slotQueue) liveTickets(ctx context.Context) ([]uint64, error) {
 	entries, err := q.entries()
 	if err != nil {
@@ -71,6 +79,9 @@ func (q *slotQueue) liveTickets(ctx context.Context) ([]uint64, error) {
 	return live, nil
 }
 
+// ticketAlive treats a busy kernel lock as a live waiter and removes an unlocked ticket as dead,
+// regardless of its file contents. The caller holds queue.lock across the lock check and unlink so
+// ticket creation and readers cannot race removal.
 func (q *slotQueue) ticketAlive(name string) (alive bool, resultErr error) {
 	_, release, busy, err := util.OpenPrivateLock(q.tickets, name, os.O_RDWR, "heavy-step ticket")
 	if err != nil || busy {
@@ -84,6 +95,9 @@ func (q *slotQueue) ticketAlive(name string) (alive bool, resultErr error) {
 	return false, nil
 }
 
+// takeTicket creates and retains the next ticket lock after the greatest sorted live number while the
+// caller holds queue.lock. Full capacity, numbering exhaustion, or an unexpectedly busy new ticket
+// refuses admission.
 func (q *slotQueue) takeTicket(live []uint64) error {
 	if len(live) >= MaxTickets {
 		return errors.New("heavy-step ticket limit 4096 reached; refused")

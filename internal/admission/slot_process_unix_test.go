@@ -19,6 +19,8 @@ import (
 
 type helperReady struct{ ready chan struct{} }
 
+// Write signals readiness without blocking when child output contains the holder marker, allowing the
+// parent to attempt admission only after the child owns a slot.
 func (w helperReady) Write(data []byte) (int, error) {
 	if strings.Contains(string(data), "helper holds") {
 		select {
@@ -51,6 +53,9 @@ func TestAdmitSlots_ProcessHelper(t *testing.T) {
 	time.Sleep(2 * time.Millisecond)
 }
 
+// TestAdmitSlots_TwoProcessesShareSlot requires a parent to refuse admission while the child holds the
+// sole slot and to acquire it after the child exits. The planted child holder exposes any process-local
+// substitute for kernel locking.
 func TestAdmitSlots_TwoProcessesShareSlot(t *testing.T) {
 	ctx := admitContext(t)
 	slots := fixtureSlots(t, 1)
@@ -95,6 +100,9 @@ func TestAdmitSlots_TwoProcessesShareSlot(t *testing.T) {
 	closeLease(t, lease)
 }
 
+// helperCommand selects the current test executable and builds a child context with helper markers
+// in its environment and every inherited GIT_ variable stripped. The caller must bound the child with
+// ctx and wait for its exit.
 func helperCommand(t *testing.T, ctx context.Context, dir string) (context.Context, string) {
 	t.Helper()
 	executable, err := os.Executable()
@@ -111,6 +119,8 @@ func helperCommand(t *testing.T, ctx context.Context, dir string) (context.Conte
 	return childCtx, executable
 }
 
+// waitHelperReady waits for the child holder marker, failing on early exit or the caller's deadline.
+// The caller remains responsible for unblocking and joining the child.
 func waitHelperReady(t *testing.T, ctx context.Context, ready helperReady, done <-chan error) {
 	t.Helper()
 	select {
@@ -122,6 +132,8 @@ func waitHelperReady(t *testing.T, ctx context.Context, ready helperReady, done 
 	}
 }
 
+// waitHelperEnd joins the child result within the caller's deadline and rejects a failed child. The
+// caller must first release the child's stdin wait.
 func waitHelperEnd(t *testing.T, ctx context.Context, done <-chan error) {
 	t.Helper()
 	select {

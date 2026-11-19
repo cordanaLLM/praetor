@@ -234,6 +234,9 @@ func TestLockPrivateFileReportsMissingLockAndCreatesPrivately(t *testing.T) {
 	}
 }
 
+// TestAdmitPrivateDirectoryRetainsBarriers requires private-directory creation to preserve ownership,
+// symlink, and exact-mode barriers. Planted foreign ownership, a final symlink, and mode 0770 must
+// each be refused.
 func TestAdmitPrivateDirectoryRetainsBarriers(t *testing.T) {
 	if util.OwnsFile(nil) {
 		t.Fatal("nil ownership accepted")
@@ -267,6 +270,8 @@ func TestAdmitPrivateDirectoryRetainsBarriers(t *testing.T) {
 	}
 }
 
+// TestAdmitRuntimeDirectoryResolver pins XDG runtime precedence and a private temporary fallback,
+// including cancellation and local-name validation. A planted escaping fallback must be refused.
 func TestAdmitRuntimeDirectoryResolver(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -296,6 +301,9 @@ func TestAdmitRuntimeDirectoryResolver(t *testing.T) {
 	}
 }
 
+// TestAdmitPrivateLockMetadata requires a caller holding a private lock to retain its descriptor for
+// metadata writes and then release it successfully. Returning a closed or unwritable descriptor fails
+// the holder write.
 func TestAdmitPrivateLockMetadata(t *testing.T) {
 	root, _ := lockRoot(t)
 	file, release, busy, err := util.OpenPrivateLock(root, "metadata", os.O_RDWR|os.O_CREATE, "metadata")

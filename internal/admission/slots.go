@@ -105,11 +105,15 @@ func (w Waiter) Acquire(ctx context.Context, label string, slots Slots) (lease *
 	return lease, verdict, resultErr
 }
 
+// queueLine writes a timestamped queue or wait diagnostic and returns any writer failure so admission
+// cannot silently lose the diagnostic.
 func queueLine(log io.Writer, label, kind, reason string) error {
 	_, err := fmt.Fprintf(log, "%s admission %s %s: %s\n", time.Now().Format("15:04:05"), kind, label, reason)
 	return err
 }
 
+// heldRefusal wraps the wait failure with the last observed blocking reason and label, retaining the
+// original error for deadline checks.
 func heldRefusal(label, reason string, err error) error {
 	return fmt.Errorf("admission %s: still held (%s), refused: %w", label, reason, err)
 }

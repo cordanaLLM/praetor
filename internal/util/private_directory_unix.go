@@ -44,6 +44,8 @@ func PrivateDirectory(ctx context.Context, path string, owns func(os.FileInfo) b
 	return pinPrivateDirectory(ctx, path, info)
 }
 
+// privateDirectoryInfo uses Lstat to refuse a final symlink, non-directory, foreign owner, or mode
+// other than 0700 before a root is pinned.
 func privateDirectoryInfo(path string, owns func(os.FileInfo) bool) (os.FileInfo, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -61,6 +63,9 @@ func privateDirectoryInfo(path string, owns func(os.FileInfo) bool) (os.FileInfo
 	return info, nil
 }
 
+// pinPrivateDirectory opens the validated path as an os.Root and requires its identity to match the
+// prior metadata. Identity, stat, or context failure closes the new root and returns joined cleanup
+// errors.
 func pinPrivateDirectory(ctx context.Context, path string, info os.FileInfo) (*os.Root, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
