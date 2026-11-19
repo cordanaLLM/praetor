@@ -3,13 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -393,13 +397,13 @@ func TestForgeCheckCommits_ExcludeFileRefusals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeFixtureFile(t, t.TempDir(), "excludes", tc.text)
 			_, err := loadCommitExcludes(t.Context(), path, nil)
-			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), path) {
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), strconv.Quote(path)) {
 				t.Fatalf("want --exclude-file path and %q, got %v", tc.want, err)
 			}
 		})
 	}
 	path := filepath.Join(t.TempDir(), "missing")
-	if _, err := loadCommitExcludes(t.Context(), path, nil); err == nil || !strings.Contains(err.Error(), path) {
+	if _, err := loadCommitExcludes(t.Context(), path, nil); err == nil || !strings.Contains(err.Error(), strconv.Quote(path)) {
 		t.Fatalf("unreadable source must name path: %v", err)
 	}
 }
@@ -407,7 +411,7 @@ func TestForgeCheckCommits_ExcludeFileRefusals(t *testing.T) {
 // TestForgeCheckCommits_ExcludeFileSourceErrors refuses nonregular sources and expired reads.
 func TestForgeCheckCommits_ExcludeFileSourceErrors(t *testing.T) {
 	path := t.TempDir()
-	if _, err := loadCommitExcludes(t.Context(), path, nil); err == nil || !strings.Contains(err.Error(), path) {
+	if _, err := loadCommitExcludes(t.Context(), path, nil); err == nil || !strings.Contains(err.Error(), strconv.Quote(path)) {
 		t.Fatalf("directory source must name its path: %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -454,5 +458,125 @@ func TestForgeCheckCommits_RealArgvCap(t *testing.T) {
 	args := append([]string{"--base=HEAD"}, slices.Repeat([]string{"--exclude=HEAD"}, 300)...)
 	if err := runForgeCheckCommits(t.Context(), args); err == nil || !strings.Contains(err.Error(), "too many arguments: 301 exceeds the 256-argument limit") {
 		t.Fatalf("public command must preserve cap: %v", err)
+	}
+}
+
+// TestForgeCheckCommits_Complexity pins every changed Go function to the repository's HISS-04 measure.
+func TestForgeCheckCommits_Complexity(t *testing.T) {
+	checkCommitComplexityFile(t, "forge.go", []string{"commitRange", "runForgeCheckCommits", "commitExcludeInput", "reportCommitMessageResult"})
+	checkCommitComplexityFile(t, "forge_commits_test.go", []string{"checkCommitComplexityFile", "TestForgeCheckCommits_Complexity", "TestForgeCheckCommits_RevisionStdin", "TestForgeCheckCommits_RevisionPayload", "TestForgeCheckCommits_RevisionSpellings", "TestForgeCheckCommits_DottedExcludeArgvBound", "TestForgeCheckCommits_ResultReporting"})
+}
+
+// checkCommitComplexityFile checks named functions, refusing absent names as well as exceeded bounds.
+func checkCommitComplexityFile(t *testing.T, path string, names []string) {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	for _, unit := range hiss.MeasureFile(fset, file) {
+		if !slices.Contains(names, unit.Name) {
+			continue
+		}
+		found = append(found, unit.Name)
+		t.Logf("%s: %+v", unit.Name, unit.Metrics)
+		if exceeded := unit.Metrics.Exceeded(hiss.ComplexityLimits{}); len(exceeded) != 0 {
+			t.Errorf("%s exceeds HISS-04: %+v", unit.Name, exceeded)
+		}
+	}
+	for _, name := range names {
+		if !slices.Contains(found, name) {
+			t.Errorf("complexity contract function missing: %s", name)
+		}
+	}
+}
+
+// TestForgeCheckCommits_RevisionStdin compares option-free negatives with the command-line exclusion form.
+func TestForgeCheckCommits_RevisionStdin(t *testing.T) {
+	ctx, dir, refs := commitExcludeFixture(t)
+	// The third tip is an ancestor of the first: fast-import attached each tip to base.
+	refs = []string{refs[0], refs[1], refs[0] + "~1"}
+	args := []string{"log", "--format=%H", "refs/heads/base..refs/heads/range"}
+	negative, _ := commitExcludeInput(refs)
+	want, err := util.RunGit(ctx, dir, append(append(slices.Clone(args), "--not"), append(refs, "--")...)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := util.WithCommandStdin(ctx, negative)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := util.RunGit(input, dir, append(slices.Clone(args), "--stdin", "--")...)
+	if err != nil || got != want {
+		t.Fatalf("stdin revisions differ from argv: %v", err)
+	}
+
+	t.Log("three excluded tips (one ancestor); caret stdin = --not argv; nonempty result")
+	if want == "" {
+		t.Fatal("fixture must leave commits to compare")
+	}
+}
+
+// TestForgeCheckCommits_RevisionPayload refuses stdin option lines and pins the Python-compatible shape.
+func TestForgeCheckCommits_RevisionPayload(t *testing.T) {
+	refs := []string{"refs/heads/tip", "refs/heads/ancestor", "refs/heads/side"}
+	input, ranges := commitExcludeInput(refs)
+	payload := string(input)
+	if len(ranges) != 0 {
+		t.Fatalf("simple exclusions must stay off argv: %v", ranges)
+	}
+	for _, line := range strings.Split(payload, "\n") {
+		if strings.HasPrefix(line, "-") {
+			t.Fatalf("stdin option line forbidden: %q", line)
+		}
+	}
+	if want := "^" + strings.Join(refs, "\n^") + "\n"; payload != want {
+		t.Fatalf("payload %q; want Python form %q", payload, want)
+	}
+	signed, _ := commitExcludeInput([]string{"^refs/heads/tip", "^", "^^tip", "^--all"})
+	if want := "refs/heads/tip\n^^\n^^^tip\n^^--all\n"; string(signed) != want {
+		t.Fatalf("invalid signed revisions must not become options or empty input: %q", signed)
+	}
+
+}
+
+// TestForgeCheckCommits_RevisionSpellings preserves signed, dotted and parent-set revision semantics.
+func TestForgeCheckCommits_RevisionSpellings(t *testing.T) {
+	ctx, dir, refs := commitExcludeFixture(t)
+	for _, ref := range []string{refs[0], "^" + refs[0], "refs/heads/base.." + refs[0], "refs/heads/base..." + refs[0], "refs/heads/range^!", "refs/heads/range^@", "refs/heads/range^-1"} {
+		got, err := commitRange(ctx, dir, "refs/heads/base", "refs/heads/range", []string{ref, refs[2]})
+		want := chunkedExcludeRange(t, ctx, dir, []string{ref, refs[2]})
+		if err != nil || !slices.Equal(got, want) {
+			t.Fatalf("revision %q differs from argv: %v", ref, err)
+		}
+	}
+}
+
+// TestForgeCheckCommits_DottedExcludeArgvBound accepts the exact argv cap and refuses the next range.
+func TestForgeCheckCommits_DottedExcludeArgvBound(t *testing.T) {
+	ctx, dir, _ := commitExcludeFixture(t)
+	for _, count := range []int{maxCLIArgs - 8, maxCLIArgs - 7} {
+		refs := slices.Repeat([]string{"refs/heads/base..refs/heads/base"}, count)
+		_, err := commitRange(ctx, dir, "refs/heads/base", "refs/heads/range", refs)
+		if count == maxCLIArgs-8 && err != nil {
+			t.Fatalf("exact argv cap: %v", err)
+		}
+		if count == maxCLIArgs-7 && (err == nil || !strings.Contains(err.Error(), "256-argument limit")) {
+			t.Fatalf("argv overflow must fail by name: %v", err)
+		}
+	}
+}
+
+// TestForgeCheckCommits_ResultReporting retains both passing and failing extracted reports.
+func TestForgeCheckCommits_ResultReporting(t *testing.T) {
+	out, err := captureStdout(t, func() error { return reportCommitMessageResult(nil, 0) })
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("passing result: %v, %s", err, out)
+	}
+	err = reportCommitMessageResult([]string{"planted failure"}, 3)
+	if err == nil || !strings.Contains(err.Error(), "1 of 3 commit(s) fail, first planted failure") {
+		t.Fatalf("failing result: %v", err)
 	}
 }

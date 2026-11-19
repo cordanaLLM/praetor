@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
 # SPDX-License-Identifier: EUPL-1.2
 type: fixed
-title: Keep pre-push commit checks within the argument limit when other remotes have many tracking refs
+title: Keep pre-push commit exclusions within argument and deadline limits using Git-compatible revision input
 breaking: false

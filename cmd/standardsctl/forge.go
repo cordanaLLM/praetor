@@ -332,6 +332,31 @@ func parseCommitRecords(records []string) ([]string, error) {
 	return messages, nil
 }
 
+// commitExcludeInput emits signed revisions without stdin options. Dotted ranges retain
+// their --not argv form because prefixing a range with a caret is not valid Git syntax.
+func commitExcludeInput(excludes []string) ([]byte, []string) {
+	var input strings.Builder
+	var ranges []string
+	for i := 0; i < len(excludes) && i < maxCommitExcludeRevisions; i++ {
+		ref := excludes[i]
+		if strings.Contains(ref, "..") {
+			ranges = append(ranges, ref)
+			continue
+		}
+		if plain, included := strings.CutPrefix(ref, "^"); included && plain != "" && !strings.HasPrefix(plain, "^") && !strings.HasPrefix(plain, "-") {
+			input.WriteString(plain)
+		} else {
+			input.WriteByte('^')
+			input.WriteString(ref)
+		}
+		input.WriteByte('\n')
+	}
+	if len(ranges) > 0 {
+		ranges = append(append([]string{"--not"}, ranges...), "--not")
+	}
+	return []byte(input.String()), ranges
+}
+
 // commitRange reads the commit messages of base..head through the audited git wrapper.
 func commitRange(ctx context.Context, repoDir, base, head string, opts ...any) ([]string, error) {
 	excludes, firstParent := parseCommitRangeOpts(opts)
@@ -347,13 +372,18 @@ func commitRange(ctx context.Context, repoDir, base, head string, opts ...any) (
 	logArgs = append(logArgs, base+".."+head)
 	if len(excludes) > 0 {
 		var err error
-		ctx, err = util.WithCommandStdin(ctx, []byte("--not\n"+strings.Join(excludes, "\n")+"\n"))
+		input, ranges := commitExcludeInput(excludes)
+		logArgs = append(logArgs, ranges...)
+		ctx, err = util.WithCommandStdin(ctx, input)
 		if err != nil {
 			return nil, fmt.Errorf("commit exclusions stdin: %w", err)
 		}
 		logArgs = append(logArgs, "--stdin")
 	}
 	logArgs = append(logArgs, "--")
+	if len(logArgs) > maxCLIArgs {
+		return nil, fmt.Errorf("dotted exclusions exceed the %d-argument limit (%d git arguments)", maxCLIArgs, len(logArgs))
+	}
 	out, err := util.RunGit(ctx, repoDir, logArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed reading commit range %s..%s: %w", base, head, err)
@@ -443,8 +473,13 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 	if len(excludes) > 0 || *firstParent {
 		reportCheckCommitsLeftOut(ctx, *repoDir, *base, *head, len(messages))
 	}
+	return reportCommitMessageResult(failures, len(messages))
+}
+
+// reportCommitMessageResult reports policy failures or the successful range result.
+func reportCommitMessageResult(failures []string, checkedCount int) error {
 	if len(failures) > 0 {
-		return fmt.Errorf("commit message policy violation: %d of %d commit(s) fail, first %s", len(failures), len(messages), failures[0])
+		return fmt.Errorf("commit message policy violation: %d of %d commit(s) fail, first %s", len(failures), checkedCount, failures[0])
 	}
 	fmt.Println("[PASS] Every commit carries a Conventional Commits subject, and every breaking commit a mandatory Migration: footer.")
 	return nil
