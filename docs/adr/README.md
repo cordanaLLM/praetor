@@ -29,6 +29,7 @@ This directory documents all significant architectural and design decisions gove
 | **[ADR-0019](0019-released-surfaces-verified-from-shipped-artefacts.md)** | Released Surfaces Verified from Shipped Artefacts | **Accepted** | 2026-10-21 |
 | **[ADR-0020](0020-forge-app-installation-tokens.md)** | Forge App Installation Tokens | **Proposed** | 2026-10-21 |
 | **[ADR-0021](0021-figure-player-as-release-asset.md)** | Figure Player Bundle as an Engine Release Asset | **Accepted** | 2026-10-18 |
+| **[ADR-0022](0022-ci-receipt-verify-job.md)** | Optional CI Receipt Verification Job | **Proposed** | 2026-11-19 |
 
 ---
 
