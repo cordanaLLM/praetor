@@ -2767,6 +2767,14 @@ with mock.patch("hooks.tempfile.TemporaryDirectory", side_effect=create), \
         ):
             self.assertEqual(hooks.refuse_commit_exclude_timeout(), 1)
 
+    def test_timeout_refusal_survives_closed_or_missing_stderr(self):
+        """A closed (ValueError) or missing (None) stderr cannot prevent the refusal."""
+        closed = io.StringIO()
+        closed.close()
+        for stream in (closed, None):
+            with mock.patch("hooks.sys.stderr", stream):
+                self.assertEqual(hooks.refuse_commit_exclude_timeout(), 1)
+
     def test_source_deadline_reserves_process_shutdown(self):
         """A spent command budget refuses before spawn and still cleans up."""
         with (

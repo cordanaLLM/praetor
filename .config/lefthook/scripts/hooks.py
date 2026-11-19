@@ -499,8 +499,8 @@ def refuse_commit_exclude_timeout():
             f"after {COMMIT_EXCLUDE_TIMEOUT:g} s\n"
         )
         sys.stderr.flush()
-    except OSError:
-        # A closed diagnostic stream must still refuse the hook.
+    except (OSError, ValueError, AttributeError):
+        # A failing, closed (ValueError) or missing (None: AttributeError) diagnostic stream must still refuse the hook.
         pass
 
     return 1
