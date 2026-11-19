@@ -72,18 +72,6 @@ func hereDocDoubleWord(text string) (string, int, bool) {
 	return "", 0, false
 }
 
-var (
-	sudoValuelessLong = map[string]bool{
-		"--askpass": true, "--background": true, "--preserve-env": true, "--set-home": true,
-		"--reset-timestamp": true, "--remove-timestamp": true, "--non-interactive": true,
-		"--preserve-groups": true, "--stdin": true,
-	}
-	sudoValueLong = map[string]bool{
-		"--user": true, "--group": true, "--close-from": true, "--host": true,
-		"--prompt": true, "--chroot": true, "--command-timeout": true, "--other-user": true,
-	}
-)
-
 // hereDocLiteralCommand reads an assignment-prefixed command and unwraps privilege wrappers.
 func hereDocLiteralCommand(text string) (string, []string) {
 	match := hereDocCommand.FindStringSubmatchIndex(text)
@@ -111,11 +99,8 @@ func hereDocUnwrapCommand(program string, args []string) (string, []string) {
 
 // hereDocWrapper names the privilege and environment launchers around an owner command.
 func hereDocWrapper(program string) bool {
-	switch hereDocBase(program) {
-	case "sudo", "doas", "env":
-		return true
-	}
-	return false
+	_, ok := ShellWrapperOptions[hereDocBase(program)]
+	return ok
 }
 
 // hereDocStepWrapper consumes one wrapper's non-command options and environment assignments.
@@ -160,50 +145,21 @@ func hereDocWrapperAssignment(wrapper, word string) bool {
 
 // hereDocWrapperOption validates one non-command wrapper flag and its value arity.
 func hereDocWrapperOption(wrapper, option string, rest []string) (int, bool) {
-	switch wrapper {
-	case "sudo":
-		return hereDocSudoOption(option, rest)
-	case "doas":
-		if strings.HasPrefix(option, "--") {
-			return 0, false
-		}
-		return hereDocShortOption(option, "nL", "uCa", rest)
-	case "env":
-		return hereDocEnvOption(option, rest)
-	}
-	return 0, false
-}
-
-// hereDocSudoOption admits non-command sudo options documented in sudo(8).
-func hereDocSudoOption(option string, rest []string) (int, bool) {
-	if !strings.HasPrefix(option, "--") {
-		return hereDocShortOption(option, "ABEHkKnPS", "ughCpRTU", rest)
-	}
-	if sudoValuelessLong[option] {
-		return 0, true
-	}
-	if sudoValueLong[option] {
-		return hereDocOptionValue(rest)
-	}
-	name, value, ok := strings.Cut(option, "=")
-	return 0, ok && value != "" && (sudoValueLong[name] || name == "--preserve-env")
-}
-
-// hereDocEnvOption admits non-command env options documented in env(1).
-func hereDocEnvOption(option string, rest []string) (int, bool) {
-	if option == "-" || option == "--ignore-environment" || option == "--null" {
-		return 0, true
-	}
-	if option == "--unset" {
-		return hereDocOptionValue(rest)
-	}
-	if value, ok := strings.CutPrefix(option, "--unset="); ok {
-		return 0, value != ""
-	}
-	if strings.HasPrefix(option, "--") {
+	spec, ok := ShellWrapperOptions[wrapper]
+	if !ok {
 		return 0, false
 	}
-	return hereDocShortOption(option, "i0", "u", rest)
+	if slices.Contains(spec.FlagLong, option) || slices.Contains(spec.OptionalValueLong, option) {
+		return 0, true
+	}
+	if !strings.HasPrefix(option, "--") {
+		return hereDocShortOption(option, spec.FlagShort, spec.ValueShort, rest)
+	}
+	if slices.Contains(spec.ValueLong, option) {
+		return hereDocOptionValue(rest)
+	}
+	name, value, attached := strings.Cut(option, "=")
+	return 0, attached && value != "" && (slices.Contains(spec.ValueLong, name) || slices.Contains(spec.OptionalValueLong, name))
 }
 
 // hereDocShortOption parses a short option cluster with optional trailing value letter.

@@ -2,9 +2,16 @@ package forge
 
 import (
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // TestShellFields checks shell words and code or data here-documents.
@@ -21,7 +28,9 @@ func TestShellFields(t *testing.T) {
 		{"cat heredoc data", "cat <<'EOF'\nreviewer's\nEOF", []string{"cat", ";"}},
 		{"assignment cat data", "FOO=1 cat > out.md <<'EOF'\nreviewer's\nEOF", []string{"FOO=1", "cat", ">", "out.md", ";"}},
 		{"absolute cat data", "/usr/bin/cat <<'EOF'\nreviewer's\nEOF", []string{"/usr/bin/cat", ";"}},
-		{"sudo tee code", "sudo tee out.md <<'EOF'\ngh pr view 1\nEOF", []string{"sudo", "tee", "out.md", ";"}},
+		{"sudo tee data", "sudo tee out.md <<'EOF'\ngh pr view 1\nEOF", []string{"sudo", "tee", "out.md", ";"}},
+		{"sudo chdir tee data", "sudo -D /srv tee out.md <<'EOF'\ngh pr view 1\nEOF", []string{"sudo", "-D", "/srv", "tee", "out.md", ";"}},
+		{"sudo long chdir tee data", "sudo --chdir=/srv tee out.md <<'EOF'\ngh pr view 1\nEOF", []string{"sudo", "--chdir=/srv", "tee", "out.md", ";"}},
 		{"doas tee data", "doas -u root tee -a out.md <<'EOF'\ngh pr view 1\nEOF", []string{"doas", "-u", "root", "tee", "-a", "out.md", ";"}},
 		{"env cat data", "env -u BAR FOO=1 cat <<'EOF'\ngh pr view 1\nEOF", []string{"env", "-u", "BAR", "FOO=1", "cat", ";"}},
 		{"piped tee options data", "cat <<'EOF' | tee -a -i file\ngh pr view 1\nEOF", []string{"cat", "|", "tee", "-a", "-i", "file", ";"}},
@@ -51,6 +60,132 @@ func TestShellFields(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestShellWrapperValueOptionsShared compares both readers' sudo value sets and
+// retains the forge reader's env arities, including unproven here-document options.
+func TestShellWrapperValueOptionsShared(t *testing.T) {
+	for _, wrapper := range []string{"sudo", "env"} {
+		want := hiss.ShellWrapperOptions[wrapper].ValueOptions()
+		if got := commandWrappers[wrapper].valueOptions; !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s forge value options %v; shared %v", wrapper, got, want)
+		}
+		for option := range want {
+			cmd := parseShellCommand([]string{wrapper, option, "/srv", "tee", "out.md"})
+			if cmd.program != "tee" {
+				t.Errorf("%s %s value: forge program %q; want tee", wrapper, option, cmd.program)
+			}
+			if wrapper == "sudo" {
+				assertWrapperHereDocData(t, wrapper+" "+option+" /srv", true)
+			}
+		}
+	}
+	wantLetters := hiss.ShellWrapperOptionSpec{ValueShort: hiss.ShellWrapperOptions["sudo"].ValueShort}.ValueOptions()
+	gotLetters := hiss.ShellWrapperOptionSpec{ValueShort: sudoValueLetters}.ValueOptions()
+	if !reflect.DeepEqual(gotLetters, wantLetters) {
+		t.Fatalf("forge sudo value letters %v; shared %v", gotLetters, wantLetters)
+	}
+	if options := (hiss.ShellWrapperOptionSpec{}).ValueOptions(); len(options) != 0 {
+		t.Fatalf("empty wrapper spec has options: %v", options)
+	}
+}
+
+// TestShellWrapperHereDocAllowlist keeps unknown and transforming options unproven.
+// Missing/empty operands and bare options pin the arity boundaries.
+func TestShellWrapperHereDocAllowlist(t *testing.T) {
+	for _, prefix := range []string{
+		"sudo --unknown", "sudo -Z", "env -S value", "env --split-string=value",
+		"env -C /srv", "env --chdir=/srv", "env -a name", "env --argv0=name",
+		"sudo --chdir=", "env --unset=", "doas --user root",
+	} {
+		assertWrapperHereDocData(t, prefix, false)
+	}
+	for _, prefix := range []string{"sudo -D/srv", "sudo --chdir=/srv", "env -", "sudo --preserve-env=FOO"} {
+		assertWrapperHereDocData(t, prefix, true)
+	}
+	for _, prefix := range []string{"sudo -D", "sudo --chdir", "env -u", "doas -u"} {
+		_, docs, err := hiss.SplitHereDocs(prefix + " <<'EOF'\ndata\nEOF\n")
+		if err != nil || len(docs) != 1 || docs[0].Data() {
+			t.Fatalf("missing wrapper operand %q: docs %#v, err %v", prefix, docs, err)
+		}
+	}
+}
+
+func assertWrapperHereDocData(t *testing.T, prefix string, want bool) {
+	t.Helper()
+	_, docs, err := hiss.SplitHereDocs(prefix + " tee out.md <<'EOF'\ngh pr view 1\nEOF\n")
+	if err != nil || len(docs) != 1 || docs[0].Data() != want {
+		t.Fatalf("wrapper %q: docs %#v, err %v; want data %v", prefix, docs, err, want)
+	}
+}
+
+// TestShellWrapperOptionSources refuses private option literals in either reader's
+// arity declarations, even when a copied list initially has the same contents.
+func TestShellWrapperOptionSources(t *testing.T) {
+	for _, tc := range []struct{ path, name, key string }{
+		{"build_warnings_shell.go", "commandWrappers", "sudo"},
+		{"build_warnings_shell.go", "commandWrappers", "env"},
+		{"build_warnings_shell.go", "sudoValueLetters", ""},
+		{"../hiss/shell_heredoc_files.go", "hereDocWrapperOption", ""},
+	} {
+		t.Run(tc.name+tc.key, func(t *testing.T) {
+			file, err := parser.ParseFile(token.NewFileSet(), tc.path, nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			node := wrapperOptionSource(t, file, tc.name, tc.key)
+			ast.Inspect(node, func(node ast.Node) bool {
+				lit, ok := node.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				value, err := strconv.Unquote(lit.Value)
+				if err != nil || !slices.Contains([]string{"", "sudo", "env", "--", "="}, value) {
+					t.Errorf("private wrapper option literal %s; use hiss.ShellWrapperOptions", lit.Value)
+				}
+				return true
+			})
+		})
+	}
+}
+
+func wrapperOptionSource(t *testing.T, file *ast.File, name, key string) ast.Node {
+	t.Helper()
+	var found ast.Node
+	ast.Inspect(file, func(node ast.Node) bool {
+		if fn, ok := node.(*ast.FuncDecl); ok && fn.Name.Name == name {
+			found = fn.Body
+		}
+		if decl, ok := node.(*ast.ValueSpec); ok && len(decl.Names) == 1 && decl.Names[0].Name == name {
+			found = decl.Values[0]
+		}
+		return true
+	})
+	if found == nil {
+		t.Fatalf("wrapper option source missing: %s", name)
+	}
+	if key != "" {
+		found = wrapperOptionEntry(t, found, key)
+	}
+	return found
+}
+
+func wrapperOptionEntry(t *testing.T, node ast.Node, key string) ast.Node {
+	t.Helper()
+	lit, ok := node.(*ast.CompositeLit)
+	if !ok {
+		t.Fatalf("wrapper table must contain entries: %T", node)
+	}
+	for _, entry := range lit.Elts {
+		pair, ok := entry.(*ast.KeyValueExpr)
+		if ok {
+			if word, ok := pair.Key.(*ast.BasicLit); ok && word.Value == strconv.Quote(key) {
+				return pair.Value
+			}
+		}
+	}
+	t.Fatalf("wrapper option entry missing: %s", key)
+	return nil
 }
 
 // TestShellFieldsBoundaries rejects oversized and malformed scripts.
