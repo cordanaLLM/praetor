@@ -15,6 +15,8 @@ func TestShellFields(t *testing.T) {
 	}{
 		{"data cd hidden", "cat <<'EOF'\ncd /tmp\nEOF\ngh pr comment 1", []string{"cat", ";", "gh", "pr", "comment", "1"}},
 		{"data sbom hidden", "cat <<'EOF'\nsyft packages\nEOF", []string{"cat", ";"}},
+		{"piped shell code", "cat <<'EOF' | bash\nsyft dir:. -o sbom.json\nEOF", []string{"cat", "|", "bash", ";", "syft", "dir:.", "-o", "sbom.json", ";"}},
+		{"non shell pipe data", "cat <<'EOF' | tee file\nreviewer's syft dir:. -o sbom.json\nEOF", []string{"cat", "|", "tee", "file", ";"}},
 		{"shell heredoc code", "bash <<'EOF'\ngh pr view 1\nEOF", []string{"bash", ";", "gh", "pr", "view", "1", ";"}},
 		{"cat heredoc data", "cat <<'EOF'\nreviewer's\nEOF", []string{"cat", ";"}},
 		{"assignment cat data", "FOO=1 cat > out.md <<'EOF'\nreviewer's\nEOF", []string{"FOO=1", "cat", ">", "out.md", ";"}},

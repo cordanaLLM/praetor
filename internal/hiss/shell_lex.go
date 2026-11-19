@@ -392,13 +392,21 @@ func (l *shellLexer) arith(text string, i int, frame *shellFrame, b *strings.Bui
 type HereDoc struct {
 	Text    string
 	Command string
+	// shellPipe marks a data command whose output feeds a supported shell.
+	shellPipe bool
 }
 
-// Data reports whether the owning command reads the here-document as data.
+// Data reports whether the body remains data rather than code fed to a shell.
 func (h HereDoc) Data() bool {
 	word := hereDocBase(h.Command)
-	return word == "cat" || word == "tee" || word == "gh"
+	return !h.shellPipe && (word == "cat" || word == "tee" || word == "gh")
 }
+
+// hereDocStdinArgs admits stdin-reading shell options, never -c or a script file.
+var hereDocStdinArgs = regexp.MustCompile(`^\s*(?:-[seuxv]+\s*)*(?:$|[;&|])`)
+
+// hereDocTeeArgs admits file operands and options that preserve copied stdin.
+var hereDocTeeArgs = regexp.MustCompile(`^(?:(?:-a|-i|--append|--ignore-interrupts|[^-\s][^\s]*)(?:\s+|$))*$`)
 
 var hereDocCommand = regexp.MustCompile(`^\s*(?:[a-zA-Z_][a-zA-Z0-9_]*=(?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>])*\s+)*([^\s;&|<>()]+)`)
 
@@ -410,7 +418,8 @@ type hereDocSplit struct {
 	bodies []strings.Builder
 }
 
-// SplitHereDocs removes redirects and data bodies while retaining code bodies.
+// SplitHereDocs removes redirects and data bodies while retaining code bodies,
+// including data commands piped directly to a supported shell interpreter.
 func SplitHereDocs(script string) (string, []HereDoc, error) {
 	if len(script) > 1<<20 {
 		return "", nil, fmt.Errorf("here-document reader exceeds byte limit")
@@ -486,16 +495,15 @@ func (s *hereDocSplit) codeLine(line string) error {
 	filtered.WriteString(line[pos:])
 	text := filtered.String()
 	for i := 0; i < len(s.lexer.spans) && i < maxShellHeredocs; i++ {
-		command := hereDocOwner(line, s.lexer.spans, i)
-		s.docs = append(s.docs, HereDoc{Command: command})
+		s.docs = append(s.docs, hereDocOwner(line, s.lexer.spans, i))
 		s.bodies = append(s.bodies, strings.Builder{})
 	}
 	s.code.WriteString(text)
 	return nil
 }
 
-// hereDocOwner finds the command word in the redirect's simple command.
-func hereDocOwner(line string, spans [][2]int, index int) string {
+// hereDocOwner finds the redirect's command word and whether its pipe feeds a shell.
+func hereDocOwner(line string, spans [][2]int, index int) HereDoc {
 	start, end := 0, len(line)
 	var quote QuoteStepper
 	for i := 0; i < len(line) && i < maxHereDocLineBytes; i++ {
@@ -522,9 +530,39 @@ func hereDocOwner(line string, spans [][2]int, index int) string {
 	command.WriteString(line[pos:end])
 	word := hereDocCommand.FindStringSubmatch(command.String())
 	if len(word) < 2 {
-		return ""
+		return HereDoc{}
 	}
-	return word[1]
+	return HereDoc{Command: word[1], shellPipe: hereDocPipeShell(command.String(), line[end:])}
+}
+
+// hereDocPipeShell recognizes a direct pipe to an interpreter already supported by the lexer.
+func hereDocPipeShell(source, tail string) bool {
+	if !hereDocForwards(source) {
+		return false
+	}
+	if !strings.HasPrefix(tail, "|") || strings.HasPrefix(tail, "||") {
+		return false
+	}
+	command := tail[1:]
+	word := hereDocCommand.FindStringSubmatchIndex(command)
+	return len(word) > 3 && shellLanguages[hereDocBase(command[word[2]:word[3]])] && hereDocStdinArgs.MatchString(command[word[3]:])
+}
+
+// hereDocForwards admits cat stdin and tee file copies without overriding redirections.
+func hereDocForwards(command string) bool {
+	word := hereDocCommand.FindStringSubmatchIndex(command)
+	if len(word) < 4 {
+		return false
+	}
+	name := hereDocBase(command[word[2]:word[3]])
+	rest := strings.TrimSpace(command[word[3]:])
+	if name == "cat" {
+		return rest == "" || rest == "-"
+	}
+	var lexer shellLexer
+	code, _ := lexer.line(rest)
+	return name == "tee" && !lexer.misread && !lexer.open() &&
+		!strings.ContainsAny(code, "<>") && hereDocTeeArgs.MatchString(rest)
 }
 
 // hereDocBase normalizes an absolute command name for data detection.

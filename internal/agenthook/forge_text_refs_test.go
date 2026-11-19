@@ -29,6 +29,7 @@ func repositoryWithManifest(t *testing.T, manifestYAML string) string {
 // and fails the test if any filesystem write fails.
 func writeTestFixtureFile(t *testing.T, path, content string) {
 	t.Helper()
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -567,4 +568,40 @@ func TestForgeTextRefsUnbalancedSubshellBoundary(t *testing.T) {
 
 	extraResp := runPreToolCommand(t, root, `(cd sub ; true)) ; gh issue comment 9 --body-file body.md`, nil)
 	assertForgeTextDenied(t, extraResp, "outside-org/project#42")
+}
+
+// TestForgeTextRefsBodyFileOverwrite refuses equivalent-path overwrites without executing shell code.
+func TestForgeTextRefsBodyFileOverwrite(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second, body string
+		exists, allowed           bool
+	}{
+		{"dot then plain missing", "./missing-body.md", "missing-body.md", "outside-org/project#47", false, false},
+		{"plain then dot missing", "missing-body.md", "./missing-body.md", "outside-org/project#47", false, false},
+		{"dot then plain changed", "./missing-body.md", "missing-body.md", "outside-org/project#47", true, false},
+		{"plain then dot changed", "missing-body.md", "./missing-body.md", "outside-org/project#47", true, false},
+		{"fleet control", "./missing-body.md", "missing-body.md", "fleet-org/project#47", true, true},
+		{"plain control", "missing-body.md", "./missing-body.md", "safe", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.exists {
+				writeTestFixtureFile(t, filepath.Join(root, "missing-body.md"), tc.body)
+			}
+			command := "cat > " + tc.first + " <<'EOF'\nsafe\nEOF\necho '" + tc.body + "' > " + tc.second + "\ngh pr comment 9 --body-file " + tc.first
+			calls, err := collectGHWriteCalls(command, root)
+			if err != nil || len(calls) != 1 {
+				t.Fatalf("collect writes: %#v, %v", calls, err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			verdict := judgeGHWriteCall(ctx, calls[0], []string{"fleet-org"}, false)
+			if (verdict.Outcome == Allow) != tc.allowed {
+				t.Fatalf("verdict = %#v; want allow %v", verdict, tc.allowed)
+			}
+			if !tc.allowed && !strings.Contains(verdict.Reason, "missing-body.md") {
+				t.Fatalf("refusal must name body file: %s", verdict.Reason)
+			}
+		})
+	}
 }

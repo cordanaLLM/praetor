@@ -42,3 +42,36 @@ func TestSplitHereDocsBounds(t *testing.T) {
 		}
 	}
 }
+
+// TestSplitHereDocsShellPipes preserves code only for pipes to supported shell interpreters.
+func TestSplitHereDocsShellPipes(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		code    bool
+	}{
+		{"cat <<'EOF' | bash", true},
+		{"cat <<'EOF' | /bin/sh -s", true},
+		{"tee notes <<'EOF' | dash", true},
+		{"cat <<'EOF' | FOO=1 ash", true},
+		{"cat <<'EOF' | tee file", false},
+		{"cat > notes <<'EOF' | bash", false},
+		{"cat <<'EOF' | bash -c true", false},
+		{"cat <<'EOF' | bash script.sh", false},
+		{"gh pr comment 9 --body-file - <<'EOF' | bash", false},
+		{"cat notes <<'EOF' | bash", false},
+		{"cat <<'EOF' || bash", false},
+		{"cat <<'EOF'; true | bash", false},
+		{"cat <<'EOF' > notes", false},
+		{"cat <<'EOF' > 'literal|bash'", false},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			code, docs, err := SplitHereDocs(tc.command + "\necho sentinel\nEOF\n")
+			if err != nil || len(docs) != 1 {
+				t.Fatalf("split: %q %#v %v", code, docs, err)
+			}
+			if strings.Contains(code, "echo sentinel") != tc.code || docs[0].Data() == tc.code {
+				t.Fatalf("body classification: %q %#v; want code %v", code, docs, tc.code)
+			}
+		})
+	}
+}

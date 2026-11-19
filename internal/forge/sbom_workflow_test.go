@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // sbomRepo writes files (relative path to content) into a fresh repository directory.
@@ -15,10 +16,11 @@ func sbomRepo(t *testing.T, files map[string]string) string {
 	root := t.TempDir()
 	for rel, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -193,5 +195,45 @@ func TestSBOMWorkflowAcceptsNestedQuotesCommandSubstitution(t *testing.T) {
 	got, err := SBOMWorkflow(context.Background(), sbomRepo(t, map[string]string{".github/workflows/release-build.yml": sbomJob(step)}))
 	if err != nil || got != "release-build.yml" {
 		t.Fatalf("SBOMWorkflow = %q, %v; want release-build.yml", got, err)
+	}
+}
+
+// TestSBOMWorkflowHereDocs distinguishes executed bodies from data and malformed input.
+func TestSBOMWorkflowHereDocs(t *testing.T) {
+	for _, tc := range []struct {
+		name, command   string
+		want, wantError bool
+	}{
+		{"piped shell", "cat <<'EOF' | bash", true, false},
+		{"direct shell", "bash <<'EOF'", true, false},
+		{"stdin shell", "sh -s <<EOF", true, false},
+		{"absolute shell", "cat <<'EOF' | /bin/sh -s", true, false},
+		{"assigned shell", "cat <<'EOF' | FOO=1 dash", true, false},
+		{"ash shell", "cat <<'EOF' | ash", true, false},
+		{"file data", "cat > notes.txt <<'EOF'", false, false},
+		{"printed data", "cat <<'EOF'", false, false},
+		{"non interpreter pipe", "cat <<'EOF' | tee file", false, false},
+		{"redirected output", "cat > notes.txt <<'EOF' | bash", false, false},
+		{"shell command argument", "cat <<'EOF' | bash -c true", false, false},
+		{"shell script argument", "cat <<'EOF' | bash script.sh", false, false},
+		{"cat file argument", "cat notes.txt <<'EOF' | bash", false, false},
+		{"forge output", "gh pr comment 9 --body-file - <<'EOF' | bash", false, false},
+		{"unrelated shell", "cat <<'EOF'; true | bash", false, false},
+		{"unterminated", "cat <<'EOF' | bash", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := tc.command + "\nsyft dir:. -o spdx-json=sbom.json\n"
+			if !tc.wantError {
+				script += "EOF\n"
+			}
+			steps := "      - run: |\n          " + strings.ReplaceAll(strings.TrimSuffix(script, "\n"), "\n", "\n          ") + "\n"
+			root := sbomRepo(t, map[string]string{".github/workflows/sbom.yml": sbomJob(steps)})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			name, err := SBOMWorkflow(ctx, root)
+			if (err != nil) != tc.wantError || (name != "") != tc.want {
+				t.Fatalf("SBOMWorkflow = %q, %v; want generation %v, error %v", name, err, tc.want, tc.wantError)
+			}
+		})
 	}
 }
