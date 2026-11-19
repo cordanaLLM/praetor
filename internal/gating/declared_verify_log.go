@@ -91,40 +91,71 @@ func declaredVerifyMakeTarget(line string) (string, int) {
 
 // writeDeclaredVerifyLog uses the checkout, never the disposable stage worktree. A separate
 // short context permits diagnostics after the stage deadline without extending verification.
-// The confined writer applies 0600 on POSIX and an owner-only DACL on Windows before data
-// reaches the file (util.filePermission.apply); ACL errors refuse the write.
 func writeDeclaredVerifyLog(ctx context.Context, repoDir, target, diagnostic string) (string, error) {
 	logCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), util.GitProbeTimeout)
 	defer cancel()
-	if err := declaredVerifyLogAllowed(logCtx, repoDir); err != nil {
+	return writeDeclaredVerifyLogWithIO(logCtx, repoDir, target, diagnostic, declaredVerifyLogIO{
+		mkdir: util.MkdirIn, write: util.WriteFileExclusiveIn,
+	})
+}
+
+// declaredVerifyLogIO keeps injection local to one write; stalled fixtures never replace global functions.
+type declaredVerifyLogIO struct {
+	mkdir func(*os.Root, string, os.FileMode) error
+	write func(*os.Root, string, []byte, os.FileMode) error
+}
+
+// writeDeclaredVerifyLogWithIO retains both roots across the ignore query and publication.
+// Every blocking step, including write permissions and fsync, shares the logging deadline.
+func writeDeclaredVerifyLogWithIO(ctx context.Context, repoDir, target, diagnostic string, disk declaredVerifyLogIO) (_ string, err error) {
+	checkout, err := util.BoundedCall(ctx, "open checkout for gate log", func() (*os.Root, error) {
+		return os.OpenRoot(repoDir)
+	}, discardDeclaredLogRoot)
+	if err != nil {
 		return "", err
 	}
-	relDir := filepath.Join(".workingdir", "gate")
-	privateDir := filepath.Join(repoDir, ".workingdir")
-	if err := util.MkdirConfined(privateDir, "gate", 0o700); err != nil {
-		return "", fmt.Errorf("create .workingdir/gate: %w", err)
+	defer closeDeclaredLogRoot(checkout, &err)
+	info, err := util.BoundedCall(ctx, ".workingdir unavailable", func() (os.FileInfo, error) {
+		return checkout.Lstat(".workingdir")
+	}, nil)
+	if err != nil {
+		return "", err
 	}
-	if err := logCtx.Err(); err != nil {
-		return "", fmt.Errorf("write declared verification log: %w", err)
+	if !info.IsDir() {
+		return "", fmt.Errorf(".workingdir is not a directory (symlinks refused)")
 	}
-	rel := filepath.Join(relDir, "declared-verify-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".log")
+	ledger, err := util.BoundedCall(ctx, "pin .workingdir", func() (*os.Root, error) {
+		return util.OpenDirectoryIn(checkout, ".workingdir", info)
+	}, discardDeclaredLogRoot)
+	if err != nil {
+		return "", err
+	}
+	defer closeDeclaredLogRoot(ledger, &err)
+	if err := declaredVerifyLogAllowed(ctx, repoDir, checkout, info); err != nil {
+		return "", err
+	}
+	if err := declaredLogStep(ctx, "create .workingdir/gate", func() error { return disk.mkdir(ledger, "gate", 0o700) }); err != nil {
+		return "", err
+	}
+	rel := filepath.Join(".workingdir", "gate", "declared-verify-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".log")
 	header := target + "\n\n"
 	body := header + util.UTF8Tail(diagnostic, maxDeclaredVerifyLogBytes-len(header)-4) + "\n"
-	if err := util.WriteFileConfinedExclusive(privateDir, filepath.Join("gate", filepath.Base(rel)), []byte(body), 0o600); err != nil {
-		return "", fmt.Errorf("write %s: %w", filepath.Join(repoDir, rel), err)
+	if err := declaredLogIdentity(ctx, checkout, info); err != nil {
+		return "", err
+	}
+	if err := declaredLogStep(ctx, "write "+rel, func() error {
+		return disk.write(ledger, filepath.Join("gate", filepath.Base(rel)), []byte(body), 0o600)
+	}); err != nil {
+		return "", err
+	}
+	if err := declaredLogIdentity(ctx, checkout, info); err != nil {
+		return "", err
 	}
 	return filepath.Join(repoDir, rel), nil
 }
 
-// declaredVerifyLogAllowed requires an existing, git-ignored ledger directory without symlink redirection.
-func declaredVerifyLogAllowed(ctx context.Context, repoDir string) error {
-	info, err := os.Lstat(filepath.Join(repoDir, ".workingdir"))
-	if err != nil {
-		return fmt.Errorf(".workingdir unavailable: %w", err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf(".workingdir is not a directory (symlinks refused)")
-	}
+// declaredVerifyLogAllowed requires an ignore answer for the same directory that was pinned.
+func declaredVerifyLogAllowed(ctx context.Context, repoDir string, checkout *os.Root, expected os.FileInfo) error {
 	matches, err := util.GitIgnoreMatches(ctx, repoDir, []string{".workingdir/"}, false)
 	if err != nil {
 		return fmt.Errorf("check whether .workingdir is git-ignored: %w", err)
@@ -132,5 +163,33 @@ func declaredVerifyLogAllowed(ctx context.Context, repoDir string) error {
 	if len(matches) == 0 {
 		return fmt.Errorf(".workingdir is not git-ignored")
 	}
-	return nil
+	return declaredLogIdentity(ctx, checkout, expected)
+}
+
+// declaredLogIdentity keeps the replacement check under the same deadline as the write.
+func declaredLogIdentity(ctx context.Context, checkout *os.Root, expected os.FileInfo) error {
+	return declaredLogStep(ctx, "check .workingdir replacement", func() error {
+		return util.CheckDirectoryIdentity(checkout, ".workingdir", expected)
+	})
+}
+
+// declaredLogStep adapts error-only filesystem operations to the bounded result handoff.
+func declaredLogStep(ctx context.Context, step string, call func() error) error {
+	_, err := util.BoundedCall(ctx, step, func() (struct{}, error) { return struct{}{}, call() }, nil)
+	return err
+}
+
+// closeDeclaredLogRoot preserves close errors without replacing an existing diagnostic error.
+func closeDeclaredLogRoot(root *os.Root, err *error) {
+	if closeErr := root.Close(); closeErr != nil && *err == nil {
+		*err = fmt.Errorf("close gate log directory: %w", closeErr)
+	}
+}
+
+// discardDeclaredLogRoot releases an open completed after its caller's deadline.
+func discardDeclaredLogRoot(root *os.Root) {
+	if root != nil {
+		//nolint:errcheck // best-effort late cleanup; the caller has already returned its deadline error
+		root.Close() // #nosec G104 -- no caller remains to receive a late close error
+	}
 }

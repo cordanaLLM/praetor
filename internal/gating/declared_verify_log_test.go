@@ -605,3 +605,173 @@ func TestDeclaredVerifyRunnerOutputBounds(t *testing.T) {
 		}
 	}
 }
+
+// swappingLedgerGit replaces the checked ledger before answering the ignore query.
+const swappingLedgerGit = `package main
+import ("fmt"; "os")
+// main plants a replacement entirely inside the temporary checkout.
+func main() {
+ if err := os.Rename(".workingdir", "saved-ledger"); err != nil { panic(err) }
+ if err := os.Symlink("public", ".workingdir"); err != nil { panic(err) }
+ fmt.Print(".gitignore\x001\x00.workingdir/\x00.workingdir/\x00")
+}
+`
+
+// TestDeclaredVerifyLogReplacementDuringIgnore reproduces the review's valid git answer after a ledger swap.
+func TestDeclaredVerifyLogReplacementDuringIgnore(t *testing.T) {
+	t.Run("ledger replaced after first check", func(t *testing.T) {
+		repo := declaredLogRepo(t, true, true)
+		public := filepath.Join(repo, "public")
+		if err := util.MkdirSecure(public, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		requireDeclaredLogSymlink(t, repo)
+		bin := t.TempDir()
+		testsupport.BuildExecutable(t, bin, "git", swappingLedgerGit)
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		_, err := writeDeclaredVerifyLog(t.Context(), repo, "failing make target: lint", "last line")
+		if err == nil || !strings.Contains(err.Error(), "replaced") {
+			t.Errorf("replacement refusal = %v; want replacement named", err)
+		}
+		entries, readErr := os.ReadDir(public)
+		if readErr != nil || len(entries) != 0 {
+			t.Fatalf("replacement destination changed: %v, %v", entries, readErr)
+		}
+	})
+}
+
+// requireDeclaredLogSymlink skips only platforms denying fixture symlink creation.
+func requireDeclaredLogSymlink(t *testing.T, repo string) {
+	t.Helper()
+	path := filepath.Join(repo, "link-permission-check")
+	if err := os.Symlink("public", path); err != nil {
+		if runtime.GOOS == "windows" && isSymlinkPermissionError(err) {
+			t.Skipf("Windows symlink permission unavailable: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDeclaredVerifyLogPinnedWrites checks successful writes and replacement between filesystem steps.
+func TestDeclaredVerifyLogPinnedWrites(t *testing.T) {
+	for _, phase := range []string{"plain success", "after directory creation", "at write"} {
+		t.Run(phase, func(t *testing.T) { assertDeclaredLogPinnedWrite(t, phase) })
+	}
+}
+
+// assertDeclaredLogPinnedWrite plants swaps before or inside the write seam, after all earlier checks.
+func assertDeclaredLogPinnedWrite(t *testing.T, phase string) {
+	t.Helper()
+	repo := declaredLogRepo(t, true, true)
+	public := filepath.Join(repo, "public")
+	if err := util.MkdirSecure(filepath.Join(public, "gate"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	disk := declaredLogSwapIO(t, repo, phase)
+	ctx, cancel := context.WithTimeout(t.Context(), util.GitProbeTimeout)
+	defer cancel()
+	path, err := writeDeclaredVerifyLogWithIO(ctx, repo, "failing make target: lint", "last line", disk)
+	if phase == "plain success" {
+		if err != nil || filepath.Dir(path) != filepath.Join(repo, ".workingdir", "gate") {
+			t.Fatalf("success path=%q error=%v", path, err)
+		}
+		assertDeclaredLog(t, path, "last line", "last line", 1)
+	} else if err == nil || !strings.Contains(err.Error(), "replaced") || path != "" {
+		t.Errorf("replacement path=%q error=%v", path, err)
+	}
+	entries, readErr := os.ReadDir(filepath.Join(public, "gate"))
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("replacement destination changed: %v, %v", entries, readErr)
+	}
+}
+
+// declaredLogSwapIO plants one replacement at the requested filesystem seam.
+func declaredLogSwapIO(t *testing.T, repo, phase string) declaredVerifyLogIO {
+	t.Helper()
+	if phase != "plain success" {
+		requireDeclaredLogSymlink(t, repo)
+	}
+	disk := declaredVerifyLogIO{mkdir: util.MkdirIn, write: util.WriteFileExclusiveIn}
+	disk.mkdir = func(root *os.Root, rel string, mode os.FileMode) error {
+		err := util.MkdirIn(root, rel, mode)
+		if err == nil && phase == "after directory creation" {
+			err = replaceDeclaredLogLedger(repo)
+		}
+		return err
+	}
+	disk.write = func(root *os.Root, rel string, body []byte, mode os.FileMode) error {
+		if phase == "at write" {
+			if err := replaceDeclaredLogLedger(repo); err != nil {
+				return err
+			}
+		}
+		return util.WriteFileExclusiveIn(root, rel, body, mode)
+	}
+	return disk
+}
+
+// replaceDeclaredLogLedger swaps only a fixture directory, preserving the original for readback.
+func replaceDeclaredLogLedger(repo string) error {
+	if err := os.Rename(filepath.Join(repo, ".workingdir"), filepath.Join(repo, "saved-ledger")); err != nil {
+		return fmt.Errorf("rename fixture ledger: %w", err)
+	}
+	if err := os.Symlink("public", filepath.Join(repo, ".workingdir")); err != nil {
+		return fmt.Errorf("link fixture replacement: %w", err)
+	}
+	return nil
+}
+
+// TestDeclaredVerifyLogStalledIO proves both blocking steps return while their fixture remains stalled.
+func TestDeclaredVerifyLogStalledIO(t *testing.T) {
+	for _, step := range []string{"directory creation", "write and sync"} {
+		t.Run(step, func(t *testing.T) { assertDeclaredLogStalledIO(t, step) })
+	}
+}
+
+// assertDeclaredLogStalledIO releases the worker only after the deadline assertion, also on mutant failure.
+func assertDeclaredLogStalledIO(t *testing.T, step string) {
+	t.Helper()
+	repo := declaredLogRepo(t, true, true)
+	release, entered, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	stall := func() error { close(entered); <-release; return nil }
+	disk := declaredVerifyLogIO{mkdir: util.MkdirIn, write: util.WriteFileExclusiveIn}
+	want := "create .workingdir/gate"
+	if step == "directory creation" {
+		disk.mkdir = func(*os.Root, string, os.FileMode) error { return stall() }
+	} else {
+		want = "write " + filepath.Join(".workingdir", "gate") + string(os.PathSeparator)
+		disk.write = func(*os.Root, string, []byte, os.FileMode) error { return stall() }
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		defer close(finished)
+		_, err := writeDeclaredVerifyLogWithIO(ctx, repo, "failing make target: lint", "last line", disk)
+		result <- err
+	}()
+	t.Cleanup(func() {
+		close(release)
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
+			t.Error("writer failed to finish after releasing fixture")
+		}
+	})
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("filesystem seam not reached")
+	}
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("stalled %s error=%v", step, err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("stalled %s exceeded logging deadline plus margin", step)
+	}
+}

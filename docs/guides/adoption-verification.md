@@ -1447,7 +1447,12 @@ Node lockfile selects a toolchain stage, and the target is declared, the stage r
   log survives removal of the isolated stage worktree. The log directory has mode `0700` and
   the file has mode `0600` (owner-only access on Windows). Logging requires an existing,
   git-ignored `.workingdir` directory; an absent or unignored directory, an unsafe path, or a
-  write failure leaves no log and the reason explicitly names why. See the acceptance fixtures
+  write failure leaves no successful log result and the reason explicitly names why. The checkout
+  and ledger handles stay pinned across the ignore query, directory creation and write; a replaced
+  ledger is refused with a replacement diagnostic. Each filesystem step, including file sync,
+  shares a separate five-second logging deadline. A stalled operating-system call can finish in
+  the background, but the caller returns at the deadline with the step named and the original
+  verification failure preserved. See the acceptance fixtures
   in [`declared_verify_log_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/declared_verify_log_test.go).
 - **Exit 0:** passes the stage (`make verify-all exited 0`) and writes no failure log. The run is admitted, and the receipt
   stage says the command ran and passed but signs no receipt. Signing a receipt for such a run is

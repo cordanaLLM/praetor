@@ -537,9 +537,9 @@ func WriteFileConfinedExclusive(root, rel string, data []byte, perm os.FileMode)
 // resolves through the pinned handle on absRoot, as writeConfined's does, and the file is
 // created there by createExclusively.
 func writeConfinedExclusive(absRoot, inside string, data []byte, perm os.FileMode) error {
-	return inConfinedParent(absRoot, inside, func(dir *os.Root, name string) error {
-		return createExclusively(dir, name, data, filePermission{mode: perm, exact: true})
-	})
+	return classifyEscape(absRoot, inside, inRoot(absRoot, ".", func(base *os.Root) error {
+		return WriteFileExclusiveIn(base, inside, data, perm)
+	}))
 }
 
 // createExclusively is WriteFileExclusive inside the pinned directory: it stages data in a
@@ -625,12 +625,7 @@ func inRoot(dir, sub string, fn func(pinned *os.Root) error) (err error) {
 	if sub == "." {
 		return fn(base)
 	}
-	pinned, err := base.OpenRoot(sub)
-	if err != nil {
-		return fmt.Errorf("util: open directory %q below %q: %w", sub, dir, err)
-	}
-	defer closePinned(pinned, &err)
-	return fn(pinned)
+	return inRootDirectory(base, sub, fn)
 }
 
 // closePinned closes a handle opened by inRoot and reports a close failure through err
@@ -804,25 +799,7 @@ func inConfinedDirectory(absRoot, inside string, fn func(dir *os.Root) error) er
 // classifyEscape.
 func mkdirConfined(absRoot, inside string, perm os.FileMode) error {
 	return classifyEscape(absRoot, inside, inRoot(absRoot, ".", func(base *os.Root) error {
-		if inside == "." {
-			return nil
-		}
-		if err := base.MkdirAll(inside, perm); err != nil {
-			return fmt.Errorf("util: create directory %q below %q: %w", inside, absRoot, err)
-		}
-		info, err := base.Stat(inside)
-		if err != nil {
-			return fmt.Errorf("util: stat directory %q below %q: %w", inside, absRoot, err)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("util: %q below %q is not a directory", inside, absRoot)
-		}
-		if err := tightenMode(filepath.Join(absRoot, inside), info, perm, func(mode os.FileMode) error {
-			return base.Chmod(inside, mode)
-		}); err != nil {
-			return err
-		}
-		return restrictOpened(func() (*os.File, error) { return base.Open(inside) }, perm)
+		return MkdirIn(base, inside, perm)
 	}))
 }
 

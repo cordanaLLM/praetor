@@ -188,6 +188,7 @@ func walkComponents(ctx context.Context, current *os.Root, parts []string) (_ *o
 	return current, nil
 }
 
+// childDirectory shares util's pinned identity verification after the caller's context/type checks.
 func childDirectory(ctx context.Context, parent *os.Root, name string) (*os.Root, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -199,18 +200,7 @@ func childDirectory(ctx context.Context, parent *os.Root, name string) (*os.Root
 	if !before.IsDir() {
 		return nil, fmt.Errorf("path component must be a directory, never a symlink")
 	}
-	child, err := parent.OpenRoot(name)
-	if err != nil {
-		return nil, err
-	}
-	after, err := child.Stat(".")
-	if err == nil && !os.SameFile(before, after) {
-		err = fmt.Errorf("directory changed while opening")
-	}
-	if err != nil {
-		return nil, errors.Join(err, child.Close())
-	}
-	return child, nil
+	return util.OpenDirectoryIn(parent, name, before)
 }
 
 func snapshots(ctx context.Context, options Options) ([][]byte, error) {
