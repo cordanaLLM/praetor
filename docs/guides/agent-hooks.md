@@ -924,7 +924,10 @@ directly, so its blank case uses a zero-length parameter slice with an arithmeti
 The remaining slots sample continuation/indent repeats. The recorder detector reads Git
 2.56.1's documented global and commit option arities, excludes option values and stops at
 the pathspec `--`; a log command's `--grep commit -n` is not a commit bypass. Linux replay requires
-`bash` and `bwrap`; other platforms report why isolated execution cannot run.
+`bash`, `bwrap` and permission to create unprivileged user namespaces; other platforms report
+why isolated execution cannot run. A sandbox probe skips only the corpus replay when user
+namespaces are unavailable (including restricted containers), naming the cause and unchecked
+replay in the test output; detector and probe-decision table tests still run.
 
 A data here-document ends only at the line the shell itself ends it on. The
 delimiter word is read by `util.ShellHereDocDelimiter` (`internal/util/shell_heredoc.go`,

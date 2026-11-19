@@ -511,8 +511,8 @@ func oracleRecorder(t *testing.T) string {
 	return root
 }
 
-// oracleShell runs one command in a fresh namespace; setup errors and timeouts never count as a safe result.
-func oracleShell(t *testing.T, sandbox, bash, command string) bool {
+// oracleRun shares the probe and replay's exact namespace, recorder, environment and timeout.
+func oracleRun(t *testing.T, sandbox, bash, command string) (string, util.CommandBytes, error) {
 	t.Helper()
 	root := oracleRecorder(t)
 	ctx, cancel := context.WithTimeout(testsupport.DeadlineContext(t), 10*time.Second)
@@ -526,7 +526,76 @@ func oracleShell(t *testing.T, sandbox, bash, command string) bool {
 	if runErr != nil && !errors.As(runErr, &exit) {
 		t.Fatalf("shell oracle execution failed: %v: %s", runErr, result.Stderr)
 	}
+	return root, result, runErr
+}
+
+// oracleShell runs one corpus command; namespace startup failures remain fatal after the probe.
+func oracleShell(t *testing.T, sandbox, bash, command string) bool {
+	t.Helper()
+	root, result, runErr := oracleRun(t, sandbox, bash, command)
 	return oracleCalls(t, root, runErr, result.Stderr)
+}
+
+// oracleProbeDecision allows only bubblewrap's namespace diagnostics with exit status 1 to skip.
+func oracleProbeDecision(exitCode int, stderr []byte) string {
+	if exitCode == 0 {
+		return "replay"
+	}
+	if testsupport.NamespaceProbeUnavailable(exitCode, stderr) {
+		return "skip"
+	}
+	return "fail"
+}
+
+// oracleProbe mirrors internal/sandbox/network_integration_test.go's realNetworkBinaries prerequisite check.
+// Its private helper uses a different sandbox; this probe must use the oracle's own invocation.
+func oracleProbe(t *testing.T, sandbox, bash string) {
+	t.Helper()
+	root, result, runErr := oracleRun(t, sandbox, bash, "true")
+	exitCode := 0
+	var exit *exec.ExitError
+	if errors.As(runErr, &exit) {
+		exitCode = exit.ExitCode()
+	}
+	switch oracleProbeDecision(exitCode, result.Stderr) {
+	case "skip":
+		t.Skipf("bubblewrap user namespaces unavailable: %s; the shell execution oracle did not replay the corpus on this host", strings.TrimSpace(string(result.Stderr)))
+	case "fail":
+		t.Fatalf("shell oracle sandbox probe failed: %v: %s", runErr, result.Stderr)
+	}
+	oracleCalls(t, root, runErr, result.Stderr)
+}
+
+// TestEvasionOracleProbeDecision plants namespace denials, unrelated failures and successful replay.
+func TestEvasionOracleProbeDecision(t *testing.T) {
+	const denied = "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces"
+	cases := []struct {
+		name     string
+		exitCode int
+		stderr   string
+		want     string
+	}{
+		{"namespace denied", 1, denied, "skip"},
+		{"namespace denied with advice", 1, denied + ". On e.g. debian this can be enabled with 'sysctl kernel.unprivileged_userns_clone=1'.\n", "skip"},
+		{"namespace not permitted", 1, "bwrap: Creating new namespace failed: Operation not permitted", "skip"},
+		{"namespace permission denied", 1, "bwrap: Creating new namespace failed: Permission denied", "skip"},
+		{"namespace unsupported", 1, "bwrap: Creating new namespace failed, likely because the kernel does not support user namespaces.", "skip"},
+		{"bash missing", 1, "bwrap: execvp bash: No such file or directory", "fail"},
+		{"empty failure", 1, "", "fail"},
+		{"unrelated permission", 1, "bwrap: Can't bind mount /work: Permission denied", "fail"},
+		{"namespace different exit", 2, denied, "fail"},
+		{"signal termination", -1, denied, "fail"},
+		{"success", 0, "", "replay"},
+		{"success with diagnostic", 0, denied, "replay"},
+	}
+	for index := 0; index < len(cases); index++ {
+		tc := cases[index]
+		t.Run(tc.name, func(t *testing.T) {
+			if got := oracleProbeDecision(tc.exitCode, []byte(tc.stderr)); got != tc.want {
+				t.Errorf("oracleProbeDecision(%d, %q)=%q want=%q", tc.exitCode, tc.stderr, got, tc.want)
+			}
+		})
+	}
 }
 
 // oracleCalls checks namespace startup and decodes each recording through a rooted handle.
@@ -585,17 +654,18 @@ func oracleCheck(t *testing.T, row shellOracleCase, allowed []bool, ran bool) bo
 
 // TestEvasionShellOracle compares three policy forms with actual shell execution, independent of parity.
 func TestEvasionShellOracle(t *testing.T) {
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash absent: shell execution oracle cannot run")
-	}
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux namespace sandbox unavailable: shell execution oracle cannot safely replay destructive corpus on this platform")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatal("bash missing: shell execution oracle requires Bash")
 	}
 	sandbox, err := exec.LookPath("bwrap")
 	if err != nil {
 		t.Fatal("bwrap missing: shell execution oracle requires filesystem and network isolation")
 	}
+	oracleProbe(t, sandbox, bash)
 	cases := oracleFixtures(t)
 	fixtures := len(cases)
 	expansions := oracleOuterExpansions()
