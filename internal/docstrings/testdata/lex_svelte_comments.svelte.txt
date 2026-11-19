@@ -1,0 +1,5 @@
+<script>
+// Run provides the documented control.
+@Tag(/* inner )] */ 1) // line
+function run() {}
+</script>

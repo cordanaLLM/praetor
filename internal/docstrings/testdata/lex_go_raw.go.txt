@@ -1,0 +1,4 @@
+package fixture
+var text = `/*`
+// Run provides the documented control.
+func run() {}

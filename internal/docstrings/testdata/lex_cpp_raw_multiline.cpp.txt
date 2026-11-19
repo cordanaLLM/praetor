@@ -1,0 +1,5 @@
+// Run provides the documented control.
+[[deprecated(R"msg(a] \
+// Not documentation.
+b)msg")]]
+int run(void) { return 0; }

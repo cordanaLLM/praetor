@@ -1,0 +1,2 @@
+@Tag("a ${listOf("/*", "a]")} b", """a ${"""inner ]"""} b""")
+fun run() {}

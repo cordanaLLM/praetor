@@ -1,0 +1,2 @@
+text = f"{value:{width}.{precision}f}"
+def run(): pass

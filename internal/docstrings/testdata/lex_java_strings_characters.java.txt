@@ -1,0 +1,3 @@
+// Run provides the documented control.
+@Tag("a]\"/*", '\n', 'é')
+void run() {}

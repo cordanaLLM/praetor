@@ -1,0 +1,2 @@
+let pattern = /a[/*]/
+func run() {}

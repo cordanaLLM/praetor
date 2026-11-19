@@ -1,0 +1,4 @@
+<script>
+@Tag(/[)'"/]/u)
+function run() {}
+</script>

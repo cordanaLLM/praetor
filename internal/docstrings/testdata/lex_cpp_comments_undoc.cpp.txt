@@ -1,0 +1,2 @@
+int value = /* inner )] */ 1; // line
+int run(void) { return 0; }

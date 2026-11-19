@@ -1,0 +1,5 @@
+// Run provides the documented control.
+@Tag(`a] \`
+// Not documentation.
+b`)
+function run() {}

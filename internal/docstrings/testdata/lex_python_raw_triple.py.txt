@@ -1,0 +1,4 @@
+text = r"""a] \
+# Not documentation.
+b"""
+def run(): """Run provides the documented control."""

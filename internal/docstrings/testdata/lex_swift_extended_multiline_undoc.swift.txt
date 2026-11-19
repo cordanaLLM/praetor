@@ -1,0 +1,6 @@
+@Tag(##"""
+a] \"""
+// Not documentation.
+b
+"""##)
+func run() {}

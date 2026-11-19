@@ -1,0 +1,3 @@
+// Run provides the documented control.
+@Tag("a]\"/*", '\u005d', 'é')
+fun run() {}

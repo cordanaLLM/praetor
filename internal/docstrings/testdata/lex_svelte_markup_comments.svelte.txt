@@ -1,0 +1,15 @@
+<!--
+<script>
+// Fake documentation.
+function phantom() {}
+</script>
+-->
+<style>/*
+<script>
+function phantom() {}
+</script>
+*/</style>
+<script>
+// Run provides the documented control.
+function run() {}
+</script>

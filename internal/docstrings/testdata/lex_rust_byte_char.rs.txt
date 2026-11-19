@@ -1,0 +1,3 @@
+/// Run provides the documented control.
+#[tag(b'\x5d')]
+pub fn run() {}

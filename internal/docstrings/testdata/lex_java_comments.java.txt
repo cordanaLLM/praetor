@@ -1,0 +1,3 @@
+// Run provides the documented control.
+@Tag(/* inner )] */ 1) // line
+void run() {}

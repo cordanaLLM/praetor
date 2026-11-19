@@ -42,6 +42,7 @@ const (
 )
 
 var (
+	svelteStyleOpen  = regexp.MustCompile(`(?i)<style(?:\s[^>]*)?>`)
 	svelteScriptOpen = regexp.MustCompile(`(?i)^\s*<script(?:\s[^>]*)?>`)
 	// scriptEmptyCatch is a catch clause whose block is empty on its line; scriptCatchOpens is
 	// one whose block opens at the end of the line, empty so far.
@@ -110,10 +111,50 @@ func isMinified(lines []string) bool {
 func svelteScriptLines(lines []string) []string {
 	out := make([]string, len(lines))
 	inScript := false
+	markupFence := ""
 	for i, line := range lines {
+		if !inScript {
+			line, markupFence = svelteMarkupLine(line, markupFence)
+		}
 		out[i], inScript = svelteScriptPart(line, inScript)
 	}
 	return out
+}
+
+// svelteMarkupLine excludes HTML comments and style blocks before top-level script discovery.
+func svelteMarkupLine(line, fence string) (string, string) {
+	for steps := 0; steps < maxSvelteTagsPerLine && line != ""; steps++ {
+		if fence != "" {
+			end := strings.Index(strings.ToLower(line), fence)
+			if end < 0 {
+				return "", fence
+			}
+			line, fence = line[end+len(fence):], ""
+			continue
+		}
+		if svelteScriptOpen.MatchString(line) {
+			return line, ""
+		}
+		after, closeFence := svelteMarkupFence(line)
+		if after < 0 {
+			return line, ""
+		}
+		line, fence = line[after:], closeFence
+	}
+	return "", fence
+}
+
+// svelteMarkupFence selects the first HTML comment or style opener outside a script block.
+func svelteMarkupFence(line string) (int, string) {
+	comment := strings.Index(line, "<!--")
+	style := svelteStyleOpen.FindStringIndex(line)
+	if comment >= 0 && (style == nil || comment < style[0]) {
+		return comment + 4, "-->"
+	}
+	if style != nil {
+		return style[1], "</style>"
+	}
+	return -1, ""
 }
 
 // svelteScriptPart returns the script text of one component line, given whether a script

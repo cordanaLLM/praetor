@@ -1,0 +1,3 @@
+// Run provides the documented control.
+@Tag(/* outer /* nested */ tail */ 1) // line
+fun run() {}

@@ -1,0 +1,2 @@
+[[deprecated(R"q(a] \ /* )q", LR"q(a] \ /* )q", u8R"q(a] \ /* )q", uR"q(a] \ /* )q", UR"q(a] \ /* )q")]]
+int run(void) { return 0; }

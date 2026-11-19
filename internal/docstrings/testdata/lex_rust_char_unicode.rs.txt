@@ -1,0 +1,3 @@
+/// Run provides the documented control.
+#[tag('\u{5d}')]
+pub fn run() {}

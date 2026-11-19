@@ -767,6 +767,11 @@ func TestStripLiterals_3D(t *testing.T) {
 		{"typescript_unclosed_template", "typescript", []string{"@tag(`unclosed)"}, []string{"@tag("}, false},
 		{"python_triple", "python", []string{"@tag('''a]", "#b)''')"}, []string{"@tag(", ")"}, true},
 		{"python_unclosed_triple", "python", []string{"@tag('''x)"}, []string{"@tag("}, false},
+		{"rust_unicode_separators", "rust", []string{"#[tag('\\u{5_d}')]"}, []string{"#[tag()]"}, true},
+
+		{"rust_c_string", "rust", []string{`#[tag(c"]")]`}, []string{"#[tag()]"}, true},
+		{"rust_raw_c_string", "rust", []string{`#[tag(cr#"]"#)]`}, []string{"#[tag()]"}, true},
+		{"go_unicode_rune", "go", []string{`var r = '\u005d'`}, []string{"var r = "}, true},
 		{"rust_character", "rust", []string{"#[tag(']')]"}, []string{"#[tag()]"}, true},
 		{"rust_byte_character", "rust", []string{"#[tag(b']')]"}, []string{"#[tag()]"}, true},
 		{"rust_byte_string", "rust", []string{"#[tag(b\"]\")]"}, []string{"#[tag()]"}, true},
@@ -845,6 +850,7 @@ func expectedFixtureSpans() map[string][]hiss.FunctionSpan {
 	}
 	addTypeScriptFixtureSpans(spans)
 	addLexicalScannerFixtureSpans(spans)
+	addReferenceFixtureSpans(spans)
 	return spans
 }
 
@@ -922,11 +928,15 @@ func TestFixtureScannerSpansAndFindings_3D(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < len(entries); i++ {
 		name := entries[i].Name()
+		want, exists := wantMap[name]
+		if !exists {
+			t.Fatalf("fixture %s has no pinned span expectation", name)
+		}
 		target := strings.TrimSuffix(name, ".txt")
 		raw := readDocstringFixture(t, name, target)
 		spans, err := hiss.ExtractFileFunctions(target, []byte(raw))
-		if err != nil || !slices.Equal(spans, wantMap[name]) {
-			t.Fatalf("%s: got spans=%+v err=%v, want %+v", name, spans, err, wantMap[name])
+		if err != nil || !slices.Equal(spans, want) {
+			t.Fatalf("%s: got spans=%+v err=%v, want %+v", name, spans, err, want)
 		}
 		writeTestFile(t, dir, target, raw)
 	}
@@ -965,5 +975,463 @@ func assertLexLine(t *testing.T, label string, got hiss.LexLine, start, end hiss
 	t.Helper()
 	if got.StartClass != start || got.EndClass != end || got.EndInLiteral != endLit || got.CommentOnly != commentOnly {
 		t.Fatalf("%s: got %+v, want start=%v end=%v endLit=%v commentOnly=%v", label, got, start, end, endLit, commentOnly)
+	}
+}
+
+// referenceFixture pins a lexical fixture's function location and documentation verdict.
+type referenceFixture struct {
+	name                                  string
+	line                                  int
+	covered, complete, visible, extracted bool
+}
+
+// referenceFixtures returns documented controls and their undocumented twins for every syntax family.
+func referenceFixtures() []referenceFixture {
+	var out []referenceFixture
+	out = append(out, goReferenceFixtures()...)
+	out = append(out, cReferenceFixtures()...)
+	out = append(out, cppReferenceFixtures()...)
+	out = append(out, rustReferenceFixtures()...)
+	out = append(out, cudaReferenceFixtures()...)
+	out = append(out, objectiveCppReferenceFixtures()...)
+	out = append(out, javaReferenceFixtures()...)
+	out = append(out, kotlinReferenceFixtures()...)
+	out = append(out, swiftReferenceFixtures()...)
+	out = append(out, pythonReferenceFixtures()...)
+	out = append(out, javascriptReferenceFixtures()...)
+	out = append(out, typescriptReferenceFixtures()...)
+	out = append(out, svelteReferenceFixtures()...)
+	return out
+}
+
+// goReferenceFixtures pins the go lexical reference controls.
+func goReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_go_raw.go.txt", 4, true, true, true, true},
+		{"lex_go_raw_undoc.go.txt", 3, false, true, true, true},
+		{"lex_go_interpreted.go.txt", 4, true, true, true, true},
+		{"lex_go_interpreted_undoc.go.txt", 3, false, true, true, true},
+		{"lex_go_raw_multiline.go.txt", 6, true, true, true, true},
+		{"lex_go_raw_multiline_undoc.go.txt", 5, false, true, true, true},
+		{"lex_go_runes.go.txt", 9, true, true, true, true},
+		{"lex_go_runes_undoc.go.txt", 8, false, true, true, true},
+		{"lex_go_comments.go.txt", 4, true, true, true, true},
+		{"lex_go_comments_undoc.go.txt", 3, false, true, true, true},
+	}
+}
+
+// cReferenceFixtures pins the c lexical reference controls.
+func cReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_c_macro_string.c.txt", 4, true, true, true, true},
+		{"lex_c_macro_string_undoc.c.txt", 3, false, true, true, true},
+		{"lex_c_strings.c.txt", 3, true, true, true, true},
+		{"lex_c_strings_undoc.c.txt", 2, false, true, true, true},
+		{"lex_c_characters.c.txt", 3, true, true, true, true},
+		{"lex_c_characters_undoc.c.txt", 2, false, true, true, true},
+		{"lex_c_comments.c.txt", 3, true, true, true, true},
+		{"lex_c_comments_undoc.c.txt", 2, false, true, true, true},
+		{"lex_c_line_splice.c.txt", 4, false, false, false, true},
+		{"lex_c_line_splice_undoc.c.txt", 3, false, false, false, true},
+		{"lex_c_split_comment.c.txt", 4, false, false, false, true},
+		{"lex_c_split_comment_undoc.c.txt", 3, false, false, false, true},
+		{"lex_c_trigraph.c.txt", 3, false, false, false, true},
+		{"lex_c_trigraph_undoc.c.txt", 2, false, false, false, true},
+	}
+}
+
+// cppReferenceFixtures pins the cpp lexical reference controls.
+func cppReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_cpp_quote_delimiter.cpp.txt", 3, true, true, true, true},
+		{"lex_cpp_quote_delimiter_undoc.cpp.txt", 2, false, true, true, true},
+		{"lex_cpp_strings.cpp.txt", 3, true, true, true, true},
+		{"lex_cpp_strings_undoc.cpp.txt", 2, false, true, true, true},
+		{"lex_cpp_characters.cpp.txt", 3, true, true, true, true},
+		{"lex_cpp_characters_undoc.cpp.txt", 2, false, true, true, true},
+		{"lex_cpp_comments.cpp.txt", 3, true, true, true, true},
+		{"lex_cpp_comments_undoc.cpp.txt", 2, false, true, true, true},
+		{"lex_cpp_line_splice.cpp.txt", 4, false, false, false, true},
+		{"lex_cpp_line_splice_undoc.cpp.txt", 3, false, false, false, true},
+		{"lex_cpp_split_comment.cpp.txt", 4, false, false, false, true},
+		{"lex_cpp_split_comment_undoc.cpp.txt", 3, false, false, false, true},
+		{"lex_cpp_raw_strings.cpp.txt", 3, true, true, true, true},
+		{"lex_cpp_raw_strings_undoc.cpp.txt", 2, false, true, true, true},
+		{"lex_cpp_raw_multiline.cpp.txt", 5, true, true, true, true},
+		{"lex_cpp_raw_multiline_undoc.cpp.txt", 4, false, true, true, true},
+		{"lex_cpp_raw_delimiter_boundary.cpp.txt", 3, true, true, true, true},
+		{"lex_cpp_raw_delimiter_boundary_undoc.cpp.txt", 2, false, true, true, true},
+	}
+}
+
+// rustReferenceFixtures joins bounded reference fixture groups.
+func rustReferenceFixtures() []referenceFixture {
+	var out []referenceFixture
+	out = append(out, rustReferenceFixtures0()...)
+	out = append(out, rustReferenceFixtures1()...)
+	return out
+}
+
+// rustReferenceFixtures0 pins the rust lexical reference controls.
+func rustReferenceFixtures0() []referenceFixture {
+	return []referenceFixture{
+		{"lex_rust_seventeen_lines.rs.txt", 19, true, true, true, true},
+		{"lex_rust_seventeen_lines_undoc.rs.txt", 18, false, true, true, true},
+		{"lex_rust_sixteen_one_line.rs.txt", 3, true, true, true, true},
+		{"lex_rust_sixteen_one_line_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_seventeen_one_line.rs.txt", 3, false, true, true, true},
+		{"lex_rust_seventeen_one_line_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_attribute_item.rs.txt", 3, false, true, true, true},
+		{"lex_rust_attribute_item_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_thirty_two_lines.rs.txt", 34, true, true, true, true},
+		{"lex_rust_thirty_two_lines_undoc.rs.txt", 33, false, true, true, true},
+		{"lex_rust_thirty_three_lines.rs.txt", 35, false, true, true, true},
+		{"lex_rust_thirty_three_lines_undoc.rs.txt", 34, false, true, true, true},
+		{"lex_rust_ordinary.rs.txt", 3, true, true, true, true},
+		{"lex_rust_ordinary_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_byte.rs.txt", 3, true, true, true, true},
+		{"lex_rust_byte_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_raw.rs.txt", 3, true, true, true, true},
+		{"lex_rust_raw_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_raw_hash.rs.txt", 3, true, true, true, true},
+		{"lex_rust_raw_hash_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_raw_byte.rs.txt", 3, true, true, true, true},
+		{"lex_rust_raw_byte_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_c_string.rs.txt", 3, true, true, true, true},
+		{"lex_rust_c_string_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_raw_c.rs.txt", 3, true, true, true, true},
+		{"lex_rust_raw_c_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_char.rs.txt", 3, true, true, true, true},
+		{"lex_rust_char_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_char_unicode.rs.txt", 3, true, true, true, true},
+		{"lex_rust_char_unicode_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_char_utf8.rs.txt", 3, true, true, true, true},
+		{"lex_rust_char_utf8_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_byte_char.rs.txt", 3, true, true, true, true},
+		{"lex_rust_byte_char_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_multiline.rs.txt", 5, true, true, true, true},
+		{"lex_rust_multiline_undoc.rs.txt", 4, false, true, true, true},
+		{"lex_rust_multiline_byte_c.rs.txt", 5, true, true, true, true},
+		{"lex_rust_multiline_byte_c_undoc.rs.txt", 4, false, true, true, true},
+		{"lex_rust_raw_boundary.rs.txt", 3, true, true, true, true},
+		{"lex_rust_raw_boundary_undoc.rs.txt", 2, false, true, true, true},
+	}
+}
+
+// rustReferenceFixtures1 pins the rust lexical reference controls.
+func rustReferenceFixtures1() []referenceFixture {
+	return []referenceFixture{
+		{"lex_rust_comments.rs.txt", 3, true, true, true, true},
+		{"lex_rust_comments_undoc.rs.txt", 2, false, true, true, true},
+		{"lex_rust_doc_comments.rs.txt", 3, true, true, true, true},
+		{"lex_rust_doc_comments_undoc.rs.txt", 2, false, true, true, true},
+	}
+}
+
+// cudaReferenceFixtures pins the cuda lexical reference controls.
+func cudaReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_cuda_strings.cu.txt", 3, true, true, true, true},
+		{"lex_cuda_strings_undoc.cu.txt", 2, false, true, true, true},
+		{"lex_cuda_characters.cu.txt", 3, true, true, true, true},
+		{"lex_cuda_characters_undoc.cu.txt", 2, false, true, true, true},
+		{"lex_cuda_comments.cu.txt", 3, true, true, true, true},
+		{"lex_cuda_comments_undoc.cu.txt", 2, false, true, true, true},
+		{"lex_cuda_line_splice.cu.txt", 4, false, false, false, true},
+		{"lex_cuda_line_splice_undoc.cu.txt", 3, false, false, false, true},
+		{"lex_cuda_split_comment.cu.txt", 4, false, false, false, true},
+		{"lex_cuda_split_comment_undoc.cu.txt", 3, false, false, false, true},
+		{"lex_cuda_raw_strings.cu.txt", 3, true, true, true, true},
+		{"lex_cuda_raw_strings_undoc.cu.txt", 2, false, true, true, true},
+		{"lex_cuda_raw_multiline.cu.txt", 5, true, true, true, true},
+		{"lex_cuda_raw_multiline_undoc.cu.txt", 4, false, true, true, true},
+		{"lex_cuda_raw_delimiter_boundary.cu.txt", 3, true, true, true, true},
+		{"lex_cuda_raw_delimiter_boundary_undoc.cu.txt", 2, false, true, true, true},
+	}
+}
+
+// objectiveCppReferenceFixtures pins the objective_cpp lexical reference controls.
+func objectiveCppReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_objective_cpp_strings.mm.txt", 3, true, true, true, true},
+		{"lex_objective_cpp_strings_undoc.mm.txt", 2, false, true, true, true},
+		{"lex_objective_cpp_characters.mm.txt", 3, true, true, true, true},
+		{"lex_objective_cpp_characters_undoc.mm.txt", 2, false, true, true, true},
+		{"lex_objective_cpp_comments.mm.txt", 3, true, true, true, true},
+		{"lex_objective_cpp_comments_undoc.mm.txt", 2, false, true, true, true},
+		{"lex_objective_cpp_line_splice.mm.txt", 4, false, false, false, true},
+		{"lex_objective_cpp_line_splice_undoc.mm.txt", 3, false, false, false, true},
+		{"lex_objective_cpp_split_comment.mm.txt", 4, false, false, false, true},
+		{"lex_objective_cpp_split_comment_undoc.mm.txt", 3, false, false, false, true},
+		{"lex_objective_cpp_raw_strings.mm.txt", 3, true, true, true, true},
+		{"lex_objective_cpp_raw_strings_undoc.mm.txt", 2, false, true, true, true},
+		{"lex_objective_cpp_raw_multiline.mm.txt", 5, true, true, true, true},
+		{"lex_objective_cpp_raw_multiline_undoc.mm.txt", 4, false, true, true, true},
+		{"lex_objective_cpp_raw_delimiter_boundary.mm.txt", 3, true, true, true, true},
+		{"lex_objective_cpp_raw_delimiter_boundary_undoc.mm.txt", 2, false, true, true, true},
+		{"lex_objective_cpp_objc_string.mm.txt", 3, true, true, true, true},
+		{"lex_objective_cpp_objc_string_undoc.mm.txt", 2, false, true, true, true},
+	}
+}
+
+// javaReferenceFixtures pins the java lexical reference controls.
+func javaReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_java_strings_characters.java.txt", 3, true, true, true, true},
+		{"lex_java_strings_characters_undoc.java.txt", 2, false, true, true, true},
+		{"lex_java_text_block.java.txt", 7, true, true, true, true},
+		{"lex_java_text_block_undoc.java.txt", 6, false, true, true, true},
+		{"lex_java_comments.java.txt", 3, true, true, true, true},
+		{"lex_java_comments_undoc.java.txt", 2, false, true, true, true},
+		{"lex_java_unicode_translation.java.txt", 3, false, false, false, true},
+		{"lex_java_unicode_translation_undoc.java.txt", 2, false, false, false, true},
+	}
+}
+
+// kotlinReferenceFixtures pins the kotlin lexical reference controls.
+func kotlinReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_kotlin_strings_characters.kt.txt", 3, true, true, true, true},
+		{"lex_kotlin_strings_characters_undoc.kt.txt", 2, false, true, true, true},
+		{"lex_kotlin_raw.kt.txt", 5, true, true, true, true},
+		{"lex_kotlin_raw_undoc.kt.txt", 4, false, true, true, true},
+		{"lex_kotlin_interpolation.kt.txt", 3, true, true, true, true},
+		{"lex_kotlin_interpolation_undoc.kt.txt", 2, false, true, true, true},
+		{"lex_kotlin_comments.kt.txt", 3, true, true, true, true},
+		{"lex_kotlin_comments_undoc.kt.txt", 2, false, true, true, true},
+		{"lex_kotlin_raw_quote_run.kt.txt", 3, true, true, true, true},
+		{"lex_kotlin_raw_quote_run_undoc.kt.txt", 2, false, true, true, true},
+	}
+}
+
+// swiftReferenceFixtures pins the swift lexical reference controls.
+func swiftReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_swift_string.swift.txt", 3, true, true, true, true},
+		{"lex_swift_string_undoc.swift.txt", 2, false, true, true, true},
+		{"lex_swift_multiline.swift.txt", 7, true, true, true, true},
+		{"lex_swift_multiline_undoc.swift.txt", 6, false, true, true, true},
+		{"lex_swift_extended.swift.txt", 3, true, true, true, true},
+		{"lex_swift_extended_undoc.swift.txt", 2, false, true, true, true},
+		{"lex_swift_extended_multiline.swift.txt", 7, true, true, true, true},
+		{"lex_swift_extended_multiline_undoc.swift.txt", 6, false, true, true, true},
+		{"lex_swift_interpolation.swift.txt", 3, true, true, true, true},
+		{"lex_swift_interpolation_undoc.swift.txt", 2, false, true, true, true},
+		{"lex_swift_comments.swift.txt", 3, true, true, true, true},
+		{"lex_swift_comments_undoc.swift.txt", 2, false, true, true, true},
+		{"lex_swift_regex.swift.txt", 3, false, false, false, false},
+		{"lex_swift_regex_undoc.swift.txt", 2, false, false, false, false},
+		{"lex_swift_extended_regex.swift.txt", 5, false, false, false, false},
+		{"lex_swift_extended_regex_undoc.swift.txt", 4, false, false, false, false},
+	}
+}
+
+// pythonReferenceFixtures pins the python lexical reference controls.
+func pythonReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_python_single.py.txt", 2, true, true, true, true},
+		{"lex_python_single_undoc.py.txt", 2, false, true, true, true},
+		{"lex_python_double.py.txt", 2, true, true, true, true},
+		{"lex_python_double_undoc.py.txt", 2, false, true, true, true},
+		{"lex_python_triple_single.py.txt", 4, true, true, true, true},
+		{"lex_python_triple_single_undoc.py.txt", 4, false, true, true, true},
+		{"lex_python_triple_double.py.txt", 4, true, true, true, true},
+		{"lex_python_triple_double_undoc.py.txt", 4, false, true, true, true},
+		{"lex_python_prefixes.py.txt", 2, true, true, true, true},
+		{"lex_python_prefixes_undoc.py.txt", 2, false, true, true, true},
+		{"lex_python_bytes.py.txt", 2, true, true, true, true},
+		{"lex_python_bytes_undoc.py.txt", 2, false, true, true, true},
+		{"lex_python_raw_triple.py.txt", 4, true, true, true, true},
+		{"lex_python_raw_triple_undoc.py.txt", 4, false, true, true, true},
+		{"lex_python_formatted.py.txt", 2, true, true, true, true},
+		{"lex_python_formatted_undoc.py.txt", 2, false, true, true, true},
+		{"lex_python_formatted_triple.py.txt", 4, true, true, true, true},
+		{"lex_python_formatted_triple_undoc.py.txt", 4, false, true, true, true},
+		{"lex_python_formatted_raw.py.txt", 2, true, true, true, true},
+		{"lex_python_formatted_raw_undoc.py.txt", 2, false, true, true, true},
+		{"lex_python_formatted_nested.py.txt", 2, true, true, true, true},
+		{"lex_python_formatted_nested_undoc.py.txt", 2, false, true, true, true},
+		{"lex_python_formatted_format.py.txt", 2, true, true, true, true},
+		{"lex_python_formatted_format_undoc.py.txt", 2, false, true, true, true},
+		{"lex_python_template.py.txt", 2, true, true, true, true},
+		{"lex_python_template_undoc.py.txt", 2, false, true, true, true},
+		{"lex_python_comments.py.txt", 2, true, true, true, true},
+		{"lex_python_comments_undoc.py.txt", 2, false, true, true, true},
+	}
+}
+
+// javascriptReferenceFixtures pins the javascript lexical reference controls.
+func javascriptReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_javascript_strings.js.txt", 3, true, true, true, true},
+		{"lex_javascript_strings_undoc.js.txt", 2, false, true, true, true},
+		{"lex_javascript_continued_string.js.txt", 4, true, true, true, true},
+		{"lex_javascript_continued_string_undoc.js.txt", 3, false, true, true, true},
+		{"lex_javascript_template.js.txt", 5, true, true, true, true},
+		{"lex_javascript_template_undoc.js.txt", 4, false, true, true, true},
+		{"lex_javascript_nested_template.js.txt", 3, true, true, true, true},
+		{"lex_javascript_nested_template_undoc.js.txt", 2, false, true, true, true},
+		{"lex_javascript_regex.js.txt", 3, true, true, true, true},
+		{"lex_javascript_regex_undoc.js.txt", 2, false, true, true, true},
+		{"lex_javascript_comments.js.txt", 3, true, true, true, true},
+		{"lex_javascript_comments_undoc.js.txt", 2, false, true, true, true},
+		{"lex_javascript_legacy_comments.js.txt", 5, true, true, true, true},
+		{"lex_javascript_legacy_comments_undoc.js.txt", 4, false, true, true, true},
+		{"lex_javascript_hashbang.js.txt", 4, true, true, true, true},
+		{"lex_javascript_hashbang_undoc.js.txt", 3, false, true, true, true},
+		{"lex_javascript_regex_statement.js.txt", 3, false, false, false, false},
+		{"lex_javascript_regex_statement_undoc.js.txt", 2, false, false, false, false},
+		{"lex_javascript_nesting_boundary.js.txt", 3, true, true, true, true},
+		{"lex_javascript_nesting_boundary_undoc.js.txt", 2, false, true, true, true},
+		{"lex_javascript_nesting_overflow.js.txt", 3, false, false, false, false},
+		{"lex_javascript_nesting_overflow_undoc.js.txt", 2, false, false, false, false},
+	}
+}
+
+// typescriptReferenceFixtures pins the typescript lexical reference controls.
+func typescriptReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_typescript_strings.ts.txt", 3, true, true, true, true},
+		{"lex_typescript_strings_undoc.ts.txt", 2, false, true, true, true},
+		{"lex_typescript_continued_string.ts.txt", 4, true, true, true, true},
+		{"lex_typescript_continued_string_undoc.ts.txt", 3, false, true, true, true},
+		{"lex_typescript_template.ts.txt", 5, true, true, true, true},
+		{"lex_typescript_template_undoc.ts.txt", 4, false, true, true, true},
+		{"lex_typescript_nested_template.ts.txt", 3, true, true, true, true},
+		{"lex_typescript_nested_template_undoc.ts.txt", 2, false, true, true, true},
+		{"lex_typescript_regex.ts.txt", 3, true, true, true, true},
+		{"lex_typescript_regex_undoc.ts.txt", 2, false, true, true, true},
+		{"lex_typescript_comments.ts.txt", 3, true, true, true, true},
+		{"lex_typescript_comments_undoc.ts.txt", 2, false, true, true, true},
+		{"lex_typescript_legacy_comments.ts.txt", 5, true, true, true, true},
+		{"lex_typescript_legacy_comments_undoc.ts.txt", 4, false, true, true, true},
+		{"lex_typescript_hashbang.ts.txt", 4, true, true, true, true},
+		{"lex_typescript_hashbang_undoc.ts.txt", 3, false, true, true, true},
+		{"lex_typescript_regex_statement.ts.txt", 3, false, false, false, false},
+		{"lex_typescript_regex_statement_undoc.ts.txt", 2, false, false, false, false},
+		{"lex_typescript_nesting_boundary.ts.txt", 3, true, true, true, true},
+		{"lex_typescript_nesting_boundary_undoc.ts.txt", 2, false, true, true, true},
+		{"lex_typescript_nesting_overflow.ts.txt", 3, false, false, false, false},
+		{"lex_typescript_nesting_overflow_undoc.ts.txt", 2, false, false, false, false},
+	}
+}
+
+// svelteReferenceFixtures pins the svelte lexical reference controls.
+func svelteReferenceFixtures() []referenceFixture {
+	return []referenceFixture{
+		{"lex_svelte_strings.svelte.txt", 4, true, true, true, true},
+		{"lex_svelte_strings_undoc.svelte.txt", 3, false, true, true, true},
+		{"lex_svelte_continued_string.svelte.txt", 5, true, true, true, true},
+		{"lex_svelte_continued_string_undoc.svelte.txt", 4, false, true, true, true},
+		{"lex_svelte_template.svelte.txt", 6, true, true, true, true},
+		{"lex_svelte_template_undoc.svelte.txt", 5, false, true, true, true},
+		{"lex_svelte_nested_template.svelte.txt", 4, true, true, true, true},
+		{"lex_svelte_nested_template_undoc.svelte.txt", 3, false, true, true, true},
+		{"lex_svelte_regex.svelte.txt", 4, true, true, true, true},
+		{"lex_svelte_regex_undoc.svelte.txt", 3, false, true, true, true},
+		{"lex_svelte_comments.svelte.txt", 4, true, true, true, true},
+		{"lex_svelte_comments_undoc.svelte.txt", 3, false, true, true, true},
+		{"lex_svelte_legacy_comments.svelte.txt", 6, true, true, true, true},
+		{"lex_svelte_legacy_comments_undoc.svelte.txt", 5, false, true, true, true},
+		{"lex_svelte_hashbang.svelte.txt", 5, true, true, true, true},
+		{"lex_svelte_hashbang_undoc.svelte.txt", 4, false, true, true, true},
+		{"lex_svelte_regex_statement.svelte.txt", 4, false, false, false, false},
+		{"lex_svelte_regex_statement_undoc.svelte.txt", 3, false, false, false, false},
+		{"lex_svelte_nesting_boundary.svelte.txt", 4, true, true, true, true},
+		{"lex_svelte_nesting_boundary_undoc.svelte.txt", 3, false, true, true, true},
+		{"lex_svelte_nesting_overflow.svelte.txt", 4, false, false, false, false},
+		{"lex_svelte_nesting_overflow_undoc.svelte.txt", 3, false, false, false, false},
+		{"lex_svelte_markup_comments.svelte.txt", 14, true, true, true, true},
+		{"lex_svelte_markup_comments_undoc.svelte.txt", 13, false, true, true, true},
+	}
+}
+
+// TestReferenceLexicalForms_3D checks reference forms and explicitly rejected constructs against fixture twins.
+func TestReferenceLexicalForms_3D(t *testing.T) {
+	cases := referenceFixtures()
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) { checkReferenceFixture(t, tc) })
+	}
+}
+
+// checkReferenceFixture verifies a reference fixture's documentation and lexical visibility independently.
+func checkReferenceFixture(t *testing.T, tc referenceFixture) {
+	t.Helper()
+	target := strings.TrimSuffix(tc.name, ".txt")
+	raw := readDocstringFixture(t, tc.name, target)
+	lines := strings.Split(raw, "\n")
+	fn := hiss.FunctionSpan{Name: "run", Start: tc.line, End: tc.line}
+	if got := docstrings.HasDocstring(target, []byte(raw), lines, fn); got != tc.covered {
+		t.Errorf("documentation = %v, want %v at line %d", got, tc.covered, tc.line)
+	}
+	lexed, complete := hiss.ScanLines(lines, util.SourceLanguage(target))
+	if complete != tc.complete {
+		t.Errorf("complete = %v, want %v", complete, tc.complete)
+	}
+	visible := lexed[tc.line-1].StartClass == hiss.LexCode && strings.Contains(lexed[tc.line-1].Code, "run(")
+	if visible != tc.visible {
+		t.Errorf("function visible = %v, want %v: %+v", visible, tc.visible, lexed[tc.line-1])
+	}
+}
+
+// addReferenceFixtureSpans pins reference spans, including explicit empty expectations for rejected forms.
+func addReferenceFixtureSpans(spans map[string][]hiss.FunctionSpan) {
+	spans["lex_empty.rs.txt"] = nil
+	cases := referenceFixtures()
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		spans[tc.name] = nil
+		if tc.extracted {
+			spans[tc.name] = []hiss.FunctionSpan{{Name: "run", Start: tc.line, End: tc.line}}
+		}
+	}
+}
+
+// TestPythonDocstringPrefixes_3D separates constant text docstrings from bytes and interpolated values.
+func TestPythonDocstringPrefixes_3D(t *testing.T) {
+	cases := []struct {
+		body    string
+		covered bool
+	}{
+		{`"Run the operation."`, true},
+		{`r"Run the operation."`, true},
+		{`U"Run the operation."`, true},
+		{`b"No text docstring."`, false},
+		{`f"No constant docstring."`, false},
+		{`rf"No constant docstring."`, false},
+		{`t"No constant docstring."`, false},
+		{`r`, false},
+		{``, false},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		raw := "def run():\n    " + tc.body + "\n"
+		fn := hiss.FunctionSpan{Name: "run", Start: 1, End: 2}
+		if got := docstrings.HasDocstring("run.py", []byte(raw), strings.Split(raw, "\n"), fn); got != tc.covered {
+			t.Errorf("body %q: documentation = %v, want %v", tc.body, got, tc.covered)
+		}
+	}
+}
+
+// TestUnrecognisedLexicalFilesFailClosed_3D refuses incomplete source when extraction loses every candidate.
+func TestUnrecognisedLexicalFilesFailClosed_3D(t *testing.T) {
+	cases := referenceFixtures()
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		if tc.complete || tc.extracted {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			target := strings.TrimSuffix(tc.name, ".txt")
+			raw := readDocstringFixture(t, tc.name, target)
+			dir := newDocstringTestRepo(t, map[string]string{"seed.go": "package seed\n"})
+			writeTestFile(t, dir, target, raw)
+			runGitCmd(t, dir, "add", ".")
+			rep, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
+			if err == nil || !strings.Contains(err.Error(), "lexically incomplete") {
+				t.Fatalf("incomplete source passed without an explicit lexical error: report=%+v err=%v", rep, err)
+			}
+		})
 	}
 }

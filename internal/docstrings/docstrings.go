@@ -188,9 +188,21 @@ func evaluateSingleFile(ctx context.Context, repoDir, headRef, rel string, fileR
 		return fmt.Errorf("extract functions from %s: %w", rel, err)
 	}
 	if len(functions) == 0 {
-		return nil
+		return checkEmptyLexicalFile(rel, data)
 	}
 	recordFunctionCoverage(rel, data, splitSourceLines(data), functions, fileRanges, rep)
+	return nil
+}
+
+// checkEmptyLexicalFile refuses a zero-candidate pass when the shared lexical scan is incomplete.
+func checkEmptyLexicalFile(rel string, data []byte) error {
+	if resolveDocStyle(rel, data) == docStyleShellAbove {
+		return nil
+	}
+	_, complete := hiss.ScanLines(splitSourceLines(data), util.SourceLanguage(rel))
+	if !complete {
+		return fmt.Errorf("%s: lexically incomplete source with no function candidates", rel)
+	}
 	return nil
 }
 
@@ -406,7 +418,7 @@ func scanSourceLines(lines []string, language string) []scannedLine {
 }
 
 // hasCommentAbove walks upward over the forward-scanned line records above startLine,
-// skipping complete annotation spans within the line and count budgets to check for a comment span.
+// skipping complete annotation spans within the physical-line budget to check for a comment span.
 func hasCommentAbove(scanned []scannedLine, startLine int) bool {
 	if startLine <= 1 || startLine-1 > len(scanned) {
 		return false
@@ -423,21 +435,19 @@ func hasCommentAbove(scanned []scannedLine, startLine int) bool {
 }
 
 // skipAttributesAbove walks upward over complete annotation spans recorded by the forward pass,
-// enforcing maxAttributeLines and maxLineAttributes.
+// enforcing maxAttributeLines; startLineAnnotations enforces the per-line count.
 func skipAttributesAbove(scanned []scannedLine, idx int) (int, bool) {
 	remainingLines := maxAttributeLines
-	remainingAnnotations := maxLineAttributes
 	for steps := 0; steps < maxAttributeLines && idx >= 0; steps++ {
 		span := scanned[idx].annotation
 		if span == nil {
 			return idx, true
 		}
 		usedLines := span.closeLine - span.openLine + 1
-		if usedLines > remainingLines || span.count > remainingAnnotations {
+		if usedLines > remainingLines {
 			return -1, false
 		}
 		remainingLines -= usedLines
-		remainingAnnotations -= span.count
 		idx = span.openLine - 1
 	}
 	return idx, true
@@ -580,8 +590,13 @@ func stepLineAnnotations(code string, stack []byte, count int) ([]byte, int, boo
 			return stack, count, true
 		}
 	}
+	return startLineAnnotations(code, stack, count)
+}
+
+// startLineAnnotations consumes at most maxLineAttributes new annotations on one physical line.
+func startLineAnnotations(code string, stack []byte, count int) ([]byte, int, bool) {
 	code = trimHorizontal(code)
-	for step := 0; step <= maxLineAttributes && code != ""; step++ {
+	for step := 0; step < maxLineAttributes && code != ""; step++ {
 		body, hasBody, ok := consumeAnnotationHeader(code)
 		if !ok {
 			return nil, 0, false
@@ -762,15 +777,11 @@ func countParenDelta(code string) int {
 	return delta
 }
 
-// isPythonStringLiteral reports whether a trimmed Python statement starts with a string literal.
+// isPythonStringLiteral accepts constant text docstrings; bytes and interpolated strings provide none.
 func isPythonStringLiteral(stmt string) bool {
 	s := stmt
-	for i := 0; i < 2 && len(s) > 0; i++ {
-		if strings.IndexByte("rRuUbBfF", s[0]) >= 0 {
-			s = s[1:]
-		} else {
-			break
-		}
+	if s != "" && strings.ContainsRune("rRuU", rune(s[0])) {
+		s = s[1:]
 	}
-	return len(s) > 0 && (s[0] == '"' || s[0] == '\'')
+	return s != "" && (s[0] == '"' || s[0] == '\'')
 }

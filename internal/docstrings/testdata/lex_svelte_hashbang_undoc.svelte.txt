@@ -1,0 +1,5 @@
+<script>
+#! /usr/bin/env node /* ` "
+const text = 1;
+function run() {}
+</script>

@@ -1,0 +1,4 @@
+<script>
+if (ready) /[/*]/.test(text);
+function run() {}
+</script>

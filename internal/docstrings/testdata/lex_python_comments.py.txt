@@ -1,0 +1,2 @@
+text = 1 # comment
+def run(): """Run provides the documented control."""

@@ -1,0 +1,5 @@
+package fixture
+var text = `a] \
+// Not documentation.
+/*`
+func run() {}

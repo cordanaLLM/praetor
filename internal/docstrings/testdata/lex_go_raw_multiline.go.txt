@@ -1,0 +1,6 @@
+package fixture
+var text = `a] \
+// Not documentation.
+/*`
+// Run provides the documented control.
+func run() {}

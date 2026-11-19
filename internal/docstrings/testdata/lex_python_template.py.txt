@@ -1,0 +1,2 @@
+text = t"a {items["key"]} b" + TR'a{items["key"]}'
+def run(): """Run provides the documented control."""

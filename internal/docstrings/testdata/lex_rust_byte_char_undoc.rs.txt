@@ -1,0 +1,2 @@
+#[tag(b'\x5d')]
+pub fn run() {}

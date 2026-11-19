@@ -1,0 +1,2 @@
+@Tag(`a ${`b ${1}`} c`)
+function run(): void {}

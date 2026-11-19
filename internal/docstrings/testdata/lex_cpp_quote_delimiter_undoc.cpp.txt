@@ -1,0 +1,2 @@
+[[deprecated(R""(])"")]]
+int run(void) { return 0; }

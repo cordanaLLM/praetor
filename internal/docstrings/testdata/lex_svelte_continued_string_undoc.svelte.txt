@@ -1,0 +1,5 @@
+<script>
+@Tag("a]\
+b")
+function run() {}
+</script>

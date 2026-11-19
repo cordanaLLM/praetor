@@ -1,0 +1,3 @@
+// Run provides the documented control.
+[[deprecated(R"abcdefghijklmnop(a])abcdefghijklmnop")]]
+int run(void) { return 0; }

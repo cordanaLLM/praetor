@@ -1,0 +1,4 @@
+<!-- line comment
+--> line comment
+const text = 1;
+function run() {}

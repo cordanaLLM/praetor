@@ -1,0 +1,2 @@
+#[tag(/* outer /* nested */ tail */ 1)] // line
+pub fn run() {}
