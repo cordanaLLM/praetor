@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -454,7 +455,9 @@ type Manifest struct {
 	// Forge configures the repository text policy (engine-fr-rule-checks-20261027).
 	Forge *ForgeTextPolicy `yaml:"forge,omitempty"`
 	// Gate configures the anti-direct-merge gating pipeline: declared_verify_timeout sets the stage
-	// bound for the declared-verification stage. It is repository-only and stays out of ResolvedPolicy.
+	// bound for the declared-verification stage, and declared_verify_evidence points to the
+	// committed suite-length measurement required when that bound exceeds 30 minutes (up to 60 minutes).
+	// It is repository-only and stays out of ResolvedPolicy.
 	Gate *GatePolicy `yaml:"gate,omitempty"`
 	// Release configures release governance gates such as release.e2e end-to-end test evidence
 	// per feature and fix commit since the last release tag (order engine-release-feature-e2e-gate-20261027).
@@ -463,6 +466,9 @@ type Manifest struct {
 	// Licensing configures the licensing gate checks: copyright holder format, etc.
 	// (order engine-fr-rule-checks-20261027).
 	Licensing *LicensingPolicy `yaml:"licensing,omitempty"`
+
+	repoRoot    string
+	validateCtx context.Context
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -509,6 +515,9 @@ func ParseManifest(name string, data []byte) (*Manifest, error) {
 	return parseManifest(name, data)
 }
 
+// defaultManifestContext is the baseline context used by non-context manifest parsers.
+var defaultManifestContext = context.Background()
+
 // parseManifest decodes manifest YAML data from path and validates all schema constraints,
 // returning the parsed Manifest or an error.
 func parseManifest(path string, data []byte) (*Manifest, error) {
@@ -516,6 +525,22 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse manifest at %s: %w", path, err)
 	}
+	m.repoRoot = filepath.Dir(path)
+	if err := ValidateManifest(m); err != nil {
+		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+	}
+	return m, nil
+}
+
+// parseRepositoryManifest decodes manifest YAML data for the repository at repoRoot and
+// validates all schema constraints under ctx, reporting errors under path.
+func parseRepositoryManifest(ctx context.Context, repoRoot, path string, data []byte) (*Manifest, error) {
+	m, err := DecodeManifest(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse manifest at %s: %w", path, err)
+	}
+	m.repoRoot = repoRoot
+	m.validateCtx = ctx
 	if err := ValidateManifest(m); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}

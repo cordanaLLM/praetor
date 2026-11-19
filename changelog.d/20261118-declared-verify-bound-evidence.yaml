@@ -1,0 +1,3 @@
+type: added
+title: "Adopters can raise gate.declared_verify_timeout above 30m up to a 60m hard cap when gate.declared_verify_evidence points to a committed suite-length measurement in the repository"
+breaking: false

@@ -35,5 +35,5 @@ func LoadRepositoryManifest(ctx context.Context, repoPath string) (*Manifest, er
 	if !exists {
 		return nil, nil
 	}
-	return ParseManifest(ManifestFileName, data)
+	return parseRepositoryManifest(ctx, repoPath, ManifestFileName, data)
 }
