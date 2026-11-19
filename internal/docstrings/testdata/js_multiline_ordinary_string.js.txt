@@ -1,0 +1,6 @@
+class C {
+  // Run the operation.
+  @tag("use
+  run_v2")
+  run() {}
+}

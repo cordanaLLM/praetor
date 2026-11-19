@@ -62,8 +62,15 @@ internal spacing.
 
 ## Literals and comments are stripped before matching
 
-A rule keyword inside a string or a comment is not a finding. Stripping runs across lines, so a
-block comment or a docstring containing `while True` does not fire.
+A rule keyword inside a string or a comment is not a finding. Stripping runs across lines in one forward pass per file through the shared per-language lexical scanner (`literalStripper`, `hiss.ScanLines` and `hiss.StripLiterals` in `internal/hiss/rules.go`), so a block comment or a docstring containing `while True` does not fire:
+
+- **Rust (`rustSyntax`)**: `//`, `///` and `//!` line comments; nested `/* ... */`, `/** ... */` and `/*! ... */` block comments; ordinary `"..."` and byte `b"..."` strings including raw line ends inside them and backslash escapes; raw `r"..."`, `r#"..."#` and raw byte `br"..."`, `br#"..."#` strings with any `#` count; and `'x'`, `'\x'`, `b'x'`, `b'\x'` character literals distinguished from `'a` lifetimes (`TestStripLiterals_3D` in `internal/docstrings/docstrings_test.go`).
+- **JavaScript, TypeScript and Svelte (`scriptSyntax`)**: `//` line comments (preserving `https://` URLs in JSX text), non-nesting `/* ... */` block comments, `'...'` and `"..."` quotes (where an unescaped raw line end is invalid and unclosed), multi-line `` `...` `` template literals with nested `${...}` substitutions up to 32 levels (`maxTemplateNesting`), and single-line `/.../flags` regular expression literals where an expression may start (`TestLiteralStripperScriptSyntax` in `internal/hiss/script_test.go`).
+- **C, C++, CUDA, HIP and Objective-C++ (`cppSyntax`)**: `//` line comments, non-nesting `/* ... */` block comments, `"..."` strings with backslash escapes and trailing `\` line continuations, `'x'` and `'\x'` character literals, and C++ `R"delim(...)delim"` raw strings (with optional `L`, `u8`, `u`, `U` prefix and up to 16 delimiter bytes). In `nativeFuncHeader` (`internal/hiss/rules.go`), a function header is recognised on the line carrying the declarator name and its opening parenthesis, so a C or C++ return type placed on its own line (`int` / `run(void)`) is not covered.
+- **Python (`pythonSyntax`)**: `#` line comments, `'...'` and `"..."` quotes with trailing `\` line continuations, and multi-line `'''...'''` and `"""..."""` triple-quoted strings (`TestLiteralStripperCarriesEscapedLineBreaks` in `internal/hiss/recursion_test.go`).
+- **Go, Java, Kotlin and Swift (`cLikeSyntax`)**: `//` line comments, non-nesting `/* ... */` block comments, `"..."` strings with trailing `\` line continuations, and `'x'` and `'\x'` character literals.
+
+Documentation coverage (`docstrings.HasDocstring` in `internal/docstrings/docstrings.go`) reads `hiss.ScanLines` once forward per file to record each line's start and end lexical classes (`LexBlank`, `LexCode`, `LexLineComment`, `LexBlockComment`, `LexDocComment`, `LexLiteralString`, `LexLiteralRawString`, `LexLiteralTripleString`, `LexLiteralTemplate`, `LexLiteralChar`, `LexLiteralRegex`), standalone comment spans and complete annotation spans (`#[...]`, `[[...]]`, `__attribute__((...))`, `@decorator`), then walks upward over those recorded spans (`TestCheck_AttributeLiteralRegressions_3D` in `internal/docstrings/docstrings_test.go`). Unclosed, mismatched or unrecognised lexical forms leave the annotation span incomplete and the function undocumented.
 
 ## CRLF does not silence a rule
 

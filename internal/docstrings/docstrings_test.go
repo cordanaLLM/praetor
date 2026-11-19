@@ -683,9 +683,41 @@ func TestCheck_AttributeLiteralRegressions_3D(t *testing.T) {
 		{"rust_unclosed_attr_comment", "rust_unclosed_attr_comment.rs.txt", "src/lib.rs", false, 1, 0, "run", 6},
 		{"rust_multiline_attr_blank_line", "rust_multiline_attr_blank_line.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
 	}
+	cases = append(cases, lexicalScannerFixtureCases()...)
 	for i := 0; i < len(cases); i++ {
 		tc := cases[i]
 		t.Run(tc.name, func(t *testing.T) { runDocstringFixtureCase(t, tc) })
+	}
+}
+
+// lexicalScannerFixtureCases returns the positive, negative, boundary, and undocumented-twin
+// fixtures for forward lexical scanning across Rust, TypeScript, JavaScript, and C++.
+func lexicalScannerFixtureCases() []docstringFixtureCase {
+	return []docstringFixtureCase{
+		{"rust_raw_string_attribute", "rust_raw_string_attribute.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"rust_raw_string_attribute_undoc", "rust_raw_string_attribute_undoc.rs.txt", "src/lib.rs", false, 1, 0, "run", 2},
+		{"rust_unclosed_raw_string", "rust_unclosed_raw_string.rs.txt", "src/lib.rs", false, 1, 0, "run", 3},
+		{"rust_unclosed_raw_string_undoc", "rust_unclosed_raw_string_undoc.rs.txt", "src/lib.rs", false, 1, 0, "run", 2},
+		{"ts_template_inner_decorator", "ts_template_inner_decorator.ts.txt", "web/run.ts", true, 1, 1, "", 0},
+		{"ts_template_inner_decorator_undoc", "ts_template_inner_decorator_undoc.ts.txt", "web/run.ts", false, 1, 0, "run", 5},
+		{"cpp_block_comment_inner_attribute", "cpp_block_comment_inner_attribute.cpp.txt", "src/lib.cpp", true, 1, 1, "", 0},
+		{"cpp_block_comment_inner_attribute_undoc", "cpp_block_comment_inner_attribute_undoc.cpp.txt", "src/lib.cpp", false, 1, 0, "run", 7},
+		{"rust_multiline_ordinary_string", "rust_multiline_ordinary_string.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"rust_multiline_ordinary_string_undoc", "rust_multiline_ordinary_string_undoc.rs.txt", "src/lib.rs", false, 1, 0, "run", 3},
+		{"rust_unfinished_multiline_string", "rust_unfinished_multiline_string.rs.txt", "src/lib.rs", false, 1, 0, "run", 4},
+		{"rust_unfinished_multiline_string_undoc", "rust_unfinished_multiline_string_undoc.rs.txt", "src/lib.rs", false, 1, 0, "run", 3},
+		{"js_multiline_ordinary_string", "js_multiline_ordinary_string.js.txt", "web/run.js", false, 1, 0, "run", 5},
+		{"js_multiline_ordinary_string_undoc", "js_multiline_ordinary_string_undoc.js.txt", "web/run.js", false, 1, 0, "run", 4},
+		{"rust_multiline_attr_trailing_block_comment", "rust_multiline_attr_trailing_block_comment.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"rust_multiline_attr_trailing_block_comment_undoc", "rust_multiline_attr_trailing_block_comment_undoc.rs.txt", "src/lib.rs", false, 1, 0, "run", 5},
+		{"rust_block_comment_before_attribute", "rust_block_comment_before_attribute.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"rust_block_comment_before_attribute_undoc", "rust_block_comment_before_attribute_undoc.rs.txt", "src/lib.rs", false, 1, 0, "run", 5},
+		{"rust_nested_block_comment_attribute", "rust_nested_block_comment_attribute.rs.txt", "src/lib.rs", true, 1, 1, "", 0},
+		{"rust_nested_block_comment_attribute_undoc", "rust_nested_block_comment_attribute_undoc.rs.txt", "src/lib.rs", false, 1, 0, "run", 6},
+		{"cpp_raw_string_attribute", "cpp_raw_string_attribute.cpp.txt", "src/lib.cpp", true, 1, 1, "", 0},
+		{"cpp_raw_string_attribute_undoc", "cpp_raw_string_attribute_undoc.cpp.txt", "src/lib.cpp", false, 1, 0, "run", 2},
+		{"ts_template_nested_backtick", "ts_template_nested_backtick.ts.txt", "web/run.ts", true, 1, 1, "", 0},
+		{"ts_template_nested_backtick_undoc", "ts_template_nested_backtick_undoc.ts.txt", "web/run.ts", false, 1, 0, "run", 3},
 	}
 }
 
@@ -736,6 +768,17 @@ func TestStripLiterals_3D(t *testing.T) {
 		{"python_triple", "python", []string{"@tag('''a]", "#b)''')"}, []string{"@tag(", ")"}, true},
 		{"python_unclosed_triple", "python", []string{"@tag('''x)"}, []string{"@tag("}, false},
 		{"rust_character", "rust", []string{"#[tag(']')]"}, []string{"#[tag()]"}, true},
+		{"rust_byte_character", "rust", []string{"#[tag(b']')]"}, []string{"#[tag()]"}, true},
+		{"rust_byte_string", "rust", []string{"#[tag(b\"]\")]"}, []string{"#[tag()]"}, true},
+		{"rust_raw_string", "rust", []string{"#[tag(r#\"use \"new_api]\"#)]"}, []string{"#[tag()]"}, true},
+		{"rust_raw_byte_string", "rust", []string{"#[tag(br##\"a]\"#b\"##)]"}, []string{"#[tag()]"}, true},
+		{"rust_unclosed_raw_string", "rust", []string{"#[tag(r#\"unclosed\")]"}, []string{"#[tag("}, false},
+		{"rust_multiline_string", "rust", []string{"#[tag(\"use", "run_v2\")]"}, []string{"#[tag(", ")]"}, true},
+		{"rust_nested_block_comment", "rust", []string{"#[tag(/* a /* )] */ b */)]"}, []string{"#[tag()]"}, true},
+		{"rust_unclosed_nested_comment", "rust", []string{"#[tag(/* a /* b */)]"}, []string{"#[tag("}, false},
+		{"cpp_raw_string", "cpp", []string{"[[deprecated(R\"msg(a )]] b)msg\")]]"}, []string{"[[deprecated()]]"}, true},
+		{"cpp_unclosed_raw_string", "cpp", []string{"[[deprecated(R\"msg(a )]] b)\")]]"}, []string{"[[deprecated("}, false},
+		{"typescript_nested_backtick", "typescript", []string{"@tag(`outer ${`inner )`}`)"}, []string{"@tag()"}, true},
 		{"rust_lifetime", "rust", []string{"#[tag('a)]"}, []string{"#[tag('a)]"}, true},
 		{"rust_comments", "rust", []string{"#[inline] /* x */ #[must_use] // y"}, []string{"#[inline]  #[must_use] "}, true},
 		{"rust_unclosed_block_comment", "rust", []string{"#[inline] /* unclosed"}, []string{"#[inline] "}, false},
@@ -801,7 +844,43 @@ func expectedFixtureSpans() map[string][]hiss.FunctionSpan {
 		"rust_unclosed_attr_comment.rs.txt":           run6,
 	}
 	addTypeScriptFixtureSpans(spans)
+	addLexicalScannerFixtureSpans(spans)
 	return spans
+}
+
+// addLexicalScannerFixtureSpans populates the pinned function spans for the lexical scanner fixtures.
+func addLexicalScannerFixtureSpans(spans map[string][]hiss.FunctionSpan) {
+	run2 := []hiss.FunctionSpan{{Name: "run", Start: 2, End: 2}}
+	run3 := []hiss.FunctionSpan{{Name: "run", Start: 3, End: 3}}
+	run4 := []hiss.FunctionSpan{{Name: "run", Start: 4, End: 4}}
+	run5 := []hiss.FunctionSpan{{Name: "run", Start: 5, End: 5}}
+	run6 := []hiss.FunctionSpan{{Name: "run", Start: 6, End: 6}}
+	run7 := []hiss.FunctionSpan{{Name: "run", Start: 7, End: 7}}
+	run8 := []hiss.FunctionSpan{{Name: "run", Start: 8, End: 8}}
+	spans["cpp_block_comment_inner_attribute.cpp.txt"] = run8
+	spans["cpp_block_comment_inner_attribute_undoc.cpp.txt"] = run7
+	spans["cpp_raw_string_attribute.cpp.txt"] = run3
+	spans["cpp_raw_string_attribute_undoc.cpp.txt"] = run2
+	spans["js_multiline_ordinary_string.js.txt"] = run5
+	spans["js_multiline_ordinary_string_undoc.js.txt"] = run4
+	spans["rust_block_comment_before_attribute.rs.txt"] = run7
+	spans["rust_block_comment_before_attribute_undoc.rs.txt"] = run5
+	spans["rust_multiline_attr_trailing_block_comment.rs.txt"] = run6
+	spans["rust_multiline_attr_trailing_block_comment_undoc.rs.txt"] = run5
+	spans["rust_multiline_ordinary_string.rs.txt"] = run4
+	spans["rust_multiline_ordinary_string_undoc.rs.txt"] = run3
+	spans["rust_nested_block_comment_attribute.rs.txt"] = run7
+	spans["rust_nested_block_comment_attribute_undoc.rs.txt"] = run6
+	spans["rust_raw_string_attribute.rs.txt"] = run3
+	spans["rust_raw_string_attribute_undoc.rs.txt"] = run2
+	spans["rust_unclosed_raw_string.rs.txt"] = run3
+	spans["rust_unclosed_raw_string_undoc.rs.txt"] = run2
+	spans["rust_unfinished_multiline_string.rs.txt"] = run4
+	spans["rust_unfinished_multiline_string_undoc.rs.txt"] = run3
+	spans["ts_template_inner_decorator.ts.txt"] = run6
+	spans["ts_template_inner_decorator_undoc.ts.txt"] = run5
+	spans["ts_template_nested_backtick.ts.txt"] = run4
+	spans["ts_template_nested_backtick_undoc.ts.txt"] = run3
 }
 
 // addTypeScriptFixtureSpans populates the pinned function spans for TypeScript fixtures.
@@ -854,5 +933,37 @@ func TestFixtureScannerSpansAndFindings_3D(t *testing.T) {
 	rep, err := hiss.Scan(t.Context(), dir, hiss.ScanOptions{})
 	if err != nil || rep.TotalInfractions != 0 {
 		t.Fatalf("unexpected HISS findings across fixtures: err=%v violations=%+v", err, rep.Violations)
+	}
+}
+
+// TestScanLines_3D verifies per-line start and end lexical classes, block-comment nesting depths,
+// literal carry state, and unclosed literal markers across Rust, TypeScript, and C++.
+func TestScanLines_3D(t *testing.T) {
+	rustLines, ok := hiss.ScanLines([]string{
+		"/// Doc comment.",
+		"#[deprecated(note = \"use",
+		"run_v2\")] /* note */",
+		"",
+	}, "rust")
+	if !ok || len(rustLines) != 4 {
+		t.Fatalf("ScanLines rust: ok=%v len=%d", ok, len(rustLines))
+	}
+	assertLexLine(t, "line 0", rustLines[0], hiss.LexDocComment, hiss.LexDocComment, false, true)
+	assertLexLine(t, "line 1", rustLines[1], hiss.LexCode, hiss.LexLiteralString, true, false)
+	assertLexLine(t, "line 2", rustLines[2], hiss.LexLiteralString, hiss.LexBlockComment, false, false)
+	assertLexLine(t, "line 3", rustLines[3], hiss.LexBlank, hiss.LexBlank, false, false)
+
+	unclosed, ok := hiss.ScanLines([]string{"#[tag(r#\"unclosed\")]"}, "rust")
+	if ok || len(unclosed) != 1 {
+		t.Fatalf("ScanLines unclosed raw string: ok=%v got=%+v", ok, unclosed)
+	}
+	assertLexLine(t, "unclosed raw", unclosed[0], hiss.LexCode, hiss.LexLiteralRawString, true, false)
+}
+
+// assertLexLine checks one LexLine's start/end classes, literal carry flag, and commentOnly state.
+func assertLexLine(t *testing.T, label string, got hiss.LexLine, start, end hiss.LexClass, endLit, commentOnly bool) {
+	t.Helper()
+	if got.StartClass != start || got.EndClass != end || got.EndInLiteral != endLit || got.CommentOnly != commentOnly {
+		t.Fatalf("%s: got %+v, want start=%v end=%v endLit=%v commentOnly=%v", label, got, start, end, endLit, commentOnly)
 	}
 }

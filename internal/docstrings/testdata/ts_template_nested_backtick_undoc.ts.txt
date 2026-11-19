@@ -1,0 +1,4 @@
+class C {
+  @tag(`outer ${`inner )`}`)
+  run() {}
+}

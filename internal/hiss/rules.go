@@ -162,6 +162,69 @@ func (t *braceTracker) finish(endLine int) {
 	}
 }
 
+// LexClass identifies the lexical state at the start or end of a source line.
+type LexClass int
+
+const (
+	// LexBlank marks a line holding whitespace only outside multi-line constructs.
+	LexBlank LexClass = iota
+	// LexCode marks executable source code outside comments and literals.
+	LexCode
+	// LexLineComment marks a single-line comment such as // or #.
+	LexLineComment
+	// LexBlockComment marks a /* ... */ block comment.
+	LexBlockComment
+	// LexDocComment marks a ///, //!, /** ... */ or /*! ... */ documentation comment.
+	LexDocComment
+	// LexLiteralString marks an ordinary or byte string literal.
+	LexLiteralString
+	// LexLiteralRawString marks a Rust or C++ raw string literal.
+	LexLiteralRawString
+	// LexLiteralTripleString marks a Python triple-quoted string literal.
+	LexLiteralTripleString
+	// LexLiteralTemplate marks a JavaScript or TypeScript template literal.
+	LexLiteralTemplate
+	// LexLiteralChar marks a character literal.
+	LexLiteralChar
+	// LexLiteralRegex marks a JavaScript or TypeScript regular expression literal.
+	LexLiteralRegex
+)
+
+// LexLine records the stripped code and lexical state of one source line from a forward file scan.
+type LexLine struct {
+	Code            string
+	StartClass      LexClass
+	EndClass        LexClass
+	StartBlockDepth int
+	EndBlockDepth   int
+	StartInLiteral  bool
+	EndInLiteral    bool
+	Unclosed        bool
+	CommentOnly     bool
+}
+
+// lineLexTracker accumulates the lexical classification of a single line during literalStripper.strip.
+type lineLexTracker struct {
+	startClass LexClass
+	lastClass  LexClass
+	sawComment bool
+	sawCode    bool
+	unclosed   bool
+}
+
+// noteToken records one token's lexical class and whether it is a comment token.
+func (t *lineLexTracker) noteToken(class LexClass, isComment bool) {
+	if t.startClass == LexBlank {
+		t.startClass = class
+	}
+	t.lastClass = class
+	if isComment {
+		t.sawComment = true
+	} else {
+		t.sawCode = true
+	}
+}
+
 // literalSyntax describes how a language delimits strings and comments.
 type literalSyntax struct {
 	// apostropheIsString treats '...' as a string (Python, JavaScript) rather than a character
@@ -172,6 +235,14 @@ type literalSyntax struct {
 	tripleQuotes bool
 	// blockComments opens a C-style /* */ comment, which spans lines.
 	blockComments bool
+	// nestedBlockComments nests /* ... */ block comments (Rust).
+	nestedBlockComments bool
+	// multilineQuotes carries an ordinary "..." string across raw line ends (Rust).
+	multilineQuotes bool
+	// rustStrings opens Rust r"...", r#"..."#, b"...", br"...", br#"..."# and b'x' literals.
+	rustStrings bool
+	// cppRawStrings opens C++ R"delim(...)delim" raw string literals.
+	cppRawStrings bool
 	// templates opens a JavaScript `...` template literal, which spans lines and carries code
 	// in its ${...} substitutions. That code is kept, so a call written there is still seen.
 	templates bool
@@ -191,6 +262,8 @@ type literalSyntax struct {
 
 var (
 	cLikeSyntax  = literalSyntax{lineComment: "//", blockComments: true}
+	cppSyntax    = literalSyntax{lineComment: "//", blockComments: true, cppRawStrings: true}
+	rustSyntax   = literalSyntax{lineComment: "//", blockComments: true, nestedBlockComments: true, multilineQuotes: true, rustStrings: true}
 	pythonSyntax = literalSyntax{apostropheIsString: true, lineComment: "#", tripleQuotes: true}
 	scriptSyntax = literalSyntax{apostropheIsString: true, lineComment: "//", blockComments: true,
 		templates: true, regexLiterals: true, quotesEndWithLine: true, urlText: true}
@@ -202,6 +275,8 @@ const (
 	// maxTemplateNesting bounds the stack of open ${...} substitutions (HISS-02). A deeper
 	// substitution is read as template text.
 	maxTemplateNesting = 32
+	// maxCPPRawDelimiterBytes bounds a C++ raw-string d-char-sequence per [lex.string].
+	maxCPPRawDelimiterBytes = 16
 )
 
 // blockCommentClose ends a C-style block comment, the one fence that honours no escapes.
@@ -218,17 +293,115 @@ type literalStripper struct {
 	syn literalSyntax
 	// fence is the delimiter that closes the span currently open, or empty outside one.
 	fence string
+	// fenceClass names the lexical class of the currently open multi-line span.
+	fenceClass LexClass
+	// rawFence reports that fence closes a raw string literal without backslash escaping.
+	rawFence bool
+	// blockDepth is the nesting depth of open /* ... */ block comments.
+	blockDepth int
 	// substitutions holds, per open ${...} of a template literal, the depth of the braces the
 	// substitution's own code opened, so its closing brace is told apart from theirs.
 	substitutions []int
 	// unclosed reports a single-line quoted literal that ended without its closing quote.
 	unclosed bool
+	// line tracks the per-line lexical classification during strip.
+	line lineLexTracker
 }
 
 // open reports whether a multi-line span is still open: a comment, a string or a template
 // literal, including one whose ${...} substitution is being read as code.
 func (s *literalStripper) open() bool {
-	return s.fence != "" || len(s.substitutions) > 0
+	return s.fence != "" || s.blockDepth > 0 || len(s.substitutions) > 0
+}
+
+// inLiteral reports whether a multi-line literal or template substitution is currently open.
+func (s *literalStripper) inLiteral() bool {
+	return (s.fence != "" && s.fence != blockCommentClose) || len(s.substitutions) > 0
+}
+
+// activeLiteralClass returns the LexClass of the currently open multi-line literal.
+func (s *literalStripper) activeLiteralClass() LexClass {
+	if s.fence == templateFence || len(s.substitutions) > 0 {
+		return LexLiteralTemplate
+	}
+	return s.fenceClass
+}
+
+// scanLine strips literals and comments from line and returns its recorded LexLine state.
+func (s *literalStripper) scanLine(line string) LexLine {
+	startBlock := s.blockDepth
+	startLit := s.inLiteral()
+	carry := s.carryClass(startBlock, startLit)
+	s.line = lineLexTracker{
+		startClass: carry,
+		lastClass:  carry,
+		sawComment: startBlock > 0,
+		sawCode:    startLit,
+	}
+	code := s.strip(line)
+	endLit := s.inLiteral()
+	endClass := s.resolveEndClass(endLit)
+	return LexLine{
+		Code:            code,
+		StartClass:      s.line.startClass,
+		EndClass:        endClass,
+		StartBlockDepth: startBlock,
+		EndBlockDepth:   s.blockDepth,
+		StartInLiteral:  startLit,
+		EndInLiteral:    endLit,
+		Unclosed:        s.line.unclosed,
+		CommentOnly:     s.line.sawComment && !s.line.sawCode && !startLit && !s.line.unclosed,
+	}
+}
+
+// carryClass returns the lexical class carried into the start of a line from an open multi-line span.
+func (s *literalStripper) carryClass(startBlock int, startLit bool) LexClass {
+	if startBlock > 0 {
+		return s.fenceClass
+	}
+	if startLit {
+		return s.activeLiteralClass()
+	}
+	return LexBlank
+}
+
+// resolveEndClass returns the lexical class at the end of the line just scanned.
+func (s *literalStripper) resolveEndClass(endLit bool) LexClass {
+	if s.blockDepth > 0 {
+		return s.fenceClass
+	}
+	if endLit {
+		return s.activeLiteralClass()
+	}
+	if s.line.unclosed {
+		return LexLiteralString
+	}
+	return s.line.lastClass
+}
+
+// noteCarriedFence updates the per-line tracker when consuming an active multi-line fence.
+func (s *literalStripper) noteCarriedFence() {
+	if s.fence == blockCommentClose {
+		s.line.noteToken(s.fenceClass, true)
+		return
+	}
+	s.line.noteToken(s.activeLiteralClass(), false)
+}
+
+// lineCommentClass classifies a line comment token as a doc comment or ordinary line comment.
+func lineCommentClass(syn literalSyntax, rest string) LexClass {
+	if syn.lineComment == "//" && (strings.HasPrefix(rest, "///") || strings.HasPrefix(rest, "//!")) {
+		return LexDocComment
+	}
+	return LexLineComment
+}
+
+// blockCommentClass classifies a block comment opener as a doc comment or ordinary block comment.
+func blockCommentClass(rest string) LexClass {
+	if (strings.HasPrefix(rest, "/**") && !strings.HasPrefix(rest, "/**/")) || strings.HasPrefix(rest, "/*!") {
+		return LexDocComment
+	}
+	return LexBlockComment
 }
 
 // strip returns line with the contents of literals and comments removed, updating the
@@ -237,6 +410,7 @@ func (s *literalStripper) strip(line string) string {
 	var b strings.Builder
 	for i := 0; i < len(line); {
 		if s.fence != "" {
+			s.noteCarriedFence()
 			i = s.consumeFence(line, i)
 			continue
 		}
@@ -244,10 +418,12 @@ func (s *literalStripper) strip(line string) string {
 			i = next
 			continue
 		}
-		if strings.HasPrefix(line[i:], s.syn.lineComment) {
+		if s.syn.lineComment != "" && strings.HasPrefix(line[i:], s.syn.lineComment) {
 			if !s.urlAt(line, i) {
+				s.line.noteToken(lineCommentClass(s.syn, line[i:]), true)
 				return b.String()
 			}
+			s.line.noteToken(LexCode, false)
 			i += len(s.syn.lineComment)
 			continue
 		}
@@ -266,20 +442,68 @@ func (s *literalStripper) consumeFence(line string, i int) int {
 		return s.consumeTemplate(line, i)
 	}
 	if s.fence == blockCommentClose {
-		if idx := strings.Index(line[i:], s.fence); idx >= 0 {
+		return s.consumeBlockComment(line, i)
+	}
+	if s.rawFence {
+		return s.consumeRawString(line, i)
+	}
+	end, closed, carried := scanQuoted(line, i, s.fence)
+	if closed || (len(s.fence) == 1 && !carried && !s.syn.multilineQuotes) {
+		if !closed {
+			s.unclosed = true
+			s.line.unclosed = true
+		}
+		s.fence = ""
+	}
+	return end
+}
+
+// consumeBlockComment advances through an open /* ... */ comment, tracking nesting when enabled.
+func (s *literalStripper) consumeBlockComment(line string, i int) int {
+	if !s.syn.nestedBlockComments {
+		if idx := strings.Index(line[i:], blockCommentClose); idx >= 0 {
+			s.blockDepth = 0
 			s.fence = ""
 			return i + idx + len(blockCommentClose)
 		}
 		return len(line)
 	}
-	end, closed, carried := scanQuoted(line, i, s.fence)
-	if closed || (len(s.fence) == 1 && !carried) {
-		if !closed {
-			s.unclosed = true
-		}
-		s.fence = ""
+	if s.blockDepth <= 0 {
+		s.blockDepth = 1
 	}
-	return end
+	for j := i; j < len(line); j++ {
+		if strings.HasPrefix(line[j:], "/*") {
+			s.blockDepth++
+			j++
+		} else if strings.HasPrefix(line[j:], blockCommentClose) {
+			s.blockDepth--
+			if s.blockDepth == 0 {
+				s.fence = ""
+				return j + len(blockCommentClose)
+			}
+			j++
+		}
+	}
+	return len(line)
+}
+
+// skipRawString skips a raw string body starting at i with closing delimiter fence.
+func (s *literalStripper) skipRawString(line string, i int, fence string) int {
+	s.fence = fence
+	s.fenceClass = LexLiteralRawString
+	s.rawFence = true
+	return s.consumeRawString(line, i)
+}
+
+// consumeRawString advances through a raw string body up to s.fence without backslash escapes.
+func (s *literalStripper) consumeRawString(line string, i int) int {
+	if idx := strings.Index(line[i:], s.fence); idx >= 0 {
+		end := i + idx + len(s.fence)
+		s.fence = ""
+		s.rawFence = false
+		return end
+	}
+	return len(line)
 }
 
 // openFence reports whether a multi-line span starts at i and records its closing delimiter.
@@ -288,17 +512,118 @@ func (s *literalStripper) consumeFence(line string, i int) int {
 func (s *literalStripper) openFence(line string, i int) (int, bool) {
 	if fence, _ := s.syn.quoteAt(line, i); len(fence) == 3 {
 		s.fence = fence
+		s.fenceClass = LexLiteralTripleString
+		s.line.noteToken(LexLiteralTripleString, false)
 		return i + len(fence), true
 	}
 	if s.syn.blockComments && strings.HasPrefix(line[i:], "/*") {
 		s.fence = blockCommentClose
+		s.blockDepth = 1
+		s.fenceClass = blockCommentClass(line[i:])
+		s.line.noteToken(s.fenceClass, true)
 		return i + 2, true
 	}
 	if s.syn.templates && line[i] == '`' {
 		s.fence = templateFence
+		s.fenceClass = LexLiteralTemplate
+		s.line.noteToken(LexLiteralTemplate, false)
 		return i + 1, true
 	}
+	return s.openPrefixedLiteral(line, i)
+}
+
+// openPrefixedLiteral recognises Rust r/br/b string and byte-char literals and C++ R raw strings.
+func (s *literalStripper) openPrefixedLiteral(line string, i int) (int, bool) {
+	if i > 0 && (isIdentByte(line[i-1]) || line[i-1] == '\'') {
+		return i, false
+	}
+	if s.syn.rustStrings {
+		if next, ok := s.openRustPrefixedLiteral(line, i); ok {
+			return next, true
+		}
+	}
+	if s.syn.cppRawStrings {
+		if fence, bodyStart, ok := cppRawStringFence(line, i); ok {
+			s.line.noteToken(LexLiteralRawString, false)
+			return s.skipRawString(line, bodyStart, fence), true
+		}
+	}
 	return i, false
+}
+
+// openRustPrefixedLiteral recognises Rust b'x', b"...", r"...", r#"..."#, br"..." and br#"..."# literals.
+func (s *literalStripper) openRustPrefixedLiteral(line string, i int) (int, bool) {
+	if strings.HasPrefix(line[i:], "b'") {
+		if w := charLiteralWidth(line, i+1); w > 0 {
+			s.line.noteToken(LexLiteralChar, false)
+			return i + 1 + w, true
+		}
+	}
+	if strings.HasPrefix(line[i:], "b\"") {
+		s.line.noteToken(LexLiteralString, false)
+		return s.skipQuoted(line, i+1), true
+	}
+	if fence, bodyStart, ok := rustRawStringFence(line, i); ok {
+		s.line.noteToken(LexLiteralRawString, false)
+		return s.skipRawString(line, bodyStart, fence), true
+	}
+	return i, false
+}
+
+// rustRawStringFence matches a Rust r"...", r#"..."#, br"..." or br#"..."# raw string opener at i.
+func rustRawStringFence(line string, i int) (string, int, bool) {
+	prefix := 0
+	if line[i] == 'r' {
+		prefix = 1
+	} else if strings.HasPrefix(line[i:], "br") {
+		prefix = 2
+	}
+	if prefix == 0 {
+		return "", 0, false
+	}
+	j := i + prefix
+	for j < len(line) && line[j] == '#' {
+		j++
+	}
+	if j >= len(line) || line[j] != '"' {
+		return "", 0, false
+	}
+	hashes := j - (i + prefix)
+	return "\"" + strings.Repeat("#", hashes), j + 1, true
+}
+
+// cppRawStringFence matches a C++ R"delim(...)" raw string opener (with optional L, u8, u, U prefix) at i.
+func cppRawStringFence(line string, i int) (string, int, bool) {
+	delimStart := cppRawPrefixEnd(line, i)
+	if delimStart < 0 {
+		return "", 0, false
+	}
+	for k := 0; k <= maxCPPRawDelimiterBytes && delimStart+k < len(line); k++ {
+		ch := line[delimStart+k]
+		if ch == '(' {
+			delim := line[delimStart : delimStart+k]
+			return ")" + delim + "\"", delimStart + k + 1, true
+		}
+		if isInvalidCPPRawDelimByte(ch) {
+			return "", 0, false
+		}
+	}
+	return "", 0, false
+}
+
+// cppRawPrefixEnd returns the index after the opening quote of a C++ raw string prefix at i, or -1.
+func cppRawPrefixEnd(line string, i int) int {
+	for _, p := range [...]string{"R\"", "LR\"", "uR\"", "UR\"", "u8R\""} {
+		if strings.HasPrefix(line[i:], p) {
+			return i + len(p)
+		}
+	}
+	return -1
+}
+
+// isInvalidCPPRawDelimByte reports whether ch is forbidden in a C++ raw-string d-char-sequence.
+func isInvalidCPPRawDelimByte(ch byte) bool {
+	return ch <= ' ' || ch == '(' || ch == ')' || ch == '\\' || ch == '"'
 }
 
 // consumeTemplate skips template text from i up to the backtick that closes the literal or the
@@ -328,25 +653,34 @@ func (s *literalStripper) copyOne(line string, i int, b *strings.Builder) int {
 		if len(s.substitutions) > 0 {
 			return s.copySubstitutionBrace(c, i, b)
 		}
+		s.line.noteToken(LexCode, false)
 		b.WriteByte(c)
 		return i + 1
 	case '/':
 		if end := s.regexLiteralEnd(line, i, b.String()); end > i {
+			s.line.noteToken(LexLiteralRegex, false)
 			return end
 		}
+		s.line.noteToken(LexCode, false)
 		b.WriteByte(c)
 		return i + 1
 	case '"', '\'':
 		fence, width := s.syn.quoteAt(line, i)
 		if fence != "" {
+			s.line.noteToken(LexLiteralString, false)
 			return s.skipQuoted(line, i)
 		}
 		if width > 0 {
+			s.line.noteToken(LexLiteralChar, false)
 			return i + width
 		}
+		s.line.noteToken(LexCode, false)
 		b.WriteByte(c)
 		return i + 1
 	default:
+		if c != ' ' && c != '\t' && c != '\r' {
+			s.line.noteToken(LexCode, false)
+		}
 		b.WriteByte(c)
 		return i + 1
 	}
@@ -354,14 +688,17 @@ func (s *literalStripper) copyOne(line string, i int, b *strings.Builder) int {
 
 // skipQuoted skips the quoted string opening at i and returns the index past it. A string that
 // does not close on its line either continues on the next, when a backslash escapes the line
-// break, or, under quotesEndWithLine, was never a string: the quote is dropped as text.
+// break or multilineQuotes holds, or, under quotesEndWithLine, was never a string: the quote is dropped.
 func (s *literalStripper) skipQuoted(line string, i int) int {
 	end, closed, carried := scanQuoted(line, i+1, line[i:i+1])
-	if carried {
+	if carried || (!closed && s.syn.multilineQuotes) {
 		s.fence = line[i : i+1]
+		s.fenceClass = LexLiteralString
+		return end
 	}
-	if !closed && !carried {
+	if !closed {
 		s.unclosed = true
+		s.line.unclosed = true
 		if s.syn.quotesEndWithLine {
 			return i + 1
 		}
@@ -389,10 +726,13 @@ func (s *literalStripper) copySubstitutionBrace(c byte, i int, b *strings.Builde
 	case s.substitutions[top] == 0:
 		s.substitutions = s.substitutions[:top]
 		s.fence = templateFence
+		s.fenceClass = LexLiteralTemplate
+		s.line.noteToken(LexLiteralTemplate, false)
 		return i + 1
 	default:
 		s.substitutions[top]--
 	}
+	s.line.noteToken(LexCode, false)
 	b.WriteByte(c)
 	return i + 1
 }
@@ -1213,21 +1553,41 @@ func (syn literalSyntax) quoteAt(text string, i int) (string, int) {
 	return text[i : i+1], 1
 }
 
+// syntaxForLanguage selects the lexical allow-list for a source language.
+func syntaxForLanguage(language string) literalSyntax {
+	switch language {
+	case "rust":
+		return rustSyntax
+	case "c", "cpp", "cuda", "objective-c++":
+		return cppSyntax
+	case "python":
+		return pythonSyntax
+	case "javascript", "typescript", "svelte":
+		return scriptSyntax
+	default:
+		return cLikeSyntax
+	}
+}
+
+// ScanLines scans lines forward once with the language's lexical allow-list, returning each
+// line's stripped code and start/end lexical state, and whether all constructs closed.
+func ScanLines(lines []string, language string) ([]LexLine, bool) {
+	s := literalStripper{syn: syntaxForLanguage(language)}
+	out := make([]LexLine, len(lines))
+	for i := 0; i < len(lines); i++ {
+		out[i] = s.scanLine(lines[i])
+	}
+	return out, !s.open() && !s.unclosed
+}
+
 // StripLiterals returns lines with string, character, template and regular-expression
 // literals and comments removed by the scanner's per-language literalStripper, and
 // reports whether every literal and comment closed within lines.
 func StripLiterals(lines []string, language string) ([]string, bool) {
-	syn := cLikeSyntax
-	switch language {
-	case "python":
-		syn = pythonSyntax
-	case "javascript", "typescript", "svelte":
-		syn = scriptSyntax
+	lexed, ok := ScanLines(lines, language)
+	out := make([]string, len(lexed))
+	for i := 0; i < len(lexed); i++ {
+		out[i] = lexed[i].Code
 	}
-	s := literalStripper{syn: syn}
-	out := make([]string, len(lines))
-	for i := 0; i < len(lines); i++ {
-		out[i] = s.strip(lines[i])
-	}
-	return out, !s.open() && !s.unclosed
+	return out, ok
 }

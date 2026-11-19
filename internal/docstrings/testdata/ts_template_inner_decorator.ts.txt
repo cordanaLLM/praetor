@@ -1,0 +1,7 @@
+class C {
+  // Run the operation.
+  @tag(`first
+  @example
+  last`)
+  run() {}
+}

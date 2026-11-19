@@ -1,0 +1,6 @@
+#[cfg_attr(
+    feature = "x",
+    /* outer /* inner )] */ still in outer comment )] */
+    inline
+)]
+pub fn run() {}

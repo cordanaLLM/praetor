@@ -196,13 +196,18 @@ func evaluateSingleFile(ctx context.Context, repoDir, headRef, rel string, fileR
 
 // recordFunctionCoverage updates rep with coverage for functions overlapping fileRanges.
 func recordFunctionCoverage(rel string, data []byte, lines []string, functions []hiss.FunctionSpan, fileRanges []cifilter.LineRange, rep *Report) {
+	style := resolveDocStyle(rel, data)
+	var scanned []scannedLine
+	if style == docStyleCommentAbove {
+		scanned = scanSourceLines(lines, util.SourceLanguage(rel))
+	}
 	for i := 0; i < len(functions); i++ {
 		fn := functions[i]
 		if !overlapsRanges(fn, fileRanges) {
 			continue
 		}
 		rep.Counted++
-		if HasDocstring(rel, data, lines, fn) {
+		if hasDocstringForStyle(style, scanned, lines, fn) {
 			rep.Covered++
 		} else {
 			rep.Uncovered = append(rep.Uncovered, UncoveredFunction{
@@ -336,9 +341,19 @@ func hasShellShebang(data []byte) bool {
 
 // HasDocstring reports whether fn in rel has a docstring under its language family's convention.
 func HasDocstring(rel string, data []byte, lines []string, fn hiss.FunctionSpan) bool {
-	switch resolveDocStyle(rel, data) {
+	style := resolveDocStyle(rel, data)
+	var scanned []scannedLine
+	if style == docStyleCommentAbove {
+		scanned = scanSourceLines(lines, util.SourceLanguage(rel))
+	}
+	return hasDocstringForStyle(style, scanned, lines, fn)
+}
+
+// hasDocstringForStyle checks docstring presence using pre-scanned lexical lines for comment-above languages.
+func hasDocstringForStyle(style docStyle, scanned []scannedLine, lines []string, fn hiss.FunctionSpan) bool {
+	switch style {
 	case docStyleCommentAbove:
-		return hasCommentAbove(lines, fn.Start, util.SourceLanguage(rel))
+		return hasCommentAbove(scanned, fn.Start)
 	case docStylePythonBody:
 		return hasPythonDocstring(lines, fn.Start, fn.End)
 	case docStyleShellAbove:
@@ -348,134 +363,248 @@ func HasDocstring(rel string, data []byte, lines []string, fn hiss.FunctionSpan)
 	}
 }
 
-// hasCommentAbove checks for a //, ///, /* */, or /** */ comment ending directly above startLine,
-// skipping intervening attributes and decorators.
-func hasCommentAbove(lines []string, startLine int, language string) bool {
-	if startLine <= 1 || startLine-1 > len(lines) {
+const maxAnnotationScanLines = maxAttributeLines * 2
+
+// annotationSpan records a complete, balanced attribute or decorator span from openLine to closeLine.
+type annotationSpan struct {
+	openLine   int
+	closeLine  int
+	count      int
+	startDepth int
+	endDepth   int
+	startClass hiss.LexClass
+	endClass   hiss.LexClass
+}
+
+// commentSpan records a standalone line or block comment span from openLine to closeLine.
+type commentSpan struct {
+	openLine  int
+	closeLine int
+	class     hiss.LexClass
+}
+
+// scannedLine combines the lexical scanner's per-line state with recorded annotation and comment spans.
+type scannedLine struct {
+	lex               hiss.LexLine
+	startBracketDepth int
+	endBracketDepth   int
+	annotation        *annotationSpan
+	comment           *commentSpan
+}
+
+// scanSourceLines runs the HISS lexical scanner once forward across lines and records
+// complete annotation spans, bracket depths, and standalone comment spans.
+func scanSourceLines(lines []string, language string) []scannedLine {
+	lexed, _ := hiss.ScanLines(lines, language)
+	out := make([]scannedLine, len(lexed))
+	for i := 0; i < len(lexed); i++ {
+		out[i] = scannedLine{lex: lexed[i]}
+	}
+	recordAnnotationSpans(out)
+	recordCommentSpans(out)
+	return out
+}
+
+// hasCommentAbove walks upward over the forward-scanned line records above startLine,
+// skipping complete annotation spans within the line and count budgets to check for a comment span.
+func hasCommentAbove(scanned []scannedLine, startLine int) bool {
+	if startLine <= 1 || startLine-1 > len(scanned) {
 		return false
 	}
 	idx := startLine - 2
-	if strings.TrimSpace(lines[startLine-1]) == "{" && idx >= 1 {
+	if strings.TrimSpace(scanned[startLine-1].lex.Code) == "{" && idx >= 1 {
 		idx--
 	}
-	idx, ok := skipAttributesAbove(lines, idx, language)
+	idx, ok := skipAttributesAbove(scanned, idx)
 	if !ok || idx < 0 {
 		return false
 	}
-	above := strings.TrimSpace(lines[idx])
-	if strings.HasPrefix(above, "//") {
-		return true
-	}
-	if strings.HasSuffix(above, "*/") {
-		return hasBlockCommentStart(lines, idx)
-	}
-	return false
+	return scanned[idx].comment != nil
 }
 
-// skipAttributesAbove skips only complete attributes within maxAttributeLines.
-// A comment ends the lookup; other text must form a standalone annotation.
-func skipAttributesAbove(lines []string, idx int, language string) (int, bool) {
-	remaining := maxAttributeLines
-	for steps := 0; steps < maxAttributeLines && remaining > 0 && idx >= 0; steps++ {
-		trimmed := strings.TrimSpace(lines[idx])
-		if isAttributeBoundary(trimmed) {
+// skipAttributesAbove walks upward over complete annotation spans recorded by the forward pass,
+// enforcing maxAttributeLines and maxLineAttributes.
+func skipAttributesAbove(scanned []scannedLine, idx int) (int, bool) {
+	remainingLines := maxAttributeLines
+	remainingAnnotations := maxLineAttributes
+	for steps := 0; steps < maxAttributeLines && idx >= 0; steps++ {
+		span := scanned[idx].annotation
+		if span == nil {
 			return idx, true
 		}
-		nextIdx, used, ok := stepAttributeGroup(lines, idx, remaining, language)
-		if !ok {
+		usedLines := span.closeLine - span.openLine + 1
+		if usedLines > remainingLines || span.count > remainingAnnotations {
 			return -1, false
 		}
-		idx = nextIdx
-		remaining -= used
+		remainingLines -= usedLines
+		remainingAnnotations -= span.count
+		idx = span.openLine - 1
 	}
 	return idx, true
 }
 
-// stepAttributeGroup finds a header backwards, then validates its bounded text forwards.
-// Forward scanning preserves multiline literal state and detects trailing items.
-func stepAttributeGroup(lines []string, idx, remaining int, language string) (int, int, bool) {
-	for step := 0; step < remaining && idx-step >= 0; step++ {
-		lineIdx := idx - step
-		trimmed := strings.TrimSpace(lines[lineIdx])
-		if isAttributeBoundary(trimmed) && !insideOpenAttribute(lines, lineIdx, remaining-step, language) {
-			return -1, 0, false
+// recordAnnotationSpans walks forward over scanned lines and records complete annotation spans
+// and per-line bracket depths.
+func recordAnnotationSpans(out []scannedLine) {
+	for i := 0; i < len(out); i++ {
+		if !canOpenAnnotation(out[i].lex) {
+			continue
 		}
-		if isAttributeOrDecorator(trimmed) {
-			if standaloneAttribute(lines[lineIdx:idx+1], language) {
-				return lineIdx - 1, step + 1, true
+		if closeIdx, ok := matchAnnotationSpan(out, i); ok {
+			i = closeIdx
+			continue
+		}
+		i = markUnclosedAnnotation(out, i)
+	}
+}
+
+// canOpenAnnotation reports whether lex can start a top-level attribute or decorator span.
+func canOpenAnnotation(lex hiss.LexLine) bool {
+	if lex.StartClass != hiss.LexCode || lex.StartInLiteral || lex.StartBlockDepth > 0 || lex.Unclosed {
+		return false
+	}
+	_, _, ok := consumeAnnotationHeader(trimHorizontal(lex.Code))
+	return ok
+}
+
+// matchAnnotationSpan scans forward from openLine to find a complete, balanced annotation span.
+func matchAnnotationSpan(out []scannedLine, openLine int) (int, bool) {
+	var stack []byte
+	count := 0
+	limit := min(len(out)-1, openLine+maxAnnotationScanLines-1)
+	for j := openLine; j <= limit; j++ {
+		if out[j].lex.Unclosed {
+			return -1, false
+		}
+		var ok bool
+		stack, count, ok = stepLineAnnotations(out[j].lex.Code, stack, count)
+		if !ok {
+			return -1, false
+		}
+		if len(stack) == 0 && !out[j].lex.EndInLiteral && out[j].lex.EndBlockDepth == 0 {
+			if count <= 0 {
+				return -1, false
 			}
-			return -1, 0, false
+			applyAnnotationSpan(out, openLine, j, count)
+			return j, true
 		}
 	}
-	return -1, 0, false
+	return -1, false
 }
 
-// insideOpenAttribute reports whether lineIdx lies inside an attribute or decorator
-// opened on an earlier line within remaining lookback lines whose delimiters are unbalanced.
-func insideOpenAttribute(lines []string, lineIdx, remaining int, language string) bool {
-	for step := 1; step < remaining && lineIdx-step >= 0; step++ {
-		start := lineIdx - step
-		if isAttributeOrDecorator(strings.TrimSpace(lines[start])) {
-			return hasUnclosedAttribute(lines[start:lineIdx+1], language)
+// applyAnnotationSpan records the bracket depths across openLine..closeLine and attaches the span to closeLine.
+func applyAnnotationSpan(out []scannedLine, openLine, closeLine, count int) {
+	var stack []byte
+	c := 0
+	for j := openLine; j <= closeLine; j++ {
+		out[j].startBracketDepth = len(stack)
+		stack, c, _ = stepLineAnnotations(out[j].lex.Code, stack, c)
+		out[j].endBracketDepth = len(stack)
+	}
+	out[closeLine].annotation = &annotationSpan{
+		openLine:   openLine,
+		closeLine:  closeLine,
+		count:      count,
+		startDepth: out[openLine].startBracketDepth,
+		endDepth:   out[closeLine].endBracketDepth,
+		startClass: out[openLine].lex.StartClass,
+		endClass:   out[closeLine].lex.EndClass,
+	}
+}
+
+// markUnclosedAnnotation records positive bracket depths on lines belonging to an unclosed
+// annotation up to the next statement or body delimiter, returning the last line consumed.
+func markUnclosedAnnotation(out []scannedLine, openLine int) int {
+	var stack []byte
+	stack, _, ok := stepLineAnnotations(out[openLine].lex.Code, stack, 0)
+	out[openLine].endBracketDepth = len(stack)
+	if !ok || len(stack) == 0 || strings.ContainsAny(out[openLine].lex.Code, "{;") {
+		return openLine
+	}
+	limit := min(len(out)-1, openLine+maxAttributeLines-1)
+	for j := openLine + 1; j <= limit; j++ {
+		if strings.ContainsAny(out[j].lex.Code, "{;") {
+			return j - 1
+		}
+		out[j].startBracketDepth = len(stack)
+		var valid bool
+		stack, _, valid = stepLineAnnotations(out[j].lex.Code, stack, 1)
+		out[j].endBracketDepth = max(len(stack), 1)
+		if !valid || len(stack) == 0 {
+			return j
 		}
 	}
-	return false
+	return limit
 }
 
-// isAttributeBoundary stops lookback at blank lines and standalone comments,
-// while allowing an annotation to end with a trailing block comment.
-func isAttributeBoundary(trimmed string) bool {
-	return !isAttributeOrDecorator(trimmed) && (trimmed == "" || isCommentBoundary(trimmed))
+// recordCommentSpans walks forward over scanned lines and records standalone line and block comment spans.
+func recordCommentSpans(out []scannedLine) {
+	for i := 0; i < len(out); i++ {
+		if !out[i].lex.CommentOnly || out[i].startBracketDepth > 0 || out[i].lex.StartBlockDepth > 0 {
+			continue
+		}
+		if out[i].lex.EndBlockDepth == 0 {
+			out[i].comment = &commentSpan{openLine: i, closeLine: i, class: out[i].lex.StartClass}
+			continue
+		}
+		i = matchBlockCommentSpan(out, i)
+	}
 }
 
-// isCommentBoundary reports whether a trimmed line is a standalone comment.
-func isCommentBoundary(trimmed string) bool {
-	return strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasSuffix(trimmed, "*/")
+// matchBlockCommentSpan scans forward from openLine to the closing line of a standalone block comment.
+func matchBlockCommentSpan(out []scannedLine, openLine int) int {
+	limit := min(len(out)-1, openLine+maxCommentBlockLines)
+	for j := openLine + 1; j <= limit; j++ {
+		if out[j].lex.EndBlockDepth == 0 {
+			if out[j].lex.CommentOnly {
+				out[j].comment = &commentSpan{openLine: openLine, closeLine: j, class: out[openLine].lex.StartClass}
+			}
+			return j
+		}
+	}
+	return limit
 }
 
 // attributeName matches a decorator's dotted identifier or a native attribute introducer.
 var attributeName = regexp.MustCompile(`^(?:@[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*|__attribute__|#)`)
 
-// standaloneAttribute strips literals and comments via the HISS scanner and verifies
-// that lines hold only complete annotations within the per-line scalar bound.
-func standaloneAttribute(lines []string, language string) bool {
-	stripped, ok := hiss.StripLiterals(lines, language)
-	if !ok {
-		return false
-	}
-	closed, valid := walkAttributeText(strings.Join(stripped, "\n"))
-	return closed && valid
-}
-
-// hasUnclosedAttribute strips literals and comments via the HISS scanner and reports
-// whether lines start a valid annotation sequence whose delimiters remain unbalanced.
-func hasUnclosedAttribute(lines []string, language string) bool {
-	stripped, _ := hiss.StripLiterals(lines, language)
-	closed, valid := walkAttributeText(strings.Join(stripped, "\n"))
-	return !closed && valid
-}
-
-// walkAttributeText consumes 1..maxLineAttributes annotations from stripped text,
-// reporting whether all annotations closed and whether the text is a valid annotation sequence.
-func walkAttributeText(text string) (bool, bool) {
-	text = trimHorizontal(text)
-	if text == "" {
-		return false, false
-	}
-	for count := 0; count < maxLineAttributes; count++ {
-		rest, closed, valid := consumeOneAttribute(text)
+// stepLineAnnotations advances annotation bracket state across one line's stripped code.
+func stepLineAnnotations(code string, stack []byte, count int) ([]byte, int, bool) {
+	if len(stack) > 0 {
+		var closed, valid bool
+		code, stack, closed, valid = advanceAnnotationBody(code, stack)
 		if !valid {
-			return false, false
+			return nil, 0, false
 		}
 		if !closed {
-			return false, true
-		}
-		text = trimHorizontal(rest)
-		if text == "" {
-			return true, true
+			return stack, count, true
 		}
 	}
-	return false, false
+	code = trimHorizontal(code)
+	for step := 0; step <= maxLineAttributes && code != ""; step++ {
+		body, hasBody, ok := consumeAnnotationHeader(code)
+		if !ok {
+			return nil, 0, false
+		}
+		count++
+		if !hasBody {
+			code = trimHorizontal(body)
+			continue
+		}
+		var closed, valid bool
+		code, stack, closed, valid = advanceAnnotationBody(body, stack)
+		if !valid {
+			return nil, 0, false
+		}
+		if !closed {
+			return stack, count, true
+		}
+		code = trimHorizontal(code)
+	}
+	if code != "" {
+		return nil, 0, false
+	}
+	return stack, count, true
 }
 
 // trimHorizontal trims spaces, tabs, and carriage returns while keeping newline boundaries intact.
@@ -483,22 +612,21 @@ func trimHorizontal(text string) string {
 	return strings.Trim(text, " \t\r")
 }
 
-// consumeOneAttribute consumes one annotation from the start of stripped text, reporting
-// the remaining text, whether its delimiters closed, and whether the prefix is a valid annotation.
-func consumeOneAttribute(text string) (string, bool, bool) {
+// consumeAnnotationHeader consumes an annotation introducer from the start of trimmed stripped code,
+// returning the remaining text, whether a bracketed body follows, and whether the introducer is valid.
+func consumeAnnotationHeader(text string) (string, bool, bool) {
+	if text == "" {
+		return "", false, false
+	}
 	name := attributeName.FindString(text)
 	body := trimHorizontal(strings.TrimPrefix(text, name))
 	if strings.HasPrefix(name, "@") && !strings.HasPrefix(body, "(") {
-		return body, true, true
+		return body, false, true
 	}
 	if !opensAttributeBody(name, body) {
 		return "", false, false
 	}
-	end, closed, valid := attributeDelimiterEnd(body)
-	if !valid {
-		return "", false, false
-	}
-	return body[end:], closed, true
+	return body, true, true
 }
 
 // opensAttributeBody reports whether name and body open a delimited attribute or decorator.
@@ -515,57 +643,29 @@ func opensAttributeBody(name, body string) bool {
 	}
 }
 
-// attributeDelimiterEnd finds the first balanced closing delimiter in stripped text.
-// Its stack and byte walk are bounded by the caller's at-most-32-line source slice.
-func attributeDelimiterEnd(text string) (int, bool, bool) {
-	stack := make([]byte, 0, len(text))
-	for i := 0; i < len(text); i++ {
-		ch := text[i]
+// advanceAnnotationBody advances stack across code up to the closing delimiter that empties stack.
+func advanceAnnotationBody(code string, stack []byte) (string, []byte, bool, bool) {
+	for i := 0; i < len(code); i++ {
+		ch := code[i]
 		switch {
 		case strings.ContainsRune("([{", rune(ch)):
 			stack = append(stack, ch)
 		case strings.ContainsRune(")]}", rune(ch)):
 			if len(stack) == 0 || !matchingAttributeDelimiter(stack[len(stack)-1], ch) {
-				return 0, false, false
+				return "", nil, false, false
 			}
 			stack = stack[:len(stack)-1]
 			if len(stack) == 0 {
-				return i + 1, true, true
+				return code[i+1:], stack, true, true
 			}
 		}
 	}
-	return len(text), false, len(stack) > 0
+	return "", stack, false, len(stack) > 0
 }
 
 // matchingAttributeDelimiter reports whether open and close are a matching bracket pair.
 func matchingAttributeDelimiter(open, close byte) bool {
 	return strings.IndexByte("([{", open) == strings.IndexByte(")]}", close)
-}
-
-// isAttributeOrDecorator reports whether a trimmed line is an attribute or decorator annotation.
-func isAttributeOrDecorator(trimmed string) bool {
-	if trimmed == "" {
-		return false
-	}
-	return strings.HasPrefix(trimmed, "#[") ||
-		strings.HasPrefix(trimmed, "@") ||
-		strings.HasPrefix(trimmed, "[[") ||
-		strings.HasPrefix(trimmed, "__attribute__")
-}
-
-// hasBlockCommentStart verifies that a line ending with */ belongs to a standalone /* or /** comment block.
-func hasBlockCommentStart(lines []string, endIdx int) bool {
-	minIdx := max(0, endIdx-maxCommentBlockLines)
-	for i := endIdx; i >= minIdx; i-- {
-		trimmed := strings.TrimSpace(lines[i])
-		if i < endIdx && strings.Contains(trimmed, "*/") {
-			return false
-		}
-		if strings.Contains(trimmed, "/*") {
-			return strings.HasPrefix(trimmed, "/*")
-		}
-	}
-	return false
 }
 
 // hasShellCommentAbove checks for a # comment line (excluding shebangs) directly above startLine.
