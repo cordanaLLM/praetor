@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -235,20 +236,66 @@ func archiveUnwrapPath(prefix, path string) string {
 	return path
 }
 
-// archivePathStart accepts a field boundary before native roots, drive letters and slash paths.
+// archivePathStart applies the host's path spelling rules before cleaning or filesystem inspection.
 func archivePathStart(field string) int {
-	start := strings.IndexAny(field, `/\`)
-	if start < 0 {
+	return archivePathStartForPlatform(field, runtime.GOOS)
+}
+
+// archivePathStartForPlatform accepts boundary-rooted paths and drive prefixes, plus Windows relative backslash paths, excluding prose separators and bare backslashes.
+func archivePathStartForPlatform(field, platform string) int {
+	separator := strings.IndexAny(field, `/\`)
+	if separator < 0 || strings.Trim(field, `\`) == "" {
 		return -1
 	}
+	if archivePathSeparatorInProse(field, separator) {
+		return -1
+	}
+	start := archiveNativePathStart(field, separator, platform)
+	if start < 0 || !archiveFieldBoundary(field, start) {
+		return -1
+	}
+	if start > 0 && strings.HasPrefix(field[start-1:], "://") {
+		return -1
+	}
+	return start
+}
+
+// archiveNativePathStart includes drive prefixes and the first Windows relative component.
+func archiveNativePathStart(field string, separator int, platform string) int {
+	if start := archiveDrivePathStart(field, separator); start != separator {
+		return start
+	}
+	if platform != "windows" || field[separator] != '\\' || archiveFieldBoundary(field, separator) {
+		return separator
+	}
+	start := archiveDrivePathStart(field, strings.LastIndexAny(field[:separator], "`\"'([:=")+1)
+	prefix := field[start:separator]
+	trimmed := strings.TrimLeft(prefix, " \t")
+	if strings.ContainsAny(trimmed, " \t") {
+		return -1
+	}
+	return start + len(prefix) - len(trimmed)
+}
+
+// archivePathSeparatorInProse preserves leading spaces in rooted, wrapped and labelled paths.
+func archivePathSeparatorInProse(field string, separator int) bool {
+	if !archiveFieldBoundary(field, separator) {
+		return false
+	}
+	if separator+1 >= len(field) || !strings.ContainsAny(field[separator+1:separator+2], " 	") {
+		return false
+	}
+	prefix := strings.TrimSpace(field[:separator])
+	if description, _, checkbox := taskCheckbox(prefix + " "); checkbox && strings.TrimSpace(description) == "" {
+		return false
+	}
+	return prefix != "" && !strings.ContainsAny(prefix[len(prefix)-1:], "`\"'([:=")
+}
+
+// archiveDrivePathStart includes a drive prefix only at a complete field boundary.
+func archiveDrivePathStart(field string, start int) int {
 	if start >= 2 && field[start-1] == ':' && archiveFieldBoundary(field, start-2) {
-		start -= 2
-	}
-	if !archiveFieldBoundary(field, start) {
-		return -1
-	}
-	if start > 0 && field[start-1] == ':' && start+1 < len(field) && field[start+1] == '/' {
-		return -1
+		return start - 2
 	}
 	return start
 }

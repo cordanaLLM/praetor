@@ -6,11 +6,7 @@
 
 package state
 
-import (
-	"errors"
-	"runtime"
-	"syscall"
-)
+import "runtime"
 
 // hostArchivePathArgumentLimit excludes the terminating NUL from the native syscall buffer.
 // Linux: include/uapi/linux/limits.h PATH_MAX=4096; XNU: bsd/sys/syslimits.h PATH_MAX=1024.
@@ -30,9 +26,4 @@ func hostArchivePathArgumentLimit() int {
 func archivePathWithinBounds(path string) bool {
 	limit := archivePathArgumentLimit()
 	return limit == 0 || len(path) <= limit
-}
-
-// archivePathTooLong recognizes the native name-too-long error through wrapped stat errors.
-func archivePathTooLong(err error) bool {
-	return errors.Is(err, syscall.ENAMETOOLONG)
 }

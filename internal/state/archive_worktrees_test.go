@@ -437,13 +437,14 @@ func TestArchiveWindowsSpellings(t *testing.T) {
 // TestArchiveWindowsNativeTooLong classifies the real Windows stat error for an oversized component.
 func TestArchiveWindowsNativeTooLong(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("native ERROR_FILENAME_EXCED_RANGE stat requires Windows")
+		t.Skip("native filesystem error for an oversized component requires Windows")
 	}
 	root := t.TempDir()
 	path := filepath.Join(root, strings.Repeat("a", 300))
 	_, statErr := os.Stat(path)
-	if !errors.Is(statErr, syscall.Errno(206)) {
-		t.Fatalf("native stat = %v; want ERROR_FILENAME_EXCED_RANGE (206)", statErr)
+	logArchiveNativeStat(t, statErr)
+	if statErr == nil || !archivePathAbsent(statErr, runtime.GOOS) {
+		t.Fatalf("native stat = %v; want no existing path", statErr)
 	}
 	result, err := lookupArchivePath(t.Context(), path)
 	if err != nil || result.exists || result.notDirectory {
@@ -471,7 +472,7 @@ func TestArchivePathFields(t *testing.T) {
 func TestArchiveLongProseFields(t *testing.T) {
 	prose := "Resolve X (BUG-1): the builder returns ErrA / ErrB per target and the command exits non-zero; " + strings.Repeat("details ", 60)
 	slashProse := "Resolve X (BUG-2): " + "/" + strings.Repeat("a/", 2047) + "a"
-	for _, sample := range []string{prose, slashProse} {
+	for _, sample := range []string{prose, strings.ReplaceAll(prose, "/", `\`), slashProse} {
 		for _, format := range []string{"- [ ] %s\n", "| TODO | %s |\n"} {
 			t.Run(format, func(t *testing.T) { testArchiveLongProseField(t, format, sample) })
 		}
@@ -733,10 +734,10 @@ func testArchivePathStatLength(t *testing.T, root string, size int) {
 	t.Helper()
 	path := filepath.Join(root, strings.Repeat("a", size))
 	_, statErr := os.Stat(path)
-	if !errors.Is(statErr, os.ErrNotExist) && !archivePathTooLong(statErr) {
+	if statErr == nil || !archivePathAbsent(statErr, runtime.GOOS) {
 		t.Fatalf("%d-byte absent candidate stat = %v; want missing or too long", size, statErr)
 	}
-	t.Logf("%d-byte native stat = %v", size, statErr)
+	logArchiveNativeStat(t, statErr)
 	result, err := lookupArchivePath(t.Context(), path)
 	if err != nil || result.exists || result.notDirectory || result.path != filepath.Clean(path) {
 		t.Fatalf("absent archive path = %+v, %v", result, err)
@@ -832,7 +833,7 @@ func testArchiveInvalidPathPreservesRows(t *testing.T, candidate, format string)
 	}
 	_, statErr := os.Stat(candidate)
 	var pathErr *os.PathError
-	if !errors.As(statErr, &pathErr) || errors.Is(statErr, os.ErrNotExist) || archivePathTooLong(statErr) {
+	if !errors.As(statErr, &pathErr) || archivePathAbsent(statErr, runtime.GOOS) {
 		t.Fatalf("invalid-name fixture stat = %v; want non-absence PathError", statErr)
 	}
 	body := fmt.Sprintf(format, candidate) + "- [x] unrelated\n"
@@ -1165,6 +1166,116 @@ func TestNamesNativeWorktreeFields(t *testing.T) {
 		}
 		if namesWorktreePath("path: "+path+" extra | branch: topic", path) {
 			t.Errorf("native prefix matched longer field: %q", path)
+		}
+	}
+}
+
+// logArchiveNativeStat records the actual native code without prescribing a filesystem's answer.
+func logArchiveNativeStat(t *testing.T, err error) {
+	t.Helper()
+	var code syscall.Errno
+	if !errors.As(err, &code) {
+		t.Fatalf("native stat error lacks a syscall code: %v", err)
+	}
+	t.Logf("native stat code = %d; error = %v", uint64(code), err)
+}
+
+// TestArchiveWindowsErrorClassification exercises the production Windows list without Windows I/O.
+func TestArchiveWindowsErrorClassification(t *testing.T) {
+	for _, tc := range []struct {
+		code   syscall.Errno
+		absent bool
+	}{
+		{2, true}, {3, true}, {53, true}, {123, true}, {206, true},
+		{5, false}, {32, false}, {31, false}, {21, false}, {87, false}, {36, false},
+	} {
+		t.Run(fmt.Sprint(uint64(tc.code)), func(t *testing.T) {
+			err := fmt.Errorf("inspect: %w", &os.PathError{Op: "CreateFile", Path: "fixture", Err: tc.code})
+			if got := archivePathAbsent(err, "windows"); got != tc.absent {
+				t.Fatalf("Windows code %d: absent = %v; want %v", uint64(tc.code), got, tc.absent)
+			}
+		})
+	}
+	for _, err := range []error{nil, os.ErrPermission, errors.New("device failure")} {
+		if archivePathAbsent(err, "windows") {
+			t.Errorf("non-missing error classified absent: %v", err)
+		}
+	}
+}
+
+// TestArchiveUnixErrorClassification preserves Unix absence and fail-closed error decisions.
+func TestArchiveUnixErrorClassification(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		absent bool
+	}{
+		{os.ErrNotExist, true}, {syscall.ENAMETOOLONG, true},
+		{syscall.EACCES, false}, {syscall.EIO, false}, {syscall.EINVAL, false},
+		{syscall.Errno(123), false}, {syscall.Errno(206), false}, {nil, false},
+	} {
+		if got := archivePathAbsent(tc.err, "linux"); got != tc.absent {
+			t.Errorf("Unix error %v: absent = %v; want %v", tc.err, got, tc.absent)
+		}
+	}
+}
+
+// TestArchivePathCandidatePlatforms runs native spellings and prose through both platform rules.
+func TestArchivePathCandidatePlatforms(t *testing.T) {
+	prose := `Resolve X (BUG-1): the builder returns ErrA \ ErrB per target and the command exits non-zero; ` + strings.Repeat("details ", 60)
+	for _, tc := range []struct {
+		name, field   string
+		windows, unix bool
+	}{
+		{"bullet-prose", "- [ ] " + prose, false, false},
+		{"table-prose", prose, false, false},
+		{"several-backslashes", `Resolve ErrA \ ErrB \ ErrC per target`, false, false},
+		{"embedded-backslashes", `Resolve ErrA\ErrB and ErrC\ErrD per target`, false, false},
+		{"slash-prose", strings.ReplaceAll(prose, `\`, "/"), false, false},
+		{"relative", `relative\worktree`, true, false},
+		{"relative-leading-space", `relative\ leading worktree`, true, false},
+		{"dot-relative", `.\worktree`, true, false},
+		{"parent-relative", `..\worktree`, true, false},
+		{"label-relative", "path: `relative\\worktree`", true, false},
+		{"drive", `C:\repo\linked worktree`, true, true},
+		{"drive-slash", `C:/repo/linked worktree`, true, true},
+		{"unc", `\\server\share\linked worktree`, true, true},
+		{"extended", `\\?\C:\repo\linked worktree`, true, true},
+		{"extended-unc", `\\?\UNC\server\share\linked worktree`, true, true},
+		{"root-relative", `\repo\linked worktree`, true, true},
+		{"only-backslashes", `\\\\`, false, false},
+		{"single-backslash", `\`, false, false},
+		{"unix", "/repo/linked worktree", true, true},
+		{"leading-component-space", "/ leading worktree", true, true},
+		{"label-leading-space", "path: / leading worktree", true, true},
+		{"wrapped-leading-space", "`/ leading worktree`", true, true},
+		{"checkbox-leading-space", "- [x] / leading worktree", true, true},
+		{"drive-leading-space", `C:\ leading worktree`, true, true},
+		{"drive-relative", `C:relative\worktree`, true, false},
+		{"unix-backslash-component", `/repo/a\b`, true, true},
+		{"url", "url: https://example.test/repo", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := archivePathStartForPlatform(tc.field, "windows") >= 0; got != tc.windows {
+				t.Errorf("Windows candidate %q = %v; want %v", tc.field, got, tc.windows)
+			}
+			if got := archivePathStartForPlatform(tc.field, "linux") >= 0; got != tc.unix {
+				t.Errorf("Unix candidate %q = %v; want %v", tc.field, got, tc.unix)
+			}
+		})
+	}
+}
+
+// TestArchiveWindowsRelativeOffsets preserves complete drive-relative fields after labels and wrappers.
+func TestArchiveWindowsRelativeOffsets(t *testing.T) {
+	for _, tc := range []struct{ field, path string }{
+		{`relative\worktree`, `relative\worktree`},
+		{`C:relative\worktree`, `C:relative\worktree`},
+		{`path: C:relative\worktree`, `C:relative\worktree`},
+		{"path: `C:relative\\worktree`", "C:relative\\worktree`"},
+	} {
+		start := archivePathStartForPlatform(tc.field, "windows")
+		if start < 0 || tc.field[start:] != tc.path {
+			t.Errorf("candidate start for %q = %d; want complete %q", tc.field, start, tc.path)
 		}
 	}
 }

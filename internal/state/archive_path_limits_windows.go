@@ -4,10 +4,7 @@
 
 package state
 
-import (
-	"errors"
-	"syscall"
-)
+import "syscall"
 
 // hostArchivePathArgumentLimit returns the Windows extended-path ceiling in UTF-16 units.
 // https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation
@@ -19,10 +16,4 @@ func hostArchivePathArgumentLimit() int { return 32767 }
 func archivePathWithinBounds(path string) bool {
 	encoded, err := syscall.UTF16FromString(path)
 	return err != nil || len(encoded)-1 <= archivePathArgumentLimit()
-}
-
-// archivePathTooLong includes CreateFile's native ERROR_FILENAME_EXCED_RANGE (WinError.h, 206).
-// os.Stat wraps that errno in PathError; syscall.ENAMETOOLONG is a separate invented value.
-func archivePathTooLong(err error) bool {
-	return errors.Is(err, syscall.ENAMETOOLONG) || errors.Is(err, syscall.Errno(206))
 }
