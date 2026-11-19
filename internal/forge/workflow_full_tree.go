@@ -5,6 +5,7 @@
 package forge
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -235,10 +236,10 @@ func findFullTreeStepCommand(script string) (string, bool) {
 // (engine-hiss18-full-tree-on-pr-20261027).
 func findFullTreeCommandInLine(line string) (string, bool) {
 	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+	if trimmed == "" {
 		return "", false
 	}
-	fields, err := ShellFields(trimmed)
+	fields, err := ProvenShellFields(trimmed)
 	if err == nil {
 		commands := scriptCommands(fields)
 		for i := 0; i < len(commands) && i < maxRunScriptFields; i++ {
@@ -248,6 +249,9 @@ func findFullTreeCommandInLine(line string) (string, bool) {
 				return matched, true
 			}
 		}
+		return "", false
+	}
+	if errors.Is(err, ErrShellReadLimit) {
 		return "", false
 	}
 	return fullTreeFallbackMatch(trimmed)

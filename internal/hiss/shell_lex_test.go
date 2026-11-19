@@ -206,7 +206,7 @@ func TestShellCodeFields(t *testing.T) {
 
 // TestHereDocHelperComplexity measures every function in the new shared-reader files.
 func TestHereDocHelperComplexity(t *testing.T) {
-	for _, path := range []string{"shell_fields.go", "shell_heredoc_files.go", "shell_lex_test.go"} {
+	for _, path := range []string{"shell_fields.go", "shell_heredoc_files.go", "shell_heredoc_owner.go", "shell_heredoc_expansions.go", "shell_lex_test.go"} {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
@@ -215,5 +215,183 @@ func TestHereDocHelperComplexity(t *testing.T) {
 		for _, unit := range MeasureFile(fset, file) {
 			assertHereDocMetrics(t, unit)
 		}
+	}
+}
+
+// TestSplitHereDocsRound3Owners pins proven stdin ownership and redirect order.
+func TestSplitHereDocsRound3Owners(t *testing.T) {
+	for _, tc := range []struct {
+		name, header string
+		want         bool
+	}{
+		{"T6 command string", "bash -c true <<'EOF'", false},
+		{"T6 bare shell", "bash <<'EOF'", true},
+		{"T6 stdin shell", "bash -s <<'EOF'", true},
+		{"T6 script operand", "bash script.sh <<'EOF'", false},
+		{"T8 trailing comment", "cat <<'EOF' | bash # note", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, _, err := SplitHereDocs(tc.header + "\necho sentinel\nEOF\n")
+			if err != nil || strings.Contains(code, "echo sentinel") != tc.want {
+				t.Fatalf("code %q, error %v; want body %v", code, err, tc.want)
+			}
+		})
+	}
+	for _, header := range []string{"cat <<'A' <<'B' | bash", "cat <<'B' <<'A' | bash"} {
+		t.Run("T7 "+header, func(t *testing.T) {
+			first, last := "A", "B"
+			if strings.Contains(header, "<<'B' <<'A'") {
+				first, last = last, first
+			}
+			code, _, err := SplitHereDocs(header + "\necho discarded\n" + first + "\necho effective\n" + last + "\n")
+			if err != nil || strings.Contains(code, "echo discarded") || !strings.Contains(code, "echo effective") {
+				t.Fatalf("redirect order: code %q, error %v", code, err)
+			}
+		})
+	}
+}
+
+// TestSplitHereDocsRound3Files pins literal paths and directory ownership.
+func TestSplitHereDocsRound3Files(t *testing.T) {
+	for _, tc := range []struct {
+		name, header, tail string
+		want               bool
+	}{
+		{"T3 quoted plus", "cat > 'build+sbom.sh' <<'EOF'", "bash 'build+sbom.sh'", true},
+		{"T3 expansion", "cat > \"$SCRIPT\" <<'EOF'", "bash \"$SCRIPT\"", false},
+		{"T4 pipeline cd", "cat > run.sh <<'EOF'", "cd sub | cat\nbash run.sh", true},
+		{"T4 standalone cd", "cat > run.sh <<'EOF'", "cd sub\nbash ../run.sh", true},
+		{"T4 subshell cd", "cat > run.sh <<'EOF'", "(cd sub)\nbash run.sh", true},
+		{"T4 background cd", "cat > run.sh <<'EOF'", "cd sub &\nbash run.sh", true},
+		{"T4 moved path", "cat > run.sh <<'EOF'", "cd sub\nbash run.sh", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, _, err := SplitHereDocs(tc.header + "\necho sentinel\nEOF\n" + tc.tail + "\n")
+			if err != nil || strings.Contains(code, "echo sentinel") != tc.want {
+				t.Fatalf("code %q, error %v; want body %v", code, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestSplitHereDocsRound3Writes pins the definition visible at each invocation.
+func TestSplitHereDocsRound3Writes(t *testing.T) {
+	for _, tc := range []struct {
+		name, middle, writer string
+		wantFirst            bool
+	}{
+		{"T5 overwrite", "", "cat >", false},
+		{"T5 append", "", "cat >>", true},
+		{"T5 tee append", "", "tee -a", true},
+		{"T5 quoted tee append", "", "tee '-a'", true},
+		{"T5 intermediate invocation", "bash run.sh\n", "cat >", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := "cat > run.sh <<'A'\necho first\nA\n" + tc.middle + tc.writer + " run.sh <<'B'\necho second\nB\nbash run.sh\n"
+			code, _, err := SplitHereDocs(script)
+			if err != nil || strings.Contains(code, "echo first") != tc.wantFirst || !strings.Contains(code, "echo second") {
+				t.Fatalf("write lifetime: code %q, error %v", code, err)
+			}
+		})
+	}
+}
+
+// TestSplitHereDocsRound3Unproven checks named uncertainty without execution credit.
+func TestSplitHereDocsRound3Unproven(t *testing.T) {
+	for _, tc := range []struct{ name, script, reason string }{
+		{"owner", "mystery <<'EOF'\necho sentinel\nEOF\n", "unproven here-document owner: mystery"},
+		{"descriptor chain", "bash <<'EOF' <&3\necho sentinel\nEOF\n", "unproven redirect target or descriptor chain"},
+		{"directory", "cat > run.sh <<'EOF'\necho sentinel\nEOF\ncd \"$D\"\nbash run.sh\n", "unproven directory change"},
+		{"grouped definition", "(cd sub\ncat > run.sh <<'EOF'\necho sentinel\nEOF\n)\nbash run.sh\n", "unproven grouped file definition"},
+		{"append without base", "tee -a run.sh <<'EOF'\necho sentinel\nEOF\nbash run.sh\n", "unproven append without file definition"},
+		{"piped file definition", "cat <<'EOF' | tee run.sh\necho sentinel\nEOF\nbash run.sh\n", "unproven piped file definition"},
+		{"cat file operands", "cat -- > run.sh <<'EOF'\necho sentinel\nEOF\nbash run.sh\n", "unproven cat stdin operands"},
+		{"variable tee operand", "tee \"$SCRIPT\" <<'EOF'\necho sentinel\nEOF\nbash run.sh\n", "unproven tee arguments"},
+		{"variable invocation", "cat > run.sh <<'EOF'\necho sentinel\nEOF\nbash \"$SCRIPT\"\n", "unproven script invocation"},
+		{"variable write", "cat > \"$OUT\" <<'EOF'\necho sentinel\nEOF\nbash run.sh\n", "unproven redirect target"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, docs, err := SplitHereDocs(tc.script)
+			if err != nil || len(docs) != 1 || strings.Contains(code, "echo sentinel") || !strings.Contains(docs[0].Reason, tc.reason) {
+				t.Fatalf("unproven: code %q, docs %#v, error %v", code, docs, err)
+			}
+		})
+	}
+}
+
+// TestHereDocLiteralWords covers quoted literal bytes and expansion/glob refusal.
+func TestHereDocLiteralWords(t *testing.T) {
+	for _, tc := range []struct{ word, want string }{
+		{"'build+sbom.sh'", "build+sbom.sh"}, {`"build+sbom.sh"`, "build+sbom.sh"},
+		{"'!$`*?[]{}|&;<> ()\\'", "!$`*?[]{}|&;<> ()\\"},
+		{`"a\$b\` + "`" + `c\"d\\e\q"`, "a$b`c\"d\\e\\q"},
+		{`"price$.sh"`, "price$.sh"}, {`"price$"`, "price$"},
+		{`"$SCRIPT"`, ""}, {`"$(echo file)"`, ""}, {"run*.sh", ""}, {"~user/run", ""},
+	} {
+		t.Run(tc.word, func(t *testing.T) {
+			if got := literalHereDocWord(tc.word); got != tc.want {
+				t.Fatalf("decoded %q; want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSplitHereDocsRound3Redirects pins stdin descriptors and parent directory boundaries.
+func TestSplitHereDocsRound3Redirects(t *testing.T) {
+	for _, tc := range []struct {
+		name, header string
+		want         bool
+	}{
+		{"explicit stdin", "bash 0<<'EOF'", true},
+		{"other descriptor", "bash 2<<'EOF'", false},
+		{"later input replaces body", "bash <<'EOF' < input", false},
+		{"earlier input replaced", "bash < input <<'EOF'", true},
+		{"stderr independent", "bash <<'EOF' 2> error.log", true},
+		{"comment redirect literal", "bash <<'EOF' # > output", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, _, err := SplitHereDocs(tc.header + "\necho sentinel\nEOF\n")
+			if err != nil || strings.Contains(code, "echo sentinel") != tc.want {
+				t.Fatalf("code %q, error %v; want %v", code, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestSplitHereDocsRound3UnprovenWrites withholds stale definitions after unsupported writes.
+func TestSplitHereDocsRound3UnprovenWrites(t *testing.T) {
+	for _, tc := range []struct{ name, write, reason string }{
+		{"multiple outputs", "cat > run.sh > other.sh <<'B'\ntrue\nB\n", "unproven multiple output redirects"},
+		{"variable tee writer", "tee \"$SCRIPT\" <<'B'\ntrue\nB\n", "unproven tee arguments or file operand"},
+		{"other writer", "printf true > run.sh\n", "unproven non-here-document file write"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, docs, err := SplitHereDocs("cat > run.sh <<'A'\necho sentinel\nA\n" + tc.write + "bash run.sh\n")
+			if err != nil || len(docs) == 0 || strings.Contains(code, "echo sentinel") || docs[0].Reason != tc.reason {
+				t.Fatalf("unproven write: code %q, docs %#v, error %v", code, docs, err)
+			}
+		})
+	}
+}
+
+// TestHereDocDefinitionBound proves exact-cap file fragments and refuses the next definition.
+func TestHereDocDefinitionBound(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		copies int
+	}{{"exact cap", maxShellHeredocs}, {"overflow", maxShellHeredocs + 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := "cat > run.sh <<'A'\nA\ntee -a " + strings.Repeat("run.sh ", tc.copies-1) + "<<'EOF'\necho sentinel\nEOF\nbash run.sh\n"
+			code, docs, err := SplitHereDocs(script)
+			if tc.copies > maxShellHeredocs {
+				if err == nil || code != "" || docs != nil {
+					t.Fatalf("definition overflow returned partial proof: %q, %#v, %v", code, docs, err)
+				}
+				return
+			}
+			if err != nil || strings.Count(code, "echo sentinel") != tc.copies-1 {
+				t.Fatalf("exact definition cap: %q, %v", code, err)
+			}
+		})
 	}
 }

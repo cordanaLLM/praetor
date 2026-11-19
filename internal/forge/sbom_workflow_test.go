@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"time"
 )
 
@@ -247,4 +249,43 @@ func TestSBOMReaderHereDocs(t *testing.T) {
 		}
 		return runInvokesSBOMGenerator(fields)
 	})
+}
+
+// TestSBOMWorkflowRound3Unproven withholds generation credit for unknown stdin ownership.
+func TestSBOMWorkflowRound3Unproven(t *testing.T) {
+	fields, err := scriptFields("mystery <<'EOF'\nsyft dir:. -o sbom.json\nEOF\n")
+	if err != nil || runInvokesSBOMGenerator(fields) {
+		t.Fatalf("unproven generator credited: %q, %v", fields, err)
+	}
+	_, docs, splitErr := hiss.SplitHereDocs("mystery <<'EOF'\nbody\nEOF\n")
+	if splitErr != nil || len(docs) != 1 || docs[0].Reason != "unproven here-document owner: mystery" {
+		t.Fatalf("missing unproven reason: %#v, %v", docs, splitErr)
+	}
+
+}
+
+// TestSBOMWorkflowRound3Proof pins generator evidence through the shared ownership and file walker.
+func TestSBOMWorkflowRound3Proof(t *testing.T) {
+	generator := "syft dir:. -o sbom.json\n"
+	for _, tc := range []struct {
+		name, script string
+		want         bool
+	}{
+		{"T3 quoted plus", "cat > 'build+sbom.sh' <<'A'\n" + generator + "A\nbash 'build+sbom.sh'\n", true},
+		{"T4 pipeline cd", "cat > run.sh <<'A'\n" + generator + "A\ncd sub | cat\nbash run.sh\n", true},
+		{"T5 overwritten generator", "cat > run.sh <<'A'\n" + generator + "A\ncat > run.sh <<'B'\ntrue\nB\nbash run.sh\n", false},
+		{"T5 appended generator", "cat > run.sh <<'A'\n" + generator + "A\ncat >> run.sh <<'B'\ntrue\nB\nbash run.sh\n", true},
+		{"T6 command string", "bash -c true <<'A'\n" + generator + "A\n", false},
+		{"T6 stdin shell", "bash -s <<'A'\n" + generator + "A\n", true},
+		{"T7 discarded generator", "cat <<'A' <<'B' | bash\n" + generator + "A\ntrue\nB\n", false},
+		{"T7 effective generator", "cat <<'A' <<'B' | bash\ntrue\nA\n" + generator + "B\n", true},
+		{"T8 trailing comment", "cat <<'A' | bash # note\n" + generator + "A\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fields, err := scriptFields(tc.script)
+			if err != nil || runInvokesSBOMGenerator(fields) != tc.want {
+				t.Fatalf("generator evidence: %q, %v; want %v", fields, err, tc.want)
+			}
+		})
+	}
 }

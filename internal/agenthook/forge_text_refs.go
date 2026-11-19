@@ -578,10 +578,17 @@ func shellWordsText(words []string) string {
 	return strings.Join(unquoted, " ")
 }
 
-// shellFieldsForGH splits command into shell words with forge.ShellFields, refusing any
-// forge.ErrShellReadLimit error, commands over maxForgeTextWords, or parse errors on commands matching ghWriteWordPattern.
+// shellFieldsForGH shares proven body and field reading, adding the forge-write uncertainty policy.
+// Reader bounds and write-shaped parse failures refuse before named files are collected.
 func shellFieldsForGH(command string) ([]string, error) {
-	fields, err := forge.ShellFields(command)
+	code, docs, err := hiss.SplitHereDocs(command)
+	if err == nil {
+		code, err = forgeTextHereDocCode(code, docs)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", forge.ErrShellReadLimit, err)
+	}
+	fields, err := hiss.ShellCodeFields(code)
 	if err != nil {
 		if errors.Is(err, forge.ErrShellReadLimit) || ghWriteWordPattern.MatchString(command) {
 			return nil, err
@@ -592,6 +599,35 @@ func shellFieldsForGH(command string) ([]string, error) {
 		return nil, fmt.Errorf("command exceeds %d shell words", maxForgeTextWords)
 	}
 	return fields, nil
+}
+
+// forgeTextHereDocCode refuses write-shaped uncertainty; proven substitutions already enter code.
+func forgeTextHereDocCode(code string, docs []hiss.HereDoc) (string, error) {
+	for i := 0; i < len(docs) && i < maxForgeTextWords; i++ {
+		if docs[i].Reason != "" && unprovenHereDocWrite(docs[i].Text) {
+			return "", fmt.Errorf("here-document: %s", docs[i].Reason)
+		}
+	}
+	return code, nil
+}
+
+// unprovenHereDocWrite applies the existing word decoder before judging uncertain source.
+// Non-shell prose can contain open quotes; its bounded raw words still screen write shapes.
+func unprovenHereDocWrite(text string) bool {
+	text = joinedHereDocText(text)
+	if ghWriteWordPattern.MatchString(text) {
+		return true
+	}
+	fields, err := hiss.ShellCodeFields(text)
+	if err != nil {
+		fields = strings.Fields(text)
+	}
+	return len(fields) > maxForgeTextWords || ghWriteWordPattern.MatchString(shellWordsText(fields))
+}
+
+// joinedHereDocText shares shell continuation removal between hidden and unproven body checks.
+func joinedHereDocText(text string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(text, "\\\r\n", ""), "\\\n", "")
 }
 
 // parseSegmentGHCall inspects one command segment, updates workDir on cd or pushd, and
@@ -899,8 +935,7 @@ func readForgeTextFile(ctx context.Context, path string) (string, error) {
 // hasHiddenGHWrite detects write-shaped data after shell continuations are joined.
 func hasHiddenGHWrite(docs []hiss.HereDoc) bool {
 	for i := 0; i < len(docs) && i < maxForgeTextWords; i++ {
-		joined := strings.ReplaceAll(docs[i].Text, "\\\r\n", "")
-		joined = strings.ReplaceAll(joined, "\\\n", "")
+		joined := joinedHereDocText(docs[i].Text)
 		if docs[i].Data() && ghWriteWordPattern.MatchString(joined) {
 			return true
 		}

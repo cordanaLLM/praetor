@@ -320,3 +320,12 @@ A finding is one line, and the last line counts them and names both ways out:
   (`TestEngineRequiredContextsFailOnADraft`).
 - The run budget part of #817 (runs and run-minutes per workflow from the forge) and the check
   for a workflow that re-runs on every base-branch push are not implemented.
+
+Workflow fragments select `ProvenShellFields`, the proof mode of the bounded field reader in `internal/forge/shell_fields.go`.
+Leading comments and shebangs do not hide later commands; comment-only fragments match nothing
+(`TestFullTreeRound3Comments`). Here-document execution requires proven stdin ownership and
+shell arguments. Replaced redirects, `-c` strings and unknown owners do not make body text a
+command (`TestFullTreeRound3Unproven`). This proof default also applies to SBOM generator
+recognition in `internal/forge/sbom_workflow.go` (`TestSBOMWorkflowRound3Unproven`). The forge-text
+guard takes the other safe direction: write-shaped uncertainty is refused with a reason; see
+the [agent hook guide](agent-hooks.md).

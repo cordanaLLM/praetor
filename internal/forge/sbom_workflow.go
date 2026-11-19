@@ -149,7 +149,7 @@ func actionPath(uses string) string {
 
 // scriptFields is the internal entry point for the shared shell field reader.
 func scriptFields(run string) ([]string, error) {
-	return ShellFields(run)
+	return ProvenShellFields(run)
 }
 
 // runInvokesSBOMGenerator reports whether a run script's fields invoke a generator that
