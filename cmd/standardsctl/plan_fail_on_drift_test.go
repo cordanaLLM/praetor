@@ -5,8 +5,13 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"maps"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // syncedPlanFixture syncs an acme/widgets fixture to the stub forge and returns the plan
@@ -26,49 +31,66 @@ func editRuleset(t *testing.T, stub *forgeStub, edit func(map[string]any)) {
 	t.Helper()
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
-	for _, doc := range stub.rulesets {
-		if doc["name"] == "praetor-main-protection" {
-			edit(doc)
-			return
-		}
-	}
-	t.Fatalf("no praetor ruleset in the stub: %v", stub.rulesets)
-}
-
-// Positive: a synced branch passes plan --remote --fail-on-drift, bypass actors included.
-func TestPlan_FailOnDrift_Positive_SyncedBranchExitsZero(t *testing.T) {
-	for _, fixture := range []func(*testing.T, *forgeStub) (*auditFixture, string){remoteProtectionFixture, aggregateRemoteFixture} {
-		_, args := syncedPlanFixture(t, fixture)
-		if out, err := runPlanCmd(t, append(args, "--fail-on-drift")...); err != nil {
-			t.Fatalf("plan --remote --fail-on-drift on a synced branch: %v\n%s", err, out)
-		}
-	}
-	_, args := syncedPlanFixture(t, remoteProtectionFixture)
-	out, err := runPlanCmd(t, append(args, "--fail-on-drift")...)
+	doc, err := planFixtureRuleset(stub.rulesets)
 	if err != nil {
-		t.Fatalf("plan --remote --fail-on-drift on a synced branch: %v\n%s", err, out)
+		t.Fatal(err)
 	}
-	mustContain(t, out, "[OK] Bypass actors: declared none, live none",
-		"Status: GitHub enforces every declared branch protection property.")
+	edit(doc)
 }
 
-// Negative, planted: an extra bypass actor and a dropped required check are drift; with
-// --fail-on-drift plan exits with ErrPlanDrift, without it the preview still exits zero.
+// maxPlanFixtureRulesets bounds the ruleset map a plan fixture may scan.
+const maxPlanFixtureRulesets = 32
+
+// planFixtureRuleset finds the managed ruleset for editRuleset while its caller holds the lock.
+func planFixtureRuleset(rulesets map[int]map[string]any) (map[string]any, error) {
+	if len(rulesets) > maxPlanFixtureRulesets {
+		return nil, fmt.Errorf("the plan fixture lists %d rulesets, more than %d", len(rulesets), maxPlanFixtureRulesets)
+	}
+	docs := slices.Collect(maps.Values(rulesets))
+	for i := 0; i < len(docs) && i < maxPlanFixtureRulesets; i++ {
+		doc := docs[i]
+		if doc["name"] == "praetor-main-protection" {
+			return doc, nil
+		}
+	}
+	return nil, fmt.Errorf("no praetor ruleset in the stub: %v", rulesets)
+}
+
+// TestPlanFixtureRuleset_Boundary accepts the exact limit and refuses an oversized map.
+func TestPlanFixtureRuleset_Boundary(t *testing.T) {
+	rulesets := make(map[int]map[string]any, maxPlanFixtureRulesets+1)
+	for i := 0; i < maxPlanFixtureRulesets; i++ {
+		rulesets[i] = map[string]any{"name": "other"}
+	}
+	rulesets[maxPlanFixtureRulesets-1]["name"] = "praetor-main-protection"
+	doc, err := planFixtureRuleset(rulesets)
+	if err != nil || doc["name"] != "praetor-main-protection" {
+		t.Fatalf("at fixture limit: %v, %v", doc, err)
+	}
+	rulesets[maxPlanFixtureRulesets] = map[string]any{"name": "other"}
+	_, err = planFixtureRuleset(rulesets)
+	mustErrContain(t, err, fmt.Sprintf("more than %d", maxPlanFixtureRulesets))
+}
+
+// TestPlan_FailOnDrift_Positive_SyncedBranchExitsZero checks both modes on synced fixtures.
+func TestPlan_FailOnDrift_Positive_SyncedBranchExitsZero(t *testing.T) {
+	fixtures := [...]func(*testing.T, *forgeStub) (*auditFixture, string){remoteProtectionFixture, aggregateRemoteFixture}
+	for i := 0; i < len(fixtures) && i < 2; i++ {
+		_, args := syncedPlanFixture(t, fixtures[i])
+		assertPlanModes(t, args, false, []string{"[OK] Bypass actors: declared none, live none",
+			"Status: GitHub enforces every declared branch protection property."}, []string{"[DRIFT]"})
+	}
+}
+
+// TestPlan_FailOnDrift_Negative_PlantedDrift retains preview exits for every drift fixture.
 func TestPlan_FailOnDrift_Negative_PlantedDrift(t *testing.T) {
 	stub, args := syncedPlanFixture(t, remoteProtectionFixture)
 	editRuleset(t, stub, func(doc map[string]any) {
 		doc["bypass_actors"] = []any{map[string]any{"actor_id": 42, "actor_type": "Team", "bypass_mode": "always"}}
 	})
-	out, err := runPlanCmd(t, append(args, "--fail-on-drift")...)
-	if !errors.Is(err, ErrPlanDrift) {
-		t.Fatalf("an extra bypass actor: want ErrPlanDrift, got %v\n%s", err, out)
-	}
-	mustContain(t, out, "[DRIFT] Bypass actors: declared none, live [Team 42 always]",
-		"sync --remote keeps the bypass actors of a live ruleset",
-		`[DRIFT] The bypass actors of ruleset "praetor-main-protection" on main differ from the declared ones.`)
-	if out, err := runPlanCmd(t, args...); err != nil {
-		t.Fatalf("plan --remote without --fail-on-drift must stay a zero-exit preview: %v\n%s", err, out)
-	}
+	assertPlanModes(t, args, true, []string{"[DRIFT] Bypass actors: declared none, live [Team 42 always]", existingRulesetAction,
+		`[DRIFT] The bypass actors of ruleset "praetor-main-protection" on main differ from the declared ones.`},
+		[]string{"Status: GitHub enforces every declared branch protection property."})
 
 	stub, args = syncedPlanFixture(t, aggregateRemoteFixture)
 	editRuleset(t, stub, func(doc map[string]any) {
@@ -81,22 +103,110 @@ func TestPlan_FailOnDrift_Negative_PlantedDrift(t *testing.T) {
 			return isMap && typed["type"] == "required_status_checks"
 		})
 	})
-	out, err = runPlanCmd(t, append(args, "--fail-on-drift")...)
-	if !errors.Is(err, ErrPlanDrift) {
-		t.Fatalf("a dropped required check: want ErrPlanDrift, got %v\n%s", err, out)
-	}
-	mustContain(t, out, "[DRIFT] Required status checks", "Action: Run 'praetorctl sync --remote' to reconcile branch protection on GitHub.")
+	assertPlanModes(t, args, true, []string{"[DRIFT] Required status checks", "Action: Run 'praetorctl sync --remote' to reconcile branch protection on GitHub."},
+		[]string{"Status: GitHub enforces every declared branch protection property."})
 }
 
-// Boundary: an unread bypass list never passes, and --fail-on-drift without --remote is refused.
+// TestPlan_FailOnDrift_Boundary rejects unread lists as clean in both modes and flag misuse.
 func TestPlan_FailOnDrift_Boundary(t *testing.T) {
 	stub, args := syncedPlanFixture(t, remoteProtectionFixture)
 	editRuleset(t, stub, func(doc map[string]any) { delete(doc, "bypass_actors") })
-	out, err := runPlanCmd(t, append(args, "--fail-on-drift")...)
-	if !errors.Is(err, ErrPlanDrift) {
-		t.Fatalf("an unread bypass list: want ErrPlanDrift, got %v\n%s", err, out)
-	}
-	mustContain(t, out, "[DRIFT] Bypass actors: declared none, live unread")
-	_, err = runPlanCmd(t, args[0], "--fail-on-drift")
+	assertPlanModes(t, args, true, []string{"[DRIFT] Bypass actors: declared none, live unread (GitHub returns bypass_actors only with write access to the ruleset)", existingRulesetAction},
+		[]string{"[OK] Bypass actors", "Status: GitHub enforces every declared branch protection property."})
+	_, err := runPlanCmd(t, args[0], "--fail-on-drift")
 	mustErrContain(t, err, "--fail-on-drift judges the live branch protection, which only --remote reads")
 }
+
+// singleMaintainerPlanFixture declares the admin bypass actor before syncing the stub.
+func singleMaintainerPlanFixture(t *testing.T, stub *forgeStub) (*auditFixture, string) {
+	t.Helper()
+	f, endpoint := remoteProtectionFixture(t, stub)
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+"overrides:\n  branch_protection:\n    review_mode: single_maintainer\n")
+	policy := config.DefaultPolicy().BranchProtection
+	policy.ReviewMode = config.BranchReviewModeSingleMaintainer
+	if err := synthesizeRuleset(f.dir, "main", policy, nil); err != nil {
+		t.Fatal(err)
+	}
+	return f, endpoint
+}
+
+// assertPlanModes checks the same report with both preview and failure exit behavior.
+func assertPlanModes(t *testing.T, args []string, drift bool, want, absent []string) {
+	t.Helper()
+	for mode := 0; mode < 2; mode++ {
+		runArgs := slices.Clone(args)
+		if mode == 1 {
+			runArgs = append(runArgs, "--fail-on-drift")
+		}
+		out, err := runPlanCmd(t, runArgs...)
+		if drift && mode == 1 {
+			if !errors.Is(err, ErrPlanDrift) {
+				t.Fatalf("flagged drift: got %v\n%s", err, out)
+			}
+		} else if err != nil {
+			t.Fatalf("mode %d: want nil error, got %v\n%s", mode, err, out)
+		}
+		mustContain(t, out, want...)
+		rejectPlanMessages(t, out, absent)
+	}
+}
+
+// rejectPlanMessages refuses false clean reports and remedies for the wrong ruleset state.
+func rejectPlanMessages(t *testing.T, out string, absent []string) {
+	t.Helper()
+	if len(absent) > 4 {
+		t.Fatal("too many forbidden plan messages")
+	}
+	for i := 0; i < len(absent) && i < 4; i++ {
+		if strings.Contains(out, absent[i]) {
+			t.Fatalf("unexpected %q\n%s", absent[i], out)
+		}
+	}
+}
+
+// TestPlan_FailOnDrift_MissingManagedRuleset distinguishes missing rulesets from live actors.
+func TestPlan_FailOnDrift_MissingManagedRuleset(t *testing.T) {
+	cases := [...]struct {
+		name   string
+		change func(map[string]any)
+		clear  bool
+		drift  bool
+		want   []string
+		absent []string
+	}{
+		{"protection elsewhere", func(doc map[string]any) { doc["name"] = "other-protection" }, false, true,
+			[]string{"[DRIFT] Bypass actors: declared [RepositoryRole 5 pull_request], live no praetor-main-protection ruleset", missingRulesetAction},
+			[]string{"by hand", "[DRIFT] GitHub does not enforce"}},
+		{"no protection", func(map[string]any) {}, true, true,
+			[]string{"[DRIFT] Bypass actors: declared [RepositoryRole 5 pull_request], live no praetor-main-protection ruleset", missingRulesetAction,
+				"[DRIFT] GitHub does not enforce the declared"}, []string{"by hand"}},
+		{"extra actor", func(doc map[string]any) {
+			doc["bypass_actors"] = []any{map[string]any{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
+				map[string]any{"actor_id": 42, "actor_type": "Team", "bypass_mode": "always"}}
+		}, false, true, []string{"[DRIFT] Bypass actors: declared [RepositoryRole 5 pull_request], live [RepositoryRole 5 pull_request, Team 42 always]", existingRulesetAction}, []string{missingRulesetAction}},
+		{"equal", func(map[string]any) {}, false, false,
+			[]string{"[OK] Bypass actors: declared [RepositoryRole 5 pull_request], live [RepositoryRole 5 pull_request]", "Status: GitHub enforces every declared branch protection property."},
+			[]string{"[DRIFT]", existingRulesetAction, missingRulesetAction}},
+		{"missing actor", func(doc map[string]any) { doc["bypass_actors"] = []any{} }, false, true,
+			[]string{"[DRIFT] Bypass actors: declared [RepositoryRole 5 pull_request], live none", existingRulesetAction}, []string{missingRulesetAction}},
+	}
+	for i := 0; i < len(cases) && i < 5; i++ {
+		c := cases[i]
+		t.Run(c.name, func(t *testing.T) {
+			stub, args := syncedPlanFixture(t, singleMaintainerPlanFixture)
+			editRuleset(t, stub, c.change)
+			if c.clear {
+				stub.mu.Lock()
+				clear(stub.rulesets)
+				stub.mu.Unlock()
+			}
+			assertPlanModes(t, args, c.drift, c.want, c.absent)
+		})
+	}
+}
+
+// missingRulesetAction names creation; existingRulesetAction preserves the live-actor remedy.
+const (
+	missingRulesetAction  = `Action: Run 'praetorctl sync --remote' to create missing ruleset "praetor-main-protection" with the declared bypass actors.`
+	existingRulesetAction = `sync --remote keeps the bypass actors of a live ruleset; change those of ruleset "praetor-main-protection" on GitHub by hand (repository Settings, Rules) if the declared policy is intended`
+)

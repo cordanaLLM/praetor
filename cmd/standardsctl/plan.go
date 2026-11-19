@@ -153,7 +153,7 @@ type liveRulesetReader interface {
 }
 
 // planBypassActors compares the bypass actors of the live praetor ruleset with the declared ones
-// and prints the finding; sync --remote keeps live bypass actors, so drift names the hand edit.
+// and prints the finding; missing rulesets need creation, existing actors need a hand edit.
 func planBypassActors(ctx context.Context, reader liveRulesetReader, target protectionTarget) (bool, error) {
 	body, err := reader.LiveRuleset(ctx, target.branch)
 	if err != nil {
@@ -166,6 +166,10 @@ func planBypassActors(ctx context.Context, reader liveRulesetReader, target prot
 	fmt.Println("    " + formatProtectionFinding(finding))
 	if finding.Verdict != forge.ProtectionDrift {
 		return false, nil
+	}
+	if body == nil {
+		fmt.Printf("    Action: Run 'praetorctl sync --remote' to create missing ruleset %q with the declared bypass actors.\n", forge.RepositoryRulesetName)
+		return true, nil
 	}
 	fmt.Printf("    sync --remote keeps the bypass actors of a live ruleset; change those of ruleset %q on GitHub by hand "+
 		"(repository Settings, Rules) if the declared policy is intended\n", forge.RepositoryRulesetName)
