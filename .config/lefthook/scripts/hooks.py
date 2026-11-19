@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -18,7 +19,18 @@ from checks import (
     gofmt_check,
     source_checks,
 )
-from common import HookError, changed, clean_env, git, paths, run, snapshot
+from common import (
+    HookBudget,
+    HookError,
+    STOP_GRACE,
+    changed,
+    clean_env,
+    git,
+    paths,
+    refuse_after,
+    run,
+    snapshot,
+)
 from privacy import check_private_history, check_private_index
 from toolchain import make_program
 
@@ -280,6 +292,14 @@ def check_merge_range(base, head):
     cli(["merge-check", f"--range={base}..{head}"])
 
 
+def signature_excluded_log(args, other_refs):
+    """Keep bounded tracking object IDs off Git's argv, preserving log timeout."""
+    if not other_refs:
+        return git("log", *args, "--")
+    data = ("^" + "\n^".join(other_refs) + "\n").encode()
+    return run(["git", "log", *args, "--stdin", "--"], data=data, timeout=180)
+
+
 def signature_log_lines(base, head, remote):
     """Return bounded signature logs, retaining own commits even when published elsewhere.
 
@@ -291,9 +311,7 @@ def signature_log_lines(base, head, remote):
     def collect(other_refs):
         """Collect one snapshot without printing diagnostics from a discarded attempt."""
         args = [limit, "--format=%H %G?", f"{base}..{head}"]
-        if other_refs:
-            args.extend(["--not", *other_refs])
-        lines = git("log", *args, "--").decode().splitlines()
+        lines = signature_excluded_log(args, other_refs).decode().splitlines()
         email, total = None, None
         if other_refs:
             email = git("config", "--get", "user.email", allowed=(0, 1)).decode().strip()
@@ -442,6 +460,10 @@ def other_remote_refs(remotes):
     return refs
 
 
+class CommitExcludeCleanupError(HookError):
+    """A local source removal failure that a changed ref snapshot cannot resolve."""
+
+
 def with_stable_remote_refs(remotes, action):
     """Retry ref-dependent work after a concurrent fetch; preserve only stable results."""
     for _ in range(MAX_REF_SNAPSHOT_ATTEMPTS):
@@ -450,13 +472,75 @@ def with_stable_remote_refs(remotes, action):
         result = None
         try:
             result = action(refs)
+        except CommitExcludeCleanupError:
+            raise
         except HookError as exc:
             error = exc
         if other_remote_refs(remotes) == refs:
             if error is not None:
                 raise error
             return result
-    raise HookError("Remote tracking refs changed during a concurrent fetch; retry the push")
+    raise HookError(
+        "Remote tracking refs changed during a concurrent fetch; retry the push"
+    )
+
+
+# One deadline covers creation, writing, the command and removal. Reserve the
+# runner's stop grace plus its final communicate wait before the watchdog fires.
+COMMIT_EXCLUDE_TIMEOUT = 180
+COMMIT_EXCLUDE_STOP_RESERVE = STOP_GRACE + 5
+
+
+def refuse_commit_exclude_timeout():
+    """Name a stalled source lifecycle before the shared watchdog refuses the hook."""
+    try:
+        sys.stderr.write(
+            "Commit message check: exclude file lifecycle timed out "
+            f"after {COMMIT_EXCLUDE_TIMEOUT:g} s\n"
+        )
+        sys.stderr.flush()
+    except (OSError, ValueError, AttributeError):
+        # A failing, closed (ValueError) or missing (None: AttributeError) diagnostic stream must still refuse the hook.
+        pass
+
+    return 1
+
+
+def remove_commit_exclude_source(directory):
+    """Remove the source under its caller's watchdog, naming any cleanup failure."""
+    try:
+        directory.cleanup()
+    except OSError as exc:
+        raise CommitExcludeCleanupError(
+            f"Commit message check: exclude file cleanup: {exc}"
+        ) from exc
+
+
+def run_commit_excludes(cmd, other_refs):
+    """Bound the entire temporary-source lifecycle, including stalled filesystem calls."""
+    budget = HookBudget(COMMIT_EXCLUDE_TIMEOUT)
+    timer = refuse_after(COMMIT_EXCLUDE_TIMEOUT, refuse_commit_exclude_timeout)
+    try:
+        directory = tempfile.TemporaryDirectory(prefix="praetor-commit-excludes-")
+        try:
+            path = Path(directory.name) / "revisions"
+            path.write_text(
+                "\n".join(other_refs) + "\n", encoding="utf-8", newline="\n"
+            )
+            timeout = (
+                budget.timeout(COMMIT_EXCLUDE_TIMEOUT) - COMMIT_EXCLUDE_STOP_RESERVE
+            )
+            if timeout <= 0:
+                raise HookError(
+                    "Commit message check: exclude file lifecycle deadline before command"
+                )
+            run([*cmd, f"--exclude-file={path}"], capture=False, timeout=timeout)
+        finally:
+            remove_commit_exclude_source(directory)
+    except OSError as exc:
+        raise HookError(f"Commit message check: exclude file: {exc}") from exc
+    finally:
+        timer.cancel()
 
 
 def check_commit_message_range(base, head, remote=None):
@@ -468,14 +552,24 @@ def check_commit_message_range(base, head, remote=None):
     so that sync pushes from an upstream repository do not fail on published history.
     """
     if not base:
-        print("Commit message check: skipped, no pushed-range base; CI checks pull request range")
+        print(
+            "Commit message check: skipped, no pushed-range base; CI checks pull request range"
+        )
         return
+
     def check(other_refs):
         """Check commit messages against one remote ref snapshot."""
-        cmd = [praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"]
-        for ref in other_refs:
-            cmd.append(f"--exclude={ref}")
-        run(cmd, capture=False, timeout=180)
+        cmd = [
+            praetorctl_path(),
+            "forge",
+            "check-commits",
+            f"--base={base}",
+            f"--head={head}",
+        ]
+        if not other_refs:
+            run(cmd, capture=False, timeout=180)
+            return
+        run_commit_excludes(cmd, other_refs)
 
     with_stable_remote_refs(other_push_remotes(remote), check)
 
