@@ -428,13 +428,19 @@ func (s *shellSpans) documentStep() bool {
 	return true
 }
 
+// shellNeedsWholeScan keeps the state veto unless the entire line is proven literal data.
+func shellNeedsWholeScan(command string) bool {
+	return shellBoundaryVetoPattern.MatchString(command) ||
+		shellStatePattern.MatchString(command) && !dataOnlyCommand(command)
+}
+
 // scanCommandSpans masks data operands and refuses unknown commit/am argument lists.
 func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 	if !shellCommitPattern.MatchString(joinLineContinuations(command)) {
 		return []shellSpan{{text: command, veto: readOnlyVetoPattern.MatchString(command)}}, nil, nil
 	}
 	s := shellSpans{command: command, judged: []byte(command), wordStart: -1, executionStart: -1,
-		whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command)}
+		whole: shellNeedsWholeScan(command)}
 	for s.position < len(command) {
 		if !s.step() || s.err != nil {
 			return nil, nil, s.err

@@ -821,6 +821,8 @@ func printedAllowListCases() []struct {
 		{"data logical and", `echo 'git commit -n' && true`, 0},
 		{"data newline sequence", "echo 'git commit -n'\ntrue", 0},
 		{"data plain redirect parameter", `echo 'git commit -n' > "$file"`, 2},
+		{"data literal state keyword", `printf '%s\n' 'git commit -n; set a message'`, 0},
+		{"data quoted state command", `'set' x; git commit -m x && tail -n 1`, 2},
 	}
 }
 
@@ -1078,9 +1080,18 @@ func TestParityEvasionPrintedAllowList(t *testing.T) {
 		t.Fatal(err)
 	}
 	pattern := regexp.MustCompile(`(?m)^DATA_ONLY_COMMAND_NAMES = r"([^"]+)"$`)
-	match := pattern.FindSubmatch(source)
-	if len(match) != 2 || string(match[1]) != dataOnlyCommandNames {
-		t.Fatalf("print allow-list drift: Python %q; Go %q", match, dataOnlyCommandNames)
+	lf, _ := util.NormalizeLineEndings(string(source))
+	for _, tc := range []struct{ name, canonical string }{
+		{"checkout", string(source)},
+		{"CRLF", util.RestoreLineEndings(lf, true)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			canonical, _ := util.NormalizeLineEndings(tc.canonical)
+			match := pattern.FindStringSubmatch(canonical)
+			if len(match) != 2 || match[1] != dataOnlyCommandNames {
+				t.Fatalf("print allow-list drift: Python %q; Go %q", match, dataOnlyCommandNames)
+			}
+		})
 	}
 }
 

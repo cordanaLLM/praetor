@@ -605,7 +605,9 @@ class CommandSpans:
         self.short_pattern, self.uncertain = short_pattern, False
         self.parts, self.stack, self.documents = [], [], []
         self.position = self.start = self.here_lines = 0
-        self.whole = bool(re.search(self.state_pattern, command))
+        self.whole = bool(re.search(self.state_pattern, command)) and not (
+            data_only_command(command)
+        )
         self.whole |= bool(re.search(r"--%|%[;&|]", command))
         self.word_start = self.execution_start = -1
         self.execution_depth = 0

@@ -729,7 +729,9 @@ class CommandSpans:
         self.short_pattern, self.uncertain = short_pattern, False
         self.parts, self.stack, self.documents = [], [], []
         self.position = self.start = self.here_lines = 0
-        self.whole = bool(re.search(self.state_pattern, command))
+        self.whole = bool(re.search(self.state_pattern, command)) and not (
+            data_only_command(command)
+        )
         self.whole |= bool(re.search(r"--%|%[;&|]", command))
         self.word_start = self.execution_start = -1
         self.execution_depth = 0
@@ -1472,7 +1474,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
-	"1a55fead97754551b198df9025fcd36d14ce563c5867aedcef0763f6be2eba15": "whole-line printer and literal text-sink allow-list",
+	"ccc073993e6e3bb40fbd34450e7d1e4ba66ac287ee8afa17237c524305e919a6": "whole-line printer allow-list with literal shell-state words",
 	"f5fdc772bcb15947b6fcfe6afccb718c09f868b38c8cc579a5572631e9f39471": "printed commands lose exemption after state changes and before executable consumers",
 	"5e00224927539739ba4c91e11735944ec8c879534704f89a7b7565f8a94ba49e": "literal printf and echo data excluded with substitution and redefinition guards",
 	"6c6f93592ceb1781566f9862c45fc645c59bf8d232074797c1f27ffd3d67691c": "refuse commit/am argument lists with runtime splitting",

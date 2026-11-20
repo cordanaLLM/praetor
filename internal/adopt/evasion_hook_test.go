@@ -421,6 +421,8 @@ func evasionPrintedAllowListCases() []struct {
 		{"data logical and", `echo 'git commit -n' && true`, 0},
 		{"data newline sequence", "echo 'git commit -n'\ntrue", 0},
 		{"data plain redirect parameter", `echo 'git commit -n' > "$file"`, 2},
+		{"data literal state keyword", `printf '%s\n' 'git commit -n; set a message'`, 0},
+		{"data quoted state command", `'set' x; git commit -m x && tail -n 1`, 2},
 	}
 }
 
@@ -1398,16 +1400,26 @@ func TestEmittedInterceptorSearchesLikeTheEngineGuard(t *testing.T) {
 func TestBuildBlockEvasionPY_PrintedAllowList(t *testing.T) {
 	canonical := mustRead(t, filepath.Join("..", "..", evasionHookFile))
 	pattern := regexp.MustCompile(`(?m)^DATA_ONLY_COMMAND_NAMES = r"([^"]+)"$`)
-	want := pattern.FindStringSubmatch(canonical)
-	got := pattern.FindStringSubmatch(buildBlockEvasionPY())
-	if len(want) != 2 || len(got) != 2 || want[1] != got[1] {
-		t.Fatalf("print allow-list drift: canonical %q; emitted %q", want, got)
+	rendered := buildBlockEvasionPY()
+	got := pattern.FindStringSubmatch(rendered)
+	lf, _ := util.NormalizeLineEndings(canonical)
+	for _, tc := range []struct{ name, canonical string }{
+		{"checkout", canonical},
+		{"CRLF", crlfText(lf)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			canonicalLF, _ := util.NormalizeLineEndings(tc.canonical)
+			want := pattern.FindStringSubmatch(canonicalLF)
+			if len(want) != 2 || len(got) != 2 || want[1] != got[1] {
+				t.Fatalf("print allow-list drift: canonical %q; emitted %q", want, got)
+			}
+		})
 	}
 	for _, path := range []string{
 		filepath.Join(priorEvasionFixtures, currentEvasionFixture),
 		filepath.Join("testdata", "emitted", evasionHookFile),
 	} {
-		if actual := mustRead(t, path); actual != buildBlockEvasionPY() {
+		if actual := mustRead(t, path); actual != rendered {
 			t.Errorf("%s differs from the emitted rendering", path)
 		}
 	}
