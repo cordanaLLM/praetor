@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
-# GoReleaser configuration for cordanaLLM/praetor
+# GoReleaser configuration for tekmora/praetor
 version: 2
 
 project_name: standards
@@ -150,7 +150,7 @@ dockers_v2:
       - praetorctl
     dockerfile: Dockerfile
     images:
-      - ghcr.io/cordanallm/praetor
+      - ghcr.io/tekmora/praetor
     tags:
       - "{{ .Version }}"
     platforms:
@@ -168,7 +168,7 @@ dockers_v2:
       "org.opencontainers.image.title": "praetor"
       "org.opencontainers.image.description": "Autonomous Fleet Governance & Workstation Sentinel Engine"
       "org.opencontainers.image.vendor": "cordanaLLM"
-      "org.opencontainers.image.source": "https://github.com/cordanaLLM/praetor"
+      "org.opencontainers.image.source": "https://github.com/tekmora/praetor"
       "org.opencontainers.image.licenses": "EUPL-1.2"
       "org.opencontainers.image.version": "{{ .Version }}"
       "org.opencontainers.image.revision": "{{ .FullCommit }}"

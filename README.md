@@ -43,8 +43,8 @@ private scratch-link policy.
 **Debt Baseline**: `.standards-baseline.json` anchors the debt ratchet at
 2 recorded infractions; audit forbids growth.
 
-[praetor-docs-badge]: https://github.com/cordanaLLM/praetor/actions/workflows/praetor-docs.yml/badge.svg
-[praetor-docs-runs]: https://github.com/cordanaLLM/praetor/actions/workflows/praetor-docs.yml
+[praetor-docs-badge]: https://github.com/tekmora/praetor/actions/workflows/praetor-docs.yml/badge.svg
+[praetor-docs-runs]: https://github.com/tekmora/praetor/actions/workflows/praetor-docs.yml
 <!-- praetor:readme-governance:end -->
 
 ---

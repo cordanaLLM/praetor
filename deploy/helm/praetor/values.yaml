@@ -4,7 +4,7 @@ image:
   # Pushed by .github/workflows/release-binaries.yml for every v* tag. GHCR names are
   # lowercase; internal/forge/workflow_guard_test.go holds this equal to the image
   # .goreleaser.yaml pushes.
-  repository: ghcr.io/cordanallm/praetor
+  repository: ghcr.io/tekmora/praetor
   pullPolicy: IfNotPresent
   # Empty means the chart's appVersion, which the release workflow sets to the version
   # it pushed the image under. Set a tag only for an image built or mirrored elsewhere.

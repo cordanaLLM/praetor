@@ -9,8 +9,8 @@ Every `v*` release publishes the chart to GHCR as an OCI artifact, next to the i
 ([releasing guide](releasing.md)). The chart version is the release version without its `v`:
 
 ```bash
-helm install praetor oci://ghcr.io/cordanallm/charts/praetor --version 0.1.0
-helm install praetor-canary oci://ghcr.io/cordanallm/charts/praetor --version 0.1.0   # a second release in the same namespace
+helm install praetor oci://ghcr.io/tekmora/charts/praetor --version 0.1.0
+helm install praetor-canary oci://ghcr.io/tekmora/charts/praetor --version 0.1.0   # a second release in the same namespace
 ```
 
 Both releases coexist. Every object is named `<release>-praetor`, so nothing collides; the render
@@ -21,14 +21,15 @@ chart before installing it:
 
 ```bash
 VERSION=0.1.0
-SIGNER="https://github.com/cordanaLLM/praetor/.github/workflows/release-binaries.yml@refs/tags/v$VERSION"
+SIGNER="https://github.com/tekmora/praetor/.github/workflows/release-binaries.yml@refs/tags/v$VERSION"
 cosign verify \
   --certificate-identity "$SIGNER" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  "ghcr.io/cordanallm/charts/praetor:$VERSION"
+  "ghcr.io/tekmora/charts/praetor:$VERSION"
 ```
 
-The same command with `ghcr.io/cordanallm/praetor:$VERSION` checks the image.
+The same command with `ghcr.io/tekmora/praetor:$VERSION` checks the image.
+For releases before 2026-11-20, use `cordanaLLM/praetor` in `SIGNER` and verify the chart or image in its original `ghcr.io/cordanallm` namespace.
 
 ## Image
 

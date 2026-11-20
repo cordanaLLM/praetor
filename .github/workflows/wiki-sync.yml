@@ -24,7 +24,7 @@ jobs:
     # Engine-only: skipped outside the canonical repository (#189). The literal is the
     # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
     name: Mirror docs/wiki to GitHub Wiki (canonical repository only)
-    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor')
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:

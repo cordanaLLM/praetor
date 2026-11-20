@@ -1,0 +1,3 @@
+type: changed
+title: "The engine moved to the tekmora organisation: engine-only CI jobs guard on tekmora/praetor again (Platform Neutrality reported nothing on any pull request after the move), and new releases push the image to ghcr.io/tekmora/praetor and the chart to oci://ghcr.io/tekmora/charts; images already published under ghcr.io/cordanallm stay readable"
+breaking: false

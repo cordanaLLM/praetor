@@ -44,6 +44,7 @@ type checkpointSource struct {
 // recorded here (checkpoint_prior_test.go).
 var priorCheckpointDigests = map[string]map[string]string{
 	checkpointScript: {
+		"f83bd89938ab00581becbc160d59c1df866f2bcf01f7ab4b8103a6dba05746a2": "checkpoint remote mismatch names the organization move repair",
 		"6d22fbcab1cdd08efcb0975ad0c09cfc46107346365e16a05e06b2ce9b565691": "complete emitted docstrings and explained empty handlers",
 		"54130726f2c6830a763a2485b849293d4c014e34c308596cc3e28d5330e6fc3f": "stop checkpoint retries PR listing and collapses failure",
 		"6295b09a4077a3c3bc6819ecf69b3eb18fe4c3a23d4473d99c880fc3184ce3b5": "stop checkpoint judges landed worktrees by their merged pull request",

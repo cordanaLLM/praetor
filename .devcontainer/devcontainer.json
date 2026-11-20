@@ -1,5 +1,5 @@
 {
-  "name": "cordanaLLM/praetor",
+  "name": "tekmora/praetor",
   "build": {
     "dockerfile": "Dockerfile.praetor",
     "context": "."

@@ -1,7 +1,7 @@
 # Third-party notices
 
 Praetor is licensed under the EUPL-1.2 ([`LICENSE`](LICENSE)). Its release archives and the
-container image `ghcr.io/cordanallm/praetor` also contain code that others wrote. This file
+container image `ghcr.io/tekmora/praetor` also contain code that others wrote. This file
 names each of those components with its version, its license and the copyright line its
 upstream states, and carries the upstream license and notice texts the licenses require to
 travel with a binary.

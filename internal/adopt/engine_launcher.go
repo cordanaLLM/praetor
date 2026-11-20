@@ -29,6 +29,7 @@ var priorEngineLauncherDigests = map[string]string{
 	"26a458c46116cce38b23e591902ce0ed1541b6f3cedf77807743edd2298fcff5": "engine launcher with install_pinned split under the strict function length (#906)",
 	"3379119644fa1cf96c730cd7f43fd35846a79b28acb57586ff76b4fd5a243a2e": "engine launcher with PRAETOR_COMMIT pins (#1366)",
 	"c02c323ab6aec1731de1e28167f4e3ba8262ee3b38b8cc194e00b80515782f30": "engine launcher with PRAETOR_COMMIT pins, an SPDX line and the layout shfmt -i 2 -ci writes (#1366, #1281, #1282)",
+	"d33fd27530ee2331491d3a3b92c0f5cb8363008dfb6359e5e25715693fa4add0": "engine launcher accepts uses pins from tekmora and cordanaLLM (#2023)",
 }
 
 // reconcileEngineLauncher scaffolds the launcher beside the lefthook.yml jobs that run it. An

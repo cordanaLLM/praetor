@@ -337,23 +337,33 @@ func TestEngineLauncher_Boundary_NoPinKeepsPathBehaviourAndSaysSo(t *testing.T) 
 }
 
 // Positive: uses refs of praetor-adopt and reusable workflows pin the engine too (#906).
-func TestEngineLauncher_Positive_UsesRefPinsEngine(t *testing.T) {
+func TestEngineLauncher_UsesRefRepository(t *testing.T) {
 	for _, tc := range []struct {
-		name, content string
+		name, repository string
+		pinned           bool
 	}{
-		{"action", "jobs:\n  gate:\n    steps:\n      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@" + enginePin + "\n"},
-		{"workflow", "jobs:\n  call:\n    uses: cordanaLLM/praetor/.github/workflows/standards-gate.yml@" + enginePin + "\n"},
+		{"current", "tekmora/praetor", true},
+		{"former_mixed_case", "CoRdAnAlLm/PrAeToR", true},
+		{"unrelated_owner", "example/praetor", false},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newEngineFixture(t)
-			f.pathEngine()
-			f.cached(enginePin)
-			f.declare("gate.yml", tc.content)
-			out, code := f.run()
-			if code != 0 || strings.TrimSpace(out) != "pinned-engine audit --offline" {
-				t.Fatalf("exit %d, output %q, want the pinned engine", code, out)
-			}
-		})
+		for _, use := range []struct{ name, start, path string }{
+			{"action", "jobs:\n  gate:\n    steps:\n      - uses: ", "/.github/actions/praetor-adopt@"},
+			{"workflow", "jobs:\n  call:\n    uses: ", "/.github/workflows/standards-gate.yml@"},
+		} {
+			t.Run(tc.name+"/"+use.name, func(t *testing.T) {
+				f := newEngineFixture(t)
+				f.pathEngine()
+				f.cached(enginePin)
+				f.declare("gate.yml", use.start+tc.repository+use.path+enginePin+"\n")
+				want := "path-engine audit --offline"
+				if tc.pinned {
+					want = "pinned-engine audit --offline"
+				}
+				if out, code := f.run(); code != 0 || !strings.HasPrefix(out, want+"\n") {
+					t.Fatalf("exit %d, output %q, want %q", code, out, want)
+				}
+			})
+		}
 	}
 }
 

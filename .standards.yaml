@@ -2,7 +2,7 @@
 # Schema: the Manifest type in internal/config/config.go; LoadManifest rejects unknown keys.
 version: 1
 repository:
-  owner: "cordanaLLM"
+  owner: "tekmora"
   name: "praetor"
   # Forge hosting the repository (github, forgejo or gitlab): selects the Paperclip push rows.
   forge: "github"

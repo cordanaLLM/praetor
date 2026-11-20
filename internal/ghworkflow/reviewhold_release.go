@@ -104,7 +104,7 @@ func ReviewHoldReleaseCondition() string {
 			"contains(github.event.context, '"+bot+"') || contains(github.event.sender.login, '"+bot+"')",
 		)
 	}
-	return "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') && " +
+	return "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor') && " +
 		"(github.event_name != 'check_run' || (" + strings.Join(checkParts, " || ") + ")) && " +
 		"(github.event_name != 'status' || (github.event.state != 'pending' && (" + strings.Join(statusParts, " || ") + ")))"
 }

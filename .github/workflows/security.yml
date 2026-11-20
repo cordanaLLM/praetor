@@ -42,7 +42,7 @@ jobs:
     # internal/forge/workflow_guard.go).
     # The name is a required status context and therefore carries no skip reason.
     name: Go Vulnerability & AST Security Scan
-    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.event_name != 'schedule' || github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor'))"
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.event_name != 'schedule' || github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor'))"
     runs-on: ubuntu-26.04
     # The secrets step may take up to its twelve-minute scan bound (tools/secrets/gate); the rest
     # of the job measured 2m41s on main (2026-11-11), so 25 keeps a margin under the audit ceiling.

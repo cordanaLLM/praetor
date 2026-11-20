@@ -103,7 +103,7 @@ export default {
           gap: 42,
           align: 'start',
           children: [
-            { id: 'oci', label: 'Distroless Image', sub: 'ghcr.io/cordanallm/praetor' },
+            { id: 'oci', label: 'Distroless Image', sub: 'ghcr.io/tekmora/praetor' },
             { id: 'vendor', label: 'Vendor Agent Files', sub: 'CLAUDE.md, etc.' },
             { id: 'sarif_out', label: 'Diagnostic Summary', sub: 'SARIF output' },
           ],
