@@ -21,21 +21,21 @@ checks, and review settings cannot drift here as copied prose.
 
 ### Core Governance & Invariants
 
-- [HISS Formal Specification](https://cordanallm.github.io/praetor/standards/hiss-spec/) — source: `docs/standards/hiss-spec.md`. Complete specification of HISS-01 through HISS-21 invariants.
-- [Model Routing & Capacity Arbiter](https://cordanallm.github.io/praetor/standards/model-routing-and-fanout/) — source: `docs/standards/model-routing-and-fanout.md`. Orchestration and fallback cascade for frontier and open models.
-- [Agent Hooks & Operating Harness](https://cordanallm.github.io/praetor/guides/agent-hooks/) — source: `docs/guides/agent-hooks.md`. Canonical operating instructions and native client hook coverage.
-- [Archetype Authoring](https://cordanallm.github.io/praetor/guides/archetype-authoring/) — source: `docs/guides/archetype-authoring.md`. Archetype authoring, lattice joins, and profile manifests.
-- [Developer Onboarding](https://cordanallm.github.io/praetor/guides/onboarding/) — source: `docs/guides/onboarding.md`. Developer setup, Git hooks, and environment bootstrapping.
-- [Architectural Decision Records](https://cordanallm.github.io/praetor/adr/) — source: `docs/adr/README.md`. ADR directory and architectural decision history.
+- [HISS Formal Specification](https://tekmora.github.io/praetor/standards/hiss-spec/) — source: `docs/standards/hiss-spec.md`. Complete specification of HISS-01 through HISS-21 invariants.
+- [Model Routing & Capacity Arbiter](https://tekmora.github.io/praetor/standards/model-routing-and-fanout/) — source: `docs/standards/model-routing-and-fanout.md`. Orchestration and fallback cascade for frontier and open models.
+- [Agent Hooks & Operating Harness](https://tekmora.github.io/praetor/guides/agent-hooks/) — source: `docs/guides/agent-hooks.md`. Canonical operating instructions and native client hook coverage.
+- [Archetype Authoring](https://tekmora.github.io/praetor/guides/archetype-authoring/) — source: `docs/guides/archetype-authoring.md`. Archetype authoring, lattice joins, and profile manifests.
+- [Developer Onboarding](https://tekmora.github.io/praetor/guides/onboarding/) — source: `docs/guides/onboarding.md`. Developer setup, Git hooks, and environment bootstrapping.
+- [Architectural Decision Records](https://tekmora.github.io/praetor/adr/) — source: `docs/adr/README.md`. ADR directory and architectural decision history.
 
 ### CLI Reference & Tooling
 
-- [Fast Repository Adoption](https://cordanallm.github.io/praetor/adoption/) — source: `docs/adoption.md`. One-step repository onboarding through the CLI, MCP, and hosted automation.
-- [Universal Dogfooding & Public Benchmarks](https://cordanallm.github.io/praetor/dogfooding/) — source: `docs/dogfooding.md`. Self-governance auditing and dry-run benchmarking against non-owned public repositories.
-- [API Reference](https://cordanallm.github.io/praetor/wiki/API-Reference/) — source: `docs/wiki/API-Reference.md`. Existing command and service reference for praetorctl and standardsctl.
-- [Operational Sync & Branch Protection](https://cordanallm.github.io/praetor/guides/operational-sync/) — source: `docs/guides/operational-sync.md`. Declarative reconciliation of hosted rules, labels, and branch protection.
+- [Fast Repository Adoption](https://tekmora.github.io/praetor/adoption/) — source: `docs/adoption.md`. One-step repository onboarding through the CLI, MCP, and hosted automation.
+- [Universal Dogfooding & Public Benchmarks](https://tekmora.github.io/praetor/dogfooding/) — source: `docs/dogfooding.md`. Self-governance auditing and dry-run benchmarking against non-owned public repositories.
+- [API Reference](https://tekmora.github.io/praetor/wiki/API-Reference/) — source: `docs/wiki/API-Reference.md`. Existing command and service reference for praetorctl and standardsctl.
+- [Operational Sync & Branch Protection](https://tekmora.github.io/praetor/guides/operational-sync/) — source: `docs/guides/operational-sync.md`. Declarative reconciliation of hosted rules, labels, and branch protection.
 
 ### Community & Funding
 
-- [Polar.sh Issue Bounties](https://cordanallm.github.io/praetor/sponsoring/) — source: `docs/sponsoring.md`. Feature bounties and contributor rewards split via Polar.sh MoR.
-- [Monetization Strategy](https://cordanallm.github.io/praetor/monetization/) — source: `docs/monetization.md`. In-IDE passive monetization (Idlen) and enterprise licensing framework.
+- [Polar.sh Issue Bounties](https://tekmora.github.io/praetor/sponsoring/) — source: `docs/sponsoring.md`. Feature bounties and contributor rewards split via Polar.sh MoR.
+- [Monetization Strategy](https://tekmora.github.io/praetor/monetization/) — source: `docs/monetization.md`. In-IDE passive monetization (Idlen) and enterprise licensing framework.

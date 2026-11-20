@@ -12,7 +12,7 @@ const MACHINE_REFERENCE_SOURCE = "docs/llms-full.txt";
 
 export const catalog = Object.freeze({
   version: 1,
-  pagesBase: "https://cordanallm.github.io/praetor/",
+  pagesBase: "https://tekmora.github.io/praetor/",
   machineDocsClaims: Object.freeze([
     Object.freeze({
       path: "README.md",

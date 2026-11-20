@@ -1,7 +1,7 @@
 # HISS Compliance Matrix
 
 The High-Integrity Systems Standard (HISS) defines 21 invariants, HISS-01 through HISS-21. This matrix
-lists each one for `cordanaLLM/praetor`: its enforcement, its failure action, and whether this
+lists each one for `tekmora/praetor`: its enforcement, its failure action, and whether this
 repository's `AGENTS.md` gates it ([HISS-Invariants](HISS-Invariants.md) shows the gated rules). The rows
 come from the core HISS rule catalog, the registry the `standards_explain_rule` MCP tool serves.
 The Enforcement column describes the checks praetor's own repository runs; an adopted repository

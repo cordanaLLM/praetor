@@ -1488,7 +1488,7 @@ jobs:
         with:
           ref: ${{ steps.pr-head.outputs.sha }}
           persist-credentials: false
-      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main
+      - uses: tekmora/praetor/.github/actions/praetor-adopt@main
         with:
           mode: adopt
           force: true
@@ -1518,7 +1518,7 @@ result in the job summary. It commits nothing. Four parts of the example each cl
 [What a forced re-adoption changes](#what-a-forced-re-adoption-changes), which rebuilds
 `.standards.lock` from a git checkout of praetor. The runner unpacks a remote action without its
 `.git`, so the action's build step runs `git init`, a one-commit `git fetch` of
-`cordanaLLM/praetor` at `main` (the action's own repository and ref, read from
+`tekmora/praetor` at `main` (the action's own repository and ref, read from
 `github.action_repository` and `github.action_ref`) and a detached checkout. These land in a fresh
 `praetor-source.*` directory under `RUNNER_TEMP`. It builds `standardsctl` from that checkout and
 passes the checkout as `--lock-source-root`. The fetch is anonymous, from `GITHUB_SERVER_URL`, so
@@ -1605,7 +1605,7 @@ and ref (the `force` row above), so
 installed from the module proxy.
 
 Outside praetor's own repository, reference the action as
-`cordanaLLM/praetor/.github/actions/praetor-adopt@<ref>`. The directory three levels above the
+`tekmora/praetor/.github/actions/praetor-adopt@<ref>`. The directory three levels above the
 action has to declare
 `module github.com/cordanaLLM/praetor` and hold `cmd/standardsctl`, and the step fails before
 anything runs when it does not:
@@ -1639,7 +1639,7 @@ that verdict and takes nothing from it: read the report's closing lines, or run 
 with the `binary` output as the next step, as `adopt.yml` does.
 
 ```yaml
-      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main
+      - uses: tekmora/praetor/.github/actions/praetor-adopt@main
         id: praetor
         with:
           mode: dogfood

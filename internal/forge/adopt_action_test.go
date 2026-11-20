@@ -822,7 +822,7 @@ func TestPraetorAdoptBuild_Negative_ActionOutsideAPraetorCheckoutBuildsNothing(t
 				}
 			}
 			got := runAdoptBuildStep(t, actionPath, cases[name].source)
-			assertBuildRefused(t, got, "cordanaLLM/praetor/.github/actions/praetor-adopt@")
+			assertBuildRefused(t, got, "tekmora/praetor/.github/actions/praetor-adopt@")
 		})
 	}
 }

@@ -10,10 +10,16 @@ import (
 	"unicode"
 )
 
+// engineForgeRepository mirrors the public identity in the engine's .standards.yaml.
+// Installed adopters run outside the engine checkout, so carry both forge identities with them.
+const (
+	engineForgeRepository       = "tekmora/praetor"
+	formerEngineForgeRepository = "cordanaLLM/praetor"
+)
+
 // engineUsesRepositoryPattern builds a case-insensitive POSIX ERE from the two slugs.
 func engineUsesRepositoryPattern() string {
-	// Current repository first, then the spelling before the 2026-11-20 move to tekmora.
-	repositories := [...]string{"tekmora/praetor", "cordanaLLM/praetor"}
+	repositories := [...]string{engineForgeRepository, formerEngineForgeRepository}
 	var pattern strings.Builder
 	pattern.WriteByte('(')
 	for i, repository := range repositories {

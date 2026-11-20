@@ -1,4 +1,4 @@
-# cordanaLLM/praetor Canonical Configuration Manifest
+# tekmora/praetor Canonical Configuration Manifest
 # Schema: the Manifest type in internal/config/config.go; LoadManifest rejects unknown keys.
 version: 1
 repository:
@@ -8,7 +8,7 @@ repository:
   forge: "github"
   visibility: "public"
   description: "Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine"
-  homepage: "https://cordanallm.github.io/praetor/"
+  homepage: "https://tekmora.github.io/praetor/"
   topics:
     - "governance"
     - "repository-as-code"

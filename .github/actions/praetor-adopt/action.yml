@@ -125,7 +125,7 @@ runs:
           if [ "$module" != "github.com/cordanaLLM/praetor" ] || [ ! -d "$1/cmd/standardsctl" ]; then
             echo "praetor-adopt: $2 is not a praetor checkout with" \
               "cmd/standardsctl (module '${module:-none}'), so there is no praetor ref to build; reference it as" \
-              "cordanaLLM/praetor/.github/actions/praetor-adopt@<tag or commit>" >&2
+              "tekmora/praetor/.github/actions/praetor-adopt@<tag or commit>" >&2
             exit 1
           fi
         }
