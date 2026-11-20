@@ -15,7 +15,7 @@ permissions:
 jobs:
   check-drift:
     name: Check Vendored Interfig Drift (canonical repository only)
-    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor')
     runs-on: ubuntu-26.04
     timeout-minutes: 10
 

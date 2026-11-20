@@ -213,8 +213,8 @@ func assertRepositorySourceShape(t *testing.T, m *Manifest) {
 			t.Errorf("repository.source %q must record the public source, not this checkout's own owner/name", m.Repository.Source)
 		}
 	}
-	if public != "cordanaLLM/praetor" {
-		t.Errorf("the manifest resolves to public identity %q, want cordanaLLM/praetor", public)
+	if public != "tekmora/praetor" {
+		t.Errorf("the manifest resolves to public identity %q, want tekmora/praetor", public)
 	}
 }
 

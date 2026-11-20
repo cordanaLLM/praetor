@@ -71,7 +71,7 @@ jobs:
   # matrix's, states the reason on one Linux runner instead of leaving three legs quietly absent.
   skipped:
     name: Platform Neutrality skipped (fork without PRAETOR_FORK_PORTABILITY=enabled, or a Renovate pull request)
-    if: "!(!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled'))"
+    if: "!(!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled'))"
     runs-on: ubuntu-26.04
     timeout-minutes: 2
     steps:
@@ -115,7 +115,7 @@ jobs:
   # (review-hold-release.yml) re-runs the whole workflow once the review clears.
   review-gate:
     name: Review gate
-    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
     runs-on: ubuntu-26.04
     timeout-minutes: 16
     outputs:
@@ -271,7 +271,7 @@ jobs:
     # internal/forge/workflow_guard.go), and on a Renovate pull request no leg reports at all.
     # !cancelled() lets the job run when review-gate fails so it can produce the held
     # annotation on the required status context instead of silently skipping.
-    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && !cancelled() && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && !cancelled() && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
     runs-on: ${{ matrix.os }}
     # windows-2025 needed 55 to 80 minutes for the whole job in October 2026 (go test 41 to 63,
     # the harness self-tests 12 to 13), against 12 on Linux and 19 on macOS; a slow runner took
@@ -813,7 +813,7 @@ jobs:
     # !cancelled() first: the shard is internal (the aggregate is the required context), so the
     # leading cancel guard keeps it out of the guard analysis chain (reportsOnEveryPullRequest).
     # It runs after review-gate failure to produce the held annotation on the shard status.
-    if: "!cancelled() && !(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
+    if: "!cancelled() && !(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
     runs-on: windows-2025
     timeout-minutes: 180
     strategy:
@@ -1177,7 +1177,7 @@ jobs:
   windows:
     name: Platform Neutrality (Windows)
     needs: windows-shard
-    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled') && always()"
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled') && always()"
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:

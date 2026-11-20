@@ -48,7 +48,7 @@ jobs:
     # branch: the update is taken over on a signed-off branch whose own pull request builds the
     # site. github.head_ref is empty on push and dispatch runs, so the deploying runs are unchanged.
     name: Build Documentation Site (canonical repository only)
-    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')"
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor')"
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
@@ -165,7 +165,7 @@ jobs:
     # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
     name: Deploy to GitHub Pages (canonical repository only)
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor')
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     # actions/deploy-pages requires both scopes on the deploying job: pages:write to create the

@@ -686,7 +686,7 @@ func TestGuardHoldsInRepository(t *testing.T) {
 }
 
 func TestManifestIdentity(t *testing.T) {
-	if identity, err := manifestIdentity(engineRoot); err != nil || identity != "cordanaLLM/praetor" {
+	if identity, err := manifestIdentity(engineRoot); err != nil || identity != "tekmora/praetor" {
 		t.Errorf("engine identity = %q, %v", identity, err)
 	}
 	empty := t.TempDir()
@@ -760,7 +760,7 @@ func overlaidEngineRoot(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("read engine workflows: %v", err)
 	}
-	root := manifestWithRepository(t, "example-owner", "praetor", "cordanaLLM/praetor")
+	root := manifestWithRepository(t, "example-owner", "praetor", "tekmora/praetor")
 	workflows := filepath.Join(root, ".github", "workflows")
 	if err := os.MkdirAll(workflows, 0o700); err != nil {
 		t.Fatal(err)
@@ -775,7 +775,7 @@ func overlaidEngineRoot(t *testing.T) string {
 
 // TestOverlaidManifestKeepsEngineGuardsAndRequiredContexts is the guard+ruleset regression
 // issue #255 asks for: run against a temp copy of the repository manifest with the owner
-// overlay applied (owner example-owner, source cordanaLLM/praetor), it must guard every scheduled
+// overlay applied (owner example-owner, source tekmora/praetor), it must guard every scheduled
 // or publishing job exactly as the canonical repository does, and it must derive the same
 // required status contexts -- so a fork's own pushed-checks.sh gate, and internal/adopt's
 // generated ruleset, do not drift from the checked-in one just because the fork carries the
@@ -783,7 +783,7 @@ func overlaidEngineRoot(t *testing.T) string {
 func TestOverlaidManifestKeepsEngineGuardsAndRequiredContexts(t *testing.T) {
 	root := overlaidEngineRoot(t)
 	identity, err := manifestIdentity(root)
-	if err != nil || identity != "cordanaLLM/praetor" {
+	if err != nil || identity != "tekmora/praetor" {
 		t.Fatalf("overlaid manifest identity = %q, %v", identity, err)
 	}
 	workflows, _ := engineWorkflows(t)

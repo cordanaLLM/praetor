@@ -56,7 +56,7 @@ func TestCanonicalRulesetRequiresEveryPlatformNeutralityLeg(t *testing.T) {
 // matrix is skipped before it expands; the security job, which runs on every pull request
 // everywhere, stays required in both; a malformed repository or a nil context is refused.
 func TestRequiredStatusContextsIn(t *testing.T) {
-	canonical, err := RequiredStatusContextsIn(t.Context(), engineRoot, "cordanaLLM/praetor")
+	canonical, err := RequiredStatusContextsIn(t.Context(), engineRoot, "tekmora/praetor")
 	if err != nil {
 		t.Fatalf("canonical: %v", err)
 	}

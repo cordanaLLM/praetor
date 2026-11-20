@@ -33,15 +33,15 @@ jobs:
     # Engine-only: skipped outside the canonical repository (#189). The literal is the
     # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
     name: Build, SBOMs, Signed Provenance & Publish (canonical repository only)
-    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor')
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       # GHCR names are lowercase. internal/forge/workflow_guard_test.go holds both equal to
       # the lowercased .standards.yaml identity, to the image .goreleaser.yaml pushes and to
       # the repository the chart's values.yaml pulls.
-      IMAGE: ghcr.io/cordanallm/praetor
-      CHART_REPOSITORY: oci://ghcr.io/cordanallm/charts
+      IMAGE: ghcr.io/tekmora/praetor
+      CHART_REPOSITORY: oci://ghcr.io/tekmora/charts
       # The keyless certificate identity every cosign signature this job makes carries, and
       # the builder its SLSA provenance names. Each verify step checks against this value.
       SIGNER: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-binaries.yml@${{ github.ref }}

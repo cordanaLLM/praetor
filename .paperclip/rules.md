@@ -1,4 +1,4 @@
-# Paperclip Operating Rules (cordanaLLM/praetor)
+# Paperclip Operating Rules (tekmora/praetor)
 
 ## Operating Contract
 

@@ -29,7 +29,7 @@ concurrency:
 jobs:
   analyze:
     name: CodeQL (${{ matrix.language }})
-    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor')
     runs-on: ubuntu-26.04
     timeout-minutes: 60  # the Go extraction reads the whole module
     permissions:

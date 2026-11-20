@@ -885,7 +885,7 @@ func assertReviewReleaseTriggers(t *testing.T, spec Spec) {
 func assertReviewReleaseConditionGuards(t *testing.T, condition string) {
 	t.Helper()
 	cases := []struct{ term, guard string }{
-		{"github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')", "canonical repository guard"},
+		{"github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor')", "canonical repository guard"},
 		{"github.event_name != 'check_run'", "check_run disjunction"},
 		{"github.event_name != 'status'", "status disjunction"},
 		{"github.event.state != 'pending'", "status pending check"},
@@ -988,7 +988,7 @@ func TestReviewHoldReleaseJobConditionBoundary(t *testing.T) {
 	condition := spec.Jobs["release"].If
 	conjuncts := reviewReleaseConditionConjuncts(t, condition)
 	canonicalConjunct := conjuncts[0]
-	if canonicalConjunct != "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')" {
+	if canonicalConjunct != "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor')" {
 		t.Errorf("unexpected canonical conjunct: %s", canonicalConjunct)
 	}
 	assertReviewReleaseCheckRunBoundary(t, conjuncts[1])
@@ -999,9 +999,9 @@ func TestReviewHoldReleaseJobConditionBoundary(t *testing.T) {
 func reviewReleaseConditionConjuncts(t *testing.T, condition string) []string {
 	t.Helper()
 	var conjuncts []string
-	prefix := "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') && "
+	prefix := "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor') && "
 	if strings.HasPrefix(condition, prefix) {
-		conjuncts = append(conjuncts, "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')")
+		conjuncts = append(conjuncts, "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor')")
 		rest := strings.TrimPrefix(condition, prefix)
 		sep := " && (github.event_name != 'status'"
 		idx := strings.Index(rest, sep)

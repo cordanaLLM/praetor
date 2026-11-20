@@ -150,7 +150,7 @@ dockers_v2:
       - praetorctl
     dockerfile: Dockerfile
     images:
-      - ghcr.io/cordanallm/praetor
+      - ghcr.io/tekmora/praetor
     tags:
       - "{{ .Version }}"
     platforms:
