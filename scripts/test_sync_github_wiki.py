@@ -167,7 +167,12 @@ class WikiSyncTests(unittest.TestCase):
 
             files = remote_files(remote)
             home = files["Home.md"]
-            site = "https://cordanallm.github.io/praetor/"
+            site = run(
+                "node", "--input-type=module", "-e",
+                "import { readText, siteUrl } from './tools/figures/checks.mjs'; "
+                "console.log(siteUrl(readText('mkdocs.yml')));",
+                cwd=ROOT,
+            ).stdout.strip().rstrip("/") + "/"
             self.assertNotIn("```figure", home)
             self.assertIn(f'<img src="{site}assets/figures/gating-pipeline.svg"', home)
             self.assertIn(f'srcset="{site}assets/figures/gating-pipeline.static.svg"', home)
