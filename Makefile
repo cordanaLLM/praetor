@@ -36,7 +36,7 @@ build:
 
 # -timeout replaces go test's ten-minute default per package: internal/dogfood reached
 # 600 s under -race on the CI runner and panicked mid-suite.
-# Issue 1381: the category C test-timeout exception for Makefile expires 2026-11-20.
+# Issue 1381: the category C test-timeout exception for Makefile expires 2026-11-30.
 # The separate adopt invocation goes away with the exception when the speedup unit lands.
 test:
 	$(if $(strip $(TEST_PACKAGES)),,$(error go list selected no test packages; refusing to test a partial list))
