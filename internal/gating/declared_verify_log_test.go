@@ -285,6 +285,11 @@ func TestDeclaredVerifyMakeTargets(t *testing.T) {
 		{"make[2]: *** [inner] Aborted (core dumped)", "inner"},
 		{"make: *** No rule to make target 'absent', needed by 'verify-all'.  Stop.", "absent"},
 		{"make[2]: *** No rule to make target `absent'.  Stop.\nmake: *** [verify-all] Error 2", "absent"},
+		{
+			"make: *** No rule to make target 'absent-prerequisite', needed by 'verify-all'.\n" +
+				"make: Target 'verify-all' not remade because of errors.\n",
+			"absent-prerequisite",
+		},
 		{"an unrelated tool failed\n", ""},
 	}
 	for i, tc := range cases {

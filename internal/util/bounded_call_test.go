@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -89,4 +91,55 @@ func TestBoundedCallBoundary(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("cancelled worker leaked at result delivery")
 	}
+}
+
+// handoffDeadlineContext lets the deadline expire during the caller's second Err check.
+type handoffDeadlineContext struct {
+	context.Context
+	checked atomic.Bool
+}
+
+// Err waits for the deadline only after the preflight check has passed.
+func (c *handoffDeadlineContext) Err() error {
+	if c.checked.Swap(true) {
+		<-c.Done()
+	}
+	return c.Context.Err()
+}
+
+// TestBoundedCallDeadlineAtHandoff proves cleanup cannot delay the deadline return.
+func TestBoundedCallDeadlineAtHandoff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		handoff := &handoffDeadlineContext{Context: ctx}
+		result := make(chan boundedResult[int], 1)
+		discarded, release := make(chan int, 1), make(chan struct{})
+		defer close(release)
+		go func(ctx context.Context) {
+			value, err := BoundedCall(ctx, "open", func() (int, error) {
+				return 42, nil
+			}, func(value int) {
+				discarded <- value
+				<-release
+			})
+			result <- boundedResult[int]{value, err}
+		}(handoff)
+		select {
+		case got := <-result:
+			if got.value != 0 || !errors.Is(got.err, context.DeadlineExceeded) {
+				t.Fatalf("value=%d error=%v; want zero and deadline exceeded", got.value, got.err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("deadline return blocked on cleanup")
+		}
+		select {
+		case value := <-discarded:
+			if value != 42 {
+				t.Fatalf("discarded value = %d; want 42", value)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("late value was not disposed")
+		}
+	})
 }

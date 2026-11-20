@@ -36,7 +36,7 @@ func BoundedCall[T any](ctx context.Context, step string, call func() (T, error)
 	case got := <-result:
 		if err := ctx.Err(); err != nil {
 			if discard != nil {
-				discard(got.value)
+				go discard(got.value)
 			}
 			return zero, fmt.Errorf("%s: %w", step, err)
 		}

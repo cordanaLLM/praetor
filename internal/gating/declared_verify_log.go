@@ -31,7 +31,7 @@ const makeSignalDescription = `(?:Hangup|Interrupt|Quit|Illegal instruction|Trac
 // Make 4 names file, line and target; Make 3.81 names only the target.
 var makeFailureLines = [...]*regexp.Regexp{
 	regexp.MustCompile(`^make(?:\[([0-9]+)\])?: \*\*\* \[(?:.*:[0-9]+: )?(.+)\] (?:Error [0-9]+(?: .*)?|` + makeSignalDescription + `)$`),
-	regexp.MustCompile("^make(?:\\[([0-9]+)\\])?: \\*\\*\\* No rule to make target ['`](.+?)'(?:, needed by ['`].*')?\\. +Stop\\.$"),
+	regexp.MustCompile("^make(?:\\[([0-9]+)\\])?: \\*\\*\\* No rule to make target ['`](.+?)'(?:, needed by ['`].*')?\\.(?: +Stop\\.)?$"),
 }
 
 // declaredVerifyDiagnostic combines bounded stdout then stderr, collapses progress updates,
