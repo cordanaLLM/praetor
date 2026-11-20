@@ -28,9 +28,9 @@ to the reviewed engine commit. See [ADR-0019](../adr/0019-released-surfaces-veri
 
 | Consumer | Trigger | Result |
 | :--- | :--- | :--- |
-| `.github/workflows/release-binaries.yml` | `push` of a tag matching `v*` | GoReleaser (`.goreleaser.yaml`) builds `praetorctl`, `standardsctl`, `standards-mcp` and `standards-lsp` for Linux, macOS and Windows on amd64 and arm64, writes a CycloneDX and an SPDX SBOM per archive, signs `checksums.txt` keyless with cosign into `checksums.txt.sigstore.json`, and uploads everything into a **draft** release; it also builds the container image from the Linux `praetorctl` binaries, pushes it to `ghcr.io/cordanallm/praetor:<version>` and signs the pushed digest. The job then signs SLSA v1.0 provenance over every checksummed file, verifies both bundles and the image signature, pushes and signs the Helm chart as `oci://ghcr.io/cordanallm/charts/praetor:<version>`, attaches the provenance and publishes the release. `<version>` is the tag without its `v` |
+| `.github/workflows/release-binaries.yml` | `push` of a tag matching `v*` | GoReleaser (`.goreleaser.yaml`) builds `praetorctl`, `standardsctl`, `standards-mcp` and `standards-lsp` for Linux, macOS and Windows on amd64 and arm64, writes a CycloneDX and an SPDX SBOM per archive, signs `checksums.txt` keyless with cosign into `checksums.txt.sigstore.json`, and uploads everything into a **draft** release; it also builds the container image from the Linux `praetorctl` binaries, pushes it to `ghcr.io/tekmora/praetor:<version>` and signs the pushed digest. The job then signs SLSA v1.0 provenance over every checksummed file, verifies both bundles and the image signature, pushes and signs the Helm chart as `oci://ghcr.io/tekmora/charts/praetor:<version>`, attaches the provenance and publishes the release. `<version>` is the tag without its `v` |
 | `go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest` | any release version on the module proxy | `@latest` selects the highest release version; with no tag at all it falls back to a pseudo-version of `main` ([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)). `praetorctl version` prints the installed tag, or the 12-character commit a pseudo-version ends with (`internal/buildid/buildid.go`) |
-| `.github/actions/praetor-adopt/action.yml` | `uses: cordanaLLM/praetor/.github/actions/praetor-adopt@<ref>` | the action builds `cmd/standardsctl` from its own checkout at that ref (a forced adopt run, whose remotely loaded tree has no `.git`, builds from a git checkout of that same ref), so `@latest` runs the commit the moving `latest` tag points at; it never installs from the module proxy, and a local or copied action outside a praetor checkout fails instead ([docs/adoption.md](../adoption.md)) |
+| `.github/actions/praetor-adopt/action.yml` | `uses: tekmora/praetor/.github/actions/praetor-adopt@<ref>` | the action builds `cmd/standardsctl` from its own checkout at that ref (a forced adopt run, whose remotely loaded tree has no `.git`, builds from a git checkout of that same ref), so `@latest` runs the commit the moving `latest` tag points at; it never installs from the module proxy, and a local or copied action outside a praetor checkout fails instead ([docs/adoption.md](../adoption.md)) |
 | `.github/workflows/sync-flavors.yml` | next run after the tag exists | moves `latest` to the highest `v*` tag |
 
 Once the first release exists, `@latest` stops following `main`. An adopter that wants
@@ -145,7 +145,7 @@ so an upload after it fails; the flow never makes one (#43).
    that `dist/artifacts.json` lists lacks either one; a builder without attestation support
    would otherwise drop both without an error.
 7. `helm package --version <version> --app-version <version>` packages the chart,
-   `helm push` pushes it to `oci://ghcr.io/cordanallm/charts`, and cosign signs and then
+   `helm push` pushes it to `oci://ghcr.io/tekmora/charts`, and cosign signs and then
    verifies the digest `helm push` reports. The chart's default image tag is its
    `appVersion`, so the published chart pulls the image from step 2.
 8. `gh release upload` attaches the statement and its bundle, and
@@ -186,7 +186,7 @@ A snapshot build compiles the binaries and builds one image per platform without
 
 ```bash
 GORELEASER_CURRENT_TAG=v0.0.0 goreleaser release --snapshot --clean --skip=sign,sbom
-docker run --rm ghcr.io/cordanallm/praetor:0.0.1-snapshot-amd64 version
+docker run --rm ghcr.io/tekmora/praetor:0.0.1-snapshot-amd64 version
 ```
 
 `--snapshot` skips publishing but not signing, and keyless signing needs the workflow's OIDC
@@ -342,8 +342,8 @@ Verification needs cosign v3 or newer (CI installs cosign `v3.0.6`, the default 
 
 ```bash
 TAG=v0.1.0
-SIGNER="https://github.com/cordanaLLM/praetor/.github/workflows/release-binaries.yml@refs/tags/$TAG"
-gh release download "$TAG" --repo cordanaLLM/praetor
+SIGNER="https://github.com/tekmora/praetor/.github/workflows/release-binaries.yml@refs/tags/$TAG"
+gh release download "$TAG" --repo tekmora/praetor
 
 cosign verify-blob \
   --certificate-identity "$SIGNER" \
@@ -360,6 +360,8 @@ cosign verify-blob-attestation \
   --bundle provenance.intoto.json.sigstore.json \
   standards_${TAG#v}_linux_amd64.tar.gz
 ```
+
+For releases before 2026-11-20, use `cordanaLLM/praetor` in `SIGNER`.
 
 `checksums.txt` covers every archive and every per-archive SBOM, so one bundle
 verification plus the checksum check covers the whole set. The provenance names the same
@@ -549,13 +551,13 @@ that adds it.
 
 ### Fragment schema
 
-Each YAML fragment in `changelog.d/` ([`internal/changelog/fragments.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/changelog/fragments.go)) adheres to a strict schema:
+Each YAML fragment in `changelog.d/` ([`internal/changelog/fragments.go`](https://github.com/tekmora/praetor/blob/main/internal/changelog/fragments.go)) adheres to a strict schema:
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `type` | string | Mandatory category: `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`. |
 | `title` | string | Mandatory one-sentence summary of the change. |
-| `issue` | string | Optional issue identifier or comma-separated list of issue identifiers (with optional spaces after commas). Each item takes digits with no leading zero and one optional leading `#` (e.g. `502` or `#502`), or a cross-repository reference (`owner/repo#n`). A single leading `#` is normalised on decode ([`internal/changelog/changelog.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/changelog/changelog.go)). Quote a value that starts with `#` (`issue: "#502"`): unquoted it is a YAML comment and reads as empty, which is refused. An unquoted integer (`issue: 502`) is accepted. |
+| `issue` | string | Optional issue identifier or comma-separated list of issue identifiers (with optional spaces after commas). Each item takes digits with no leading zero and one optional leading `#` (e.g. `502` or `#502`), or a cross-repository reference (`owner/repo#n`). A single leading `#` is normalised on decode ([`internal/changelog/changelog.go`](https://github.com/tekmora/praetor/blob/main/internal/changelog/changelog.go)). Quote a value that starts with `#` (`issue: "#502"`): unquoted it is a YAML comment and reads as empty, which is refused. An unquoted integer (`issue: 502`) is accepted. |
 | `breaking` | boolean | Optional flag (`true` indicates a breaking change). |
 
 ## Release flavors
@@ -581,7 +583,7 @@ loads, and it never moves, holds or protects a tag: two flavors that differ only
 get the same plan. Caution for a pre-release channel comes from `update_frequency: manual`,
 which holds the tag until named, and from the source ref: a `refs/tags/v*` source never
 resolves to a prerelease tag. `TestPlanSelected_Negative_StabilityNeverChangesTheAction` in
-[`internal/flavors/stability_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavors/stability_test.go)
+[`internal/flavors/stability_test.go`](https://github.com/tekmora/praetor/blob/main/internal/flavors/stability_test.go)
 pins this.
 
 ```bash

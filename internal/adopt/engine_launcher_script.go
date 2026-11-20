@@ -4,9 +4,43 @@
 
 package adopt
 
-// engineLauncherScript is the text of the engine launcher (engineLauncherFile). It is a POSIX shell
+import (
+	"regexp"
+	"strings"
+	"unicode"
+)
+
+// engineUsesRepositoryPattern builds a case-insensitive POSIX ERE from the two slugs.
+func engineUsesRepositoryPattern() string {
+	// Current repository first, then the spelling before the 2026-11-20 move to tekmora.
+	repositories := [...]string{"tekmora/praetor", "cordanaLLM/praetor"}
+	var pattern strings.Builder
+	pattern.WriteByte('(')
+	for i, repository := range repositories {
+		if i > 0 {
+			pattern.WriteByte('|')
+		}
+		for _, char := range repository {
+			upper, lower := unicode.ToUpper(char), unicode.ToLower(char)
+			if upper == lower {
+				pattern.WriteString(regexp.QuoteMeta(string(char)))
+				continue
+			}
+			pattern.WriteByte('[')
+			pattern.WriteRune(upper)
+			pattern.WriteRune(lower)
+			pattern.WriteByte(']')
+		}
+	}
+	pattern.WriteByte(')')
+	return pattern.String()
+}
+
+var engineLauncherScript = strings.ReplaceAll(engineLauncherTemplate, "@ENGINE_REPOSITORIES@", engineUsesRepositoryPattern())
+
+// engineLauncherTemplate holds the text of the engine launcher (engineLauncherFile). It is a POSIX shell
 // script because a hook must resolve its engine before any Praetor binary runs, and it runs under
-// Git Bash on Windows. It is a Go constant, not an embedded file: the DevContainer bootstrap
+// Git Bash on Windows. Its template is a Go constant: the DevContainer bootstrap
 // refuses a go:embed directive that is not a registered asset family. The emitted fixture under
 // testdata/emitted holds the same text, which scripts/test_emitted_hook_lint.py lints with
 // shellcheck, and engine_launcher_test.go runs it against stub binaries.
@@ -17,7 +51,7 @@ package adopt
 // and every statement stands on its own line, because shfmt splits a one-line if or subshell into
 // lines that would carry no guard. After an edit, run shfmt -w -i 2 -ci over the emitted fixture
 // and copy it back here; TestEngineLauncher_Positive_StableUnderShfmt fails until then.
-const engineLauncherScript = `#!/bin/sh
+const engineLauncherTemplate = `#!/bin/sh
 # SPDX-License-Identifier: EUPL-1.2
 # The one place a Praetor Git hook chooses which engine judges the repository (#906).
 # Every governance job in lefthook.yml and the fallback pre-commit hook run
@@ -27,9 +61,10 @@ const engineLauncherScript = `#!/bin/sh
 # value of PRAETOR_REF declared in a workflow under .github/workflows ("PRAETOR_REF: <ref>" or
 # "PRAETOR_REF=<ref>"), a PRAETOR_COMMIT declaration holding exactly 40 lowercase hexadecimal
 # characters, or the uses ref of praetor-adopt / reusable workflows
-# ("uses: cordanaLLM/praetor/.github/actions/praetor-adopt@<ref>" or
-# "uses: cordanaLLM/praetor/.github/workflows/<workflow>@<ref>"), the same declaration a hosted
-# Standards job installs the engine from with "go install <module>/cmd/standardsctl@${PRAETOR_REF}".
+# ("uses: tekmora/praetor/.github/actions/praetor-adopt@<ref>" or
+# "uses: tekmora/praetor/.github/workflows/<workflow>@<ref>", also accepted under cordanaLLM),
+# the same declaration a hosted Standards job uses to install the engine with
+# "go install <module>/cmd/standardsctl@${PRAETOR_REF}".
 # A PRAETOR_REF pin is a commit id of 7 to 40 hexadecimal digits or a release tag such as v1.2.3;
 # a branch name moves, so it is no pin. A non-pin uses ref such as @main is treated as unpinned
 # (running the engine on PATH). An invalid PRAETOR_COMMIT is noted and ignored.
@@ -134,7 +169,7 @@ uses_pins() {                                                      #
     [ -e "$file" ] || continue                                     #
     [ -r "$file" ] || refuse "workflow file $file is not readable" #
     #
-    tr -d '\r' <"$file" | sed -n -e 's/^[[:space:]]*-[[:space:]]*uses:[[:space:]]*//p' -e 's/^[[:space:]]*uses:[[:space:]]*//p' | sed -e 's/[[:space:]]*#.*$//' -e "s/^[\"']//" -e "s/[\"'][[:space:]]*\$//" -e 's/[[:space:]]*$//' | sed -n -e 's/^[Cc][Oo][Rr][Dd][Aa][Nn][Aa][Ll][Ll][Mm]\/[Pp][Rr][Aa][Ee][Tt][Oo][Rr]\/\.github\/actions\/praetor-adopt@\(..*\)$/\1/p' -e 's/^[Cc][Oo][Rr][Dd][Aa][Nn][Aa][Ll][Ll][Mm]\/[Pp][Rr][Aa][Ee][Tt][Oo][Rr]\/\.github\/workflows\/[^@[:space:]]*@\(..*\)$/\1/p' | while read -r value; do #
+    tr -d '\r' <"$file" | sed -n -e 's/^[[:space:]]*-[[:space:]]*uses:[[:space:]]*//p' -e 's/^[[:space:]]*uses:[[:space:]]*//p' | sed -e 's/[[:space:]]*#.*$//' -e "s/^[\"']//" -e "s/[\"'][[:space:]]*\$//" -e 's/[[:space:]]*$//' | sed -En -e 's#^@ENGINE_REPOSITORIES@/\.github/actions/praetor-adopt@(.+)$#\2#p' -e 's#^@ENGINE_REPOSITORIES@/\.github/workflows/[^@[:space:]]*@(.+)$#\2#p' | while read -r value; do #
       #
       if fault=$(pin_fault "$value"); then :; else printf '%s\tPRAETOR_REF\t%s\n' "$file" "$value"; fi #
       #

@@ -30,6 +30,9 @@ BOOTSTRAP_SPEC.loader.exec_module(BOOTSTRAP)
 SCOPE_SPEC = importlib.util.spec_from_file_location("checkpoint_scope", ROOT / ".config/lefthook/scripts/checkpoint_scope.py")
 SCOPE = importlib.util.module_from_spec(SCOPE_SPEC)
 SCOPE_SPEC.loader.exec_module(SCOPE)
+PLANNER_SPEC = importlib.util.spec_from_file_location("checkpoint_planner", ROOT / ".config/lefthook/scripts/checkpoint.py")
+PLANNER = importlib.util.module_from_spec(PLANNER_SPEC)
+PLANNER_SPEC.loader.exec_module(PLANNER)
 # Every child this suite starts goes through the harness driver's run_child: a child that a
 # signal ends is started once more, and both attempts are reported with the child's path
 # and version (#809).
@@ -109,6 +112,33 @@ def adapter_actions(hooks):
     """Every registered action of one client's `hooks` table that runs a Python adapter."""
     return [action for groups in hooks.values() for group in groups for action in group["hooks"]
             if not engine_row(action)]
+
+
+class CheckpointRemote(unittest.TestCase):
+    """Origin validation after the move from cordanaLLM to tekmora."""
+
+    def test_old_owner_origin_refused_with_migration_hint(self):
+        """An origin under the former owner is refused and names the set-url repair."""
+        for prefix in ("git@github.com:", "https://github.com/", "ssh://git@github.com/"):
+            with self.subTest(prefix=prefix):
+                with self.assertRaises(PLANNER.CheckpointError) as failure:
+                    PLANNER._validate_remote(prefix + "cordanaLLM/praetor.git", "tekmora/praetor")
+                self.assertIn(
+                    "git remote set-url origin git@github.com:tekmora/praetor.git",
+                    str(failure.exception),
+                )
+
+    def test_exact_origin_accepted(self):
+        """The configured repository itself passes."""
+        PLANNER._validate_remote("git@github.com:tekmora/praetor.git", "tekmora/praetor")
+
+    def test_other_repository_refused_without_migration_hint(self):
+        """Another repository name or host gets the plain refusal, never a repair hint."""
+        for url in ("git@github.com:cordanaLLM/other.git", "https://other.example/cordanaLLM/praetor.git"):
+            with self.subTest(url=url):
+                with self.assertRaises(PLANNER.CheckpointError) as failure:
+                    PLANNER._validate_remote(url, "tekmora/praetor")
+                self.assertEqual(str(failure.exception), "configured remote does not match repository")
 
 
 class MissingHookTools(unittest.TestCase):

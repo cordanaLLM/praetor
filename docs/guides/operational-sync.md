@@ -313,7 +313,7 @@ workflow file would be an unexpected owner tree difference. What differs is whic
 Engine-only jobs carry one condition:
 
 ```yaml
-if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor')
 ```
 
 Repository variables are not inherited by a fork, so the literal decides there. The guard
