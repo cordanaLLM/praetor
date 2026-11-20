@@ -22,6 +22,8 @@ import (
 
 const gib = 1 << 30
 
+const defaultMaxLoadPerCore = 1.25
+
 // Policy is what a host must show before a heavy step starts.
 type Policy struct {
 	// MinAvailableBytes is the least MemAvailable the host must report.
@@ -35,7 +37,7 @@ type Policy struct {
 // DefaultPolicy is the fleet's memory rule (12 GiB available, 15 GiB swap free) and a load bound
 // of 1.25 times the host's CPUs, the 40 on 32 cores the landing queue admits at.
 func DefaultPolicy() Policy {
-	return Policy{MinAvailableBytes: 12 * gib, MinSwapFreeBytes: 15 * gib, MaxLoad1: 1.25 * float64(runtime.NumCPU())}
+	return Policy{MinAvailableBytes: 12 * gib, MinSwapFreeBytes: 15 * gib, MaxLoad1: defaultMaxLoadPerCore * float64(runtime.NumCPU())}
 }
 
 // HostCappedPolicy is the fleet's admission policy capped by the host it reads: at most a quarter of
