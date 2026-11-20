@@ -60,6 +60,7 @@ Recent completions in producer order, with local times, and daily counts by UTC 
 	}
 
 	.row {
+		min-width: 0;
 		display: grid;
 		gap: var(--space-1);
 		padding: var(--space-3) var(--space-4);

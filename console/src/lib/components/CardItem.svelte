@@ -71,6 +71,8 @@ the view state (by card id), so a live data update keeps it open.
 
 <style>
 	.card {
+		min-width: 0;
+		overflow-wrap: anywhere;
 		background: var(--color-card);
 		color: var(--color-card-foreground);
 		border: 1px solid var(--color-border);
@@ -87,6 +89,8 @@ the view state (by card id), so a live data update keeps it open.
 	}
 
 	.toggle {
+		min-width: 0;
+		overflow-wrap: anywhere;
 		display: flex;
 		gap: var(--space-2);
 		align-items: baseline;
@@ -102,6 +106,8 @@ the view state (by card id), so a live data update keeps it open.
 	}
 
 	.title {
+		min-width: 0;
+		overflow-wrap: anywhere;
 		font-weight: 600;
 		font-size: 1rem;
 	}
@@ -151,6 +157,8 @@ the view state (by card id), so a live data update keeps it open.
 	}
 
 	dd {
+		min-width: 0;
+		overflow-wrap: anywhere;
 		margin: 0;
 	}
 
@@ -167,6 +175,7 @@ the view state (by card id), so a live data update keeps it open.
 	}
 
 	.cmd {
+		min-width: 0;
 		display: block;
 		flex: 1 1 100%;
 		padding: var(--space-2) var(--space-3);

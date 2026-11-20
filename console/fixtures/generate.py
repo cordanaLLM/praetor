@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Synthetic console fixtures: cards.json, graph.json and status.json written to console.schema.json.
+"""Synthetic console fixtures: cards.json, graph.json and status.json validated against console.schema.json.
 
-Every value is made up from fixed word lists (repositories example/alpha ... example/theta, nodes N1 ..., cards C1 ...),
+Long unbreakable synthetic words exercise narrow layouts. Every value is made up from fixed word lists (repositories example/alpha ... example/theta, nodes N1 ..., cards C1 ...),
 so a fixture never carries real planning data; tools/schemacheck/console_test.go validates each file against its
 $defs entry. Output is deterministic for the same arguments, so a regenerated fixture shows as no diff.
 
@@ -23,6 +23,7 @@ WHERE = ("anywhere", "controller", "office", "home")
 PROBES = ("path", "command", "repo_secret", "pr_merged", "operator-word")
 STATUS = ("ready", "active", "blocked", "waiting")
 CLASSES = ("survival", "continuity", "growth")
+LONG_TOKEN = "".join(repo.split("/")[1] for repo in REPOS) * 3
 MAX_ROWS = 500  # the schema's largest maxItems
 
 
@@ -33,7 +34,7 @@ def pick(seq, i):
 def card(i):
     """One synthetic operator card; every third carries a command, every fourth a link."""
     verb, obj = pick(VERBS, i), pick(OBJECTS, i * 3)
-    row = {"id": f"C{i + 1}", "title": f"{verb} {obj}", "state": pick(STATES, i), "where": pick(WHERE, i),
+    row = {"id": f"C{i + 1}", "title": f"{verb} {obj} {LONG_TOKEN}" if i == 0 else f"{verb} {obj}", "state": pick(STATES, i), "where": pick(WHERE, i),
            "act": f"{verb.lower()} {obj} in {pick(REPOS, i)}", "say": f"{verb.lower()} done",
            "detail": f"Synthetic card {i + 1}: {verb.lower()} {obj}. Nothing here is real data.",
            "why_now": f"{obj.capitalize()} blocks {1 + i % 4} follow-up items.",
@@ -47,13 +48,14 @@ def card(i):
 
 
 def graph(nodes):
-    totals = {s: {"nodes": n, "units": float(n * 3)} for s, n in
+    """Synthetic plan graph for `nodes` ready items; the first quick win and frontier title carry LONG_TOKEN."""
+    totals ={s: {"nodes": n, "units": float(n * 3)} for s, n in
               (("waiting", 7), ("active", 12), ("ready", nodes), ("blocked", 20), ("done", 41))}
-    wins = [{"kind": pick(("node", "steering", "research"), i), "id": f"N{i + 1}", "title": f"{pick(VERBS, i)} {pick(OBJECTS, i + 2)}",
+    wins = [{"kind": pick(("node", "steering", "research"), i), "id": f"N{i + 1}", "title": f"{pick(VERBS, i)} {LONG_TOKEN}" if i == 0 else f"{pick(VERBS, i)} {pick(OBJECTS, i + 2)}",
              "gain": 1 + i % 5, "effort": 1 + (i * 2) % 5, "clarity": pick(("clear", "partial"), i), "reason": "synthetic",
              "model": "example-model", "repo": pick(REPOS[:-1], i)} for i in range(min(nodes, 20))
             if pick(REPOS[:-1], i) != REPOS[-2]]
-    frontier = [{"id": f"N{i + 1}", "title": f"{pick(VERBS, i + 1)} {pick(OBJECTS, i)}", "status": pick(STATUS, i),
+    frontier = [{"id": f"N{i + 1}", "title": f"{pick(VERBS, i + 1)} {LONG_TOKEN}" if i == 0 else f"{pick(VERBS, i + 1)} {pick(OBJECTS, i)}", "status": pick(STATUS, i),
                  "score": round(10 - i * 0.13, 2), "goal": pick("ABCDE", i), "class": pick(CLASSES, i),
                  "repo": pick(REPOS[:-1], i)} for i in range(min(nodes, 200))]
     # Eta has frontier items but no quick win; theta has no graph items.

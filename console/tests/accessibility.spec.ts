@@ -15,6 +15,40 @@ async function ready(page: Page, tab: Tab): Promise<void> {
 }
 
 for (const tab of TABS) {
+	test(`${tab}: no overflow at 360px`, async ({ page }, info) => {
+		test.skip(!info.project.name.endsWith('-phone'), 'Phone viewport check');
+		await page.setViewportSize({ width: 360, height: 900 });
+		await ready(page, tab);
+		await page.locator('details').evaluateAll((items) => {
+			for (const item of items) (item as HTMLDetailsElement).open = true;
+		});
+		await page.evaluate(
+			() =>
+				new Promise<void>((resolve) =>
+					requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+				)
+		);
+		const result = await page.evaluate(() => {
+			const root = document.documentElement;
+			const widest = [...document.querySelectorAll('*')].reduce((a, b) =>
+				b.getBoundingClientRect().right > a.getBoundingClientRect().right ? b : a
+			);
+			return {
+				scroll: root.scrollWidth,
+				client: root.clientWidth,
+				tag: widest.tagName,
+				id: widest.id,
+				className: widest.getAttribute('class')
+			};
+		});
+		expect(
+			result.scroll,
+			`${tab}: scrollWidth ${result.scroll}, clientWidth ${result.client}; widest ${result.tag}#${result.id}.${result.className}`
+		).toBeLessThanOrEqual(result.client);
+	});
+}
+
+for (const tab of TABS) {
 	test(`${tab}: WCAG 2.2 AA, contrast and fixture screenshot`, async ({ page, browser }, info) => {
 		const errors: string[] = [];
 		page.on('pageerror', (error) => errors.push(error.message));
