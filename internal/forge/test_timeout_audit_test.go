@@ -265,9 +265,9 @@ func TestAuditTestTimeouts_RepositoryMakefile(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Pin the declaration's entry day; expiry itself is exercised by the negative fixture.
-	today := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	today := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	out, err := AuditTestTimeouts(t.Context(), TestTimeoutOptions{Root: root, Exceptions: manifest.Exceptions, Today: today})
-	if err != nil || !strings.Contains(out, "Makefile excepted until 2026-11-20") || !strings.Contains(out, "1381") {
+	if err != nil || !strings.Contains(out, "Makefile excepted until 2026-11-30") || !strings.Contains(out, "1381") {
 		t.Fatalf("repository timeout audit = %q, %v; want the dated Makefile exception", out, err)
 	}
 }
