@@ -95,8 +95,8 @@ func TestBypassActorKeys_Boundary(t *testing.T) {
 	for i := 0; i < len(actors) && i < maxBypassActors+1; i++ {
 		actors[i] = map[string]any{"actor_id": int64(i), "actor_type": "Team", "bypass_mode": "always"}
 	}
-	if _, err := bypassActorKeys(actors); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("more than %d", maxBypassActors)) {
-		t.Fatalf("an over-bound declared list: %v; want error naming the bound", err)
+	if _, err := bypassActorKeys(actors); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("lists %d bypass actors, more than %d", len(actors), maxBypassActors)) {
+		t.Fatalf("an over-bound declared list: %v; want error naming the count and bound", err)
 	}
 	keys, err := bypassActorKeys(actors[:maxBypassActors])
 	if err != nil || len(keys) != maxBypassActors {

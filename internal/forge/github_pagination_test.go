@@ -56,8 +56,9 @@ func pagedRulesetForge(t *testing.T, pages map[string][]map[string]any, rs *rule
 	return gh, fake
 }
 
+// TestGitHubDriver_Rulesets_Positive_SecondPageRulesetIsUpdatedNotDuplicated finds a managed ruleset on the second listing page and updates it.
 func TestGitHubDriver_Rulesets_Positive_SecondPageRulesetIsUpdatedNotDuplicated(t *testing.T) {
-	live := map[string]any{"id": 777, "name": "main-branch-protection"}
+	live := map[string]any{"id": 777, "name": "main-branch-protection", "source_type": "Repository", "source": "acme/widgets"}
 	pages := map[string][]map[string]any{
 		"1": namedPage("id", "name", 1, issuesPerPage, "other"),
 		"2": {live},
@@ -103,6 +104,29 @@ func TestGitHubDriver_Rulesets_Boundary_FullFirstPageThenEmptyCreates(t *testing
 	}
 	if got := fake.requests[3].Path; got != fmt.Sprintf("/repos/acme/widgets/rulesets/%d", createdRulesetID) {
 		t.Fatalf("readback targeted the wrong ruleset: %s", got)
+	}
+}
+
+// TestGitHubDriver_Rulesets_DuplicateAcrossPages refuses ambiguity beyond the first match.
+func TestGitHubDriver_Rulesets_DuplicateAcrossPages(t *testing.T) {
+	for mode := 0; mode < 2; mode++ {
+		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+			first := namedPage("id", "name", 1, issuesPerPage, "other")
+			first[0] = map[string]any{"id": 2, "name": RepositoryRulesetName, "source_type": "Repository", "source": "acme/widgets"}
+			duplicate := map[string]any{"id": 400, "name": RepositoryRulesetName, "source_type": "Repository", "source": "acme/widgets"}
+			pages := map[string][]map[string]any{"1": first, "2": {duplicate}}
+			gh, fake := pagedRulesetForge(t, pages, &rulesetServer{existing: first})
+			gh.RulesetName = RepositoryRulesetName
+			var err error
+			if mode == 0 {
+				_, err = gh.LiveRuleset(t.Context(), "main")
+			} else {
+				err = gh.ReconcileProtection(t.Context(), "main", &config.BranchProtectionPolicy{})
+			}
+			if err == nil || !strings.Contains(err.Error(), "ids 2 and 400") || len(fake.requests) != 2 {
+				t.Fatalf("duplicate on second page: %v, requests %+v", err, fake.requests)
+			}
+		})
 	}
 }
 

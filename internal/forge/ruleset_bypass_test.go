@@ -93,7 +93,7 @@ func TestGitHubDriver_ReconcileProtection_BypassOnlyInANewRuleset(t *testing.T) 
 		t.Fatalf("a created single_maintainer ruleset must carry the admin bypass: %s %s", create.Method, create.Raw)
 	}
 
-	gh, fake = rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 7, "name": "main-branch-protection"}}})
+	gh, fake = rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 7, "name": "main-branch-protection", "source_type": "Repository", "source": "acme/widgets"}}})
 	if err := gh.ReconcileProtection(context.Background(), "main", solo); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestGitHubDriver_ReconcileProtection_BypassOnlyInANewRuleset(t *testing.T) 
 	}
 
 	team := []any{map[string]any{"actor_id": float64(9), "actor_type": "Team", "bypass_mode": "always"}}
-	gh, fake = rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 7, "name": "main-branch-protection", "bypass_actors": team}}})
+	gh, fake = rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 7, "name": "main-branch-protection", "source_type": "Repository", "source": "acme/widgets", "bypass_actors": team}}})
 	if err := gh.ReconcileProtection(context.Background(), "main", solo); err != nil {
 		t.Fatalf("update with live bypass: %v", err)
 	}

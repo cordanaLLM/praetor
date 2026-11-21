@@ -6,6 +6,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 	"strings"
@@ -143,6 +144,9 @@ func assertPlanModes(t *testing.T, args []string, drift bool, want, absent []str
 			if !errors.Is(err, ErrPlanDrift) {
 				t.Fatalf("flagged drift: got %v\n%s", err, out)
 			}
+			if code := commandExitCode(io.Discard, err); code != 1 {
+				t.Fatalf("flagged drift exit status: got %d, want 1", code)
+			}
 		} else if err != nil {
 			t.Fatalf("mode %d: want nil error, got %v\n%s", mode, err, out)
 		}
@@ -210,3 +214,107 @@ const (
 	missingRulesetAction  = `Action: Run 'praetorctl sync --remote' to create missing ruleset "praetor-main-protection" with the declared bypass actors.`
 	existingRulesetAction = `sync --remote keeps the bypass actors of a live ruleset; change those of ruleset "praetor-main-protection" on GitHub by hand (repository Settings, Rules) if the declared policy is intended`
 )
+
+// plantRulesetScope places a same-named parent before or after the repository ruleset.
+// The inherited-only case keeps all protection rules to isolate managed ruleset absence.
+func plantRulesetScope(t *testing.T, stub *forgeStub, scenario string) {
+	t.Helper()
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	repo, err := planFixtureRuleset(stub.rulesets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := maps.Clone(repo)
+	repo["id"], parent["id"] = 2, 1
+	parent["source_type"], parent["source"] = "Organization", "acme"
+	parent["bypass_actors"] = []any{}
+	repo["source_type"], repo["source"] = "Repository", "acme/widgets"
+	clear(stub.rulesets)
+	stub.rulesets[2] = repo
+	switch scenario {
+	case "only inherited":
+		delete(stub.rulesets, 2)
+		stub.rulesets[1] = parent
+	case "unread scope":
+		repo["source_type"], repo["source"] = nil, nil
+	case "duplicate repository names":
+		stub.rulesets[4] = maps.Clone(repo)
+		stub.rulesets[4]["id"] = 4
+	case "only repository":
+	default:
+		parent["rules"] = []any{map[string]any{"type": "deletion"}}
+		repo["bypass_actors"] = []any{map[string]any{"actor_id": 42, "actor_type": "Team", "bypass_mode": "always"}}
+		stub.reverseRulesets = scenario == "repository first"
+		stub.rulesets[1] = parent
+	}
+}
+
+// TestPlan_FailOnDrift_RulesetScope judges repository actors in both orders and preserves absence behavior.
+func TestPlan_FailOnDrift_RulesetScope(t *testing.T) {
+	cases := [...]string{"parent first", "repository first", "only inherited", "only repository"}
+	for i := 0; i < len(cases) && i < 4; i++ {
+		name := cases[i]
+		t.Run(name, func(t *testing.T) {
+			fixture := remoteProtectionFixture
+			if name == "only inherited" {
+				fixture = singleMaintainerPlanFixture
+			}
+			stub, args := syncedPlanFixture(t, fixture)
+			plantRulesetScope(t, stub, name)
+			want := []string{"[DRIFT] Bypass actors: declared none, live [Team 42 always]", existingRulesetAction}
+			if name == "only inherited" {
+				want = []string{"live no praetor-main-protection ruleset", missingRulesetAction}
+			}
+			if name == "only repository" {
+				want = []string{"[OK] Bypass actors: declared none, live none", "Status: GitHub enforces every declared branch protection property."}
+			}
+			assertPlanModes(t, args, name != "only repository", want, []string{"[DRIFT] GitHub does not enforce"})
+		})
+	}
+}
+
+// TestPlan_FailOnDrift_UnreadRulesetScope refuses unknown owners and duplicate repository names.
+func TestPlan_FailOnDrift_UnreadRulesetScope(t *testing.T) {
+	cases := [...]struct{ name, diagnostic string }{
+		{"unread scope", "unread scope"}, {"duplicate repository names", "ids 2 and 4"},
+	}
+	for i := 0; i < len(cases) && i < 2; i++ {
+		c := cases[i]
+		t.Run(c.name, func(t *testing.T) {
+			stub, args := syncedPlanFixture(t, remoteProtectionFixture)
+			plantRulesetScope(t, stub, c.name)
+			for mode := 0; mode < 2; mode++ {
+				runArgs := slices.Clone(args)
+				if mode == 1 {
+					runArgs = append(runArgs, "--fail-on-drift")
+				}
+				out, err := runPlanCmd(t, runArgs...)
+				mustErrContain(t, err, c.diagnostic)
+				rejectPlanMessages(t, out, []string{"[OK] Bypass actors", "Status: GitHub enforces every declared branch protection property."})
+			}
+		})
+	}
+}
+
+// TestSync_Remote_RulesetScope updates repository id 2, preserving inherited id 1 in both orders.
+func TestSync_Remote_RulesetScope(t *testing.T) {
+	for _, name := range [2]string{"parent first", "repository first"} {
+		t.Run(name, func(t *testing.T) {
+			stub, args := syncedPlanFixture(t, remoteProtectionFixture)
+			plantRulesetScope(t, stub, name)
+			before := len(stub.recorded())
+			out, err := runSyncCmd(t, args...)
+			if err != nil {
+				t.Fatalf("sync: %v\n%s", err, out)
+			}
+			writes := stub.recorded()[before:]
+			if !slices.Contains(writes, "PUT /repos/acme/widgets/rulesets/2") {
+				t.Fatalf("repository id 2 not updated: %v", writes)
+			}
+			if slices.Contains(writes, "PUT /repos/acme/widgets/rulesets/1") {
+				t.Fatalf("inherited ruleset updated: %v", writes)
+			}
+		})
+	}
+}

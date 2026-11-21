@@ -117,6 +117,7 @@ func TestGitHubDriver_ReconcileMergeQueue_Negative_NilPolicy(t *testing.T) {
 // operator's own parameter, and the live read reports it. A repository without one reads nil.
 func TestGitHubDriver_ReconcileMergeQueue_Boundary_LiveWildcardSurvivesTheMerge(t *testing.T) {
 	live := map[string]any{"id": 5, "name": MergeQueueRulesetName, "target": "branch", "enforcement": "active",
+		"source_type": "Repository", "source": "acme/widgets",
 		"conditions": map[string]any{"ref_name": map[string]any{"include": []any{"refs/heads/main", "refs/heads/lts-*"}, "exclude": []any{}}},
 		"rules":      []any{map[string]any{"type": MergeQueueRule, "parameters": map[string]any{"merge_method": "MERGE"}}}}
 	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{live}})

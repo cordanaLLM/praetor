@@ -771,15 +771,19 @@ before any request. Nothing is written. When a declared property is not enforced
 at zero (`cmd/standardsctl/plan.go`, `TestPlan_Remote_ComparesLiveBranchProtection_Positive`,
 `TestPlan_Remote_ComparesLiveBranchProtection_Negative`).
 
-`--remote` also compares the bypass actors of the live `praetor-main-protection` ruleset with
-those the policy renders: the repository admin role in mode `pull_request` under review mode
+`--remote` also compares the bypass actors of the repository-owned `praetor-main-protection`
+ruleset with those the policy renders: the repository admin role in mode `pull_request` under review mode
 `single_maintainer`, none otherwise (`forge.EvaluateBypassActors`). A missing declared actor, an
 extra live one or a wider bypass mode is `[DRIFT] Bypass actors`. GitHub returns `bypass_actors`
 only to a caller with write access to the ruleset, so a ruleset read without the list reports it
 as unread drift; an unread list never passes. `sync --remote` keeps the bypass actors of a live
 ruleset, so plan names the hand edit on GitHub instead of a command. When the declared
 `single_maintainer` mode has no live ruleset yet, `sync --remote` creates it with the declared actor;
-plan reports the absence as bypass drift until the ruleset exists.
+plan reports the absence as bypass drift until the ruleset exists. A same-named inherited
+organisation ruleset is not this managed ruleset. The lookup checks both `source_type` and
+`source`; unread scope fails the read, and duplicate repository-owned names fail with both ids
+named. Inherited rules still count in the aggregate branch protection evaluation
+(`GitHubDriver.ReadBranchProtection`, `forge.EvaluateBranchProtection`).
 
 A scheduled or CI check of the live ruleset adds `--fail-on-drift`: any drift of a declared
 protection property or of the bypass actors ends plan with a non-zero exit (`ErrPlanDrift`); the
