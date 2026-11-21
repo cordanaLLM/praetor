@@ -99,9 +99,14 @@ review holds as soon as external bots complete without waiting for the next sche
 like schedule and workflow dispatch, run only from the workflow file on the default branch; a pull request
 that adds or changes the release workflow is released by hand (`gh run rerun --failed`) until it lands.
 The job condition restricts runs on `check_run` and `status` events to review bots declared in
-`ReviewHoldBots`, ignoring unrelated checks and pending statuses. For each open PR within the same page
-bound, it inspects the newest `portability.yml` PR run on that head and its current attempt's failed-job
-annotations. It reruns a completed failed run only when the hold title is present and the shared counter
+`ReviewHoldBots`, ignoring unrelated checks and pending statuses. Review events (`pull_request_review` and
+`pull_request_review_comment`) carry one pull request (`github.event.pull_request.number`), so they group
+concurrency per pull request, cancel a superseded run for that pull request and scan only that pull request
+(a queue of 108 review-event runs starved the hosted pool on 2026-11-13 when every review event waited in
+one global group and scanned all open pull requests); `schedule`, `workflow_dispatch`, `check_run` and
+`status` runs keep one scan group over every open PR within the same page bound. For each open PR in the
+run's scope, it inspects the newest `portability.yml` PR or review run on that head and its current
+attempt's failed-job annotations. It reruns a completed failed run only when the hold title is present and the shared counter
 now returns zero for both counts. It rechecks the run attempt and PR head immediately before rerunning;
 unrelated failures are left alone. Rerunning the workflow also reruns its other jobs. Each pull request's
 release scan now runs isolated: a read failure fails only that pull request (no rerun for it), prints
