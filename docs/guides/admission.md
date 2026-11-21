@@ -41,7 +41,9 @@ and the admission line in the output shows when the step started.
 ## Remote executor inventory
 
 Publish a JSON array of 1–32 entries in a regular file of at most 64 KiB. Each object requires
-all seven fields. The command rejects unknown fields, duplicate keys and repeated names.
+`name`, `ssh_host`, `ssh_user`, `workspace_root`, `memory_gib` and `class`. The command rejects
+unknown fields, duplicate keys and repeated names. `cores` is optional when the executor pod
+publishes a `cpu.max` quota.
 
 ```json
 [
@@ -59,23 +61,37 @@ all seven fields. The command rejects unknown fields, duplicate keys and repeate
 
 `name` is a unique identifier. `local` is reserved. `ssh_host` is a hostname or IP address,
 and `ssh_user` is the SSH account. `workspace_root` is an existing, writable absolute Linux
-directory below `/`. `cores` and `memory_gib` are positive integers. `cpu-offload` is the
-supported class. The executor needs a POSIX login shell, Git, GNU coreutils and a user systemd
-manager. Its SSH host key must already be trusted by the workstation.
+directory below `/`. `memory_gib` is a positive integer; when present, `cores` is a positive integer used with
+the pod cgroup. `cpu-offload` is the supported class. Home executors run in a pod whose cgroup
+is the memory barrier: the pod carries a small CPU request, a memory limit equal to the step's
+`MemoryMax`, and an `emptyDir` workspace. The executor needs a POSIX login shell, Git and GNU
+coreutils over SSH. Its SSH host key must already be trusted by the workstation.
 
-Admission reads `/proc/loadavg` and `/proc/meminfo` over SSH with a two-second bound per
-executor. Eligible executors are ranked by measured memory above the floor, then by one-minute
-load per declared core. Inventory order breaks exact ties. Failed probes and held executors
-are reported by name. When `--wait` expires without a choice, the command returns 75 and lists
-the final readings or probe errors. A missing or unreadable inventory fails with its setting
-or path.
+Admission reads `/proc/loadavg`, `/proc/meminfo`, and the pod cgroup counters under
+`/sys/fs/cgroup/` over SSH with a two-second bound per executor. Free memory for ranking is
+the lesser of `MemAvailable` and `memory.max` minus `memory.current`; an unreadable cgroup file
+makes that executor unusable for the wait, named on the wait line. Eligible executors are ranked
+by measured headroom above the floor, then by one-minute load per effective core. Effective
+cores are the lesser of the inventory `cores` and the pod `cpu.max` quota (rounded down, at least
+1); one bound alone when the other is absent or `max`; neither bound refuses by name. Inventory
+order breaks exact ties. Failed probes and held executors are reported by name. When `--wait`
+expires without a choice, the command returns 75 and lists the final readings or probe errors.
+A missing or unreadable inventory fails with its setting or path.
 
-The executor unpacks a Git bundle containing the exact HEAD and staged index tree into
-a per-run directory. The step starts in the corresponding repository subdirectory with a
-detached HEAD and the staged changes visible. Unstaged and untracked files stay on the
-workstation. Remote steps are noninteractive and stream stdout and stderr back over SSH.
-The remote session removes its working directory when it exits and stops the scope on
-interruption. Use named local mode for steps that require the workstation checkout or stdin.
+The executor unpacks a Git bundle containing the exact HEAD and staged index tree into a per-run
+directory. Before the step starts the session reads the pod's `memory.max` and refuses unless it
+equals the step's `MemoryMax` byte for byte (`max`, a different value, or an unreadable file
+refuses by name and the step does not start). The step runs in the corresponding repository
+subdirectory with a detached HEAD and the staged changes visible. Unstaged and untracked files
+stay on the workstation. Remote steps are noninteractive and stream stdout and stderr back over SSH.
+Build parallelism is `cores` divided by concurrent admitted steps on that executor (at least one
+job), passed as `MAKEFLAGS=-jN` and `GOMAXPROCS=N`; the admission line names the executor, core
+source, concurrent steps and jobs. If the SSH session ends without the step's exit status (for
+example SSH status 255, a reset, or the pod gone), admit fails with `executor <name> lost the step
+mid-run (evicted or unreachable)` and does not rerun on its own. Pass `--fallback=local` to run the
+step on the workstation instead; the command prints the substitution on stderr. The remote session
+removes its working directory when it exits. Use named local mode for steps that require the
+workstation checkout or stdin.
 
 ## Thresholds
 

@@ -118,7 +118,7 @@ exit "$3"`, "gate", f.head, f.tree, fmt.Sprint(status), "argument with 'quotes' 
 			if code != status || !strings.Contains(out, "planted gate stdout best") {
 				t.Fatalf("wanted best executor with exit %d, got %d, stdout %q, stderr %q", status, code, out, log)
 			}
-			for _, want := range []string{"admitted gate-fixture on best", "busy held: load", "down skipped: probe failed", "planted gate stderr", "planted scope limits"} {
+			for _, want := range []string{"admitted gate-fixture on best", "busy held: load", "down skipped: probe failed", "planted gate stderr", "GOMAXPROCS="} {
 				if !strings.Contains(log, want) {
 					t.Errorf("stderr lacks %q: %q", want, log)
 				}
@@ -173,6 +173,76 @@ func TestRunAdmit_RemoteTimeoutCleansWorkspace(t *testing.T) {
 	f.assertClean(t)
 }
 
+func TestRunAdmit_RemoteBuildParallelism(t *testing.T) {
+	f := newAdmitFixture(t)
+	f.inventory(t, "home")
+	out, log, code := runAdmitCaptured(t, "--", "sh", "-c", `printf "%s %s %s\n" "$(nproc)" "$MAKEFLAGS" "$GOMAXPROCS"`)
+	if code != 0 || out != "30 -j12 12\n" || !strings.Contains(log, "cores 12 from list and pod cpu.max; 1 concurrent step(s); -j12 GOMAXPROCS=12") {
+		t.Fatalf("one step parallelism: %d %q %q", code, out, log)
+	}
+	admission.AdmitExecutorLease("home")
+	defer admission.ReleaseExecutorLease("home")
+	out, log, code = runAdmitCaptured(t, "--", "sh", "-c", `printf "%s %s %s\n" "$(nproc)" "$MAKEFLAGS" "$GOMAXPROCS"`)
+	if code != 0 || out != "30 -j6 6\n" || !strings.Contains(log, "cores 12 from list and pod cpu.max; 2 concurrent step(s); -j6 GOMAXPROCS=6") {
+		t.Fatalf("two concurrent parallelism: %d %q %q", code, out, log)
+	}
+	f.assertClean(t)
+}
+
+func TestRunAdmit_RemoteNoCoresRefused(t *testing.T) {
+	f := newAdmitFixture(t)
+	f.inventoryRaw(t, `{"name":"no-cores","ssh_host":"no-cores","ssh_user":"fixture","workspace_root":"`+f.root+`","memory_gib":64,"class":"cpu-offload"}`)
+	out, log, code := runAdmitCaptured(t, "--wait", "150ms", "--", "sh", "-c", "echo ran")
+	if code != 75 || out != "" || !strings.Contains(log, "executor no-cores: no core count (list cores missing, cpu.max unlimited)") {
+		t.Fatalf("no cores: %d %q %q", code, out, log)
+	}
+}
+
+func TestRunAdmit_RemoteBadMemoryRefused(t *testing.T) {
+	for _, tc := range []struct{ host, want string }{
+		{"max-mem", "executor max-mem: pod memory.max max is not the step MemoryMax 25769803776"},
+		{"bad-mem", "executor bad-mem: pod memory.max 99999999 is not the step MemoryMax 25769803776"},
+		{"large-mem", "executor large-mem: pod memory.max 34359738368 is not the step MemoryMax 25769803776"},
+		{"missing-mem", "executor missing-mem: pod memory.max unreadable is not the step MemoryMax 25769803776"},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			f := newAdmitFixture(t)
+			f.inventory(t, tc.host)
+			out, log, code := runAdmitCaptured(t, "--poll", "10ms", "--", "sh", "-c", "echo ran")
+			if code != 1 || out != "" || !strings.Contains(log, tc.want) {
+				t.Fatalf("bad memory (%s): %d %q %q", tc.host, code, out, log)
+			}
+			f.assertClean(t)
+		})
+	}
+}
+
+func TestRunAdmit_RemoteEvictionAndFallback(t *testing.T) {
+	needShell(t)
+	f := newAdmitFixture(t)
+	f.inventory(t, "evict")
+	out, log, code := runAdmitCaptured(t, "--", "sh", "-c", "echo ran")
+	if code == 0 || !strings.Contains(log, "executor evict lost the step mid-run (evicted or unreachable)") || strings.Contains(out, "ran") {
+		t.Fatalf("eviction without fallback: %d %q %q", code, out, log)
+	}
+	out, log, code = runAdmitCaptured(t, "--fallback", "local", "--min-available-gib", "0", "--min-swap-free-gib", "0", "--max-load", "0", "--", "sh", "-c", "echo planted-local")
+	if code != 0 || out != "planted-local\n" || !strings.Contains(log, "admission fallback: running on local after executor evict lost the step mid-run") {
+		t.Fatalf("eviction with fallback: %d %q %q", code, out, log)
+	}
+	_ = f
+}
+
+func TestRunAdmit_RemoteHeadroomUsesPodCgroup(t *testing.T) {
+	f := newAdmitFixture(t)
+	f.inventory(t, "headroom", "unreadable-cgroup")
+	out, log, code := runAdmitCaptured(t, "--wait", "150ms", "--", "sh", "-c", "echo ran")
+	if code != 75 || out != "" || !strings.Contains(log, "headroom held: available 6.0 GiB < 12.0 GiB") ||
+		!strings.Contains(log, "unreadable-cgroup skipped: probe failed: \"executor unreadable-cgroup: pod cgroup counters unreadable\"") {
+		t.Fatalf("pod headroom hold: %d %q %q", code, out, log)
+	}
+	_ = f
+}
+
 func TestRunAdmit_RemoteCancellationCleansWorkspace(t *testing.T) {
 	f := newAdmitFixture(t)
 	f.inventory(t, "best")
@@ -195,8 +265,7 @@ func TestRunAdmit_RemoteCancellationCleansWorkspace(t *testing.T) {
 	}()
 	start := time.Now()
 	out, log, code := runAdmitCaptured(t, "--", "sh", "-c", `: > "$1"; exec sleep 15`, "step", marker)
-	if !<-started || code != 1 || !strings.Contains(log, "executor best: SSH run") ||
-		!strings.Contains(log, "planted scope stopped") || time.Since(start) >= 8*time.Second {
+	if !<-started || code != 1 || !strings.Contains(log, "executor best: SSH run") || time.Since(start) >= 8*time.Second {
 		t.Fatalf("cancellation: %d %q %q", code, out, log)
 	}
 	f.assertClean(t)
@@ -263,11 +332,13 @@ func newAdmitFixture(t *testing.T) admitFixture {
 	}
 	t.Setenv(admitExecutorEnv, "")
 	root := filepath.Join(t.TempDir(), "remote 'workspace'")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	repo := t.TempDir()
 	work := filepath.Join(repo, "sub dir")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
 	if err := os.Mkdir(work, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +389,9 @@ func admitStubTools(t *testing.T) {
 	writeAdmitExecutable(t, bin, "ssh", admitFakeSSH)
 	writeAdmitExecutable(t, bin, "systemd-run", admitFakeScope)
 	writeAdmitExecutable(t, bin, "systemctl", admitFakeSystemctl)
+	writeAdmitExecutable(t, bin, "nproc", "#!/bin/sh\necho 30\n")
 	t.Setenv("ADMIT_STUB_SCOPES", t.TempDir())
+	t.Setenv("ADMIT_STUB_CGROUPS", t.TempDir())
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	ctx, err := util.WithCommandEnvironment(t.Context(), admitFixtureEnvironment())
 	if err != nil {
@@ -332,6 +405,7 @@ func admitStubTools(t *testing.T) {
 func writeAdmitExecutable(t *testing.T, dir, name, body string) {
 	t.Helper()
 	file := writeFixtureFile(t, dir, name, body)
+	// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a stub run through PATH needs the owner execute bit
 	if err := os.Chmod(file, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -342,12 +416,21 @@ func (f admitFixture) inventory(t *testing.T, names ...string) {
 	var entries []string
 	for _, name := range names {
 		cores := 8
-		if name == "tie-large" {
+		switch name {
+		case "tie-large":
 			cores = 16
+		case "home":
+			cores = 30
 		}
 		entries = append(entries, fmt.Sprintf(`{"name":%q,"ssh_host":%q,"ssh_user":"fixture","workspace_root":%q,"cores":%d,"memory_gib":64,"class":"cpu-offload"}`,
 			name, name, f.root, cores))
 	}
+	file := writeFixtureFile(t, t.TempDir(), "executors.json", "["+strings.Join(entries, ",")+"]")
+	t.Setenv(admitExecutorsEnv, file)
+}
+
+func (f admitFixture) inventoryRaw(t *testing.T, entries ...string) {
+	t.Helper()
 	file := writeFixtureFile(t, t.TempDir(), "executors.json", "["+strings.Join(entries, ",")+"]")
 	t.Setenv(admitExecutorsEnv, file)
 }
@@ -359,6 +442,8 @@ func (f admitFixture) assertClean(t *testing.T) {
 	}
 }
 
+const admitMemoryMaxBytes = "25769803776"
+
 const admitFakeSSH = `#!/bin/sh
 set -eu
 for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do
@@ -366,24 +451,65 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do
     shift
 done
 host=$1 command=$2
+cgroup="$ADMIT_STUB_CGROUPS/$host"
+mkdir -p "$cgroup"
+export PRAETOR_ADMIT_CGROUP_DIR="$cgroup"
+write_cgroups() {
+    memmax=$1; memcur=$2; cpumax=$3
+    if [ "$memmax" = __UNREADABLE__ ]; then
+        rm -f "$cgroup/memory.max"
+    else
+        printf '%s\n' "$memmax" > "$cgroup/memory.max"
+    fi
+    printf '%s\n' "$memcur" > "$cgroup/memory.current"
+    printf '%s\n' "$cpumax" > "$cgroup/cpu.max"
+}
+stub_probe() {
+    load=$1; available=$2; memmax=$3; memcur=$4; cpumax=$5
+    write_cgroups "$memmax" "$memcur" "$cpumax"
+    printf '%s 0 0 1/10 123\n' "$load"
+    printf '__PRAETOR_CGROUP_END__\n'
+    printf 'MemTotal: 67108864 kB\nMemAvailable: %s kB\nSwapTotal: 33554432 kB\nSwapFree: 33554432 kB\n' "$available"
+    printf '__PRAETOR_CGROUP_END__\n'
+    for f in "$cgroup/memory.max" "$cgroup/memory.current" "$cgroup/cpu.max"; do
+        cat "$f" 2>/dev/null || echo __MISSING__
+        printf '__PRAETOR_CGROUP_END__\n'
+    done
+}
 case "$command" in
-    *'/proc/loadavg /proc/meminfo')
-        load=1
-        available=16777216
+    *'for f in /proc/loadavg'*)
+        load=1 available=16777216 memmax=` + admitMemoryMaxBytes + ` memcur=0 cpumax="max 100000"
         case "$host" in
             adequate) ;;
-            best) available=33554432 ;;
-            busy) available=50331648; load=11 ;;
+            best) available=33554432; cpumax="1200000 100000" ;;
+            busy) available=50331648; load=11; cpumax="1200000 100000" ;;
             tie-small) load=2 ;;
             tie-large) load=3 ;;
+            home) cpumax="1200000 100000" ;;
+            no-cores) cpumax="max 100000" ;;
             down) echo 'fixture connection refused' >&2; exit 255 ;;
-            incomplete) printf '1 0 0\nMemTotal: 67108864 kB\n'; exit 0 ;;
+            incomplete) printf '1 0 0\n__PRAETOR_CGROUP_END__\n'; exit 0 ;;
             slow) exec sleep 15 ;;
+            headroom) available=20971520; memmax=17179869184; memcur=10737418240 ;;
+            unreadable-cgroup) memmax=__UNREADABLE__ ;;
+            evict|bad-mem|max-mem|large-mem|missing-mem) cpumax="1200000 100000" ;;
             *) exit 99 ;;
         esac
-        printf '%s 0 0 1/10 123\nMemTotal: 67108864 kB\nMemAvailable: %s kB\nSwapTotal: 33554432 kB\nSwapFree: 33554432 kB\n' "$load" "$available"
+        stub_probe "$load" "$available" "$memmax" "$memcur" "$cpumax"
         ;;
-    *) export ADMIT_STUB_HOST="$host"; exec sh -c "exec $command" ;;
+    *)
+        memmax=` + admitMemoryMaxBytes + `
+        case "$host" in
+            max-mem) memmax=max ;;
+            bad-mem) memmax=99999999 ;;
+            large-mem) memmax=34359738368 ;;
+            missing-mem) memmax=__UNREADABLE__ ;;
+            evict) echo 'fixture mid-run disconnect' >&2; exit 255 ;;
+        esac
+        write_cgroups "$memmax" 0 "1200000 100000"
+        export ADMIT_STUB_HOST="$host"
+        exec sh -c "exec $command"
+        ;;
 esac
 `
 

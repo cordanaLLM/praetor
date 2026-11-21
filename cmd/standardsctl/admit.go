@@ -16,7 +16,7 @@ import (
 )
 
 // admitUsage is the usage line `admit` prints on a malformed call.
-const admitUsage = "usage: praetorctl admit [--local] [--label L] [--memory-high 16G] [--memory-max 24G] [--memory-swap-max 4G] [--min-available-gib 12] " +
+const admitUsage = "usage: praetorctl admit [--local] [--fallback MODE] [--label L] [--memory-high 16G] [--memory-max 24G] [--memory-swap-max 4G] [--min-available-gib 12] " +
 	"[--min-swap-free-gib 15] [--max-load N] [--wait 6h] [--timeout 6h] -- <command> [args...]"
 
 const admitExecutorEnv = "PRAETOR_ADMIT_EXECUTOR"
@@ -27,14 +27,15 @@ const maxAdmitGiB = 1 << 20
 
 // admitOptions are the flags of one `admit` call.
 type admitOptions struct {
-	label       string
-	policy      admission.Policy
-	limits      admission.Limits
-	wait, poll  time.Duration
-	timeout     time.Duration
-	argv        []string
-	local       bool
-	defaultLoad bool
+	label        string
+	policy       admission.Policy
+	limits       admission.Limits
+	wait, poll   time.Duration
+	timeout      time.Duration
+	argv         []string
+	local        bool
+	defaultLoad  bool
+	fallbackMode string
 }
 
 // runAdmit is `praetorctl admit`: it holds a heavy step until the host has the memory, swap and
@@ -85,22 +86,48 @@ func runRemoteAdmit(opts admitOptions, path string) error {
 	ctx := rootContext()
 	waiter := admission.RemoteWaiter{Executors: executors, Policy: opts.policy, MaxWait: opts.wait, Poll: opts.poll,
 		DefaultLoad: opts.defaultLoad, Log: os.Stderr}
-	executor, verdict, err := waiter.Wait(ctx, opts.label)
+	executor, info, verdict, err := waiter.Wait(ctx, opts.label)
 	if err != nil {
 		if errors.Is(err, admission.ErrNoExecutor) && ctx.Err() == nil {
 			return admitStatus(75, err)
 		}
 		return err
 	}
-	if err := logAdmitted(opts.label+" on "+executor.Name, verdict); err != nil {
+	return runAdmittedRemoteStep(opts, executor, info, verdict)
+}
+
+func runAdmittedRemoteStep(opts admitOptions, executor admission.Executor, info admission.RemoteAdmitInfo, verdict admission.Verdict) error {
+	concurrent := admission.AdmitExecutorLease(executor.Name)
+	info.Concurrent = concurrent
+	info.Jobs = admission.StepParallelismJobs(info.Cores, concurrent)
+	defer admission.ReleaseExecutorLease(executor.Name)
+	if err := logAdmittedRemote(opts.label, executor.Name, info, verdict); err != nil {
 		return err
 	}
-	code, err := admission.RunRemote(ctx, executor, admission.DefaultStep(opts.label, opts.argv, opts.limits), opts.timeout)
+	memoryMax, err := admission.LimitsMemoryMaxBytes(opts.limits)
+	if err != nil {
+		return err
+	}
+	code, err := admission.RunRemote(rootContext(), executor, admission.DefaultStep(opts.label, opts.argv, opts.limits), opts.timeout, info.Jobs, memoryMax)
+	if errors.Is(err, admission.ErrExecutorLost) && opts.fallbackMode == "local" {
+		if _, werr := fmt.Fprintf(os.Stderr, "%s admission fallback: running on local after executor %s lost the step mid-run\n",
+			time.Now().Format("15:04:05"), executor.Name); werr != nil {
+			return werr
+		}
+		return runLocalAdmit(opts)
+	}
 	return admitStatus(code, err)
 }
 
 func logAdmitted(label string, verdict admission.Verdict) error {
 	_, err := fmt.Fprintf(os.Stderr, "%s admitted %s: %s\n", time.Now().Format("15:04:05"), label, verdict.Reason)
+	return err
+}
+
+func logAdmittedRemote(label, executor string, info admission.RemoteAdmitInfo, verdict admission.Verdict) error {
+	line := fmt.Sprintf("%s admitted %s on %s: %s; cores %d from %s; %d concurrent step(s); -j%d GOMAXPROCS=%d",
+		time.Now().Format("15:04:05"), label, executor, verdict.Reason, info.Cores, info.CoreSource, info.Concurrent, info.Jobs, info.Jobs)
+	_, err := fmt.Fprintln(os.Stderr, line)
 	return err
 }
 
@@ -122,6 +149,7 @@ func parseAdmit(args []string) (admitOptions, error) {
 	fs := flag.NewFlagSet("admit", flag.ContinueOnError)
 	label := fs.String("label", "", "name of the step in admission lines and its scope (default: the command's name)")
 	local := fs.Bool("local", false, "run on the workstation explicitly; otherwise use "+admitExecutorsEnv)
+	fallback := fs.String("fallback", "", "when a remote executor loses a step mid-run, run on the workstation if MODE is local")
 	high := fs.String("memory-high", "16G", "MemoryHigh of the step's scope: above it the kernel reclaims from the step")
 	limit := fs.String("memory-max", "24G", "MemoryMax of the step's scope: above it the kernel swaps the step out")
 	swapMax := fs.String("memory-swap-max", "4G", "MemorySwapMax of the step's scope: past MemoryMax plus this the step alone is killed; 0 keeps it out of swap")
@@ -143,8 +171,11 @@ func parseAdmit(args []string) (admitOptions, error) {
 	if err != nil {
 		return admitOptions{}, err
 	}
+	if *fallback != "" && *fallback != "local" {
+		return admitOptions{}, fmt.Errorf("--fallback %q is invalid, use local", *fallback)
+	}
 	opts := admitOptions{label: *label, policy: policy, limits: admission.Limits{MemoryHigh: *high, MemoryMax: *limit, MemorySwapMax: *swapMax},
-		wait: *wait, poll: *poll, timeout: *timeout, argv: argv, local: *local, defaultLoad: true}
+		wait: *wait, poll: *poll, timeout: *timeout, argv: argv, local: *local, defaultLoad: true, fallbackMode: *fallback}
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "max-load" {
 			opts.defaultLoad = false

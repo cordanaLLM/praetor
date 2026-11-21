@@ -32,36 +32,46 @@ type RemoteWaiter struct {
 }
 
 type executorReading struct {
-	stats sentinel.HostStats
-	err   error
+	stats      sentinel.HostStats
+	cores      int
+	coreSource string
+	err        error
 }
 
 // Wait returns the admitted executor with the largest memory headroom, then the lowest
 // load per core. A final tie follows the inventory order.
-func (w RemoteWaiter) Wait(ctx context.Context, label string) (Executor, Verdict, error) {
+func (w RemoteWaiter) Wait(ctx context.Context, label string) (Executor, RemoteAdmitInfo, Verdict, error) {
 	if err := w.validate(); err != nil {
-		return Executor{}, Verdict{}, err
+		return Executor{}, RemoteAdmitInfo{}, Verdict{}, err
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, w.MaxWait)
 	defer cancel()
 	var last string
 	for range maxPolls {
-		selected, verdict, skipped := w.choose(probeExecutors(waitCtx, w.Executors))
+		selected, info, verdict, skipped := w.choose(probeExecutors(waitCtx, w.Executors))
 		last = strings.Join(skipped, "; ")
 		if err := ctx.Err(); err != nil {
-			return Executor{}, Verdict{}, fmt.Errorf("admission %s: %w", label, err)
+			return Executor{}, RemoteAdmitInfo{}, Verdict{}, fmt.Errorf("admission %s: %w", label, err)
 		}
 		if verdict.Admit {
-			return selected, verdict, logExecutorWait(w.Log, label, last)
+			return selected, info, verdict, logExecutorWait(w.Log, label, last)
 		}
 		if err := logExecutorWait(w.Log, label, last); err != nil {
-			return Executor{}, Verdict{}, err
+			return Executor{}, RemoteAdmitInfo{}, Verdict{}, err
 		}
 		if !waitForNextReading(waitCtx, w.Poll) {
 			break
 		}
 	}
-	return Executor{}, Verdict{}, fmt.Errorf("admission %s: %w: %s", label, ErrNoExecutor, last)
+	return Executor{}, RemoteAdmitInfo{}, Verdict{}, fmt.Errorf("admission %s: %w: %s", label, ErrNoExecutor, last)
+}
+
+// RemoteAdmitInfo names how many cores and jobs the admitted step will use on the executor.
+type RemoteAdmitInfo struct {
+	Cores      int
+	CoreSource string
+	Concurrent int
+	Jobs       int
 }
 
 func (w RemoteWaiter) validate() error {
@@ -85,9 +95,10 @@ func logExecutorWait(log io.Writer, label, reasons string) error {
 	return err
 }
 
-func (w RemoteWaiter) choose(readings []executorReading) (Executor, Verdict, []string) {
+func (w RemoteWaiter) choose(readings []executorReading) (Executor, RemoteAdmitInfo, Verdict, []string) {
 	var selected Executor
 	var best Verdict
+	var bestInfo RemoteAdmitInfo
 	var bestMemory uint64
 	var bestLoad float64
 	var skipped []string
@@ -97,9 +108,13 @@ func (w RemoteWaiter) choose(readings []executorReading) (Executor, Verdict, []s
 			skipped = append(skipped, fmt.Sprintf("%s skipped: probe failed: %q", e.Name, reading.err.Error()))
 			continue
 		}
+		if reading.cores < 1 {
+			skipped = append(skipped, fmt.Sprintf("%s skipped: %q", e.Name, "no core count"))
+			continue
+		}
 		policy := w.Policy
 		if w.DefaultLoad {
-			policy.MaxLoad1 = defaultMaxLoadPerCore * float64(e.Cores)
+			policy.MaxLoad1 = defaultMaxLoadPerCore * float64(reading.cores)
 		}
 		verdict := Judge(reading.stats, policy)
 		if !verdict.Admit {
@@ -108,12 +123,15 @@ func (w RemoteWaiter) choose(readings []executorReading) (Executor, Verdict, []s
 			continue
 		}
 		memory := reading.stats.RAMFreeBytes - policy.MinAvailableBytes
-		load := reading.stats.CPULoad1Min / float64(e.Cores)
+		load := reading.stats.CPULoad1Min / float64(reading.cores)
 		if !best.Admit || memory > bestMemory || memory == bestMemory && load < bestLoad {
-			selected, best, bestMemory, bestLoad = e, verdict, memory, load
+			selected = e
+			best = verdict
+			bestInfo = RemoteAdmitInfo{Cores: reading.cores, CoreSource: reading.coreSource, Jobs: StepParallelismJobs(reading.cores, 1), Concurrent: 1}
+			bestMemory, bestLoad = memory, load
 		}
 	}
-	return selected, best, skipped
+	return selected, bestInfo, best, skipped
 }
 
 func probeExecutors(ctx context.Context, executors []Executor) []executorReading {
@@ -151,17 +169,33 @@ func probeExecutor(ctx context.Context, e Executor) executorReading {
 	if err := e.validate(); err != nil {
 		return executorReading{err: err}
 	}
-	command := "timeout --kill-after=1s 2s cat /proc/loadavg /proc/meminfo"
+	command := remoteProbeCommand()
 	out, err := util.RunCommandBytes(ctx, "", "ssh", procOutputLimit, e.sshArgs(command)...)
 	if err != nil {
 		return executorReading{err: util.CommandDiagnostic(err, out.Stderr)}
 	}
-	load, memory, ok := bytes.Cut(out.Stdout, []byte{'\n'})
-	if !ok {
-		return executorReading{err: errors.New("missing loadavg or meminfo output")}
+	sections, err := parseRemoteProbeSections(out.Stdout)
+	if err != nil {
+		return executorReading{err: err}
 	}
-	stats, err := sentinel.ReadLinuxAdmissionStats(bytes.NewReader(load), bytes.NewReader(memory))
-	return executorReading{stats: stats, err: err}
+	if bytes.Contains(sections[2], []byte("__MISSING__")) || bytes.Contains(sections[3], []byte("__MISSING__")) ||
+		bytes.Contains(sections[4], []byte("__MISSING__")) {
+		return executorReading{err: fmt.Errorf("executor %s: pod cgroup counters unreadable", e.Name)}
+	}
+	stats, err := sentinel.ReadLinuxAdmissionStats(bytes.NewReader(sections[0]), bytes.NewReader(sections[1]))
+	if err != nil {
+		return executorReading{err: err}
+	}
+	headroom, err := remoteExecutorHeadroom(e.Name, stats, sections[2], sections[3])
+	if err != nil {
+		return executorReading{err: err}
+	}
+	stats.RAMFreeBytes = headroom
+	cores, source, err := measuredExecutorCores(e.Name, e.Cores, sections[4])
+	if err != nil {
+		return executorReading{err: err}
+	}
+	return executorReading{stats: stats, cores: cores, coreSource: source}
 }
 
 func (e Executor) sshArgs(command string) []string {

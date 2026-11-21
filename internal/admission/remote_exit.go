@@ -1,0 +1,81 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package admission
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os/exec"
+	"strconv"
+	"strings"
+)
+
+// ErrExecutorLost is raised when the executor drops an SSH session before reporting the step status.
+var ErrExecutorLost = errors.New("lost the step mid-run")
+
+const remoteStepExitPrefix = "praetor-admit-step-complete "
+
+type remoteStepStderr struct {
+	inner        io.Writer
+	tail         []byte
+	stepFinished bool
+}
+
+func (w *remoteStepStderr) Write(p []byte) (int, error) {
+	combined := append(append([]byte(nil), w.tail...), p...)
+	if hasStepExitMarker(combined) {
+		w.stepFinished = true
+	}
+	if len(combined) > 64 {
+		w.tail = append(w.tail[:0], combined[len(combined)-64:]...)
+	} else {
+		w.tail = append(w.tail[:0], combined...)
+	}
+	if w.inner == nil {
+		return len(p), nil
+	}
+	return w.inner.Write(p)
+}
+
+func hasStepExitMarker(buf []byte) bool {
+	idx := bytes.LastIndex(buf, []byte(remoteStepExitPrefix))
+	if idx < 0 {
+		return false
+	}
+	fields := strings.Fields(string(buf[idx+len(remoteStepExitPrefix):]))
+	if len(fields) == 0 {
+		return false
+	}
+	code, err := strconv.Atoi(fields[0])
+	return err == nil && code >= 0
+}
+
+func remoteRunFinished(stepFinished bool, err error) bool {
+	if stepFinished {
+		return true
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() != 255 {
+		return true
+	}
+	return false
+}
+
+func remoteRunFailure(ctx context.Context, name string, stepFinished bool, err error) (int, error) {
+	if err == nil {
+		return 0, nil
+	}
+	var child *exec.ExitError
+	if ctx.Err() != nil || !errors.As(err, &child) || child.ExitCode() <= 0 {
+		return 0, fmt.Errorf("executor %s: SSH run: %w", name, err)
+	}
+	if remoteRunFinished(stepFinished, err) {
+		return child.ExitCode(), nil
+	}
+	return 255, fmt.Errorf("executor %s %w (evicted or unreachable)", name, ErrExecutorLost)
+}

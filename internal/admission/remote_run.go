@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -28,14 +27,9 @@ const (
 
 // RunRemote runs a noninteractive step in a disposable executor workspace. The SSH input
 // carries the source bundle and stays open as a lease until the command ends.
-func RunRemote(ctx context.Context, executor Executor, step Step, timeout time.Duration) (code int, resultErr error) {
-	if err := executor.validate(); err != nil {
-		return 0, fmt.Errorf("executor %s: %w", executor.Name, err)
-	}
-	if len(step.Argv) == 0 || len(step.Argv) > maxRemoteArgs || timeout <= 0 || timeout > MaxRemoteStepTimeout {
-		return 0, fmt.Errorf("executor %s: invalid remote step arguments or timeout", executor.Name)
-	}
-	if err := step.Limits.Check(); err != nil {
+func RunRemote(ctx context.Context, executor Executor, step Step, timeout time.Duration, jobs int, memoryMaxBytes uint64) (code int, resultErr error) {
+	jobs, memoryMaxBytes, err := validateRemoteRun(executor, step, timeout, jobs, memoryMaxBytes)
+	if err != nil {
 		return 0, err
 	}
 	bundle, err := os.CreateTemp("", "praetor-admit-*.bundle")
@@ -49,7 +43,27 @@ func RunRemote(ctx context.Context, executor Executor, step Step, timeout time.D
 	if err != nil {
 		return 0, fmt.Errorf("executor %s: prepare Git snapshot: %w", executor.Name, err)
 	}
-	return runRemoteSnapshot(ctx, executor, step, snapshot, bundle, timeout)
+	return runRemoteSnapshot(ctx, executor, step, snapshot, bundle, timeout, jobs, memoryMaxBytes)
+}
+
+func validateRemoteRun(executor Executor, step Step, timeout time.Duration, jobs int, memoryMaxBytes uint64) (int, uint64, error) {
+	if err := executor.validate(); err != nil {
+		return 0, 0, fmt.Errorf("executor %s: %w", executor.Name, err)
+	}
+	if len(step.Argv) == 0 || len(step.Argv) > maxRemoteArgs || timeout <= 0 || timeout > MaxRemoteStepTimeout {
+		return 0, 0, fmt.Errorf("executor %s: invalid remote step arguments or timeout", executor.Name)
+	}
+	if err := step.Limits.Check(); err != nil {
+		return 0, 0, err
+	}
+	if memoryMaxBytes == 0 {
+		var err error
+		memoryMaxBytes, err = LimitsMemoryMaxBytes(step.Limits)
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	return max(1, jobs), memoryMaxBytes, nil
 }
 
 type gitSnapshot struct {
@@ -108,7 +122,7 @@ func readSnapshot(ctx context.Context) (gitSnapshot, error) {
 	return gitSnapshot{head: head, tree: tree, objectFormat: format, prefix: strings.TrimSuffix(string(out.Stdout), "\n")}, nil
 }
 
-func runRemoteSnapshot(ctx context.Context, executor Executor, step Step, snapshot gitSnapshot, bundle *os.File, timeout time.Duration) (int, error) {
+func runRemoteSnapshot(ctx context.Context, executor Executor, step Step, snapshot gitSnapshot, bundle *os.File, timeout time.Duration, jobs int, memoryMaxBytes uint64) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout+remoteOverhead+time.Second)
 	defer cancel()
 	input, lease, err := os.Pipe()
@@ -123,12 +137,13 @@ func runRemoteSnapshot(ctx context.Context, executor Executor, step Step, snapsh
 		}
 		transfer <- copyErr
 	}()
-	command := remoteCommand(executor, step, snapshot, timeout)
-	sshErr := util.RunCommandPassthrough(ctx, "", "ssh", input, step.Stdout, step.Stderr, executor.sshArgs(command)...)
+	command := remoteCommand(executor, step, snapshot, timeout, jobs, memoryMaxBytes)
+	stepErr := &remoteStepStderr{inner: step.Stderr}
+	sshErr := util.RunCommandPassthrough(ctx, "", "ssh", input, step.Stdout, stepErr, executor.sshArgs(command)...)
 	closeErr := errors.Join(input.Close(), closeLease(lease))
 	copyErr := <-transfer
 	if sshErr != nil {
-		code, err := remoteRunStatus(ctx, executor, sshErr)
+		code, err := remoteRunFailure(ctx, executor.Name, stepErr.stepFinished, sshErr)
 		return code, errors.Join(err, closeErr)
 	}
 	return 0, errors.Join(copyErr, closeErr)
@@ -141,25 +156,13 @@ func closeLease(lease *os.File) error {
 	return nil
 }
 
-func remoteRunStatus(ctx context.Context, executor Executor, err error) (int, error) {
-	var child *exec.ExitError
-	if ctx.Err() != nil || !errors.As(err, &child) || child.ExitCode() <= 0 {
-		return 0, fmt.Errorf("executor %s: SSH run: %w", executor.Name, err)
-	}
-	if child.ExitCode() == 255 {
-		return 255, fmt.Errorf("executor %s: SSH returned status 255", executor.Name)
-	}
-	return child.ExitCode(), nil
-}
-
-func remoteCommand(executor Executor, step Step, snapshot gitSnapshot, timeout time.Duration) string {
-	unit := UnitName(step.Label, time.Now())
+func remoteCommand(executor Executor, step Step, snapshot gitSnapshot, timeout time.Duration, jobs int, memoryMaxBytes uint64) string {
 	stepArgs := append([]string{"timeout", "--kill-after=5s", timeoutSeconds(timeout)}, step.Argv...)
 	args := []string{"timeout", "--kill-after=15s", timeoutSeconds(timeout + remoteOverhead), "sh", "-c", remoteWorkspaceScript,
-		"praetor-admit", executor.WorkspaceRoot, strconv.FormatInt(snapshot.size, 10), snapshot.objectFormat,
-		snapshot.head, snapshot.tree, snapshot.prefix, unit + ".scope"}
-	args = append(args, "systemd-run")
-	args = append(args, ScopeArgs(unit, step.Limits, stepArgs)...)
+		"praetor-admit", executor.Name, executor.WorkspaceRoot, strconv.FormatInt(snapshot.size, 10), snapshot.objectFormat,
+		snapshot.head, snapshot.tree, snapshot.prefix, strconv.FormatUint(memoryMaxBytes, 10),
+		strconv.Itoa(jobs)}
+	args = append(args, stepArgs...)
 	for i := 0; i < len(args) && i < maxRemoteArgs+40; i++ {
 		args[i] = util.QuotePOSIXShellArg(args[i])
 	}
@@ -170,13 +173,35 @@ func timeoutSeconds(d time.Duration) string {
 	return strconv.FormatFloat(d.Seconds(), 'f', 9, 64) + "s"
 }
 
-// One SSH session owns the directory. After receiving the bundle, a read on the lease
-// detects disconnects even for a step that never reads stdin or produces output.
+// One SSH session owns the directory. The pod cgroup is the memory barrier; the step does not
+// run in a systemd user scope on the executor.
 const remoteWorkspaceScript = `
 set -eu
 umask 077
-root=$1 size=$2 format=$3 head=$4 tree=$5 prefix=$6 scope=$7
-shift 7
+execname=$1 root=$2 size=$3 format=$4 head=$5 tree=$6 prefix=$7 want=$8 jobs=$9
+shift 9
+bundle_fail() {
+    head -c "$size" >/dev/null 2>&1 || :
+}
+cgroup=${PRAETOR_ADMIT_CGROUP_DIR:-/sys/fs/cgroup}
+have=$(cat "$cgroup/memory.max" 2>/dev/null || echo __MISSING__)
+case "$have" in
+    max)
+        bundle_fail
+        echo "executor $execname: pod memory.max max is not the step MemoryMax $want" >&2
+        exit 1
+        ;;
+    ''|*[!0-9]*)
+        bundle_fail
+        echo "executor $execname: pod memory.max unreadable is not the step MemoryMax $want" >&2
+        exit 1
+        ;;
+esac
+if [ "$have" != "$want" ]; then
+    bundle_fail
+    echo "executor $execname: pod memory.max $have is not the step MemoryMax $want" >&2
+    exit 1
+fi
 run=$(mktemp -d -- "$root/praetor-admit.XXXXXXXXXX")
 watcher= runner=
 cleanup() {
@@ -184,11 +209,13 @@ cleanup() {
     trap - EXIT
     trap '' HUP INT TERM
     if [ -n "$watcher" ]; then
-        kill "$watcher" 2>/dev/null || :
+        kill -KILL "$watcher" 2>/dev/null || :
+        wait "$watcher" 2>/dev/null || :
     fi
     if [ -n "$runner" ]; then
-        kill "$runner" 2>/dev/null || :
-        timeout --kill-after=2s 10s systemctl --user stop "$scope" || :
+        kill -TERM "-$runner" "$runner" 2>/dev/null || :
+        kill -KILL "-$runner" "$runner" 2>/dev/null || :
+        wait "$runner" 2>/dev/null || :
     fi
     if ! rm -rf -- "$run"; then
         if [ "$rc" -eq 0 ]; then rc=1; fi
@@ -214,10 +241,12 @@ exec 3<&0
 parent=$$
 ( IFS= read -r unused <&3 || kill -TERM "$parent" ) &
 watcher=$!
+export MAKEFLAGS=-j"$jobs" GOMAXPROCS="$jobs"
 "$@" </dev/null 3<&- &
 runner=$!
 rc=0
 wait "$runner" || rc=$?
 runner=
+printf 'praetor-admit-step-complete %s\n' "$rc" >&2
 exit "$rc"
 `

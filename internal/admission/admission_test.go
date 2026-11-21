@@ -25,6 +25,7 @@ const testExecutor = `{"name":"edge","ssh_host":"edge.example.invalid","ssh_user
 func TestReadExecutors_JSONSchema(t *testing.T) {
 	for _, tc := range []struct{ name, json, want string }{
 		{"minimum", "[" + testExecutor + "]", ""},
+		{"optional cores", "[" + strings.Replace(testExecutor, `"cores":1,`, "", 1) + "]", ""},
 		{"duplicate key", "[" + strings.Replace(testExecutor, `"name":`, `"Name":"other","name":`, 1) + "]", "duplicate"},
 		{"duplicate name", "[" + testExecutor + "," + testExecutor + "]", "duplicate executor name"},
 		{"unknown property", "[" + strings.Replace(testExecutor, `"cores":`, `"cpus":`, 1) + "]", "unknown field"},
@@ -41,14 +42,22 @@ func TestReadExecutors_JSONSchema(t *testing.T) {
 				t.Fatal(err)
 			}
 			executors, err := ReadExecutors(file)
-			if tc.want == "" {
-				if err != nil || len(executors) != 1 || executors[0].MemoryGiB != 1 {
-					t.Fatalf("minimum executor: %+v, %v", executors, err)
-				}
-			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("wanted %q, got %v", tc.want, err)
-			}
+			assertReadExecutorsCase(t, tc.name, executors, err, tc.want)
 		})
+	}
+}
+
+func assertReadExecutorsCase(t *testing.T, name string, executors []Executor, err error, want string) {
+	t.Helper()
+	if want != "" {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("wanted %q, got %v", want, err)
+		}
+		return
+	}
+	wantCores := name != "optional cores"
+	if err != nil || len(executors) != 1 || executors[0].MemoryGiB != 1 || (executors[0].Cores != nil) != wantCores {
+		t.Fatalf("executor %s: %+v, %v", name, executors, err)
 	}
 }
 

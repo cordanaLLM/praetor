@@ -36,7 +36,7 @@ type Executor struct {
 	SSHHost       string `json:"ssh_host"`
 	SSHUser       string `json:"ssh_user"`
 	WorkspaceRoot string `json:"workspace_root"`
-	Cores         int    `json:"cores"`
+	Cores         *int   `json:"cores"`
 	MemoryGiB     uint64 `json:"memory_gib"`
 	Class         string `json:"class"`
 }
@@ -77,7 +77,7 @@ func (e Executor) validate() error {
 		return fmt.Errorf("invalid SSH host or user")
 	case !validWorkspaceRoot(e.WorkspaceRoot):
 		return fmt.Errorf("workspace_root must be a clean absolute Linux directory below /")
-	case e.Cores < 1 || e.Cores > maxExecutorCores:
+	case e.Cores != nil && (*e.Cores < 1 || *e.Cores > maxExecutorCores):
 		return fmt.Errorf("cores must be 1 to %d", maxExecutorCores)
 	case e.MemoryGiB < 1 || e.MemoryGiB > maxExecutorMemoryGiB:
 		return fmt.Errorf("memory_gib must be 1 to %d", maxExecutorMemoryGiB)
