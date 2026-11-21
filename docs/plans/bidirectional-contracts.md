@@ -1,6 +1,10 @@
 # Bidirectional module contracts
 
-Status: audited design proposal, 2026-09-13, baseline `eb3f0d8`.
+Status: audited design proposal, 2026-09-13, baseline `eb3f0d8`. Re-checked
+2026-10-29 at `2a9dc84`: every evidence pointer below still exists, and no stage
+has started (no adapter declares directions; `grep -rn ImportProposal --include='*.go' .`
+finds nothing). Stage 1 waits on one decision: the wire shape of the
+direction/capability field it adds to public CLI/MCP reports.
 Generated configuration, observations, verified repairs and remote acceptance
 have different authority. Returning information must preserve that distinction.
 This plan extends existing services; it does not introduce a second sync engine.
