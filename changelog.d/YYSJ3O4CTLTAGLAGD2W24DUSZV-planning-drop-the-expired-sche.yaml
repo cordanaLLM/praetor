@@ -1,0 +1,2 @@
+type: removed
+title: 'Planning: drop the expired schema_version 1 compile window; version 1 drafts get the migration error without a clock check'

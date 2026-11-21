@@ -2,12 +2,10 @@
 // It validates structure only; source assertions and instructions remain inert, unverified data.
 package planning
 
-import "time"
-
 const (
 	// SchemaVersion 2 requires an experiment block with evidence_status on every implementation step.
 	SchemaVersion = 2
-	// SchemaVersionV1 drafts still compile until SchemaV1RefusedFrom, with a deprecation line in the report.
+	// SchemaVersionV1 drafts are refused with the migration steps; their compile window ended 2026-10-25.
 	SchemaVersionV1       = 1
 	MaxJSONBytes          = 512 << 10
 	MaxArtifactBytes      = 1 << 20
@@ -25,13 +23,6 @@ const (
 	MaxIDBytes            = 128
 	MaxTextBytes          = 4096
 )
-
-// SchemaV1RefusedFrom ends the schema_version 1 window: 10 days from 2026-10-15 (exception category C, ledger
-// praetor-w7-experiment-contract-trigger). From this instant a version 1 draft is refused.
-var SchemaV1RefusedFrom = time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC)
-
-// now is the clock the version window reads; tests replace it.
-var now = time.Now
 
 const (
 	StatusStructurallyValid = "structurally_valid"
@@ -138,7 +129,8 @@ type Step struct {
 }
 
 // Result is a structurally valid draft proposal. Files are derived from Draft
-// and contain plan.json plus the TODO, roadmap, and milestone projections.
+// and contain plan.json plus the TODO, roadmap, and milestone projections. Deprecations stays in the
+// report contract; no accepted input is deprecated, so it is empty.
 type Result struct {
 	Status           string            `json:"status"`
 	ReviewRequired   bool              `json:"review_required"`
