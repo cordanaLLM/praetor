@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // declaredVerifyRepo is a committed Python root (pyproject.toml, no go.mod, no Cargo.lock) whose
@@ -213,6 +215,7 @@ type exitCodeError struct{ code int }
 func (e exitCodeError) Error() string { return "exit status" }
 func (e exitCodeError) ExitCode() int { return e.code }
 
+// TestDeclaredVerifyFailureNamesTheOutcome proves failures name exit codes, deadline origins and launch errors with bounded tails.
 func TestDeclaredVerifyFailureNamesTheOutcome(t *testing.T) {
 	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
@@ -232,15 +235,13 @@ func TestDeclaredVerifyFailureNamesTheOutcome(t *testing.T) {
 		{"long output keeps its end", context.Background(), "default", errors.New(long), []string{"...", "last line"}},
 	}
 	for _, tc := range cases {
-		got := declaredVerifyFailure(tc.ctx, 2*time.Minute, tc.origin, tc.err).Error()
+		got := declaredVerifyFailure(tc.ctx, t.TempDir(), 2*time.Minute, tc.origin, util.CommandBytes{Stderr: []byte(tc.err.Error())}, tc.err).Error()
 		for _, want := range tc.want {
 			if !strings.Contains(got, want) {
 				t.Errorf("%s: %q does not name %q", tc.name, got, want)
 			}
 		}
-		if len(got) > maxDeclaredVerifyDiagnostic+200 {
-			t.Errorf("%s: reason of %d bytes is not bounded", tc.name, len(got))
-		}
+		assertDeclaredReasonTailBound(t, got)
 	}
 }
 

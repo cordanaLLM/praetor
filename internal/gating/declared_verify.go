@@ -41,6 +41,30 @@ var makefileNames = []string{"GNUmakefile", "makefile", "Makefile"}
 // declaredVerifyCommand is the command line the stage runs and every reason names.
 var declaredVerifyCommand = "make " + declaredVerifyTarget
 
+// declaredVerifyEnvironment selects C messages without changing recipe data locales.
+// GNU gettext 2.3.2/2.3.3 documents LC_ALL's override and LANGUAGE's message priority:
+// https://www.gnu.org/software/gettext/manual/html_node/Locale-Environment-Variables.html
+// https://www.gnu.org/software/gettext/manual/html_node/The-LANGUAGE-variable.html
+// A nonempty LC_ALL is expanded into POSIX and GNU non-message categories before removal.
+// InheritedEnvironment preserves the Git repository-variable scrub and recursion guard.
+func declaredVerifyEnvironment() []string {
+	overrides := []string{DeclaredVerifyGuardEnv + "=1", "LC_MESSAGES=C", "LANGUAGE=C"}
+	if all := os.Getenv("LC_ALL"); all != "" {
+		for _, category := range declaredVerifyLocaleCategories {
+			overrides = append(overrides, category+"="+all)
+		}
+	}
+	return util.FilterEnvironment(util.InheritedEnvironment(overrides), func(name string) bool {
+		return name == "LC_ALL"
+	})
+}
+
+// declaredVerifyLocaleCategories includes POSIX and GNU categories except messages.
+var declaredVerifyLocaleCategories = [...]string{
+	"LC_CTYPE", "LC_COLLATE", "LC_NUMERIC", "LC_TIME", "LC_MONETARY",
+	"LC_PAPER", "LC_NAME", "LC_ADDRESS", "LC_TELEPHONE", "LC_MEASUREMENT", "LC_IDENTIFICATION",
+}
+
 // runDeclaredVerifyStage runs `make verify-all` when the root holds no toolchain marker and its
 // makefile declares the target. Like the test suites it runs in an isolated worktree of HEAD
 // under the race stage's bound (inStageWorktree), so it checks what is pushed and leaves the
@@ -113,7 +137,7 @@ func declaresVerifyTarget(repoDir string) bool {
 
 // declaredVerifyFailure names the command, its exit code or why it has none, and the end of
 // what it reported.
-func declaredVerifyFailure(ctx context.Context, bound time.Duration, origin string, err error) error {
+func declaredVerifyFailure(ctx context.Context, repoDir string, bound time.Duration, origin string, output util.CommandBytes, err error) error {
 	outcome := "failed to run"
 	var exit interface{ ExitCode() int }
 	switch {
@@ -122,13 +146,26 @@ func declaredVerifyFailure(ctx context.Context, bound time.Duration, origin stri
 	case errors.As(err, &exit):
 		outcome = fmt.Sprintf("exited %d", exit.ExitCode())
 	}
-	return fmt.Errorf("declared verification %s %s: %s", declaredVerifyCommand, outcome, tail(err.Error(), maxDeclaredVerifyDiagnostic))
+	target, diagnostic := declaredVerifyDiagnostic(output)
+	if diagnostic == "" {
+		diagnostic = err.Error()
+	}
+	execution := "execution error: " + util.UTF8Tail(strings.ReplaceAll(err.Error(), "\n", "; "), maxDeclaredVerifyDiagnostic)
+	logPath, logErr := writeDeclaredVerifyLog(ctx, repoDir, target+"\n"+execution, diagnostic)
+	logNote := "gate log: " + logPath
+	if logErr != nil {
+		logNote = "no gate log written: " + logErr.Error()
+	}
+	return &declaredVerifyError{cause: err, reason: fmt.Sprintf("declared verification %s %s; %s; %s:\n%s", declaredVerifyCommand, outcome, target+"; "+execution, logNote, util.UTF8Tail(diagnostic, maxDeclaredVerifyDiagnostic))}
 }
 
-// tail keeps the last limit bytes of text, where a failing command's final report usually is.
-func tail(text string, limit int) string {
-	if len(text) <= limit {
-		return text
-	}
-	return "..." + text[len(text)-limit:]
+type declaredVerifyError struct {
+	cause  error
+	reason string
 }
+
+// Error returns the declared verification outcome and its bounded diagnostics.
+func (e *declaredVerifyError) Error() string { return e.reason }
+
+// Unwrap preserves the command failure for error inspection.
+func (e *declaredVerifyError) Unwrap() error { return e.cause }

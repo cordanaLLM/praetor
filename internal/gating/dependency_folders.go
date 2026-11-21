@@ -378,19 +378,16 @@ func executeDeclaredVerify(tCtx context.Context, cfg *stageConfig, dir string, b
 		}
 	}()
 
-	runCtx, envErr := util.WithCommandEnvironment(tCtx, util.InheritedEnvironment([]string{DeclaredVerifyGuardEnv + "=1"}))
+	runCtx, envErr := util.WithCommandEnvironment(tCtx, declaredVerifyEnvironment())
 	if envErr != nil {
 		return fmt.Errorf("%s: %w", declaredVerifyCommand, envErr)
 	}
 
-	_, runErr := cfg.run(runCtx, dir, "make", declaredVerifyTarget)
+	output, runErr := runDeclaredVerifyCommand(runCtx, cfg, dir)
 
-	if diffErr := verifyFolderFingerprints(cfg.repoDir, folders, beforeFPs); diffErr != nil {
-		return diffErr
-	}
-
+	var failure error
 	if runErr != nil {
-		return declaredVerifyFailure(tCtx, bound, origin, runErr)
+		failure = declaredVerifyFailure(tCtx, cfg.repoDir, bound, origin, output, runErr)
 	}
-	return nil
+	return errors.Join(failure, verifyFolderFingerprints(cfg.repoDir, folders, beforeFPs))
 }

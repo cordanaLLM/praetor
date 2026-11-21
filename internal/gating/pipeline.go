@@ -213,7 +213,7 @@ func (r *PipelineReport) StageOutput() []byte {
 }
 
 // commandRunner executes an external command and returns its standard output; a failure's
-// standard error travels in the error. util.RunCommand is the production implementation,
+// standard error travels in the error. runStageCommand is the production implementation,
 // which also keeps an ambient GIT_DIR or GIT_INDEX_FILE -- set whenever the gate runs from a
 // git hook -- away from the go-test stage and the git fixtures its tests create. Tests
 // substitute a fake to exercise stage logic hermetically.
@@ -317,7 +317,7 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 	return &stageConfig{
 		repoDir:         repoDir,
 		dryRun:          dryRun,
-		run:             util.RunCommand,
+		run:             runStageCommand,
 		lookPath:        exec.LookPath,
 		rep:             rep,
 		boundStage:      withStageBound,

@@ -1435,11 +1435,26 @@ Node lockfile selects a toolchain stage, and the target is declared, the stage r
   runner setup can be what hits it; that reason names the origin as well, for example
   `creating the isolated test worktree hit the 1s stage bound (.standards.yaml)` (#1566). Output
   capture is bounded by `util.RunCommand`.
-- **Non-zero exit:** fails the stage and refuses the push. The reason names the command, its exit
-  code and the end of its output, for example
-  `declared verification make verify-all exited 2: ... Error 1` (GNU Make exits 2 when a recipe
-  fails).
-- **Exit 0:** passes the stage (`make verify-all exited 0`). The run is admitted, and the receipt
+- **Non-zero exit:** fails the stage and refuses the push. The multiline reason names the command,
+  its exit outcome, the innermost failing GNU Make target, the saved log path, and the last 2048
+  bytes of the collapsed output tail. When Make reports no failing target, the reason says
+  `make named no failing target`. GNU Make exits 2 when a recipe fails.
+  Standard output and standard error are each captured up to 16 MiB; the diagnostic combines
+  standard output followed by standard error. Carriage-return progress updates keep only the
+  last update on each line; CRLF line endings remain ordinary line breaks.
+  A failed run saves the target and the last 60 collapsed lines, within a 64 KiB file bound,
+  under the original checkout at `.workingdir/gate/declared-verify-<UTC timestamp>.log`, so the
+  log survives removal of the isolated stage worktree. The log directory has mode `0700` and
+  the file has mode `0600` (owner-only access on Windows). Logging requires an existing,
+  git-ignored `.workingdir` directory; an absent or unignored directory, an unsafe path, or a
+  write failure leaves no successful log result and the reason explicitly names why. The checkout
+  and ledger handles stay pinned across the ignore query, directory creation and write; a replaced
+  ledger is refused with a replacement diagnostic. Each filesystem step, including file sync,
+  shares a separate five-second logging deadline. A stalled operating-system call can finish in
+  the background, but the caller returns at the deadline with the step named and the original
+  verification failure preserved. See the acceptance fixtures
+  in [`declared_verify_log_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/declared_verify_log_test.go).
+- **Exit 0:** passes the stage (`make verify-all exited 0`) and writes no failure log. The run is admitted, and the receipt
   stage says the command ran and passed but signs no receipt. Signing a receipt for such a run is
   a separate question.
 
