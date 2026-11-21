@@ -326,8 +326,17 @@ func TestAuditBranchProtection_Negative_MissingWorkflowCheck(t *testing.T) {
 	writeAuditWorkflow(t, root)
 	writeAuditRuleset(t, root, renderAuditRuleset(t, signedPolicy(), nil))
 	policy := &config.ResolvedPolicy{BranchProtection: signedPolicy()}
-	if _, err := AuditBranchProtectionWithPolicy(t.Context(), &config.Manifest{}, root, policy); err == nil {
+	_, err := AuditBranchProtectionWithPolicy(t.Context(), &config.Manifest{}, root, policy)
+	if err == nil {
 		t.Fatal("a ruleset that omits a workflow's required check must fail")
+	}
+	for _, want := range []string{"Unit Tests", ".github/workflows/ci.yml"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q in %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "Documentation") {
+		t.Fatalf("non-documentation drift mislabeled: %v", err)
 	}
 }
 

@@ -342,41 +342,12 @@ func ValidateRepositoryRuleset(data []byte, branch string, policy config.BranchP
 	if err != nil {
 		return err
 	}
-	integrationID, err := config.StatusChecksAppIntegrationID(policy.StatusChecksApp)
-	if err != nil {
-		return err
-	}
-	if integrationID > 0 {
-		if err := validateRulesetStatusChecksApp(data, integrationID, policy.StatusChecksApp); err != nil {
-			return err
-		}
-	}
 	var expected map[string]any
 	if err := yaml.Unmarshal(expectedBytes, &expected); err != nil {
 		return fmt.Errorf("parse rendered ruleset: %w", err)
 	}
 	if !reflect.DeepEqual(observed, expected) {
-		return ErrRulesetDrift
-	}
-	return nil
-}
-
-func validateRulesetStatusChecksApp(data []byte, integrationID int, appSlug string) error {
-	ruleset, err := parseStatusRuleset(data)
-	if err != nil {
-		return err
-	}
-	for i := 0; i < len(ruleset.Rules) && i < maxRulesetRules; i++ {
-		if ruleset.Rules[i].Type != "required_status_checks" {
-			continue
-		}
-		checks := ruleset.Rules[i].Parameters.RequiredStatusChecks
-		for j := 0; j < len(checks) && j < maxRulesetContexts; j++ {
-			if checks[j].IntegrationID != integrationID {
-				return fmt.Errorf("%w: required status check %q has integration_id %d, want %d (%s)",
-					ErrRulesetDrift, checks[j].Context, checks[j].IntegrationID, integrationID, appSlug)
-			}
-		}
+		return describeRulesetDrift(observed, expected, data, expectedBytes)
 	}
 	return nil
 }

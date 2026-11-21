@@ -140,7 +140,7 @@ func reconcileRuleset(ctx context.Context, rootDir, branch string, bp config.Bra
 			return fmt.Errorf("ruleset readback failed: %w", err)
 		}
 	}
-	if err := forge.ValidateRepositoryRuleset(data, branch, bp, contexts); err != nil {
+	if err := forge.ValidateRepositoryRulesetIn(ctx, rootDir, data, branch, bp, contexts); err != nil {
 		return fmt.Errorf(".github/rulesets/main.json validation failed for default branch %s: %w", branch, err)
 	}
 	fmt.Printf("  [OK] Branch protection ruleset verified (.github/rulesets/main.json: matches declared policy for default branch %s)\n", branch)

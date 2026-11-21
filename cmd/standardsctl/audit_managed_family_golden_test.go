@@ -58,9 +58,9 @@ func auditFamilyGoldenCases() []auditGoldenCase {
 			}
 		}},
 		{name: "ruleset without context", enabled: true, mutate: func(t *testing.T, root string) {
-			rewriteFixture(t, root, ".github/rulesets/main.json", func(text string) string {
-				return strings.Replace(text, adopt.DocumentationStatusContext, "Different Context", 1)
-			})
+			if err := synthesizeRuleset(root, "main", config.DefaultPolicy().BranchProtection, nil); err != nil {
+				t.Fatal(err)
+			}
 		}},
 		{name: "disabled clean"},
 		{name: "disabled retains workflow", mutate: func(t *testing.T, root string) {
