@@ -47,13 +47,6 @@ const (
 	// GosecConfigFile is the gosec configuration the security stage must use. It carries
 	// an empty exclusion list: every finding is fixed or annotated per line.
 	GosecConfigFile = ".gosec.json"
-	// TestStageTimeout is the default bound on the race-detector test stage. The effective
-	// value comes from testStageTimeout, which lets an operator raise it within a ceiling.
-	// It is sized from measured runs (#1419): on a workstation at load 45 to 60 a full race
-	// run took 9 to 10 minutes for the engine and 4 to 7 minutes for adopters, and the old
-	// 3-minute default refused ordinary pushes there. Twenty minutes is about twice the slowest
-	// measured run and two thirds of the ceiling, so an operator can still raise it.
-	TestStageTimeout = 20 * time.Minute
 	// MaxTestStageTimeout caps what the environment may ask for. HISS-02 requires an upper
 	// bound on the stage, not that the bound be unreachable, so the override is clamped
 	// rather than trusted. It tracks the declared-verification ceiling in config.
