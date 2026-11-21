@@ -199,7 +199,7 @@ func TestRepositoryManifestNamesOnlyItsRealSchema(t *testing.T) {
 // no repository.source (canonical, or a fork checkout before the first overlay commit), where
 // owner/name is the public identity; or a well-formed "<owner>/<name>" source that differs
 // from the checkout's own owner/name (an overlaid fork). Either way the public identity the
-// manifest resolves to is exactly cordanaLLM/praetor.
+// manifest resolves to is exactly tekmora/praetor.
 func assertRepositorySourceShape(t *testing.T, m *Manifest) {
 	t.Helper()
 	own := m.Repository.Owner + "/" + m.Repository.Name

@@ -1,5 +1,5 @@
 site_name: Praetor
-site_url: https://cordanallm.github.io/praetor/
+site_url: https://tekmora.github.io/praetor/
 site_description: Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine
 site_author: Lusoris
 
@@ -71,7 +71,7 @@ extra:
   # praetor:funding-announcement:end
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/CordanaLLM/praetor
+      link: https://github.com/tekmora/praetor
       name: GitHub Repository
     # praetor:funding-social:start
     # praetor:funding-social:end
@@ -80,8 +80,8 @@ extra:
   # SoftwareSourceCode block. Set here rather than through repo_url, which would also add
   # Material's repository widget to the header.
   source_code:
-    name: cordanaLLM/praetor
-    repository: https://github.com/cordanaLLM/praetor
+    name: tekmora/praetor
+    repository: https://github.com/tekmora/praetor
     programming_language: Go
     license: https://spdx.org/licenses/EUPL-1.2.html
 

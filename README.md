@@ -9,9 +9,9 @@
   *An open governance engine for any repository fleet: your repositories, your fork, your policy.*
 
   [![Go Version](https://img.shields.io/badge/Go-1.27%2B-00ADD8?style=for-the-badge&logo=go)](https://golang.org)
-  [![HISS Governance](https://img.shields.io/badge/Standard-HISS_Governance-06B6D4?style=for-the-badge&logo=nasa)](https://cordanallm.github.io/praetor/standards/hiss-spec/)
+  [![HISS Governance](https://img.shields.io/badge/Standard-HISS_Governance-06B6D4?style=for-the-badge&logo=nasa)](https://tekmora.github.io/praetor/standards/hiss-spec/)
   [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP_Server-10B981?style=for-the-badge)](https://modelcontextprotocol.io)
-  [![Dual-Surface Docs](https://img.shields.io/badge/llms.txt-Enabled-06B6D4?style=for-the-badge)](https://cordanallm.github.io/praetor/llms.txt)
+  [![Dual-Surface Docs](https://img.shields.io/badge/llms.txt-Enabled-06B6D4?style=for-the-badge)](https://tekmora.github.io/praetor/llms.txt)
   [![License: EUPL 1.2](https://img.shields.io/badge/License-EUPL_1.2-blue.svg?style=for-the-badge)](LICENSES/EUPL-1.2.txt)
   <!-- praetor:funding-badges:start -->
   <!-- praetor:funding-badges:end -->
@@ -240,4 +240,4 @@ third-party components the release archives and the container image ship, with t
 licenses and upstream notices; both carry it beside `LICENSE` and [`LICENSES/`](LICENSES).
 For open-source projects, standards, and specifications this repository builds upon, see the [Credits & Acknowledgements](docs/credits.md) page.
 
-Developed in the open at [github.com/cordanaLLM/praetor](https://github.com/cordanaLLM/praetor).
+Developed in the open at [github.com/tekmora/praetor](https://github.com/tekmora/praetor).

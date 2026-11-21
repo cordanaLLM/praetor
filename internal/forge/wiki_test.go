@@ -29,8 +29,9 @@ func canonicalAgentsMD(t *testing.T) string {
 // wikiRepoRoot returns a fresh repository root at name whose AGENTS.md is agentsMD. The wiki
 // portal is named after the root's manifest identity, so the root carries a .standards.yaml:
 // a name of the form <owner>/<repo> declares that pair (the tests comparing against the
-// checked-in pages pass cordanaLLM/praetor, this repository's own manifest identity), and a
-// bare name declares acme/<name>. The directory layout itself names nothing.
+// checked-in pages pass tekmora/praetor, this repository's own manifest identity, so an owner
+// overlay of a fork does not change them), and a bare name declares acme/<name>. The directory
+// layout itself names nothing.
 func wikiRepoRoot(t *testing.T, name, agentsMD string) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), name)
@@ -380,10 +381,9 @@ func TestHomeWiki_Boundary_EmptyEdgesProducesViolations(t *testing.T) {
 // output over the repository's own AGENTS.md, so a generator or table change cannot land
 // without the published copy (the Home.md diagram, the invariant table and the hand-written
 // matrix all drifted that way). docs/wiki may carry no page the generator does not own: the
-// wiki sync publishes every file there. The repository name comes from the root's
-// origin remote or directory structure.
+// wiki sync publishes every file there. The repository name is pinned to the canonical identity.
 func TestCheckedInWiki_Boundary_MatchesGenerator(t *testing.T) {
-	pages := generatedPages(t, wikiRepoRoot(t, filepath.Join("cordanaLLM", "praetor"), canonicalAgentsMD(t)))
+	pages := generatedPages(t, wikiRepoRoot(t, filepath.Join("tekmora", "praetor"), canonicalAgentsMD(t)))
 	if len(pages) == 0 {
 		t.Fatal("generator produced no pages")
 	}

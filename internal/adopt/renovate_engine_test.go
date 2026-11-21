@@ -7,8 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/clientjson"
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
+// TestRenovateEngineAdoptionReadback adopts the engine rule and reads back which pins it excludes,
+// including pins moved to the current forge owner and an unrelated action that stays eligible.
 func TestRenovateEngineAdoptionReadback(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "renovate.json"), "{}\n")
@@ -19,11 +24,48 @@ func TestRenovateEngineAdoptionReadback(t *testing.T) {
 	line, err := AuditRenovateEngineBumps(t.Context(), root)
 	checkRepositoryVerdict(t, line, err, false, "renovate-engine-bumps")
 	first := mustRead(t, filepath.Join(root, "renovate.json"))
+	assertRenovateEnginePins(t, first)
 	if err := reconcileRenovateIgnore(t.Context(), s); err != nil {
 		t.Fatal(err)
 	}
 	if second := mustRead(t, filepath.Join(root, "renovate.json")); second != first {
 		t.Fatal("adoption is not idempotent")
+	}
+}
+
+// assertRenovateEnginePins fails the test unless the rendered rule names every engine package name.
+func assertRenovateEnginePins(t *testing.T, data string) {
+	t.Helper()
+	manifest, err := config.LoadManifest(filepath.Join("..", "..", config.ManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := manifest.Repository.Source
+	if repository == "" {
+		repository = manifest.Repository.Owner + "/" + manifest.Repository.Name
+	}
+	root, err := clientjson.DecodeObject([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := renovatePackageRules(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, pin string
+		excluded  bool
+	}{
+		{"migrated repository", repository, true},
+		{"migrated action", repository + "/.github/actions/praetor-adopt", true},
+		{"unrelated action", repository + "-other/.github/actions/example", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			excluded := len(uncoveredRenovateValues(rules, []string{tc.pin}, "matchPackageNames")) == 0
+			if excluded != tc.excluded {
+				t.Errorf("pin %q excluded = %t, want %t", tc.pin, excluded, tc.excluded)
+			}
+		})
 	}
 }
 
@@ -52,9 +94,11 @@ func TestRenovateEngineUnsafeLaterEnable(t *testing.T) {
 	t.Log(s.report.Warnings[0])
 }
 
+// TestRenovateEngineUnsafeInputs refuses malformed or incomplete rules, such as one covering only the former identity.
 func TestRenovateEngineUnsafeInputs(t *testing.T) {
 	cases := []struct{ name, file, data string }{
 		{"JSONC", "renovate.jsonc", "// comment\n{}"},
+		{"former identity only", "renovate.json", `{"packageRules":[{"matchPackageNames":["github.com/cordanaLLM/praetor", "github.com/cordanaLLM/praetor/**", "cordanaLLM/praetor", "cordanaLLM/praetor/**"],"enabled":false}]}`},
 		{"narrow namespace", "renovate.json", `{"packageRules":[{"matchPackageNames":["github.com/cordanaLLM/praetor", "github.com/cordanaLLM/praetor/*", "github.com/cordanaLLM/praetor/cmd/standardsctl", "cordanaLLM/praetor", "cordanaLLM/praetor/*"],"enabled":false}]}`},
 		{"narrow matcher", "renovate.json", `{"packageRules":[{"matchPackageNames":["**"],"matchManagers":["gomod"],"enabled":false}]}`},
 		{"duplicate keys", "renovate.json", `{"packageRules":[],"packageRules":[]}`},
@@ -106,9 +150,10 @@ func engineFixtureConfig(t *testing.T, data string) string {
 	return string(next)
 }
 
+// TestRenovateEngineEquivalentRulesTogether accepts the exclusion split over two rules that together name every form.
 func TestRenovateEngineEquivalentRulesTogether(t *testing.T) {
 	root := t.TempDir()
-	data := `{"packageRules":[{"matchPackageNames":["github.com/cordanaLLM/praetor","github.com/cordanaLLM/praetor/**"],"enabled":false},{"matchPackageNames":["cordanaLLM/praetor","cordanaLLM/praetor/**"],"enabled":false}]}`
+	data := `{"packageRules":[{"matchPackageNames":["github.com/cordanaLLM/praetor","github.com/cordanaLLM/praetor/**"],"enabled":false},{"matchPackageNames":["cordanaLLM/praetor","cordanaLLM/praetor/**","tekmora/praetor","tekmora/praetor/**"],"enabled":false}]}`
 	mustWrite(t, filepath.Join(root, "renovate.json"), data)
 	line, err := AuditRenovateEngineBumps(t.Context(), root)
 	checkRepositoryVerdict(t, line, err, false, "renovate-engine-bumps")

@@ -19,9 +19,14 @@ import (
 // Order: engine-fr-rule-checks-20261027. Engine pins move with coordinated adoption.
 const renovateEngineDescription = "praetor-managed engine: updates arrive in one coordinated adoption pull request"
 
+// renovateEngineNames lists the package names the managed engine rule excludes: the Go module and its
+// subpaths, the tool package, and the forge repository under its current and its former owner.
 func renovateEngineNames() []string {
-	repository := strings.TrimPrefix(gomanifest.EngineModulePath, "github.com/")
-	return []string{gomanifest.EngineModulePath, gomanifest.EngineModulePath + "/**", engineToolPackage, repository, repository + "/**"}
+	return []string{
+		gomanifest.EngineModulePath, gomanifest.EngineModulePath + "/**", engineToolPackage,
+		formerEngineForgeRepository, formerEngineForgeRepository + "/**",
+		engineForgeRepository, engineForgeRepository + "/**",
+	}
 }
 
 func engineRepository(ctx context.Context, root string) (bool, error) {

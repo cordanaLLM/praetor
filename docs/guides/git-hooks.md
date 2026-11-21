@@ -436,8 +436,8 @@ the repository declares, the one its hosted Standards job installs.
 **The pin** is the value of `PRAETOR_REF` declared in any file under `.github/workflows`, as
 `PRAETOR_REF: <ref>` or `PRAETOR_REF=<ref>`, a `PRAETOR_COMMIT` value that is exactly 40
 lowercase hexadecimal characters, or the `uses:` reference of `praetor-adopt`
-(`uses: cordanaLLM/praetor/.github/actions/praetor-adopt@<ref>`) or a reusable workflow under
-`cordanaLLM/praetor/.github/workflows/` (quotes, a trailing comment and CRLF line endings
+(`uses: tekmora/praetor/.github/actions/praetor-adopt@<ref>`) or a reusable workflow under
+`tekmora/praetor/.github/workflows/` (quotes, a trailing comment and CRLF line endings
 are read past). A ref is a commit id of 7 to 40 hexadecimal digits or a full release tag such as
 `v1.2.3` (a tag without patch digits like `v1` or `v1.2` moves under `go install`, and a branch
 name moves, so they are no pin). A non-pin `uses:` ref such as `@main` is treated as unpinned (running

@@ -566,11 +566,13 @@ function repositoryRootFixtures() {
   }), (candidate) => candidate), /git stderr exceeds 4096 bytes/u);
 }
 
+/** Rendered llms.txt and llms-full.txt: links point at the catalogue's Pages base, no Markdown or forge links, no restated rules. */
 function renderedSurfaceFixtures() {
   const llms = renderLLMs();
   const full = renderLLMsFull();
-  assert.match(llms, /\[API Reference\]\(https:\/\/cordanallm\.github\.io\/praetor\/wiki\/API-Reference\/\)/u);
-  assert.doesNotMatch(llms, /cordanallm\.github\.io\/praetor\/[^)]+\.md\)/u);
+  const apiReference = new URL("wiki/API-Reference/", catalog.pagesBase);
+  assert.ok(llms.includes(`[API Reference](${apiReference.href})`));
+  assert.doesNotMatch(llms, /\]\(https:\/\/[^)]+\.md\)/u);
   assert.doesNotMatch(llms, /github\.com/u);
   assert.match(full, /source: `\.standards\.yaml`/u);
   assert.match(full, /source: `\.github\/rulesets\/main\.json`/u);
@@ -580,6 +582,7 @@ function renderedSurfaceFixtures() {
   assert.doesNotMatch(full, /```/u);
 }
 
+/** Repository verification under planted drift: a changed rendered page, a former Pages host or a stale index is refused. */
 function repositoryFixtures(root) {
   writeFixture(root);
   assert.doesNotThrow(() => verifyRepository(root));
@@ -595,6 +598,12 @@ function repositoryFixtures(root) {
   writeFixture(root);
   const llmsPath = path.join(root, "docs", "llms.txt");
   fs.writeFileSync(llmsPath, renderLLMs().replace("wiki/API-Reference/", "wiki/API-Reference.md"));
+  assert.throws(() => verifyRepository(root), /docs\/llms\.txt differs/u);
+
+  const apiReference = new URL("wiki/API-Reference/", catalog.pagesBase);
+  const oldReference = new URL(apiReference);
+  oldReference.hostname = "cordanallm.github.io";
+  fs.writeFileSync(llmsPath, renderLLMs().replace(apiReference.href, oldReference.href));
   assert.throws(() => verifyRepository(root), /docs\/llms\.txt differs/u);
 
   writeFixture(root);
