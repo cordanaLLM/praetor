@@ -100,6 +100,96 @@ def commit_command(command, short_pattern):
     return search(domain, join_line_continuations(command))
 
 
+# One allow-list shared with the Go policy; parity tests pin every name.
+DATA_ONLY_COMMAND_NAMES = r"echo|printf|cat|tee|true"
+DATA_ONLY_FILE_WORD = (
+    r"(?:[-A-Za-z0-9_./:=@,%+~]+|'[-A-Za-z0-9_./:=@,%+~ ]*'|"
+    r'"[-A-Za-z0-9_./:=@,%+~ ]*")'
+)
+DATA_ONLY_PRINT_WORD = (
+    r"(?:[-A-Za-z0-9_./:=@,%+~]|'[^'\r\n]*'|" r'"(?:[^"\\$\x60\r\n]|\\[^\r\n])*")+'
+)
+DATA_ONLY_SUBSTITUTION = re.compile(r"\$\(|\x60|[<>]\(")
+
+
+def data_only_line_source():
+    """Admit literal words, plain file redirects and listed commands only."""
+    commands = []
+    for name in DATA_ONLY_COMMAND_NAMES.split("|"):
+        word = (
+            DATA_ONLY_PRINT_WORD if name in ("echo", "printf") else DATA_ONLY_FILE_WORD
+        )
+        command = re.escape(name)
+        if name == "tee":
+            command += r"[ \t]+" + DATA_ONLY_FILE_WORD
+        command += (
+            r"(?:[ \t]+"
+            + word
+            + r"|[ \t]*(?:>>?|<)[ \t]*"
+            + DATA_ONLY_FILE_WORD
+            + r")*"
+        )
+        commands.append(command)
+    simple = r"(?:" + "|".join(commands) + r")"
+    return (
+        r"\A[ \t]*"
+        + simple
+        + r"(?:[ \t]*(?:;|&&|\|\||\||\n)[ \t]*"
+        + simple
+        + r")*[ \t]*\Z"
+    )
+
+
+DATA_ONLY_LINE = re.compile(data_only_line_source())
+
+
+def data_command_names_unchanged(command):
+    """Grant exemptions only to a whole literal allow-listed line."""
+    return data_only_command(command)
+
+
+def data_only_command(command):
+    """Strip exactly one final LF before matching the complete allow-list grammar."""
+    return bool(DATA_ONLY_LINE.search(command.removesuffix("\n"))) and not (
+        DATA_ONLY_SUBSTITUTION.search(command)
+    )
+
+
+def shell_boundary_veto(command):
+    """Match PowerShell stop-parsing and cmd.exe percent escapes outside quoted literals."""
+    quote = ""
+    escaped = False
+    position = 0
+    while position < len(command):
+        ch = command[position]
+        if quote == '"':
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                quote = ""
+            position += 1
+            continue
+        if quote == "'":
+            if ch == "'":
+                quote = ""
+            position += 1
+            continue
+        if ch == "'":
+            quote = "'"
+        elif ch == '"':
+            quote = '"'
+        elif command.startswith("--%", position):
+            return True
+        elif (
+            ch == "%" and position + 1 < len(command) and command[position + 1] in ";&|"
+        ):
+            return True
+        position += 1
+    return False
+
+
 def command_segments(command, short_pattern):
     """Scan executable message bodies iteratively, with no recursive parser calls."""
     queue, parts = [(command, False)], []
@@ -137,7 +227,7 @@ def scan_shell_input(source, short_pattern):
 def scan_command_spans(command, short_pattern):
     """Mask data operands while collecting executable message substitutions."""
     if not commit_command(command, short_pattern):
-        return [(command, bool(re.search(READ_ONLY_VETO, command)))], []
+        return [(command, bool(re.search(READ_ONLY_VETO, command)), "")], []
     spans = CommandSpans(command, short_pattern)
     for _ in range(len(command)):
         if spans.position >= len(command):
@@ -149,7 +239,7 @@ def scan_command_spans(command, short_pattern):
     if spans.documents:
         raise ValueError("invalid shell command: unterminated here-document")
     if spans.whole:
-        return [("".join(spans.judged), True)], spans.nested
+        return [("".join(spans.judged), True, "")], spans.nested
     return spans.parts, spans.nested
 
 
@@ -176,8 +266,10 @@ class CommandSpans:
         self.short_pattern, self.uncertain = short_pattern, False
         self.parts, self.stack, self.documents = [], [], []
         self.position = self.start = self.here_lines = 0
-        self.whole = bool(re.search(self.state_pattern, command))
-        self.whole |= bool(re.search(r"--%|%[;&|]", command))
+        self.whole = bool(re.search(self.state_pattern, command)) and not (
+            data_only_command(command)
+        )
+        self.whole |= shell_boundary_veto(command)
         self.word_start = self.execution_start = -1
         self.execution_depth = 0
         self.next_data = self.redirect_data = self.word_expansion = False
@@ -461,9 +553,8 @@ class CommandSpans:
         start = self.start
         part = "".join(self.judged[start:end])
         self.whole |= self.uncertain and commit_command(part, self.short_pattern)
-        self.parts.append(
-            (part, bool(re.search(READ_ONLY_VETO, self.command[start:end])))
-        )
+        raw = self.command[start:end]
+        self.parts.append((part, bool(re.search(READ_ONLY_VETO, raw)), raw))
         self.start = next_position
         self.uncertain = False
         self.next_data = self.redirect_data = False
@@ -551,8 +642,12 @@ def search_command(pattern, text, segments, short_pattern):
     """Search short commit/am flags after each span's read-only exemption."""
     if pattern != short_pattern:
         return search(pattern, text)
+    names_unchanged = data_command_names_unchanged(text)
     for segment in segments:
-        text, veto = segment
+        raw = segment[2] if len(segment) > 2 else ""
+        if names_unchanged and data_only_command(raw):
+            continue
+        text, veto = segment[:2]
         if not veto:
             text = without_read_only_words(text)
         if "-" in text and search(

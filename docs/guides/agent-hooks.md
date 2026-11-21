@@ -891,6 +891,24 @@ with their command, so `git commit -m x 2>&1 | tail -n 1` passes while
 `git commit -m x 2>&1 -n` refuses (`TestParityEvasionCommitSegments`,
 `TestEmittedEvasionCommitSegments`).
 
+The printed-command exemption requires the whole command line to contain only literal
+`echo`, `printf`, `cat`, `tee` and `true` commands. Commands may be joined by pipes,
+`;`, `&&`, `||` or newlines, with plain file redirections. `echo` and `printf` accept
+literal text arguments; sinks accept only plain file words, and `tee` requires a file
+operand. Thus `echo 'git commit -n' | cat`, `echo 'git commit -n' | tee notes.txt` and
+`printf '%s\n' 'git commit -n' > notes.txt` pass the short skip flag rule. Exactly one
+trailing LF is removed before matching in Go and both Python implementations; a bare
+`tee` with or without that LF retains the full scan.
+
+Any other command or syntax removes this exemption from every segment: state changes,
+unknown commands, command or process substitutions, dynamic file operands and later
+execution of a redirected file retain prohibited-flag scanning. For example,
+`echo 'git commit -n' > a; sh a` and `echo 'git commit -n' | tee >(bash)` refuse.
+The whole-line allow-list never exempts the segment scanner's conservative fallback.
+Other rules still inspect printed text. Replay evidence:
+`TestParityEvasionCommitSegments`, `TestEmittedEvasionCommitSegments`,
+`TestParityEvasionPrintedAllowList` and `TestBuildBlockEvasionPY_PrintedAllowList`.
+
 Message and file operands (`-m`, `--message`, `-F`, `--file`, `-C`, `-c`, `--author`,
 `--date`, including attached values) and here-document bodies are data, excluded from
 short-option matching. Both `git commit -m 'mention -n here'` and a `git commit -F -`
@@ -951,9 +969,13 @@ Why a dropped word is never a skip: it holds no quote, so it lies wholly inside 
 outside any string still open at the separator. Outside, the separator ends the commit and
 the word belongs to the read-only command; inside, it is part of one quoted argument. The
 listed constructs are the ones that break this reading (escapes, expansions, substitutions,
-line continuations, redefined command names, exported variables). One gap remains by
-design: the exemption reads `;` as a separator, as POSIX shells, fish and PowerShell do;
-cmd.exe does not, so there a `;` chain passes the read-only command's words to Git.
+line continuations, redefined command names, exported variables). The shell model has
+known gaps: the exemption reads `;` as a separator, as POSIX shells, fish and PowerShell do;
+cmd.exe does not, so there a `;` chain passes the read-only command's words to Git. The segment
+scanner likewise models single quotes as POSIX data delimiters, with no separate cmd.exe
+parsing mode: `git commit -m 'x -n y'` passes this rule. cmd.exe treats the apostrophes as
+ordinary characters, so that shell can pass `-n` to Git (`TestParityEvasionCommitSegments`,
+`data single quote shell model`).
 
 The exemption sources are `ReadOnlyWords` and `ReadOnlyVeto` in
 `internal/agenthook/policy.go`; both are linear in RE2 and Python's `re`, and

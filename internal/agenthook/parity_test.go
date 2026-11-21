@@ -35,6 +35,14 @@ func guardEnvironment(extra ...string) []string {
 	return append(environment, extra...)
 }
 
+// requirePolicyMarkerOnAllow fails when an allowed run omits the dialect marker.
+func requirePolicyMarkerOnAllow(t *testing.T, label string, result guardResult, wantExit int) {
+	t.Helper()
+	if wantExit == 0 && result.exit == 0 && !result.marker {
+		t.Errorf("%s: exit 0 without %s", label, CommandPolicyMarker)
+	}
+}
+
 // guardResult is what one Python guard run printed and returned.
 type guardResult struct {
 	exit   int
@@ -741,6 +749,92 @@ func roundTenSegmentCasesControls() []struct {
 	}
 }
 
+// dataOnlySegmentCases plants issue 1982 in both directions: the #46 exemption tests
+// never held a data-only command naming a commit. A format escape and redirection veto
+// the old exemption, letting the wide short-flag regex read printed arguments as a call.
+func dataOnlySegmentCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"data printf redirect", `printf '%s\n' 'refused: git commit -S -F msg.txt | head -n 12' >> notes.txt`, 0},
+		{"data echo redirect", `echo 'git commit -F m -n' >> notes.txt`, 0},
+		{"data printf pipe", `printf '%s\n' "ran git commit -S -F msg.txt -n" | tee -a notes.txt`, 0},
+		{"data echo execution", `echo "$(git commit -n -m x)"`, 2},
+		{"data printf execution", `printf '%s' "$(git commit -n -m x)"`, 2},
+		{"data next commit", `printf x; git commit -n -m x`, 2},
+		{"data echo function", `echo() { git commit "$@"; }; echo -n -m x`, 2},
+		{"data printf function", `function printf { git commit "$@"; }; printf -n -m x`, 2},
+		{"data echo alias", `alias echo='git commit'; echo -n -m x`, 2},
+		{"data eval", `eval 'git commit -n -m x'`, 2},
+		{"data bash", `bash -c 'git commit -n -m x'`, 2},
+		// Baseline gap: xargs receives runtime arguments, outside this segment exemption.
+		{"data xargs", `printf -- -n | xargs git commit -m x`, 0},
+		{"data actual commit", `git commit -S -F msg.txt -n`, 2},
+		// POSIX single quotes delimit data; cmd.exe is not a separate parsing mode.
+		{"data single quote shell model", `git commit -m 'x -n y'`, 0},
+		{"data indirect echo definition", `eval 'ec''ho() { "$@"; }'; echo git commit -n -m x`, 2},
+		{"data indirect printf definition", `eval "printf() { \"\$@\"; }"; printf 'git commit -n'`, 2},
+		{"data shell consumer", `echo 'git commit -n -m x' | bash`, 2},
+		{"data xargs shell consumer", `echo 'git commit -n -m x' | xargs sh -c`, 2},
+		{"data sh consumer", `printf 'git push --no-verify' | sh`, 2},
+		{"data xargs consumer", `echo git commit -n | xargs -I{} sh -c {}`, 2},
+		{"data tee consumer", `echo 'git commit -n' | tee notes.txt`, 0},
+		{"data literal redirect", `printf '%s\n' 'git commit -n' > notes.txt`, 0},
+		{"data literal echo", `echo git commit -n`, 0},
+		{"data interpreter consumer", `echo 'git commit -n' | python3`, 2},
+		{"data env consumer", `echo 'git commit -n' | env bash`, 2},
+		{"data tee shell consumer", `echo 'git commit -n' | tee notes.txt | bash`, 2},
+		{"data substitution consumer", `$(echo 'git commit -n')`, 2},
+		{"data quoted shell consumer", `echo 'git commit -n' | 'bash'`, 2},
+		{"data source state", `source setup.sh; echo git commit -n`, 2},
+		{"data dot state", `. setup.sh; echo git commit -n`, 2},
+		{"data unset state", `unset -f echo; echo git commit -n`, 2},
+		{"data quoted eval state", `e'v'al 'ec''ho() { "$@"; }'; echo git commit -n`, 2},
+		{"data literal logical or", `echo git commit -n || tee notes.txt`, 0},
+	}
+}
+
+// printedAllowListCases covers whole-line print eligibility and trailing-LF parity.
+func printedAllowListCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"data bare tee", `echo 'git commit -n' | tee`, 2},
+		{"data bare tee LF", "echo 'git commit -n' | tee\n", 2},
+		{"data redirected script bash", `printf '%s\n' 'git commit -n -m x' > run.sh; bash run.sh`, 2},
+		{"data tee process substitution", `echo 'git commit -n' | tee >(bash)`, 2},
+		{"data redirected script sh", `echo 'git commit -n' > a; sh a`, 2},
+		{"data tee sh chain", `printf 'git commit -n' | tee x | sh`, 2},
+		{"data cat bash chain", `echo 'git commit -n' | cat | bash`, 2},
+		{"data tee file LF", "echo 'git commit -n' | tee notes.txt\n", 0},
+		{"data cat sink", `echo 'git commit -n' | cat`, 0},
+		{"data true sequence", `true; echo 'git commit -n'`, 0},
+		{"data printer sequence", `echo 'git commit -n'; printf x`, 0},
+		{"data unknown before", `unknown; echo 'git commit -n'`, 2},
+		{"data unknown after", `echo 'git commit -n'; unknown`, 2},
+		{"data sink parameter", `echo 'git commit -n' | tee "$file"`, 2},
+		{"data sink glob", `echo 'git commit -n' | tee *`, 2},
+		{"data sink redirect execution", `echo 'git commit -n' | cat >"$(bash)"`, 2},
+		{"data eval after", `echo 'git commit -n'; eval x`, 2},
+		{"data eval quoted after", `echo 'git commit -n'; e'v'al x`, 2},
+		{"data file input sink", `echo 'git commit -n'; cat < notes.txt`, 0},
+		{"data logical and", `echo 'git commit -n' && true`, 0},
+		{"data newline sequence", "echo 'git commit -n'\ntrue", 0},
+		{"data plain redirect parameter", `echo 'git commit -n' > "$file"`, 2},
+		{"data literal state keyword", `printf '%s\n' 'git commit -n; set a message'`, 0},
+		{"data quoted state command", `'set' x; git commit -m x && tail -n 1`, 2},
+		{"data quoted percent progress", `echo 'git commit -n; progress 100%; retry'`, 0},
+	}
+}
+
 // TestParityEvasionCommitSegments judges every planted row with both implementations.
 func TestParityEvasionCommitSegments(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
@@ -751,6 +845,8 @@ func TestParityEvasionCommitSegments(t *testing.T) {
 	cases = append(cases, roundSevenSegmentCases()...)
 	cases = append(cases, roundEightSegmentCases()...)
 	cases = append(cases, roundNineSegmentCases()...)
+	cases = append(cases, dataOnlySegmentCases()...)
+	cases = append(cases, printedAllowListCases()...)
 	for _, tc := range append(cases, roundTenSegmentCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
@@ -764,10 +860,11 @@ func TestParityEvasionCommitSegments(t *testing.T) {
 			if tc.want != 0 {
 				pythonWant = 1
 			}
-			t.Logf("Go rc=%d Python rc=%d want=%d", goExit, python.exit, tc.want)
+			t.Logf("Go rc=%d Python rc=%d want=%d marker=%v", goExit, python.exit, tc.want, python.marker)
 			if goExit != tc.want || python.exit != pythonWant {
 				t.Errorf("Go rc=%d Python rc=%d want=%d", goExit, python.exit, tc.want)
 			}
+			requirePolicyMarkerOnAllow(t, tc.name, python, pythonWant)
 			checkSegmentRefusal(t, tc.name, tc.want, verdict.Reason, python.stderr)
 		})
 	}
@@ -811,7 +908,7 @@ func TestEvasionArgumentUncertaintyMutant(t *testing.T) {
 	}
 }
 
-// TestParityEvasionArgumentUncertaintyMutant proves canonical masking needs splitting state.
+// TestParityEvasionArgumentUncertaintyMutant pins canonical argument-splitting defences.
 func TestParityEvasionArgumentUncertaintyMutant(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
 	source, err := os.ReadFile(pythonGuard)
@@ -819,17 +916,17 @@ func TestParityEvasionArgumentUncertaintyMutant(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name, replacement, command string
+		name, before, after, command string
 	}{
-		{"all argument uncertainty", "False", `git commit -m $(printf '') -m -n`},
-		{"pre-subcommand uncertainty", "bool(self.git_command) and self.word_splitting", roundNineSegmentCases()[0].command},
+		{"all argument uncertainty", "self.arguments_uncertain |= self.command_word_seen and self.word_splitting",
+			"self.arguments_uncertain |= False", `git commit -m $(printf '') -m -n`},
+		{"pre-subcommand uncertainty", "self.arguments_uncertain |= self.command_word_seen and self.word_splitting",
+			"self.arguments_uncertain |= bool(self.git_command) and self.word_splitting", roundNineSegmentCases()[0].command},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			mutant := strings.Replace(string(source),
-				"self.arguments_uncertain |= self.command_word_seen and self.word_splitting",
-				"self.arguments_uncertain |= "+tc.replacement, 1)
+			mutant := strings.Replace(string(source), tc.before, tc.after, 1)
 			if mutant == string(source) {
-				t.Fatal("argument uncertainty mutation did not change the guard")
+				t.Fatal("mutation did not change the guard")
 			}
 			script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
 			if err := os.WriteFile(script, []byte(mutant), 0o600); err != nil {
@@ -894,6 +991,7 @@ func checkSegmentRefusal(t *testing.T, name string, code int, reason string, std
 func splittingSegmentCase(name string) bool {
 	name = strings.TrimPrefix(name, "standalone ")
 	return slices.Contains([]string{
+		"data echo function", "data printf function",
 		"nesting at bound", "own parameter",
 		"am parameter", "own substitution",
 		"positional glob", "positional question glob",
@@ -947,7 +1045,7 @@ func segmentRefusal(name string) string {
 		return InvalidInputRefusal + "invalid shell command: " + suffix
 	}
 	rule := BuiltinRules()[1]
-	if name == "long flag" || name == "am long flag" {
+	if name == "long flag" || name == "am long flag" || name == "data sh consumer" {
 		rule = BuiltinRules()[0]
 	}
 	return rule.RefusalPrefix() + rule.Source
@@ -982,5 +1080,92 @@ func redirectSegmentCases() []struct {
 		{"heredoc pending past bound", "git commit -F -" + strings.Repeat(" <<EOF", 17) + "\n" + strings.Repeat("EOF\n", 17) + "tail -n 1", 2},
 		// Parameter expansions within message data preserve segmentation.
 		{"substitution braces", `git commit -m "$(echo ${msg})" && tail -n 1`, 0},
+	}
+}
+
+// TestParityEvasionPrintedAllowList pins the only allowed names against Python's table.
+func TestParityEvasionPrintedAllowList(t *testing.T) {
+	source, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pattern := regexp.MustCompile(`(?m)^DATA_ONLY_COMMAND_NAMES = r"([^"]+)"$`)
+	lf, _ := util.NormalizeLineEndings(string(source))
+	for _, tc := range []struct{ name, canonical string }{
+		{"checkout", string(source)},
+		{"CRLF", util.RestoreLineEndings(lf, true)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			canonical, _ := util.NormalizeLineEndings(tc.canonical)
+			match := pattern.FindStringSubmatch(canonical)
+			if len(match) != 2 || match[1] != dataOnlyCommandNames {
+				t.Fatalf("print allow-list drift: Python %q; Go %q", match, dataOnlyCommandNames)
+			}
+		})
+	}
+}
+
+// TestParityEvasionPrintedAllowListMutants kills arbitrary names and inconsistent final LF.
+func TestParityEvasionPrintedAllowListMutants(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	source, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, before, after, command string
+		fixed, mutant                int
+	}{
+		{"any command", "command = re.escape(name)", `command = r"[-A-Za-z0-9_./]+"`,
+			printedAllowListCases()[2].command, 1, 0},
+		{"final LF", `command.removesuffix("\n")`, "command", printedAllowListCases()[7].command, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutant := strings.Replace(string(source), tc.before, tc.after, 1)
+			if mutant == string(source) {
+				t.Fatal("mutation did not change the guard")
+			}
+			script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
+			if err := os.WriteFile(script, []byte(mutant), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
+			fixed := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
+			planted := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
+			t.Logf("canonical mutant rc=%d marker=%v; fixed rc=%d marker=%v",
+				planted.exit, planted.marker, fixed.exit, fixed.marker)
+			if fixed.exit != tc.fixed || planted.exit != tc.mutant {
+				t.Errorf("canonical mutant rc=%d; fixed rc=%d", planted.exit, fixed.exit)
+			}
+			requirePolicyMarkerOnAllow(t, "fixed", fixed, tc.fixed)
+			requirePolicyMarkerOnAllow(t, "canonical mutant", planted, tc.mutant)
+		})
+	}
+}
+
+// TestParityEvasionApprovalMarkerMutant refuses exit zero without the approval marker.
+func TestParityEvasionApprovalMarkerMutant(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	source, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutant := strings.Replace(string(source), `b"PRAETOR_COMMAND_POLICY_OK\n"`, `b""`, 1)
+	if mutant == string(source) {
+		t.Fatal("marker mutation did not change the guard")
+	}
+	script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
+	if err := os.WriteFile(script, []byte(mutant), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := `echo 'git commit -n' | cat`
+	payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": command}})
+	fixed := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
+	planted := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
+	if fixed.exit != 0 || !fixed.marker {
+		t.Fatalf("fixed rc=%d marker=%v", fixed.exit, fixed.marker)
+	}
+	if planted.exit != 0 || planted.marker {
+		t.Errorf("canonical mutant rc=%d marker=%v; want exit 0 and no marker", planted.exit, planted.marker)
 	}
 }

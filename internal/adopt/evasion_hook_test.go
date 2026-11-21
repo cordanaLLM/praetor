@@ -359,6 +359,73 @@ func evasionRoundTenCasesControls() []struct {
 	}
 }
 
+// evasionPrintedCommandCases pins state changes and executable consumers of printed commands.
+func evasionPrintedCommandCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"data indirect echo definition", `eval 'ec''ho() { "$@"; }'; echo git commit -n -m x`, 2},
+		{"data indirect printf definition", `eval "printf() { \"\$@\"; }"; printf 'git commit -n'`, 2},
+		{"data shell consumer", `echo 'git commit -n -m x' | bash`, 2},
+		{"data xargs shell consumer", `echo 'git commit -n -m x' | xargs sh -c`, 2},
+		{"data sh consumer", `printf 'git push --no-verify' | sh`, 2},
+		{"data xargs consumer", `echo git commit -n | xargs -I{} sh -c {}`, 2},
+		{"data tee consumer", `echo 'git commit -n' | tee notes.txt`, 0},
+		{"data literal redirect", `printf '%s\n' 'git commit -n' > notes.txt`, 0},
+		{"data literal echo", `echo git commit -n`, 0},
+		{"data interpreter consumer", `echo 'git commit -n' | python3`, 2},
+		{"data env consumer", `echo 'git commit -n' | env bash`, 2},
+		{"data tee shell consumer", `echo 'git commit -n' | tee notes.txt | bash`, 2},
+		{"data substitution consumer", `$(echo 'git commit -n')`, 2},
+		{"data quoted shell consumer", `echo 'git commit -n' | 'bash'`, 2},
+		{"data source state", `source setup.sh; echo git commit -n`, 2},
+		{"data dot state", `. setup.sh; echo git commit -n`, 2},
+		{"data unset state", `unset -f echo; echo git commit -n`, 2},
+		{"data quoted eval state", `e'v'al 'ec''ho() { "$@"; }'; echo git commit -n`, 2},
+		{"data literal logical or", `echo git commit -n || tee notes.txt`, 0},
+	}
+}
+
+// evasionPrintedAllowListCases covers whole-line print eligibility and trailing-LF parity.
+func evasionPrintedAllowListCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"data bare tee", `echo 'git commit -n' | tee`, 2},
+		{"data bare tee LF", "echo 'git commit -n' | tee\n", 2},
+		{"data redirected script bash", `printf '%s\n' 'git commit -n -m x' > run.sh; bash run.sh`, 2},
+		{"data tee process substitution", `echo 'git commit -n' | tee >(bash)`, 2},
+		{"data redirected script sh", `echo 'git commit -n' > a; sh a`, 2},
+		{"data tee sh chain", `printf 'git commit -n' | tee x | sh`, 2},
+		{"data cat bash chain", `echo 'git commit -n' | cat | bash`, 2},
+		{"data tee file LF", "echo 'git commit -n' | tee notes.txt\n", 0},
+		{"data cat sink", `echo 'git commit -n' | cat`, 0},
+		{"data true sequence", `true; echo 'git commit -n'`, 0},
+		{"data printer sequence", `echo 'git commit -n'; printf x`, 0},
+		{"data unknown before", `unknown; echo 'git commit -n'`, 2},
+		{"data unknown after", `echo 'git commit -n'; unknown`, 2},
+		{"data sink parameter", `echo 'git commit -n' | tee "$file"`, 2},
+		{"data sink glob", `echo 'git commit -n' | tee *`, 2},
+		{"data sink redirect execution", `echo 'git commit -n' | cat >"$(bash)"`, 2},
+		{"data eval after", `echo 'git commit -n'; eval x`, 2},
+		{"data eval quoted after", `echo 'git commit -n'; e'v'al x`, 2},
+		{"data file input sink", `echo 'git commit -n'; cat < notes.txt`, 0},
+		{"data logical and", `echo 'git commit -n' && true`, 0},
+		{"data newline sequence", "echo 'git commit -n'\ntrue", 0},
+		{"data plain redirect parameter", `echo 'git commit -n' > "$file"`, 2},
+		{"data literal state keyword", `printf '%s\n' 'git commit -n; set a message'`, 0},
+		{"data quoted state command", `'set' x; git commit -m x && tail -n 1`, 2},
+	}
+}
+
 // TestEmittedEvasionCommitSegments keeps skip flags within their shell command.
 func TestEmittedEvasionCommitSegments(t *testing.T) {
 	python, script := emittedInterceptor(t)
@@ -368,6 +435,8 @@ func TestEmittedEvasionCommitSegments(t *testing.T) {
 	cases = append(cases, evasionRoundSevenCases()...)
 	cases = append(cases, evasionRoundEightCases()...)
 	cases = append(cases, evasionRoundNineCases()...)
+	cases = append(cases, evasionPrintedCommandCases()...)
+	cases = append(cases, evasionPrintedAllowListCases()...)
 	for _, tc := range append(cases, evasionRoundTenCases()...) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
@@ -439,7 +508,7 @@ func evasionSegmentRefusal(name string) string {
 		return agenthook.InvalidInputRefusal + "invalid shell command: " + suffix
 	}
 	rule := agenthook.BuiltinRules()[1]
-	if name == "long flag" || name == "am long flag" {
+	if name == "long flag" || name == "am long flag" || name == "data sh consumer" {
 		rule = agenthook.BuiltinRules()[0]
 	}
 	return rule.RefusalPrefix() + rule.Source
@@ -486,6 +555,10 @@ func evasionSegmentMutants() []struct {
 		name, before, after, command string
 		want                         int
 	}{
+		{"any printed command", "command = re.escape(name)", `command = r"[-A-Za-z0-9_./]+"`,
+			evasionPrintedAllowListCases()[2].command, 0},
+		{"printed final LF", `command.removesuffix("\n")`, "command",
+			evasionPrintedAllowListCases()[7].command, 2},
 		{"old span", "for segment in segments:", "for segment in [(text, bool(re.search(READ_ONLY_VETO, text)))]:",
 			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
 		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1)", "segments, None)",
@@ -1320,5 +1393,34 @@ func TestEmittedInterceptorSearchesLikeTheEngineGuard(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "return search(pattern, text)") || strings.Contains(rendered, "        if re.search(pattern, text):\n") {
 		t.Fatal("the rendered interceptor does not judge its rules through search")
+	}
+}
+
+// TestBuildBlockEvasionPY_PrintedAllowList pins the emitted table and replayable renderings.
+func TestBuildBlockEvasionPY_PrintedAllowList(t *testing.T) {
+	canonical := mustRead(t, filepath.Join("..", "..", evasionHookFile))
+	pattern := regexp.MustCompile(`(?m)^DATA_ONLY_COMMAND_NAMES = r"([^"]+)"$`)
+	rendered := buildBlockEvasionPY()
+	got := pattern.FindStringSubmatch(rendered)
+	lf, _ := util.NormalizeLineEndings(canonical)
+	for _, tc := range []struct{ name, canonical string }{
+		{"checkout", canonical},
+		{"CRLF", crlfText(lf)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			canonicalLF, _ := util.NormalizeLineEndings(tc.canonical)
+			want := pattern.FindStringSubmatch(canonicalLF)
+			if len(want) != 2 || len(got) != 2 || want[1] != got[1] {
+				t.Fatalf("print allow-list drift: canonical %q; emitted %q", want, got)
+			}
+		})
+	}
+	for _, path := range []string{
+		filepath.Join(priorEvasionFixtures, currentEvasionFixture),
+		filepath.Join("testdata", "emitted", evasionHookFile),
+	} {
+		if actual := mustRead(t, path); actual != rendered {
+			t.Errorf("%s differs from the emitted rendering", path)
+		}
 	}
 }

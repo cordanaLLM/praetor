@@ -314,7 +314,6 @@ const shellNestingLimit, shellHereLineLimit = 16, 256
 
 var (
 	shellStatePattern          = regexp.MustCompile(ReadOnlyVeto[strings.Index(ReadOnlyVeto, "(?i:"):])
-	shellBoundaryVetoPattern   = regexp.MustCompile(`--%|%[;&|]`)
 	shellHerePattern           = regexp.MustCompile(`^<<(-?)[ \t]*("[^"]*"|'[^']*'|[-A-Za-z0-9_]+)`)
 	shellRedirectPattern       = regexp.MustCompile(`^&?[<>](?:[<>|]|&[0-9-]*)?`)
 	shellUnsupportedPattern    = regexp.MustCompile(`[^\t\x20-\x7e]|[{}^!]`)
@@ -337,6 +336,8 @@ type shellDocument struct {
 type shellSpan struct {
 	text string
 	veto bool
+	// raw is present only for isolated commands, never a whole-command fallback.
+	raw string
 }
 
 // shellInput distinguishes executable text from expandable here-document data.
@@ -426,13 +427,75 @@ func (s *shellSpans) documentStep() bool {
 	return true
 }
 
+// shellBoundaryVetoAt reports an active stop-parsing token or percent escape at pos.
+func shellBoundaryVetoAt(command string, pos int) bool {
+	if strings.HasPrefix(command[pos:], "--%") {
+		return true
+	}
+	return command[pos] == '%' && pos+1 < len(command) &&
+		(command[pos+1] == ';' || command[pos+1] == '&' || command[pos+1] == '|')
+}
+
+// shellBoundaryVetoDouble advances through a double-quoted literal.
+func shellBoundaryVetoDouble(command string, pos int, escaped bool) int {
+	for pos < len(command) {
+		switch {
+		case escaped:
+			escaped = false
+		case command[pos] == '\\':
+			escaped = true
+		case command[pos] == '"':
+			return pos + 1
+		}
+		pos++
+	}
+	return pos
+}
+
+// shellBoundaryVeto matches PowerShell stop-parsing and cmd.exe percent escapes outside quotes.
+func shellBoundaryVeto(command string) bool {
+	quote, pos := byte(0), 0
+	for pos < len(command) {
+		if quote == '"' {
+			pos = shellBoundaryVetoDouble(command, pos, false)
+			quote = 0
+			continue
+		}
+		if quote == '\'' {
+			if command[pos] == '\'' {
+				quote = 0
+			}
+			pos++
+			continue
+		}
+		switch command[pos] {
+		case '\'':
+			quote = '\''
+		case '"':
+			quote = '"'
+		default:
+			if shellBoundaryVetoAt(command, pos) {
+				return true
+			}
+		}
+		pos++
+	}
+	return false
+}
+
+// shellNeedsWholeScan keeps the state veto unless the entire line is proven literal data.
+func shellNeedsWholeScan(command string) bool {
+	return shellBoundaryVeto(command) ||
+		shellStatePattern.MatchString(command) && !dataOnlyCommand(command)
+}
+
 // scanCommandSpans masks data operands and refuses unknown commit/am argument lists.
 func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 	if !shellCommitPattern.MatchString(joinLineContinuations(command)) {
-		return []shellSpan{{command, readOnlyVetoPattern.MatchString(command)}}, nil, nil
+		return []shellSpan{{text: command, veto: readOnlyVetoPattern.MatchString(command)}}, nil, nil
 	}
 	s := shellSpans{command: command, judged: []byte(command), wordStart: -1, executionStart: -1,
-		whole: shellStatePattern.MatchString(command) || shellBoundaryVetoPattern.MatchString(command)}
+		whole: shellNeedsWholeScan(command)}
 	for s.position < len(command) {
 		if !s.step() || s.err != nil {
 			return nil, nil, s.err
@@ -449,7 +512,7 @@ func scanCommandSpans(command string) ([]shellSpan, []shellInput, error) {
 		return nil, nil, fmt.Errorf("invalid shell command: unterminated here-document")
 	}
 	if s.whole {
-		return []shellSpan{{string(s.judged), true}}, s.nested, nil
+		return []shellSpan{{text: string(s.judged), veto: true}}, s.nested, nil
 	}
 	return s.parts, s.nested, nil
 }
@@ -768,7 +831,8 @@ func (s *shellSpans) split(end, next int) {
 	}
 	part := string(s.judged[s.start:end])
 	s.whole = s.whole || s.uncertain && shellCommitPattern.MatchString(joinLineContinuations(part))
-	s.parts = append(s.parts, shellSpan{part, readOnlyVetoPattern.MatchString(s.command[s.start:end])})
+	raw := s.command[s.start:end]
+	s.parts = append(s.parts, shellSpan{text: part, veto: readOnlyVetoPattern.MatchString(raw), raw: raw})
 	s.start = next
 	s.uncertain = false
 	s.nextData, s.redirectData = false, false
@@ -859,12 +923,58 @@ func (s *shellSpans) documentBody(document shellDocument) bool {
 	return false
 }
 
+// dataOnlyCommandNames is the shared printer and literal text-sink allow-list.
+const dataOnlyCommandNames = `echo|printf|cat|tee|true`
+
+const (
+	dataOnlyFileWord  = `(?:[-A-Za-z0-9_./:=@,%+~]+|'[-A-Za-z0-9_./:=@,%+~ ]*'|"[-A-Za-z0-9_./:=@,%+~ ]*")`
+	dataOnlyPrintWord = `(?:[-A-Za-z0-9_./:=@,%+~]|'[^'\r\n]*'|"(?:[^"\\$\x60\r\n]|\\[^\r\n])*")+`
+)
+
+var (
+	dataOnlyLinePattern         = regexp.MustCompile(dataOnlyLineSource())
+	dataOnlySubstitutionPattern = regexp.MustCompile(`\$\(|\x60|[<>]\(`)
+)
+
+// dataOnlyLineSource admits literal words, plain file redirects and listed commands only.
+func dataOnlyLineSource() string {
+	var commands []string
+	for _, name := range strings.Split(dataOnlyCommandNames, "|") {
+		word := dataOnlyFileWord
+		if name == "echo" || name == "printf" {
+			word = dataOnlyPrintWord
+		}
+		command := regexp.QuoteMeta(name)
+		if name == "tee" {
+			command += `[ \t]+` + dataOnlyFileWord
+		}
+		command += `(?:[ \t]+` + word + `|[ \t]*(?:>>?|<)[ \t]*` + dataOnlyFileWord + `)*`
+		commands = append(commands, command)
+	}
+	simple := `(?:` + strings.Join(commands, "|") + `)`
+	return `\A[ \t]*` + simple + `(?:[ \t]*(?:;|&&|\|\||\||\n)[ \t]*` + simple + `)*[ \t]*\z`
+}
+
+// dataCommandNamesUnchanged grants exemptions only to a whole literal allow-listed line.
+func dataCommandNamesUnchanged(command string) bool {
+	return dataOnlyCommand(command)
+}
+
+// dataOnlyCommand strips exactly one final LF before matching the complete allow-list grammar.
+func dataOnlyCommand(command string) bool {
+	return dataOnlyLinePattern.MatchString(strings.TrimSuffix(command, "\n")) && !dataOnlySubstitutionPattern.MatchString(command)
+}
+
 // matchesCommand applies segmentation only to the built-in short commit/am flag rule.
 func (r denyRule) matchesCommand(text string, segments []shellSpan) bool {
 	if r.source != shortSkipFlagRule || !r.readOnlyExempt {
 		return r.matches(text)
 	}
+	namesUnchanged := dataCommandNamesUnchanged(text)
 	for _, segment := range segments {
+		if namesUnchanged && dataOnlyCommand(segment.raw) {
+			continue
+		}
 		text := segment.text
 		if !segment.veto {
 			text = withoutReadOnlyWords(text)

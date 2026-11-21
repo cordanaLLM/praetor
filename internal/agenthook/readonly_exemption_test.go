@@ -2,9 +2,13 @@ package agenthook
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // wholeCommandDenies judges command with every rule on the whole command, the policy without
@@ -107,6 +111,16 @@ func TestReadOnlyExemption_Boundary_VetoedConstructs(t *testing.T) {
 		}
 	}
 	checkReadOnlyStateWords(t, builtin, chained)
+	for quoted, vetoed := range map[string]bool{
+		`echo 'git commit -n; progress 100%; retry'`: false,
+		`echo "progress 100%; retry"`:                false,
+		`echo x%; git status`:                        true,
+		`git commit --% -m x; git commit -n`:         true,
+	} {
+		if got := shellBoundaryVeto(quoted); got != vetoed {
+			t.Errorf("%q: shellBoundaryVeto=%v, want %v", quoted, got, vetoed)
+		}
+	}
 }
 
 // checkReadOnlyStateWords keeps state-changing words conservative in any letter case.
@@ -283,4 +297,97 @@ func fixtureCommand(payload []byte) string {
 		return ""
 	}
 	return decoded.ToolInput.Command
+}
+
+type dataOnlyGuardCase struct {
+	Name, Command, Segment string
+	Want                   bool
+}
+
+// dataOnlyGuardCases isolates each defence: nested scanning and whole-command fallbacks
+// independently refuse executable rows, so end-to-end verdicts alone cannot pin both guards.
+func dataOnlyGuardCases() []dataOnlyGuardCase {
+	var rows []dataOnlyGuardCase
+	for _, tc := range dataOnlySegmentCases()[:3] {
+		rows = append(rows, dataOnlyGuardCase{tc.name, tc.command, tc.command, true})
+	}
+	for _, tc := range dataOnlySegmentCases()[3:12] {
+		segment := tc.command
+		switch tc.name {
+		case "data next commit":
+			segment = `git commit -n -m x`
+		case "data echo function", "data echo alias":
+			segment = `echo -n -m x`
+		case "data printf function":
+			segment = `printf -n -m x`
+		case "data xargs":
+			segment = `xargs git commit -m x`
+		}
+		rows = append(rows, dataOnlyGuardCase{tc.name, tc.command, segment, false})
+	}
+	return append(rows, dataOnlyGuardBoundaryCases()...)
+}
+
+// dataOnlyGuardBoundaryCases covers every substitution spelling and both redefined names.
+func dataOnlyGuardBoundaryCases() []dataOnlyGuardCase {
+	return []dataOnlyGuardCase{
+		{"backtick", "echo `git commit -n`", "echo `git commit -n`", false},
+		{"process input", `printf '%s' <(git commit -n)`, `printf '%s' <(git commit -n)`, false},
+		{"process output", `echo x >(git commit -n)`, `echo x >(git commit -n)`, false},
+		{"redirect execution", `echo x >"$(git commit -n)"`, `echo x >"$(git commit -n)"`, false},
+		{"printf alias", `alias printf='git commit'; printf -n`, `printf -n`, false},
+		{"printf definition", `printf () { :; }; printf x`, `printf x`, false},
+		{"echo function word", `function echo { :; }; echo x`, `echo x`, false},
+		{"PowerShell printf", `Set-Alias printf git; printf commit -n`, `printf commit -n`, false},
+		{"PowerShell echo", `Set-Alias echo git; echo commit -n`, `echo commit -n`, false},
+		{"unknown word", `printfx 'git commit -n'`, `printfx 'git commit -n'`, false},
+		{"empty fallback", `echo x`, "", false},
+		{"plain whitespace", " \tprintf '%s' x", " \tprintf '%s' x", true},
+	}
+}
+
+// TestReadOnlyExemption_DataOnlyGuards pins the allow-list and both guards in Go and Python.
+func TestReadOnlyExemption_DataOnlyGuards(t *testing.T) {
+	rows := dataOnlyGuardCases()
+	for _, row := range rows {
+		if got := dataCommandNamesUnchanged(row.Command) && dataOnlyCommand(row.Segment); got != row.Want {
+			t.Errorf("Go %s: print exemption=%v, want %v", row.Name, got, row.Want)
+		}
+	}
+	encoded, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const harness = `import json, runpy, sys
+module = runpy.run_path(sys.argv[1])
+failed = False
+for row in json.loads(sys.argv[2]):
+    got = bool(module["data_command_names_unchanged"](row["Command"]) and module["data_only_command"](row["Segment"]))
+    if got != row["Want"]:
+        sys.stderr.write(row["Name"] + ": unexpected print exemption\n")
+        failed = True
+sys.exit(1 if failed else 0)
+`
+	script := filepath.Join(t.TempDir(), "data_only_guard_cases.py")
+	if err := os.WriteFile(script, []byte(harness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := runGuardScript(t, testsupport.PythonInterpreter(t), script, nil,
+		[]string{pythonGuard, string(encoded)}, guardEnvironment())
+	if result.exit != 0 {
+		t.Errorf("Python guard contract rc=%d: %s", result.exit, result.stderr)
+	}
+}
+
+// TestReadOnlyExemption_Negative_EmptyFallbackRefusesForcedRawSpan proves an empty raw segment
+// does not gain a print exemption when the check is forced true.
+func TestReadOnlyExemption_Negative_EmptyFallbackRefusesForcedRawSpan(t *testing.T) {
+	row := dataOnlyGuardCase{"empty fallback", `echo x`, "", false}
+	if forced := dataCommandNamesUnchanged(row.Command) && true; forced == row.Want {
+		t.Fatal("forcing data_only on an empty raw segment must not match want")
+	}
+	got := dataCommandNamesUnchanged(row.Command) && dataOnlyCommand(row.Segment)
+	if got != row.Want {
+		t.Fatalf("empty fallback row: print exemption=%v, want %v", got, row.Want)
+	}
 }
