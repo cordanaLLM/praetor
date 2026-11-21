@@ -96,11 +96,16 @@ func runRemoteAdmit(opts admitOptions, path string) error {
 	return runAdmittedRemoteStep(opts, executor, info, verdict)
 }
 
-func runAdmittedRemoteStep(opts admitOptions, executor admission.Executor, info admission.RemoteAdmitInfo, verdict admission.Verdict) error {
-	concurrent := admission.AdmitExecutorLease(executor.Name)
+func runAdmittedRemoteStep(opts admitOptions, executor admission.Executor, info admission.RemoteAdmitInfo, verdict admission.Verdict) (resultErr error) {
+	concurrent, releaseLease, err := admission.AdmitExecutorLease(executor.Name)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, releaseLease())
+	}()
 	info.Concurrent = concurrent
 	info.Jobs = admission.StepParallelismJobs(info.Cores, concurrent)
-	defer admission.ReleaseExecutorLease(executor.Name)
 	if err := logAdmittedRemote(opts.label, executor.Name, info, verdict); err != nil {
 		return err
 	}
@@ -114,7 +119,7 @@ func runAdmittedRemoteStep(opts admitOptions, executor admission.Executor, info 
 			time.Now().Format("15:04:05"), executor.Name); werr != nil {
 			return werr
 		}
-		return runLocalAdmit(opts)
+		return errors.Join(releaseLease(), runLocalAdmit(opts))
 	}
 	return admitStatus(code, err)
 }

@@ -5,20 +5,25 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/admission"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+const admitHoldLeaseEnv = "ADMIT_TEST_HOLD_EXECUTOR_LEASE"
 
 // needShell skips a test whose step is a POSIX shell command where no sh is on PATH (a Windows
 // runner without Git's usr/bin); the admission logic itself is covered by internal/admission.
@@ -174,19 +179,134 @@ func TestRunAdmit_RemoteTimeoutCleansWorkspace(t *testing.T) {
 }
 
 func TestRunAdmit_RemoteBuildParallelism(t *testing.T) {
+	if runAdmitSubprocessLeaseHolder(t) {
+		return
+	}
 	f := newAdmitFixture(t)
 	f.inventory(t, "home")
+	leaseDir := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "praetor-admit-leases", "home")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a lease directory needs the owner search bit; 0o700 is least privilege
+	if err := os.MkdirAll(leaseDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(leaseDir, "999999-stale.lock")
+	if err := os.WriteFile(stale, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	out, log, code := runAdmitCaptured(t, "--", "sh", "-c", `printf "%s %s %s\n" "$(nproc)" "$MAKEFLAGS" "$GOMAXPROCS"`)
 	if code != 0 || out != "30 -j12 12\n" || !strings.Contains(log, "cores 12 from list and pod cpu.max; 1 concurrent step(s); -j12 GOMAXPROCS=12") {
 		t.Fatalf("one step parallelism: %d %q %q", code, out, log)
 	}
-	admission.AdmitExecutorLease("home")
-	defer admission.ReleaseExecutorLease("home")
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale lock file was not removed: %v", err)
+	}
+	assertNoAdmitLeaseFiles(t, leaseDir)
+	stopOther := startAdmitSubprocessLeaseHolder(t, "home")
 	out, log, code = runAdmitCaptured(t, "--", "sh", "-c", `printf "%s %s %s\n" "$(nproc)" "$MAKEFLAGS" "$GOMAXPROCS"`)
 	if code != 0 || out != "30 -j6 6\n" || !strings.Contains(log, "cores 12 from list and pod cpu.max; 2 concurrent step(s); -j6 GOMAXPROCS=6") {
-		t.Fatalf("two concurrent parallelism: %d %q %q", code, out, log)
+		t.Fatalf("two concurrent parallelism across processes: %d %q %q", code, out, log)
+	}
+	stopOther()
+	assertNoAdmitLeaseFiles(t, leaseDir)
+	f.assertClean(t)
+}
+
+func TestRunAdmit_RemoteUnreadableLeaseDirectoryRefused(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("unreadable directory permission check requires non-root user")
+	}
+	f := newAdmitFixture(t)
+	f.inventory(t, "home")
+	leaseDir := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "praetor-admit-leases", "home")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a lease directory needs the owner search bit; 0o700 is least privilege
+	if err := os.MkdirAll(leaseDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(leaseDir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(leaseDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Error(err)
+		}
+	})
+	out, log, code := runAdmitCaptured(t, "--", "sh", "-c", "echo ran")
+	if code != 1 || out != "" || !strings.Contains(log, "executor home: lease directory") {
+		t.Fatalf("unreadable lease directory: %d %q %q", code, out, log)
 	}
 	f.assertClean(t)
+}
+
+func assertNoAdmitLeaseFiles(t *testing.T, leaseDir string) {
+	t.Helper()
+	entries, err := os.ReadDir(leaseDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("lease files remained after step end: %v %v", entries, err)
+	}
+}
+
+func runAdmitSubprocessLeaseHolder(t *testing.T) bool {
+	t.Helper()
+	name := os.Getenv(admitHoldLeaseEnv)
+	if name == "" {
+		return false
+	}
+	_, release, err := admission.AdmitExecutorLease(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stdout.Write([]byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+		t.Fatal(err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	return true
+}
+
+func startAdmitSubprocessLeaseHolder(t *testing.T, executor string) func() {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyR, readyW := io.Pipe()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	var stderr bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		runErr := util.RunCommandPassthrough(ctx, "", "env", stdinR, readyW, &stderr,
+			admitHoldLeaseEnv+"="+executor, self, "-test.run=^TestRunAdmit_RemoteBuildParallelism$")
+		if closeErr := readyW.CloseWithError(runErr); closeErr != nil {
+			runErr = errors.Join(runErr, closeErr)
+		}
+		done <- runErr
+	}()
+	var ack [1]byte
+	if _, err := io.ReadFull(readyR, ack[:]); err != nil {
+		cancel()
+		t.Fatalf("subprocess lease holder failed to start: %v (%s)", errors.Join(err, stdinW.Close(), stdinR.Close()), stderr.String())
+	}
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			defer cancel()
+			closeErr := stdinW.Close()
+			_, drainErr := io.Copy(io.Discard, readyR)
+			if err := errors.Join(closeErr, drainErr, <-done, stdinR.Close(), readyR.Close()); err != nil {
+				t.Fatalf("subprocess lease holder: %v (%s)", err, stderr.String())
+			}
+		})
+	}
+	t.Cleanup(stop)
+	return stop
 }
 
 func TestRunAdmit_RemoteNoCoresRefused(t *testing.T) {
@@ -392,6 +512,7 @@ func admitStubTools(t *testing.T) {
 	writeAdmitExecutable(t, bin, "nproc", "#!/bin/sh\necho 30\n")
 	t.Setenv("ADMIT_STUB_SCOPES", t.TempDir())
 	t.Setenv("ADMIT_STUB_CGROUPS", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	ctx, err := util.WithCommandEnvironment(t.Context(), admitFixtureEnvironment())
 	if err != nil {
