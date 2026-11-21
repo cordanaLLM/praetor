@@ -5,7 +5,7 @@
 saveExact: true
 engineStrict: true
 overrides:
-  minimatch: 11.0.4
+  minimatch: 11.0.9
 
 # deepmerge 4.3.1 is the latest release and still sets the result prototype from an own
 # "__proto__" key (GHSA-gcqx-w48m-w2h4); the patch refuses that key until upstream ships a fix.
