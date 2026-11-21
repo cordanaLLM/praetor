@@ -47,13 +47,13 @@ const (
 	// default (isReviewedPin). Earlier defaults are in prior-images.json
 	// (reviewed_images.go).
 	//
-	// Reviewed at docker.io/library/golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523
-	DefaultBuilderImage = "docker.io/library/golang@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523"
+	// Reviewed at docker.io/library/golang:1.27-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280
+	DefaultBuilderImage = "docker.io/library/golang@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280"
 	// The 26.04 tag drops the hyphen the 24.04 and earlier tags carried: that repository
 	// publishes "ubuntu26.04", and "ubuntu-26.04" is not a tag on it.
 	//
-	// Reviewed at mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:91eff046d5c12318fc98e59258982b87ba896c467427ed8b5dab5a02107a5db7
-	DefaultBaseImage = "mcr.microsoft.com/devcontainers/base@sha256:91eff046d5c12318fc98e59258982b87ba896c467427ed8b5dab5a02107a5db7"
+	// Reviewed at mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:e15941f70f26542ef9b0ef4bb64f88b8ecdfe8c3372e730ab6e405792805e742
+	DefaultBaseImage = "mcr.microsoft.com/devcontainers/base@sha256:e15941f70f26542ef9b0ef4bb64f88b8ecdfe8c3372e730ab6e405792805e742"
 )
 
 // BootstrapOptions selects a local Praetor source snapshot and immutable images.
