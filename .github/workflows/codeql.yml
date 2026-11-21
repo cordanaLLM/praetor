@@ -6,6 +6,9 @@
 # part of the verification gate and no required check; it runs on main, once
 # a week, and by hand. It does not run on pull requests: uploading findings
 # needs security-events: write, which no job a pull request starts may hold.
+# Dispatch from another branch is refused before checkout: findings upload would
+# give write scope to an unreviewed ref. The first step checks case sensitively;
+# GitHub expression string comparisons ignore case.
 name: Code scanning
 
 'on':
@@ -29,7 +32,9 @@ concurrency:
 jobs:
   analyze:
     name: CodeQL (${{ matrix.language }})
-    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor')
+    if: >-
+      github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'tekmora/praetor') &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-26.04
     timeout-minutes: 60  # the Go extraction reads the whole module
     permissions:
@@ -46,6 +51,15 @@ jobs:
           - language: python
             build-mode: none
     steps:
+      - name: Refuse dispatch outside the exact main ref
+        shell: bash
+        timeout-minutes: 1
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            printf 'CodeQL dispatch refused for ref: %s\n' "$GITHUB_REF" >&2
+            exit 1
+          fi
+
       - name: Checkout Source Code
         # yamllint disable-line rule:line-length
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
