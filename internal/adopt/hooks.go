@@ -653,6 +653,41 @@ def data_only_command(command):
     )
 
 
+def shell_boundary_veto(command):
+    """Match PowerShell stop-parsing and cmd.exe percent escapes outside quoted literals."""
+    quote = ""
+    escaped = False
+    position = 0
+    while position < len(command):
+        ch = command[position]
+        if quote == '"':
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                quote = ""
+            position += 1
+            continue
+        if quote == "'":
+            if ch == "'":
+                quote = ""
+            position += 1
+            continue
+        if ch == "'":
+            quote = "'"
+        elif ch == '"':
+            quote = '"'
+        elif command.startswith("--%", position):
+            return True
+        elif (
+            ch == "%" and position + 1 < len(command) and command[position + 1] in ";&|"
+        ):
+            return True
+        position += 1
+    return False
+
+
 def command_segments(command, short_pattern):
     """Scan executable message bodies iteratively, with no recursive parser calls."""
     queue, parts = [(command, False)], []
@@ -732,7 +767,7 @@ class CommandSpans:
         self.whole = bool(re.search(self.state_pattern, command)) and not (
             data_only_command(command)
         )
-        self.whole |= bool(re.search(r"--%|%[;&|]", command))
+        self.whole |= shell_boundary_veto(command)
         self.word_start = self.execution_start = -1
         self.execution_depth = 0
         self.next_data = self.redirect_data = self.word_expansion = False
@@ -1499,6 +1534,8 @@ var priorEvasionHookDigests = map[string]string{
 	"682a8ed3eea87a45a9d6f4b9b5ddc68a1363a2cbeec0dca407cc50a6bee647dd": "current rendering after main changes and SPDX header",
 	"d3dcb48d31aed45db876298e355fe4a815c688d1cac59ff4ec90b7d5b42cd669": "privilege escalation refusal and bounded diagnostics",
 	"1adce72984aa3c355370298290876e99f536007ee486663eef61634659d0e55a": "whole-word literal boundary without codespell split",
+	"4c6cad4b991a521ef684de11b1ab552556416393ff5e22d784eac967318473eb": "quote-aware shell boundary veto for printed data lines",
+	"149cceeec81a69fb8adc6739cdd9b6e9d9c133f4039f0ce2f22d1a89f2dd2514": "quote-aware shell boundary veto, black-clean layout",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an

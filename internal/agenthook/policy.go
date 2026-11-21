@@ -314,7 +314,6 @@ const shellNestingLimit, shellHereLineLimit = 16, 256
 
 var (
 	shellStatePattern          = regexp.MustCompile(ReadOnlyVeto[strings.Index(ReadOnlyVeto, "(?i:"):])
-	shellBoundaryVetoPattern   = regexp.MustCompile(`--%|%[;&|]`)
 	shellHerePattern           = regexp.MustCompile(`^<<(-?)[ \t]*("[^"]*"|'[^']*'|[-A-Za-z0-9_]+)`)
 	shellRedirectPattern       = regexp.MustCompile(`^&?[<>](?:[<>|]|&[0-9-]*)?`)
 	shellUnsupportedPattern    = regexp.MustCompile(`[^\t\x20-\x7e]|[{}^!]`)
@@ -428,9 +427,65 @@ func (s *shellSpans) documentStep() bool {
 	return true
 }
 
+// shellBoundaryVetoAt reports an active stop-parsing token or percent escape at pos.
+func shellBoundaryVetoAt(command string, pos int) bool {
+	if strings.HasPrefix(command[pos:], "--%") {
+		return true
+	}
+	return command[pos] == '%' && pos+1 < len(command) &&
+		(command[pos+1] == ';' || command[pos+1] == '&' || command[pos+1] == '|')
+}
+
+// shellBoundaryVetoDouble advances through a double-quoted literal.
+func shellBoundaryVetoDouble(command string, pos int, escaped bool) int {
+	for pos < len(command) {
+		switch {
+		case escaped:
+			escaped = false
+		case command[pos] == '\\':
+			escaped = true
+		case command[pos] == '"':
+			return pos + 1
+		}
+		pos++
+	}
+	return pos
+}
+
+// shellBoundaryVeto matches PowerShell stop-parsing and cmd.exe percent escapes outside quotes.
+func shellBoundaryVeto(command string) bool {
+	quote, pos := byte(0), 0
+	for pos < len(command) {
+		if quote == '"' {
+			pos = shellBoundaryVetoDouble(command, pos, false)
+			quote = 0
+			continue
+		}
+		if quote == '\'' {
+			if command[pos] == '\'' {
+				quote = 0
+			}
+			pos++
+			continue
+		}
+		switch command[pos] {
+		case '\'':
+			quote = '\''
+		case '"':
+			quote = '"'
+		default:
+			if shellBoundaryVetoAt(command, pos) {
+				return true
+			}
+		}
+		pos++
+	}
+	return false
+}
+
 // shellNeedsWholeScan keeps the state veto unless the entire line is proven literal data.
 func shellNeedsWholeScan(command string) bool {
-	return shellBoundaryVetoPattern.MatchString(command) ||
+	return shellBoundaryVeto(command) ||
 		shellStatePattern.MatchString(command) && !dataOnlyCommand(command)
 }
 

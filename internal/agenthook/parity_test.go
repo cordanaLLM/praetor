@@ -35,6 +35,14 @@ func guardEnvironment(extra ...string) []string {
 	return append(environment, extra...)
 }
 
+// requirePolicyMarkerOnAllow fails when an allowed run omits the dialect marker.
+func requirePolicyMarkerOnAllow(t *testing.T, label string, result guardResult, wantExit int) {
+	t.Helper()
+	if wantExit == 0 && result.exit == 0 && !result.marker {
+		t.Errorf("%s: exit 0 without %s", label, CommandPolicyMarker)
+	}
+}
+
 // guardResult is what one Python guard run printed and returned.
 type guardResult struct {
 	exit   int
@@ -823,6 +831,7 @@ func printedAllowListCases() []struct {
 		{"data plain redirect parameter", `echo 'git commit -n' > "$file"`, 2},
 		{"data literal state keyword", `printf '%s\n' 'git commit -n; set a message'`, 0},
 		{"data quoted state command", `'set' x; git commit -m x && tail -n 1`, 2},
+		{"data quoted percent progress", `echo 'git commit -n; progress 100%; retry'`, 0},
 	}
 }
 
@@ -851,10 +860,11 @@ func TestParityEvasionCommitSegments(t *testing.T) {
 			if tc.want != 0 {
 				pythonWant = 1
 			}
-			t.Logf("Go rc=%d Python rc=%d want=%d", goExit, python.exit, tc.want)
+			t.Logf("Go rc=%d Python rc=%d want=%d marker=%v", goExit, python.exit, tc.want, python.marker)
 			if goExit != tc.want || python.exit != pythonWant {
 				t.Errorf("Go rc=%d Python rc=%d want=%d", goExit, python.exit, tc.want)
 			}
+			requirePolicyMarkerOnAllow(t, tc.name, python, pythonWant)
 			checkSegmentRefusal(t, tc.name, tc.want, verdict.Reason, python.stderr)
 		})
 	}
@@ -1122,10 +1132,40 @@ func TestParityEvasionPrintedAllowListMutants(t *testing.T) {
 			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
 			fixed := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
 			planted := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
-			t.Logf("canonical mutant rc=%d; fixed rc=%d", planted.exit, fixed.exit)
+			t.Logf("canonical mutant rc=%d marker=%v; fixed rc=%d marker=%v",
+				planted.exit, planted.marker, fixed.exit, fixed.marker)
 			if fixed.exit != tc.fixed || planted.exit != tc.mutant {
 				t.Errorf("canonical mutant rc=%d; fixed rc=%d", planted.exit, fixed.exit)
 			}
+			requirePolicyMarkerOnAllow(t, "fixed", fixed, tc.fixed)
+			requirePolicyMarkerOnAllow(t, "canonical mutant", planted, tc.mutant)
 		})
+	}
+}
+
+// TestParityEvasionApprovalMarkerMutant refuses exit zero without the approval marker.
+func TestParityEvasionApprovalMarkerMutant(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	source, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutant := strings.Replace(string(source), `b"PRAETOR_COMMAND_POLICY_OK\n"`, `b""`, 1)
+	if mutant == string(source) {
+		t.Fatal("marker mutation did not change the guard")
+	}
+	script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
+	if err := os.WriteFile(script, []byte(mutant), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := `echo 'git commit -n' | cat`
+	payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": command}})
+	fixed := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
+	planted := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
+	if fixed.exit != 0 || !fixed.marker {
+		t.Fatalf("fixed rc=%d marker=%v", fixed.exit, fixed.marker)
+	}
+	if planted.exit != 0 || planted.marker {
+		t.Errorf("canonical mutant rc=%d marker=%v; want exit 0 and no marker", planted.exit, planted.marker)
 	}
 }

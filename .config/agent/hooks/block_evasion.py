@@ -155,6 +155,41 @@ def data_only_command(command):
     )
 
 
+def shell_boundary_veto(command):
+    """Match PowerShell stop-parsing and cmd.exe percent escapes outside quoted literals."""
+    quote = ""
+    escaped = False
+    position = 0
+    while position < len(command):
+        ch = command[position]
+        if quote == '"':
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                quote = ""
+            position += 1
+            continue
+        if quote == "'":
+            if ch == "'":
+                quote = ""
+            position += 1
+            continue
+        if ch == "'":
+            quote = "'"
+        elif ch == '"':
+            quote = '"'
+        elif command.startswith("--%", position):
+            return True
+        elif (
+            ch == "%" and position + 1 < len(command) and command[position + 1] in ";&|"
+        ):
+            return True
+        position += 1
+    return False
+
+
 def command_segments(command, short_pattern):
     """Scan executable message bodies iteratively, with no recursive parser calls."""
     queue, parts = [(command, False)], []
@@ -234,7 +269,7 @@ class CommandSpans:
         self.whole = bool(re.search(self.state_pattern, command)) and not (
             data_only_command(command)
         )
-        self.whole |= bool(re.search(r"--%|%[;&|]", command))
+        self.whole |= shell_boundary_veto(command)
         self.word_start = self.execution_start = -1
         self.execution_depth = 0
         self.next_data = self.redirect_data = self.word_expansion = False

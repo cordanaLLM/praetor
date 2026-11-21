@@ -459,6 +459,7 @@ hooks-test:
 	python3 -B .config/lefthook/scripts/test_checkpoint.py
 	python3 -B scripts/test_checkpoint_hooks.py
 	python3 -B scripts/test_praetor_hook.py
+	python3 -B scripts/test_block_evasion_hook.py
 	python3 -B scripts/test_cloud_bootstrap.py
 
 # The canonical hook sources (checkpoint.py and common.py, which adoption copies, and the

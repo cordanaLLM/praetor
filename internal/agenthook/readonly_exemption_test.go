@@ -111,6 +111,16 @@ func TestReadOnlyExemption_Boundary_VetoedConstructs(t *testing.T) {
 		}
 	}
 	checkReadOnlyStateWords(t, builtin, chained)
+	for quoted, vetoed := range map[string]bool{
+		`echo 'git commit -n; progress 100%; retry'`: false,
+		`echo "progress 100%; retry"`:                false,
+		`echo x%; git status`:                        true,
+		`git commit --% -m x; git commit -n`:         true,
+	} {
+		if got := shellBoundaryVeto(quoted); got != vetoed {
+			t.Errorf("%q: shellBoundaryVeto=%v, want %v", quoted, got, vetoed)
+		}
+	}
 }
 
 // checkReadOnlyStateWords keeps state-changing words conservative in any letter case.
@@ -331,7 +341,7 @@ func dataOnlyGuardBoundaryCases() []dataOnlyGuardCase {
 		{"PowerShell printf", `Set-Alias printf git; printf commit -n`, `printf commit -n`, false},
 		{"PowerShell echo", `Set-Alias echo git; echo commit -n`, `echo commit -n`, false},
 		{"unknown word", `printfx 'git commit -n'`, `printfx 'git commit -n'`, false},
-		{"empty fallback", `echo x; git commit "$flags" -n`, "", false},
+		{"empty fallback", `echo x`, "", false},
 		{"plain whitespace", " \tprintf '%s' x", " \tprintf '%s' x", true},
 	}
 }
@@ -366,5 +376,18 @@ sys.exit(1 if failed else 0)
 		[]string{pythonGuard, string(encoded)}, guardEnvironment())
 	if result.exit != 0 {
 		t.Errorf("Python guard contract rc=%d: %s", result.exit, result.stderr)
+	}
+}
+
+// TestReadOnlyExemption_Negative_EmptyFallbackRefusesForcedRawSpan proves an empty raw segment
+// does not gain a print exemption when the check is forced true.
+func TestReadOnlyExemption_Negative_EmptyFallbackRefusesForcedRawSpan(t *testing.T) {
+	row := dataOnlyGuardCase{"empty fallback", `echo x`, "", false}
+	if forced := dataCommandNamesUnchanged(row.Command) && true; forced == row.Want {
+		t.Fatal("forcing data_only on an empty raw segment must not match want")
+	}
+	got := dataCommandNamesUnchanged(row.Command) && dataOnlyCommand(row.Segment)
+	if got != row.Want {
+		t.Fatalf("empty fallback row: print exemption=%v, want %v", got, row.Want)
 	}
 }

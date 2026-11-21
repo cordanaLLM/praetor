@@ -13,8 +13,15 @@ import block_evasion
     [
         (r"printf '%s\n' 'git commit -n; set a message'", False),
         ("'set' x; git commit -m x && tail -n 1", True),
+        (r"echo 'git commit -n; progress 100%; retry'", False),
+        ("echo x; git commit -n", True),
     ],
-    ids=["literal-state-keyword", "quoted-state-command"],
+    ids=[
+        "literal-state-keyword",
+        "quoted-state-command",
+        "quoted-percent-progress",
+        "active-commit-after-semicolon",
+    ],
 )
 def test_printed_state_keyword(command, blocked):
     """Allow literal output and retain the whole-command scan for quoted set."""

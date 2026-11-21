@@ -43,6 +43,7 @@ SUITES = (
     Path(".config/lefthook/scripts/test_checkpoint.py"),
     Path("scripts/test_checkpoint_hooks.py"),
     Path("scripts/test_praetor_hook.py"),
+    Path("scripts/test_block_evasion_hook.py"),
     Path("scripts/test_cloud_bootstrap.py"),
 )
 
