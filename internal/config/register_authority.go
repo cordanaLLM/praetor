@@ -6,10 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
-	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
@@ -40,14 +38,11 @@ func LoadRegisterAuthority(ctx context.Context, root string) (RegisterAuthority,
 		return RegisterAuthority{}, err
 	}
 	path := filepath.Join(root, registerManifestName)
-	data, err := contextopt.ReadSnapshot(ctx, path)
-	if errors.Is(err, os.ErrNotExist) {
-		return registerAuthority(nil, false, path)
-	}
+	data, present, err := observeManifestSnapshot(ctx, path)
 	if err != nil {
 		return RegisterAuthority{}, fmt.Errorf("read register manifest: %w", err)
 	}
-	return registerAuthority(data, true, path)
+	return registerAuthority(data, present, path)
 }
 
 // ParseRegisterAuthority parses manifest bytes already selected by a trusted snapshot or

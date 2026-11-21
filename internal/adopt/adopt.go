@@ -186,6 +186,9 @@ type adoptSession struct {
 	baselineMigration *baseline.ReadmeMigration
 	policy            *config.EffectivePolicy
 	verification      *VerificationPlan
+	// Preflight reads the planned manifest; the step chain reads and writes the real file.
+	preflightManifestPath string
+	preflightManifestData []byte
 	// declared is the repository's existing manifest read before the chain runs.
 	declared *config.Manifest
 	// declined carries adoption.decline from the repository's existing manifest, read before
@@ -304,9 +307,22 @@ func prepareAdoption(ctx context.Context, opts AdoptOptions) (*AdoptReport, *ado
 	if err != nil {
 		return nil, nil, err
 	}
-	declared, unreadable := declaredManifest(ctx, normPath)
+	plannedPath, plannedData, proposals, migrationErr := adoptionManifestSnapshot(ctx, normPath)
+	plannedContext := ctx
+	if plannedPath != "" {
+		plannedContext = config.WithManifestSnapshot(ctx, plannedPath, plannedData)
+	}
+	declared, unreadable := declaredManifest(plannedContext, normPath)
 	decision := resolveArchetype(normPath, opts.Profile, manifestProfiles(declared))
 	report := newAdoptionReport(normPath, opts, decision)
+	if migrationErr != nil {
+		report.addError("%s", migrationErr)
+		return report, nil, migrationErr
+	}
+	if err := reportUnresolvedAdoptionExceptions(report, proposals); err != nil {
+		report.addError("%s", err)
+		return report, nil, err
+	}
 	verification, err := resolveVerificationPlanWithLimits(ctx, normPath, ResolveVerificationLimits(declared.DeclaredVerification(), opts.VerificationLimits))
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
@@ -323,6 +339,8 @@ func prepareAdoption(ctx context.Context, opts AdoptOptions) (*AdoptReport, *ado
 		return report, nil, err
 	}
 	s := newAdoptSession(normPath, opts, report, declared, identity, repoName)
+	s.preflightManifestPath = plannedPath
+	s.preflightManifestData = plannedData
 	if err := s.resolveDefaultBranch(ctx, declared); err != nil {
 		report.addError("%s", err)
 		return report, nil, err
@@ -584,8 +602,15 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	if err := preflightConfigRoot(s.repoPath); err != nil {
 		return err
 	}
-	if err := preflightSteps(ctx, s, declined); err != nil {
+	preflightContext := ctx
+	if s.preflightManifestPath != "" {
+		preflightContext = config.WithManifestSnapshot(ctx, s.preflightManifestPath, s.preflightManifestData)
+	}
+	if err := preflightSteps(preflightContext, s, declined); err != nil {
 		return err
+	}
+	if s.opts.DryRun {
+		ctx = preflightContext
 	}
 	if err := reportStaleEnginePin(ctx, s); err != nil {
 		return err
@@ -1432,7 +1457,7 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 // it lists every template the real run writes, refreshes or keeps, and writes none (#366). It
 // used to skip the flavor entirely, and a reviewer never saw the templates the real run created.
 func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
-	name, err := resolveAdoptionFlavor(s.repoPath, s.arch)
+	name, err := resolveAdoptionFlavor(ctx, s.repoPath, s.arch)
 	if flavor.IsScaffoldSkip(err) {
 		s.report.recordSkipped(flavorReportPath, flavorSkipDetail(s.arch, err))
 		s.reconcileGoSecurityConfig(ctx, nil)
@@ -1461,8 +1486,8 @@ func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 }
 
 // resolveAdoptionFlavor names the one root flavor adoption scaffolds for profile.
-func resolveAdoptionFlavor(repoPath, profile string) (string, error) {
-	targets, err := flavor.ResolveTargetsForProfile(repoPath, profile)
+func resolveAdoptionFlavor(ctx context.Context, repoPath, profile string) (string, error) {
+	targets, err := flavor.ResolveTargetsForProfileContext(ctx, repoPath, profile)
 	if err != nil {
 		return "", err
 	}

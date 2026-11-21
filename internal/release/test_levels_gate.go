@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -188,8 +189,15 @@ func ensureManifest(repoPath string, manifest *config.Manifest) (*config.Manifes
 // ResolveRepositoryProfiles returns the union of profiles from the repository's resolved flavor
 // (HISSProfile plus AlsoImplements) or its declared profiles when no flavor applies (#1733).
 func ResolveRepositoryProfiles(repoPath string, manifest *config.Manifest) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return ResolveRepositoryProfilesContext(ctx, repoPath, manifest)
+}
+
+// ResolveRepositoryProfilesContext is ResolveRepositoryProfiles with the caller's context.
+func ResolveRepositoryProfilesContext(ctx context.Context, repoPath string, manifest *config.Manifest) ([]string, error) {
 	var profiles []string
-	targets, err := flavor.ResolveTargets(repoPath)
+	targets, err := flavor.ResolveTargetsContext(ctx, repoPath)
 	if err != nil && !flavor.IsNotApplicable(err) && !errors.Is(err, flavor.ErrNoFlavorMatched) {
 		return nil, err
 	}
@@ -251,7 +259,7 @@ func resolveLevelBindings(
 	repoPath string,
 	manifest *config.Manifest,
 ) ([]string, []resolvedLevelBinding, error) {
-	profiles, err := ResolveRepositoryProfiles(repoPath, manifest)
+	profiles, err := ResolveRepositoryProfilesContext(ctx, repoPath, manifest)
 	if err != nil {
 		return nil, nil, err
 	}

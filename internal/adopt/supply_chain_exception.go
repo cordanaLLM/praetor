@@ -60,6 +60,7 @@ func newSupplyChainException(gap supplyChainGap, today time.Time) config.Excepti
 		Rule:     config.ExceptionRuleSupplyChain,
 		Path:     gap.releaseWorkflow(),
 		Category: "D",
+		Entered:  config.ExceptionDay(today).Format(config.ExceptionDateLayout),
 		Reason: fmt.Sprintf("adoption found the release workflows short of the declared supply chain (%s); raise them as "+
 			"%s in Praetor describes, then remove this entry", gap.summary(), supplyChainGuide),
 		Expires: config.ExceptionDay(today).AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout),
@@ -86,7 +87,8 @@ func PlannedReleaseWorkflow(ctx context.Context, root string) (string, error) {
 // (supplyChainException) appended, and that entry, when exceptions declares no HISS-11 entry and
 // the release workflows fall short of the declared supply chain. A re-adoption over a manifest an
 // older engine wrote used to record nothing and report success over a tree its next audit
-// refused (#1069). An entry the manifest already declares, renewed or narrowed by hand, stands.
+// refused (#1069). Declared scope and expiry stand; manifest planning repairs missing lifecycle
+// fields through the shared config migration.
 func (s *adoptSession) withSupplyChainException(ctx context.Context, exceptions []config.Exception) ([]config.Exception, *config.Exception) {
 	for i := 0; i < len(exceptions) && i < config.MaxExceptions; i++ {
 		if exceptions[i].Rule == config.ExceptionRuleSupplyChain {

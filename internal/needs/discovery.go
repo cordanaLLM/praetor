@@ -486,7 +486,7 @@ func repositoryName(ctx context.Context, repo *fleetRepo) (string, error) {
 	if repo.checkout {
 		return config.ResolveRepositoryName(ctx, repo.root)
 	}
-	return config.ManifestRepositoryName(repo.root)
+	return config.ManifestRepositoryNameContext(ctx, repo.root)
 }
 
 // repositoryDirName names a repository after its root directory, made absolute first so
