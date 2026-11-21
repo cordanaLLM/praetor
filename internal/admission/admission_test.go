@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,78 @@ import (
 )
 
 const hogEnv = "ADMISSION_TEST_HOG"
+
+const testExecutor = `{"name":"edge","ssh_host":"edge.example.invalid","ssh_user":"builder","workspace_root":"/scratch/builds","cores":1,"memory_gib":1,"class":"cpu-offload"}`
+
+// TestReadExecutors_JSONSchema proves that ReadExecutors enforces the JSON schema, catches duplicates, and rejects malformed fields.
+func TestReadExecutors_JSONSchema(t *testing.T) {
+	for _, tc := range []struct{ name, json, want string }{
+		{"minimum", "[" + testExecutor + "]", ""},
+		{"optional cores", "[" + strings.Replace(testExecutor, `"cores":1,`, "", 1) + "]", ""},
+		{"duplicate key", "[" + strings.Replace(testExecutor, `"name":`, `"Name":"other","name":`, 1) + "]", "duplicate"},
+		{"duplicate name", "[" + testExecutor + "," + testExecutor + "]", "duplicate executor name"},
+		{"unknown property", "[" + strings.Replace(testExecutor, `"cores":`, `"cpus":`, 1) + "]", "unknown field"},
+		{"unknown class", "[" + strings.Replace(testExecutor, "cpu-offload", "gpu-offload", 1) + "]", "unknown executor class"},
+		{"invalid host", "[" + strings.Replace(testExecutor, "edge.example.invalid", "-F", 1) + "]", "invalid SSH"},
+		{"invalid workspace", "[" + strings.Replace(testExecutor, "/scratch/builds", "/scratch/../builds", 1) + "]", "workspace_root"},
+		{"zero cores", "[" + strings.Replace(testExecutor, `"cores":1`, `"cores":0`, 1) + "]", "cores must be"},
+		{"empty", "[]", "requires 1"},
+		{"oversized", strings.Repeat(" ", maxExecutorListBytes+1), "exceeds the read limit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "executors.json")
+			if err := os.WriteFile(file, []byte(tc.json), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			executors, err := ReadExecutors(file)
+			assertReadExecutorsCase(t, tc.name, executors, err, tc.want)
+		})
+	}
+}
+
+// assertReadExecutorsCase asserts that ReadExecutors returns the expected error substring or valid executor attributes.
+func assertReadExecutorsCase(t *testing.T, name string, executors []Executor, err error, want string) {
+	t.Helper()
+	if want != "" {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("wanted %q, got %v", want, err)
+		}
+		return
+	}
+	wantCores := name != "optional cores"
+	if err != nil || len(executors) != 1 || executors[0].MemoryGiB != 1 || (executors[0].Cores != nil) != wantCores {
+		t.Fatalf("executor %s: %+v, %v", name, executors, err)
+	}
+}
+
+// TestRemoteReadings_RequireMeasuredThresholds proves that admission statistics parsing requires valid measured units and numeric thresholds.
+func TestRemoteReadings_RequireMeasuredThresholds(t *testing.T) {
+	const memory = "MemTotal: 12582912 kB\nMemAvailable: 12582912 kB\nSwapTotal: 15728640 kB\nSwapFree: 15728640 kB\n"
+	for _, tc := range []struct {
+		name, load, memory string
+		admit, invalid     bool
+	}{
+		{"exact floor", "1.25 0 0", memory, true, false},
+		{"zero available", "0 0 0", strings.Replace(memory, "MemAvailable: 12582912", "MemAvailable: 0", 1), false, false},
+		{"missing available", "0 0 0", strings.Replace(memory, "MemAvailable", "MemFree", 1), false, true},
+		{"invalid units", "0 0 0", strings.Replace(memory, "MemAvailable: 12582912 kB", "MemAvailable: 12582912 MB", 1), false, true},
+		{"NaN load", "NaN 0 0", memory, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stats, err := sentinel.ReadLinuxAdmissionStats(strings.NewReader(tc.load), strings.NewReader(tc.memory))
+			if (err != nil) != tc.invalid {
+				t.Fatalf("measurements %+v, error %v", stats, err)
+			}
+			if err == nil {
+				policy := DefaultPolicy()
+				policy.MaxLoad1 = defaultMaxLoadPerCore
+				if verdict := Judge(stats, policy); verdict.Admit != tc.admit {
+					t.Fatalf("thresholds: %+v", verdict)
+				}
+			}
+		})
+	}
+}
 
 // TestMain lets the test binary re-run itself as a memory hog for the planted spike.
 func TestMain(m *testing.M) {

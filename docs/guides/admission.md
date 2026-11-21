@@ -1,7 +1,7 @@
 # Admission for heavy local steps
 
-`praetorctl admit` holds a heavy local step, such as a full gate, a race-detector test run or a
-large build, until the host has the memory, swap and load headroom it asks for. It then runs the
+`praetorctl admit` holds a heavy step, such as a full gate, a race-detector test run or a
+large build, until an executor has the memory, swap and load headroom it asks for. It then runs the
 step in its own memory-limited systemd scope and exits with the step's own status. The policy and
 the scope live in `internal/admission/`, the host readings in `internal/sentinel/`, and the
 command in `cmd/standardsctl/admit.go`.
@@ -15,25 +15,85 @@ its limit die alone.
 ## Run a step
 
 ```sh
-praetorctl admit --label verify-all -- make verify-all
+PRAETOR_ADMIT_EXECUTORS=/path/to/executors.json praetorctl admit --label verify-all -- make verify-all
+praetorctl admit --local --label verify-all -- make verify-all
 ```
 
-Everything after `--` is the step. While the host is under a threshold, the command prints one
+Everything after `--` is the step. `PRAETOR_ADMIT_EXECUTORS` points to the remote inventory.
+Use `--local` or `PRAETOR_ADMIT_EXECUTOR=local` to select the workstation. While the workstation
+is under a threshold, the command prints one
 line per reading and keeps waiting:
 
 ```text
-19:04:05 admission wait verify-all: available 8.0 GiB < 12.0 GiB
+19:04:05 admission wait verify-all on local (named): available 8.0 GiB < 12.0 GiB
 ```
 
 Once the host has room, it prints one admission line, runs the step and returns when the step
 ends:
 
 ```text
-19:09:05 admitted verify-all: available 21.4 GiB, swap free 52.0 GiB, load 9.3
+19:09:05 admitted verify-all on local (named): available 21.4 GiB, swap free 52.0 GiB, load 9.3
 ```
 
 An agent runs `praetorctl admit` as a background command. Its client then reports the step's end,
 and the admission line in the output shows when the step started.
+
+## Remote executor inventory
+
+Publish a JSON array of 1–32 entries in a regular file of at most 64 KiB. Each object requires
+`name`, `ssh_host`, `ssh_user`, `workspace_root`, `memory_gib` and `class`. The command rejects
+unknown fields, duplicate keys and repeated names. `cores` is optional when the executor pod
+publishes a `cpu.max` quota.
+
+```json
+[
+  {
+    "name": "cpu-builder",
+    "ssh_host": "builder.example.invalid",
+    "ssh_user": "builder",
+    "workspace_root": "/srv/praetor/workspaces",
+    "cores": 16,
+    "memory_gib": 64,
+    "class": "cpu-offload"
+  }
+]
+```
+
+`name` is a unique identifier. `local` is reserved. `ssh_host` is a hostname or IP address,
+and `ssh_user` is the SSH account. `workspace_root` is an existing, writable absolute Linux
+directory below `/`. `memory_gib` is a positive integer; when present, `cores` is a positive integer used with
+the pod cgroup. `cpu-offload` is the supported class. Home executors run in a pod whose cgroup
+is the memory barrier: the pod carries a small CPU request, a memory limit equal to the step's
+`MemoryMax`, and an `emptyDir` workspace. The executor needs a POSIX login shell, Git and GNU
+coreutils over SSH. Its SSH host key must already be trusted by the workstation.
+
+Admission reads `/proc/loadavg`, `/proc/meminfo`, and the pod cgroup counters under
+`/sys/fs/cgroup/` over SSH with a two-second bound per executor. Free memory for ranking is
+the lesser of `MemAvailable` and `memory.max` minus `memory.current`; an unreadable cgroup file
+makes that executor unusable for the wait, named on the wait line. Eligible executors are ranked
+by measured headroom above the floor, then by one-minute load per effective core. Effective
+cores are the lesser of the inventory `cores` and the pod `cpu.max` quota (rounded down, at least
+1); one bound alone when the other is absent or `max`; neither bound refuses by name. Inventory
+order breaks exact ties. Failed probes and held executors are reported by name. When `--wait`
+expires without a choice, the command returns 75 and lists the final readings or probe errors.
+A missing or unreadable inventory fails with its setting or path.
+
+The executor unpacks a Git bundle containing the exact HEAD and staged index tree into a per-run
+directory. Before the step starts the session reads the pod's `memory.max` and refuses unless it
+equals the step's `MemoryMax` byte for byte (`max`, a different value, or an unreadable file
+refuses by name and the step does not start). The step runs in the corresponding repository
+subdirectory with a detached HEAD and the staged changes visible. Unstaged and untracked files
+stay on the workstation. Remote steps are noninteractive and stream stdout and stderr back over SSH.
+Build parallelism is `cores` divided by concurrent admitted steps on that executor (at least one
+job), passed as `MAKEFLAGS=-jN` and `GOMAXPROCS=N`; the admission line names the executor, core
+source, concurrent steps and jobs. Up to 256 lease lock files are scanned per executor, and a
+lease directory past that bound refuses admission by name rather than undercounting active steps.
+If the SSH session ends without the step's exit status (for example SSH status 255, wrapper signal
+exit 129, 130 or 143, a reset, or the pod gone), admit fails with `executor <name> lost the step
+mid-run (evicted or unreachable)` and does not rerun on its own. Pass `--fallback=local` to run the
+step on the workstation instead; the command prints the substitution on stderr. The remote session
+removes its working directory when it exits. Use named local mode for steps that require the
+workstation checkout or stdin.
 
 ## Thresholds
 
@@ -46,10 +106,9 @@ and the admission line in the output shows when the step started.
 | `--poll` | `1m` | time between readings while held |
 | `--timeout` | `6h` | longest the step runs once admitted |
 
-A host exactly at a threshold is admitted. A host that stays under one until `--wait` passes
-refuses the step with `still held after ...`, and the step never starts. A reading that fails
-refuses the step at once, without waiting: the host could not be judged, so the step is not
-admitted.
+A host exactly at a threshold is admitted. In named local mode a host that stays under one
+until `--wait` passes refuses the step with `still held after ...`. A failed local reading
+refuses the step at once.
 
 ## Scope limits
 
@@ -115,8 +174,8 @@ the hook refuses immediately with the readings and advice to wait and retry; a f
 reading also refuses. The assignment does not start a scope or wait for headroom itself.
 
 Plain `git push` remains refused under enforcement, and `PRAETOR_ADMIT=x make` or
-`PRAETOR_ADMIT=x go test` still requires another admitted form. The existing
-`praetorctl admit --label git-push -- git push ...` path is unchanged. The policy cases are
+`PRAETOR_ADMIT=x go test` still requires another admitted form. Use
+`praetorctl admit --local --label git-push -- git push ...` for a scoped workstation push. The policy cases are
 covered by `TestAdmission_IsolatedPush_*` in `internal/agenthook/admission_test.go`; the Claude
 pre-tool payload and exit codes are covered by `TestHookClaudeIsolatedPushAdmission` in
 `cmd/standardsctl/hook_test.go`.

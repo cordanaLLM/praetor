@@ -1008,9 +1008,10 @@ func isForgejoHost(host string) bool {
 func (c *admissionCheck) judgeScope(shape, label string, missing []string) string {
 	if len(missing) > 0 {
 		return refusal("HISS", fmt.Sprintf("heavy step systemd-run scope incomplete for %s: missing %s; "+
-			"run: systemd-run --user --scope -p MemoryHigh=8G --expand-environment=no <command> or "+
-			"praetorctl admit --label %s -- <command> (docs/guides/admission.md)",
-			shape, strings.Join(missing, ", "), label))
+			"run: systemd-run --user --scope -p MemoryHigh=8G --expand-environment=no <command>, "+
+			"PRAETOR_ADMIT_EXECUTORS=<executor list> praetorctl admit --label %s -- <command>, or "+
+			"praetorctl admit --local --label %s -- <command> (docs/guides/admission.md)",
+			shape, strings.Join(missing, ", "), label, label))
 	}
 	stats, err := c.readHost()
 	if err != nil {
@@ -1223,13 +1224,15 @@ func stepLabel(name, shape string, args []string) string {
 	return name
 }
 
-// admissionRefusal names the heavy step and the admitted form of the command.
+// admissionRefusal names the heavy step and the remote or local admitted forms of the command.
 func admissionRefusal(shape, label string) string {
 	isolated := ""
 	if gitPushPattern.MatchString(shape) {
 		isolated = "; in a worktree-isolated session where git under a launcher is refused, run: " +
 			admissionLabelEnv + "=" + label + " git push ... (live host judgment; retry under pressure)"
 	}
-	return refusal("HISS", "heavy step needs host admission: "+shape+"; run: praetorctl admit --label "+label+
-		" -- <command>, in background; admit waits for memory, swap and load headroom"+isolated+" (docs/guides/admission.md)")
+	return refusal("HISS", "heavy step needs host admission: "+shape+
+		"; run: PRAETOR_ADMIT_EXECUTORS=<executor list> praetorctl admit --label "+label+" -- <command> "+
+		"or praetorctl admit --local --label "+label+" -- <command>, in background; "+
+		"admit waits for memory, swap and load headroom"+isolated+" (docs/guides/admission.md)")
 }

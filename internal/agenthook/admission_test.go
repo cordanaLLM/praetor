@@ -105,6 +105,8 @@ func TestAdmission_Positive_AdmittedAndLightCommandsPass(t *testing.T) {
 	for _, command := range []string{
 		"git status && go vet ./internal/admission/",
 		"praetorctl admit --label verify-all -- make verify-all",
+		"PRAETOR_ADMIT_EXECUTORS=/etc/praetor/executors.json praetorctl admit --label verify-all -- make verify-all",
+		"praetorctl admit --local --label verify-all -- make verify-all",
 		"cd /work/repo && GOFLAGS=-p=4 praetorctl admit --label go-test -- go test -race ./...",
 		"env PRAETOR_TEST_STAGE_TIMEOUT=25m /usr/local/bin/standardsctl admit -- git push -u origin topic",
 		`git commit -s -m "make verify-all passes; go test ./... too"`,
@@ -136,10 +138,9 @@ func TestAdmission_Negative_HeavyStepsRefused(t *testing.T) {
 		"if pytest -q; then echo ok; fi":                                          "pytest",
 		"just build":                                                              "just-build",
 	} {
-		v := policy.Command(command)
-		if v.Outcome != Deny || !strings.Contains(v.Reason, "praetorctl admit --label "+label+" -- <command>") {
-			t.Errorf("%q: %v %q, want refused with label %s", command, v.Outcome, v.Reason, label)
-		}
+		requireDeniedContaining(t, command, policy.Command(command),
+			"PRAETOR_ADMIT_EXECUTORS=<executor list> praetorctl admit --label "+label+" -- <command>",
+			"praetorctl admit --local --label "+label+" -- <command>")
 	}
 	if v, err := CheckAdmission(config.AdmissionSettings{Enforce: true}, "make"); err != nil || v.Outcome != Deny {
 		t.Fatalf("CheckAdmission negative: %v %v", v, err)
@@ -156,10 +157,9 @@ func TestAdmission_GateRunOnly(t *testing.T) {
 		"cd x && praetorctl gate run":  "praetorctl-run",
 		"nice praetorctl gate run":     "praetorctl-run",
 	} {
-		v := policy.Command(command)
-		if v.Outcome != Deny || !strings.Contains(v.Reason, "praetorctl admit --label "+label+" -- <command>") {
-			t.Errorf("%q: %v %q, want refused with label %s", command, v.Outcome, v.Reason, label)
-		}
+		requireDeniedContaining(t, command, policy.Command(command),
+			"PRAETOR_ADMIT_EXECUTORS=<executor list> praetorctl admit --label "+label+" -- <command>",
+			"praetorctl admit --local --label "+label+" -- <command>")
 	}
 	for _, command := range []string{
 		"praetorctl gate verify --path=. --receipt r.json",
@@ -238,7 +238,7 @@ func TestAdmission_ScopeFormAndMemoryReadings(t *testing.T) {
 }
 
 // Negative (planted, order engine-hook-build-scope-gate-20261027): a partial systemd-run wrapper
-// is refused naming the missing required option or property.
+// is refused naming the missing required option or property and an executor selection for admit.
 func TestAdmission_ScopeFormMissingWrapperPartsRefused(t *testing.T) {
 	policy := scopeAdmissionPolicy(t, 30, 80, 32)
 	for command, missing := range map[string]string{
@@ -248,7 +248,9 @@ func TestAdmission_ScopeFormMissingWrapperPartsRefused(t *testing.T) {
 		"systemd-run --scope -p MemoryHigh=8G --expand-environment=no make":       "--user",
 		"systemd-run --user -p MemoryHigh=8G --expand-environment=no make":        "--scope",
 	} {
-		requireDeniedContaining(t, command, policy.Command(command), missing)
+		requireDeniedContaining(t, command, policy.Command(command), missing,
+			"PRAETOR_ADMIT_EXECUTORS=<executor list> praetorctl admit --label make -- <command>",
+			"praetorctl admit --local --label make -- <command>")
 	}
 }
 
@@ -303,6 +305,8 @@ func TestAdmission_IsolatedPush_Positive(t *testing.T) {
 	}
 }
 
+// TestAdmission_IsolatedPush_Negative verifies that invalid push labels and non-push assignments
+// are refused with explicit executor selection guidance and no push assignment on non-push shapes.
 func TestAdmission_IsolatedPush_Negative(t *testing.T) {
 	policy := admissionPolicy(t)
 	for _, command := range []string{
@@ -320,7 +324,9 @@ func TestAdmission_IsolatedPush_Negative(t *testing.T) {
 		requireDeniedContaining(t, command, policy.Command(command), "host admission")
 	}
 	requireDeniedContaining(t, "plain push", policy.Command("git push -u origin b"),
-		"praetorctl admit --label git-push -- <command>", "PRAETOR_ADMIT=git-push git push")
+		"PRAETOR_ADMIT_EXECUTORS=<executor list> praetorctl admit --label git-push -- <command>",
+		"praetorctl admit --local --label git-push -- <command>",
+		"PRAETOR_ADMIT=git-push git push")
 	for _, command := range []string{
 		"PRAETOR_ADMIT=git-push git push; make",
 		"PRAETOR_ADMIT=git-push git push\nmake",
@@ -328,7 +334,7 @@ func TestAdmission_IsolatedPush_Negative(t *testing.T) {
 	} {
 		requireDeniedContaining(t, command, policy.Command(command), "host admission: make")
 	}
-	if v := policy.Command("make"); strings.Contains(v.Reason, "PRAETOR_ADMIT") {
+	if v := policy.Command("make"); strings.Contains(v.Reason, admissionLabelEnv+"=") {
 		t.Errorf("non-push refusal advertises push assignment: %s", v.Reason)
 	}
 }

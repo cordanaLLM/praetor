@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -278,6 +279,45 @@ func readMeminfoSwap() (total, free uint64, measured bool, resultErr error) {
 	return parseSwap(f)
 }
 
+// ReadLinuxAdmissionStats reads the Linux measurements required to admit a remote step.
+// A missing field is an error. A reported zero is a measurement, including on a host without swap.
+func ReadLinuxAdmissionStats(loadavg, meminfo io.Reader) (HostStats, error) {
+	stats, err := admissionMemory(meminfo)
+	if err != nil {
+		return HostStats{}, err
+	}
+	l1, l5, l15, err := parseLoadavg(loadavg)
+	if err != nil {
+		return HostStats{}, err
+	}
+	if !validLoadAverage(l1) || !validLoadAverage(l5) || !validLoadAverage(l15) {
+		return HostStats{}, errors.New("invalid loadavg measurement")
+	}
+	stats.CPULoad1Min, stats.CPULoad5Min, stats.CPULoad15Min, stats.CPULoadMeasured = l1, l5, l15, true
+	return stats, nil
+}
+
+// validLoadAverage reports whether load is non-negative and finite.
+func validLoadAverage(load float64) bool {
+	return load >= 0 && !math.IsInf(load, 0)
+}
+
+// admissionMemory parses required RAM and swap fields from meminfo for admission decisions.
+func admissionMemory(meminfo io.Reader) (HostStats, error) {
+	values, err := meminfoValues(meminfo)
+	if err != nil {
+		return HostStats{}, err
+	}
+	total := values["MemTotal"]
+	available, hasAvailable := values["MemAvailable"]
+	swap, hasSwap := values["SwapTotal"]
+	swapFree, hasSwapFree := values["SwapFree"]
+	if total == 0 || !hasAvailable || available > total || !hasSwap || !hasSwapFree || swapFree > swap {
+		return HostStats{}, errors.New("invalid or missing MemTotal, MemAvailable, SwapTotal or SwapFree in meminfo")
+	}
+	return HostStats{RAMTotalBytes: total, RAMFreeBytes: available, SwapTotalBytes: swap, SwapFreeBytes: swapFree, SwapMeasured: true}, nil
+}
+
 // parseSwap parses SwapTotal and SwapFree from meminfo. A meminfo without SwapTotal is no swap
 // reading; a host without swap reports SwapTotal 0, which is measured.
 func parseSwap(r io.Reader) (total, free uint64, measured bool, err error) {
@@ -322,9 +362,10 @@ func parseMeminfo(r io.Reader) (uint64, uint64, error) {
 	return total, free, nil
 }
 
+// memoryField parses a single kB meminfo key-value line, returning its name and byte value.
 func memoryField(line string) (string, uint64, bool) {
 	parts := strings.Fields(line)
-	if len(parts) < 2 {
+	if len(parts) != 3 || parts[2] != "kB" {
 		return "", 0, false
 	}
 	key := strings.TrimSuffix(parts[0], ":")

@@ -1234,11 +1234,11 @@ the base name of the command on (`builtinHeavyShapes`):
 The `gate verify`, `gate deadline` and `gate keygen` subcommands read or print only.
 
 `hooks.admission.commands` adds shapes in the same form, for example `'^just build( |$)'`.
-A refused command names the shape and the admitted form, with a label taken from the
-command:
+A refused command names the shape and the remote and workstation admitted forms, with a label
+taken from the command:
 
 ```text
-[BLOCKED BY HISS] heavy step needs host admission: go test; run: praetorctl admit --label go-test -- <command>, in background; admit waits for memory, swap and load headroom (docs/guides/admission.md)
+[BLOCKED BY HISS] heavy step needs host admission: go test; run: PRAETOR_ADMIT_EXECUTORS=<executor list> praetorctl admit --label go-test -- <command> or praetorctl admit --local --label go-test -- <command>, in background; admit waits for memory, swap and load headroom (docs/guides/admission.md)
 ```
 
 A `git push` has a second admitted form, `PRAETOR_ADMIT=<label> git push ...`, for a

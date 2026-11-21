@@ -201,15 +201,22 @@ func ownsTerminationSignals(command string, args []string) bool {
 // pure-Go command still ends at once on a Windows Ctrl-C.
 func needsSignalRootContext(command string, args []string) bool {
 	switch command {
+	case "admit":
+		return true
 	case "decisions":
 		return len(args) > 0 && args[0] == "serve"
 	case "gate":
 		return len(args) > 0 && args[0] == "run"
 	case "agent":
-		return len(args) > 0 && args[0] == "sandbox" || len(args) >= 2 && args[0] == "run" && isGatekeeperAgent(args[1])
+		return agentNeedsSignalRootContext(args)
 	default:
 		return false
 	}
+}
+
+// agentNeedsSignalRootContext reports whether the agent subcommands require root context signal cancellation.
+func agentNeedsSignalRootContext(args []string) bool {
+	return len(args) > 0 && args[0] == "sandbox" || len(args) >= 2 && args[0] == "run" && isGatekeeperAgent(args[1])
 }
 
 // isGatekeeperAgent reports whether persona is the gatekeeper agent helper.
