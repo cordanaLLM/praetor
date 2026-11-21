@@ -117,7 +117,7 @@ func evasionFallbackCases() []struct {
 		{"am parameter", `git am $flags patch && tail -n 1`, 2},
 		{"own substitution", `git commit $(cat flags) -m x && tail -n 1`, 2},
 		{"own escape", `git commit -m a\b && tail -n 1`, 2},
-		{"own continuation", "git commit -m x\\\n && tail -n 1", 2},
+		{"own continuation", "git commit -m x\\\n && tail -n 1", 0},
 		{"single quoted newline", "git commit -m 'a\nb' && tail -n 1", 2},
 		{"double quoted newline", "git commit -m \"a\nb\" && tail -n 1", 2},
 		{"later newline", "git commit -m x && printf \"a\nb\" | tail -n 1", 0},
@@ -415,6 +415,8 @@ func splittingSegmentCase(name string) bool {
 		"runtime-only message parameter", "runtime-only positional array",
 		"substitution", "glob",
 		"am substitution",
+		"substitution flag", "backtick flag", "nested substitution flag",
+		"substitution separator flag", "positional substitution", "state function",
 	}, name)
 }
 
@@ -482,16 +484,29 @@ func evasionSegmentMutants() []struct {
 	name, before, after, command string
 	want                         int
 } {
-	return []struct {
+	return append([]struct {
 		name, before, after, command string
 		want                         int
 	}{
+		{"brace subcommand uncertainty removed", `self.git_command, self.arguments_uncertain = "unknown", True`, `pass`, evasionDelimiterBraceCases()[16].command, 0},
+		{"partial brace subcommand uncertainty removed", `self.git_command, self.arguments_uncertain = "unknown", True`, `pass`, evasionDelimiterBraceCases()[17].command, 0},
+		{"brace command uncertainty removed", `self.git_command, self.arguments_uncertain = "unknown", True`, `pass`, evasionDelimiterBraceCases()[18].command, 0},
+		{"partial brace command uncertainty removed", `self.git_command, self.arguments_uncertain = "unknown", True`, `pass`, evasionDelimiterBraceCases()[19].command, 0},
+		{"brace uncertainty removed", `glob = ch in "*?[" or ch in "{}" and self.brace_splitting(ch)`, `glob = ch in "*?["`, evasionDelimiterBraceCases()[0].command, 0},
+		{"partial delimiter reader removed", "delimiter, quoted, width = shell_here_doc_delimiter(word)",
+			"match = re.match(r\"(\\\"[^\\\"]*\\\"|'[^']*'|[-A-Za-z0-9_]+)\", word)\ndelimiter = match[0].strip(\"\\\"'\")\nquoted, width = delimiter != match[0], match.end()",
+			evasionDelimiterBraceCases()[1].command, 0},
+		{"literal quote reader removed", "delimiter, quoted, width = shell_here_doc_delimiter(word)",
+			"match = re.match(r\"(\\\"[^\\\"]*\\\"|'[^']*'|[-A-Za-z0-9_]+)\", word)\ndelimiter = match[0].strip(\"\\\"'\")\nquoted, width = delimiter != match[0], match.end()",
+			evasionDelimiterBraceCases()[2].command, 0},
+		{"body continuation removed", "if expandable and found and escapes % 2:", "if False:", evasionDelimiterBraceCases()[3].command, 0},
+
 		{"old span", "for segment in segments:", "for segment in [(text, bool(re.search(READ_ONLY_VETO, text)))]:",
 			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
-		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1)", "segments, None)",
-			`git commit -m 'message $name' && tail -n 1`, 2},
-		{"redirection veto", "    if not commit_command(command, short_pattern):",
-			"    if re.search(r\"[<>]\", command):\n        return [(command, True)], []\n    if not commit_command(command, short_pattern):",
+		{"exempt unsplit", "segments, READ_ONLY_EXEMPT_1, exempt)", "segments, None, exempt)",
+			`git commit -m 'fix' && git log -1 "$ref" | tail -n 1`, 2},
+		{"redirection veto", `if not needs_shell_spans(command, short_pattern):`,
+			"if re.search(r\"[<>]\", command):\n    return [(command, True)], []\n" + `if not needs_shell_spans(command, short_pattern):`,
 			`git commit -m x 2>&1 | tail -n 1`, 2},
 		{"positional expansion", "self.uncertain |= self.word_expansion", "self.uncertain |= False",
 			`git commit "$x" && git log -n 1`, 0},
@@ -509,21 +524,75 @@ func evasionSegmentMutants() []struct {
 		{"escaped boundary", "if not self.word_boundary():",
 			"if self.position > 0 and self.command[self.position - 1] not in \" \\t\\n;|&(\":",
 			`git commit -m fix\ #note -n`, 0},
+	}, evasionRoundSixMutants()...)
+}
+
+// evasionRoundSixMutants builds regressions for round-six here-string, heredoc and brace defences.
+func evasionRoundSixMutants() []struct {
+	name, before, after, command string
+	want                         int
+} {
+	return []struct {
+		name, before, after, command string
+		want                         int
+	}{
+		{"prefix-only here-string read", `if end < len(text) and text[end] not in " \t\n;&|<>()":`,
+			`if False:`, "bash <<< 'echo '\"$name\"", 0},
+		{"here-string fragments not joined",
+			`r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"(?:[^\"\\$\x60]|\\[\s\S])*\"|\\[^\n])+"`,
+			`r"^(?:[^ \t\n'\"\\$\x60;&|<>()]+|'[^']*'|\"[^\"\\$\x60]*\"|\\[^\n])+"`,
+			"bash <<<'echo \"<<'\"\\\"\"", 2},
+		{"here-string continuation kept", "if following == \"\\n\":\n    return \"\", True",
+			"if False:\n    return \"\", True", "bash <<< \"cat <<E\\\nOF\nhello\nEOF\"", 2},
+		{"tab-stripped heredoc tabs kept",
+			"if document[1]:\n    body = \"\\n\".join(line.lstrip(\"\\t\") for line in body.split(\"\\n\"))",
+			"if False:\n    body = \"\"",
+			"bash <<-'OUTER'\n\tcat <<'INNER'\n\thello\n\tINNER\n\tOUTER", 2},
+		{"leading redirection not skipped", "        if not stage[2]:", "        if True:",
+			"<<'EOF' cat > notes.txt\nO'Brien <draft>\nEOF", 2},
+		{"output redirection ignored", "if stage[3]:\n    return False",
+			"if False:\n    return False",
+			"cat <<'EOF' > notes.txt | sh\nO'Brien <draft>\nEOF", 2},
+		{"every brace pair treated as splitting",
+			`glob = ch in "*?[" or ch in "{}" and self.brace_splitting(ch)`,
+			`glob = ch in "*?[{}"`, `git commit -m fix{docs}`, 2},
 	}
+}
+
+// replaceEvasionMutant indents each continuation relative to the matched source line.
+func replaceEvasionMutant(rendered, before, after string) string {
+	first, _, _ := strings.Cut(before, "\n")
+	offset := strings.Index(rendered, first)
+	if offset < 0 {
+		return rendered
+	}
+	if strings.Contains(before, "\n") || strings.Contains(after, "\n") {
+		start := strings.LastIndex(rendered[:offset], "\n") + 1
+		line, _, _ := strings.Cut(rendered[start:], "\n")
+		indent := line[:len(line)-len(strings.TrimLeft(line, " "))]
+		before = strings.ReplaceAll(before, "\n", "\n"+indent)
+		after = strings.ReplaceAll(after, "\n", "\n"+indent)
+	}
+	return strings.Replace(rendered, before, after, 1)
 }
 
 // TestEmittedEvasionSegmentMutants proves both whole-command matching paths regress.
 func TestEmittedEvasionSegmentMutants(t *testing.T) {
 	python, fixed := emittedInterceptor(t)
+	t.Run("compilation defence", func(t *testing.T) { testEvasionMutantCompilation(t, python) })
+	t.Run("interpreter exits", testInterceptorExitCodes)
 	for _, tc := range evasionSegmentMutants() {
 		t.Run(tc.name, func(t *testing.T) {
 			rendered := buildBlockEvasionPY()
-			mutant := strings.Replace(rendered, tc.before, tc.after, 1)
+			mutant := replaceEvasionMutant(rendered, tc.before, tc.after)
 			if mutant == rendered {
 				t.Fatal("mutation did not change the rendering")
 			}
 			script := filepath.Join(t.TempDir(), "mutant_block_evasion.py")
 			mustWrite(t, script, mutant)
+			if err := compileEvasionMutant(t, python, script, tc.name); err != nil {
+				t.Fatal(err)
+			}
 			code := runInterceptor(t, python, script, nil, nil, tc.command)
 			fixedCode := runInterceptor(t, python, fixed, nil, nil, tc.command)
 			t.Logf("mutant hook rc=%d; fixed hook rc=%d", code, fixedCode)
@@ -532,6 +601,75 @@ func TestEmittedEvasionSegmentMutants(t *testing.T) {
 			}
 			if fixedCode != 2-tc.want {
 				t.Errorf("fixed exit %d, want %d", fixedCode, 2-tc.want)
+			}
+		})
+	}
+}
+
+// compileEvasionMutant checks Python syntax before a fixture can assert policy behaviour.
+func compileEvasionMutant(t *testing.T, python, script, name string) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), interceptorWallClock)
+	defer cancel()
+	envCtx, err := util.WithCommandEnvironment(ctx, []string{"PATH=" + os.Getenv("PATH"), "SYSTEMROOT=" + os.Getenv("SYSTEMROOT")})
+	if err != nil {
+		return fmt.Errorf("mutant compiler environment: %w", err)
+	}
+	res, err := util.RunCommandBytes(envCtx, "", python, util.MaxCommandOutputBytes, "-m", "py_compile", script)
+	if err != nil {
+		return fmt.Errorf("mutant does not compile: %s: %w: %s", name, err, interceptorStderr(t, res.Stderr))
+	}
+	return nil
+}
+
+// testEvasionMutantCompilation plants syntax and indentation errors beside valid Python.
+func testEvasionMutantCompilation(t *testing.T, python string) {
+	t.Helper()
+	for _, tc := range []struct {
+		name, source, diagnostic string
+	}{
+		{"valid", "pass\n", ""},
+		{"syntax", "if True\n    pass\n", "line 1"},
+		{"indentation", "pass\n    pass\n", "line 2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := filepath.Join(t.TempDir(), "planted.py")
+			mustWrite(t, script, tc.source)
+			err := compileEvasionMutant(t, python, script, tc.name)
+			if tc.diagnostic == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "mutant does not compile: "+tc.name) ||
+				!strings.Contains(err.Error(), tc.diagnostic) {
+				t.Fatalf("compiler diagnostic = %v; want named refusal and %s", err, tc.diagnostic)
+			}
+		})
+	}
+}
+
+// interceptorExitError accepts only the emitted hook's allow (0) and refusal (2) statuses.
+func interceptorExitError(code int, stderr string) error {
+	if code == 0 || code == 2 && !strings.Contains(stderr, "Traceback") {
+		return nil
+	}
+	return fmt.Errorf("interceptor crashed instead of refusing: exit %d: %s", code, stderr)
+}
+
+// testInterceptorExitCodes checks allow/refuse and planted crashes without traceback text.
+func testInterceptorExitCodes(t *testing.T) {
+	t.Helper()
+	for _, code := range []int{0, 2, 1, -1, 3} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			err := interceptorExitError(code, "IndentationError: unexpected indent")
+			if code == 0 || code == 2 {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "interceptor crashed") {
+				t.Fatalf("exit %d: crash diagnostic = %v", code, err)
 			}
 		})
 	}
@@ -592,48 +730,98 @@ func TestEmittedEvasionQueueBoundMutant(t *testing.T) {
 	}
 }
 
+// readRootedText reads a UTF-8 text file under dir through os.OpenRoot.
+func readRootedText(t *testing.T, dir, rel string) string {
+	t.Helper()
+	data, err := openFixtureRoot(t, dir).ReadFile(filepath.FromSlash(rel))
+	if err != nil {
+		t.Fatalf("read %s/%s: %v", dir, rel, err)
+	}
+	return string(data)
+}
+
+// regenerateCanonicalEvasionGuard updates the shared segmentation block of a canonical guard.
+func regenerateCanonicalEvasionGuard(t *testing.T, guard string) string {
+	t.Helper()
+	marker := "# Every match of the privilege rule"
+	guard = removeGuardSegments(t, guard, marker)
+	guard = strings.Replace(guard, marker, interceptorConsumers()+evasionCommandSegments+marker, 1)
+	if !strings.Contains(guard, "    raw_command = command_str\n") {
+		guard = strings.Replace(guard, "    command_str = join_line_continuations(command_str)",
+			"    raw_command = command_str\n    command_str = join_line_continuations(command_str)", 1)
+	}
+	guard = strings.Replace(guard, "segments = command_segments(command_str)",
+		"segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])", 1)
+	if !strings.Contains(guard, "segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])") {
+		guard = strings.Replace(guard, "    judged = without_read_only_words(command_str)",
+			"    try:\n        segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])\n"+
+				"    except ValueError as error:\n        sys.stderr.write(str(error) + \"\\n\")\n        return False\n"+
+				"    judged = without_read_only_words(command_str)", 1)
+	}
+	const currentCall = "        exempt = pattern in READ_ONLY_EXEMPT_PATTERNS\n" +
+		"        text = judged if exempt else command_str\n" +
+		"        if search_command(\n" +
+		"            pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0], exempt\n" +
+		"        ):\n" +
+		"            reason = ("
+	for _, oldCall := range [2]string{
+		"        text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else command_str\n" +
+			"        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0]):\n" +
+			"            reason = (",
+		"        text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else command_str\n" +
+			"        if search(pattern, text):\n" +
+			"            reason = (",
+	} {
+		guard = strings.Replace(guard, oldCall, currentCall, 1)
+	}
+	guard = strings.Replace(guard, "    for pattern in TOPOLOGY_PATTERNS:\n        if re.search(pattern, command_str):",
+		"    for pattern in TOPOLOGY_PATTERNS:\n        if search_full_inputs(pattern, command_str, segments, False):", 1)
+	guard = strings.Replace(guard, "sys.stderr.write(str(error) + \"\\n\")",
+		"sys.stderr.write(\""+agenthook.InvalidInputRefusal+"\" + str(error) + \"\\n\")", 1)
+	if !strings.Contains(guard, "    command_str = executable_text(command_str, segments)\n") {
+		guard = strings.Replace(guard, "    judged = without_read_only_words(command_str)",
+			"    command_str = executable_text(command_str, segments)\n    judged = without_read_only_words(command_str)", 1)
+	}
+	return guard
+}
+
+// checkCanonicalEvasionGuard verifies that the canonical guard matches the rendered segments and table.
+func checkCanonicalEvasionGuard(guard, rendered string) error {
+	shared := interceptorConsumers() + evasionCommandSegments
+	if !strings.Contains(guard, shared) || !strings.Contains(rendered, shared) ||
+		!strings.Contains(guard, "pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0], exempt") {
+		return errors.New("engine guard segmentation differs; regenerate with PRAETOR_UPDATE_EMITTED_FIXTURES=1")
+	}
+	return nil
+}
+
 // TestEmittedEvasionGuardSegments regenerates shared segmentation without replacing admission.
 func TestEmittedEvasionGuardSegments(t *testing.T) {
 	path := filepath.Join("..", "..", filepath.FromSlash(evasionHookFile))
-	guard := mustRead(t, path)
+	guard := readRootedText(t, filepath.Join("..", ".."), evasionHookFile)
 	guard = strings.ReplaceAll(guard, "\r\n", "\n")
 	if os.Getenv(updateEmittedFixturesEnv) == "1" {
-		guard = strings.Replace(guard, "import shlex\n", "", 1)
-		marker := "# Every match of the privilege rule"
-		guard = removeGuardSegments(t, guard, marker)
-		guard = strings.Replace(guard, marker, evasionCommandSegments+marker, 1)
-		if !strings.Contains(guard, "    raw_command = command_str\n") {
-			guard = strings.Replace(guard, "    command_str = join_line_continuations(command_str)",
-				"    raw_command = command_str\n    command_str = join_line_continuations(command_str)", 1)
-		}
-		guard = strings.Replace(guard, "segments = command_segments(command_str)",
-			"segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])", 1)
-		if !strings.Contains(guard, "segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])") {
-			guard = strings.Replace(guard, "    judged = without_read_only_words(command_str)",
-				"    try:\n        segments = command_segments(raw_command, READ_ONLY_EXEMPT_PATTERNS[0])\n"+
-					"    except ValueError as error:\n        sys.stderr.write(str(error) + \"\\n\")\n        return False\n"+
-					"    judged = without_read_only_words(command_str)", 1)
-		}
-		guard = strings.Replace(guard, "        if search(pattern, text):\n            reason = (",
-			"        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0]):\n            reason = (", 1)
-		guard = strings.Replace(guard, "sys.stderr.write(str(error) + \"\\n\")",
-			"sys.stderr.write(\""+agenthook.InvalidInputRefusal+"\" + str(error) + \"\\n\")", 1)
+		recordMinimalPythonRendering(t)
+		guard = regenerateCanonicalEvasionGuard(t, guard)
 		mustWrite(t, path, guard)
-		current := mustRead(t, filepath.Join(priorEvasionFixtures, currentEvasionFixture))
+		TestEmittedHookFixturesMatchTheRendering(t)
+		current := readRootedText(t, priorEvasionFixtures, currentEvasionFixture)
 		if !strings.Contains(current, "def command_segments(") {
-			mustWrite(t, filepath.Join(priorEvasionFixtures, "before-command-segments.block_evasion.py"), current)
+			mustWrite(t, filepath.Join(priorEvasionFixtures, "before-command-segments.block_evasion.py.txt"), current)
 		}
 	}
-	if !strings.Contains(guard, evasionCommandSegments) ||
-		!strings.Contains(guard, "search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0])") {
-		t.Fatal("engine guard segmentation differs; regenerate with PRAETOR_UPDATE_EMITTED_FIXTURES=1")
+	if err := checkCanonicalEvasionGuard(guard, buildBlockEvasionPY()); err != nil {
+		t.Fatal(err)
 	}
 }
 
 // removeGuardSegments removes the previous shared parser before regeneration.
 func removeGuardSegments(t *testing.T, guard, marker string) string {
 	t.Helper()
-	start := strings.Index(guard, "def commit_command(")
+	start := strings.Index(guard, "HEREDOC_CONSUMERS = {\n")
+	if start < 0 {
+		start = strings.Index(guard, "def commit_command(")
+	}
 	if start < 0 {
 		start = strings.Index(guard, "def command_segments(")
 	}
@@ -656,6 +844,7 @@ type interceptorModule struct {
 	Exempt     []string            `json:"READ_ONLY_EXEMPT"`
 	Words      string              `json:"READ_ONLY_WORDS"`
 	Veto       string              `json:"READ_ONLY_VETO"`
+	Consumers  map[string]string   `json:"HEREDOC_CONSUMERS"`
 }
 
 // loadInterceptorModule loads the emitted script as a module, without running main.
@@ -664,9 +853,9 @@ func loadInterceptorModule(t *testing.T, python, script string) interceptorModul
 	ctx, cancel := context.WithTimeout(t.Context(), interceptorWallClock)
 	defer cancel()
 	const program = "import json, runpy, sys; module = runpy.run_path(sys.argv[1]); " +
-		`module.setdefault("RULE_PREFILTERS", {}); ` +
+		`module.setdefault("RULE_PREFILTERS", {}); module.setdefault("HEREDOC_CONSUMERS", {}); ` +
 		"print(json.dumps({name: module[name] for name in sys.argv[2:]}))"
-	names := []string{"RULES", "READ_ONLY_EXEMPT", "READ_ONLY_WORDS", "READ_ONLY_VETO", "RULE_PREFILTERS"}
+	names := []string{"RULES", "READ_ONLY_EXEMPT", "READ_ONLY_WORDS", "READ_ONLY_VETO", "RULE_PREFILTERS", "HEREDOC_CONSUMERS"}
 	args := append([]string{"-B", "-c", program, script}, names...)
 	res, err := util.RunCommandBytes(ctx, "", python, util.MaxCommandOutputBytes, args...)
 	if err != nil {
@@ -831,8 +1020,8 @@ func runInterceptorOutput(t *testing.T, python, script string, stdin []byte, ext
 	stderr := res.Stderr
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		if strings.Contains(string(stderr), "Traceback") {
-			t.Errorf("interceptor crashed instead of refusing: %s", string(stderr))
+		if err := interceptorExitError(exitErr.ExitCode(), string(stderr)); err != nil {
+			t.Fatal(err)
 		}
 		return exitErr.ExitCode(), interceptorStderr(t, stderr)
 	}
@@ -1318,7 +1507,530 @@ func TestEmittedInterceptorSearchesLikeTheEngineGuard(t *testing.T) {
 	if !strings.Contains(rendered, guard[start:end]) {
 		t.Fatal("the rendered interceptor does not carry the engine guard's option-run search byte for byte")
 	}
-	if !strings.Contains(rendered, "return search(pattern, text)") || strings.Contains(rendered, "        if re.search(pattern, text):\n") {
+	if !strings.Contains(rendered, "if search(pattern, text):") || strings.Contains(rendered, "        if re.search(pattern, text):\n") {
 		t.Fatal("the rendered interceptor does not judge its rules through search")
+	}
+}
+
+// evasionDelimiterBraceCases covers exact heredoc words, body continuations and unknown brace arguments.
+func evasionDelimiterBraceCases() []struct {
+	name, command string
+	want          int
+} {
+	return append([]struct {
+		name, command string
+		want          int
+	}{
+		{"brace continuation", "git commit -m {message,\\\n-n}", 2},
+		{"partial delimiter", "cat <<'true'X\ndata\ntrueX\ngit commit -n -m msg\ntrue", 2},
+		{"literal delimiter quotes", "cat <<\"'true'\"\ndata\n'true'\ngit commit -n -m msg\ntrue", 2},
+		{"body continuation", "cat <<true\ntr\\\nue\ngit commit -n -m msg\ntrue", 2},
+		{"skip control", "git commit -n -m msg", 2},
+		{"message control", "git commit -m msg", 0},
+		{"unsupported delimiter expansion", "cat <<$end\ndata\n$end\ngit commit -m msg", 2},
+		{"unterminated delimiter quote", "cat <<'EOF\ngit commit -m msg", 2},
+		{"unknown brace word", "git commit -m {msg,other}", 2},
+		{"unterminated brace word", "git commit -m {msg,-n", 2},
+		{"quoted brace word", "git commit -m '{msg,-n}'", 0},
+		{"escaped delimiter", "git commit -F - <<\\EOF\n-n\nEOF", 0},
+		{"quoted body continuation", "cat <<'true'\ntr\\\nue\ntrue\ngit commit -m msg", 0},
+		{"even body escapes", "cat <<true\ntr\\\\\nue\ntrue\ngit commit -m msg", 0},
+		{"continued delimiter data", "git commit -F - <<EOF\ntext\\\nEOF\n-n\nEOF", 0},
+		{"continued delimiter tabs", "git commit -F - <<-EOF\n\tE\\\nOF\ngit commit -n\nEOF", 2},
+		{"brace subcommand", `git {commit,-n} -m msg`, 2},
+		// codespell:ignore-next-line ommit
+		{"partial brace subcommand", `git c{ommit,-n} -m msg`, 2},
+		{"brace command", `{git,commit,-n,-m,msg}`, 2},
+		{"partial brace command", `g{it,} commit -n -m msg`, 2},
+		{"quoted brace subcommand", `git '{commit,-n}' -m msg`, 0},
+		{"quoted brace message", `git commit -m '{a,b}'`, 0},
+		{"non git brace operand", `echo {a,b}`, 0},
+		// codespell:ignore-next-line ommit
+		{"brace subcommand after option", `git -C . c{ommit,-n} -m msg`, 2},
+		{"brace option value", `git -C {.,other} commit -m msg`, 2},
+		{"quoted brace option value", `git -C '{.,other}' commit -m msg`, 0},
+		{"double quoted brace subcommand", `git "{commit,-n}" -m msg`, 0},
+		{"double quoted brace message", `git commit -m "{a,b}"`, 0},
+		{"quoted brace command", `"g{it,}" commit -n -m msg`, 0},
+		{"escaped brace command", `g\{it,\} commit -n -m msg`, 0},
+		{"brace assignment control", `echo '{a,b}'; result=$?; echo done`, 0},
+		{"non git subcommand brace operand", `git status {a,b}`, 0},
+		{"brace group control", `{ echo ready; }`, 0},
+		{"brace group commit control", `{ git commit -m msg; }`, 0},
+		{"brace group skip flag", `{ git commit -n -m msg; }`, 2},
+		{"bare brace subcommand", `git { -m msg`, 2},
+		{"assignment brace data", `VALUE={a,b}`, 0},
+		{"brace command after assignment", `VALUE={a,b} {git,commit,-n,-m,msg}`, 2},
+		{"brace command inside group", `{ {git,commit,-n,-m,msg}; }`, 2},
+		{"brace option hides subcommand", `git -c {x.y=z,commit,-n} -m msg`, 2},
+		{"quoted option hides no subcommand", `git -c '{x.y=z,commit,-n}' -m msg`, 0},
+		{"non git operand names git", `echo git {commit,-n} -m msg`, 0},
+		{"git data operand names git", `git log git {commit,-n} -m msg`, 0},
+	}, evasionRoundSixDelimiterBraceCases()...)
+}
+
+// evasionRoundSixDelimiterBraceCases covers literal message braces, expanding braces and inner delimiter quotes.
+func evasionRoundSixDelimiterBraceCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"literal brace pair in commit message", `git commit -m fix{docs}`, 0},
+		{"brace comma list in commit message", `git commit -m fix{docs,tests}`, 2},
+		{"brace numeric sequence in commit message", `git commit -m fix{1..3}`, 2},
+		{"brace letter sequence in commit message", `git commit -m fix{a..c}`, 2},
+		{"nested braces with comma in commit message", `git commit -m fix{{a,b}}`, 2},
+		{"parameter expansion brace in commit message", `git commit -m fix${docs}`, 2},
+		{"unclosed brace in commit message", `git commit -m fix{docs`, 2},
+		{"single-quoted inner delimiter quotes", "cat <<'\"EOF\"'\ndata\n\"EOF\"\ngit commit -n -m msg\nEOF", 2},
+	}
+}
+
+// TestEmittedDelimiterBraceRegression replays exact delimiter and brace cases through adoption output.
+func TestEmittedDelimiterBraceRegression(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	for _, tc := range evasionDelimiterBraceCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
+			t.Logf("hook rc=%d want=%d", got, tc.want)
+			if got != tc.want {
+				t.Errorf("rc=%d want=%d: %s", got, tc.want, stderr)
+			}
+		})
+	}
+}
+
+// TestEmittedDelimiterBracePriorReplay records both verdicts of the regression and its two controls.
+func TestEmittedDelimiterBracePriorReplay(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	prior := filepath.Join(priorEvasionFixtures, "before-exact-heredoc-brace.block_evasion.py.txt")
+	for i, tc := range evasionDelimiterBraceCases()[:6] {
+		t.Run(tc.name, func(t *testing.T) {
+			before := runInterceptor(t, python, prior, nil, nil, tc.command)
+			after := runInterceptor(t, python, fixed, nil, nil, tc.command)
+			wantBefore := tc.want
+			if i < 4 {
+				wantBefore = 0
+			}
+			t.Logf("prior rc=%d fixed rc=%d", before, after)
+			if before != wantBefore || after != tc.want {
+				t.Fatalf("prior rc=%d want=%d fixed rc=%d want=%d", before, wantBefore, after, tc.want)
+			}
+		})
+	}
+}
+
+// TestEmittedBraceCommandPriorReplay checks the prior rendering and quoted/data controls.
+func TestEmittedBraceCommandPriorReplay(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	prior := filepath.Join(priorEvasionFixtures, "before-brace-command.block_evasion.py.txt")
+	// Four command regressions followed by their three unchanged controls.
+	for _, tc := range evasionDelimiterBraceCases()[16:23] {
+		t.Run(tc.name, func(t *testing.T) {
+			before := runInterceptor(t, python, prior, nil, nil, tc.command)
+			after := runInterceptor(t, python, fixed, nil, nil, tc.command)
+			t.Logf("prior rc=%d fixed rc=%d", before, after)
+			if before != 0 || after != tc.want {
+				t.Fatalf("prior rc=%d want=0 fixed rc=%d want=%d", before, after, tc.want)
+			}
+		})
+	}
+}
+
+// evasionHeredocFeedCases reads the acceptance corpus shared with the Go and canonical tests.
+func evasionHeredocFeedCases(t *testing.T) []struct {
+	Name, Command string
+	Want          int
+} {
+	t.Helper()
+	root := openFixtureRoot(t, filepath.Join("..", "agenthook", "testdata"))
+	data, err := root.ReadFile("heredoc-consumers.json")
+	if err != nil {
+		t.Fatalf("read heredoc consumer corpus: %v", err)
+	}
+	var cases []struct {
+		Name, Command string
+		Want          int
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatalf("decode heredoc consumer corpus: %v", err)
+	}
+	return cases
+}
+
+// TestEmittedEvasionHeredocFeed replays the shared consumer acceptance corpus.
+func TestEmittedEvasionHeredocFeed(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	for _, tc := range evasionHeredocFeedCases(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.Command)
+			t.Logf("emitted rc=%d want=%d", got, tc.Want)
+			if got != tc.Want {
+				t.Errorf("emitted rc=%d want=%d: %s", got, tc.Want, stderr)
+			}
+		})
+	}
+}
+
+// TestEmittedEvasionProvenShapesPriorReplay measures each conservative change against the outgoing rendering.
+func TestEmittedEvasionProvenShapesPriorReplay(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	prior := filepath.Join(priorEvasionFixtures, "before-50882fd4d562.block_evasion.py.txt")
+	names := []string{
+		"printf message substitution data", "echo message substitution data",
+		"group data document", "env data message substitution", "heredoc empty literal target",
+	}
+	count := 0
+	for _, tc := range evasionHeredocFeedCases(t) {
+		if !slices.Contains(names, tc.Name) {
+			continue
+		}
+		count++
+		before := runInterceptor(t, python, prior, nil, nil, tc.Command)
+		after := runInterceptor(t, python, fixed, nil, nil, tc.Command)
+		t.Logf("%s: outgoing rc=%d current rc=%d", tc.Name, before, after)
+		if before != 0 || after != tc.Want {
+			t.Errorf("%s: outgoing rc=%d want=0 current rc=%d want=%d", tc.Name, before, after, tc.Want)
+		}
+	}
+	if count != len(names) {
+		t.Fatalf("proven-shape fixture count=%d want=%d", count, len(names))
+	}
+}
+
+// TestEmittedEvasionOuterExpansionPriorReplay preserves round 9's data shapes and exposes its bypass.
+func TestEmittedEvasionOuterExpansionPriorReplay(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	prior := filepath.Join(priorEvasionFixtures, "before-f5318e397d26.block_evasion.py.txt")
+	count := 0
+	for _, tc := range evasionHeredocFeedCases(t) {
+		if !strings.HasPrefix(tc.Name, "round10 ") {
+			continue
+		}
+		count++
+		t.Run(tc.Name, func(t *testing.T) {
+			before := runInterceptor(t, python, prior, nil, nil, tc.Command)
+			after := runInterceptor(t, python, fixed, nil, nil, tc.Command)
+			t.Logf("round 9 rc=%d round 10 rc=%d want=%d", before, after, tc.Want)
+			if before != 0 || after != tc.Want {
+				t.Errorf("round 9 rc=%d want=0 round 10 rc=%d want=%d", before, after, tc.Want)
+			}
+		})
+	}
+	if count != 4 {
+		t.Fatalf("outer expansion fixture count=%d want=4", count)
+	}
+}
+
+// TestEmittedEvasionHeredocPriorReplay preserves the 22 acceptance verdicts of the prior hook.
+func TestEmittedEvasionHeredocPriorReplay(t *testing.T) {
+	python, fixed := emittedInterceptor(t)
+	prior := filepath.Join(priorEvasionFixtures, "before-heredoc-consumers.block_evasion.py.txt")
+	for _, tc := range evasionHeredocFeedCases(t)[:22] {
+		t.Run(tc.Name, func(t *testing.T) {
+			wantBefore := tc.Want
+			if tc.Want == 2 && tc.Name != "bash quoted no-verify" {
+				wantBefore = 0
+			}
+			before := runInterceptor(t, python, prior, nil, nil, tc.Command)
+			after := runInterceptor(t, python, fixed, nil, nil, tc.Command)
+			t.Logf("prior rc=%d fixed rc=%d", before, after)
+			if before != wantBefore || after != tc.Want {
+				t.Errorf("prior rc=%d want=%d; fixed rc=%d want=%d", before, wantBefore, after, tc.Want)
+			}
+		})
+	}
+}
+
+// TestEmittedEvasionHeredocConsumers checks the rendered table against Go policy.
+func TestEmittedEvasionHeredocConsumers(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	got := loadInterceptorModule(t, python, script).Consumers
+	if !reflect.DeepEqual(got, agenthook.HeredocConsumers()) {
+		t.Errorf("consumer table differs: %v", got)
+	}
+}
+
+// TestEmittedEvasionHeredocConsumerMutants proves each rendered ownership barrier matters.
+func TestEmittedEvasionHeredocConsumerMutants(t *testing.T) {
+	python, _ := emittedInterceptor(t)
+	source := buildBlockEvasionPY()
+	table := regexp.MustCompile(`(?s)HEREDOC_CONSUMERS = \{.*?\}\n`)
+	for _, tc := range []struct {
+		name, replacement, command string
+		want                       int
+	}{
+		{"empty", "HEREDOC_CONSUMERS = {}\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 2},
+		{"data as shells", `HEREDOC_CONSUMERS = {"*": "shell"}` + "\n", "git commit -F - <<'EOF'\ngit commit -n -m x\nEOF", 2},
+		{"unknown as data", `HEREDOC_CONSUMERS = {"*": "data"}` + "\n", "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 2},
+		{"shell named as data", `HEREDOC_CONSUMERS = {"bash": "data"}` + "\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := table.ReplaceAllLiteralString(source, tc.replacement)
+			if mutated == source {
+				t.Fatalf("heredoc consumer mutation %s did not change the rendering", tc.name)
+			}
+			script := filepath.Join(t.TempDir(), "mutant.py")
+			mustWrite(t, script, mutated)
+			got, stderr := runInterceptorOutput(t, python, script, nil, nil, tc.command)
+			t.Logf("mutant rc=%d want=%d", got, tc.want)
+			if got != tc.want {
+				t.Errorf("mutant rc=%d want=%d: %s", got, tc.want, stderr)
+			}
+		})
+	}
+}
+
+// minimalPythonImports pins the origin/main hook imports: reduced standard libraries on
+// minimal Python installations cannot be assumed to provide additional modules.
+var minimalPythonImports = []string{"json", "os", "re", "sys"}
+
+// interceptorImportViolations reads Python imports statically, including nested and aliased imports.
+func interceptorImportViolations(t *testing.T, source string, allowed []string) []string {
+	t.Helper()
+	python := testsupport.PythonInterpreter(t)
+	const program = `import ast, json, sys
+allowed = set(sys.argv[1:])
+nodes = list(ast.walk(ast.parse(sys.stdin.read())))
+names = set()
+for index in range(len(nodes)):
+    node = nodes[index]
+    if isinstance(node, ast.Import):
+        names.update(node.names[index].name for index in range(len(node.names)))
+    elif isinstance(node, ast.ImportFrom):
+        names.add("." * node.level + (node.module or ""))
+print(json.dumps(sorted(name for name in names if name not in allowed)))
+`
+	ctx, err := util.WithCommandStdin(testsupport.DeadlineContext(t), []byte(source))
+	if err != nil {
+		t.Fatalf("set import checker input: %v", err)
+	}
+	args := append([]string{"-B", "-c", program}, allowed...)
+	result, err := util.RunCommandBytes(ctx, "", python, util.MaxCommandOutputBytes, args...)
+	if err != nil {
+		t.Fatalf("read interceptor imports: %v: %s", err, result.Stderr)
+	}
+	var violations []string
+	if err := json.Unmarshal(result.Stdout, &violations); err != nil {
+		t.Fatalf("decode import violations: %v", err)
+	}
+	return violations
+}
+
+// TestEmittedEvasionMinimalImports holds both shipped hooks to the minimal Python allow-list.
+func TestEmittedEvasionMinimalImports(t *testing.T) {
+	for name, source := range map[string]string{
+		"emitted":   buildBlockEvasionPY(),
+		"canonical": mustRead(t, filepath.Join("..", "..", filepath.FromSlash(evasionHookFile))),
+	} {
+		t.Run(name, func(t *testing.T) {
+			allowed := slices.Clone(minimalPythonImports)
+			if name == "canonical" {
+				// origin/main's canonical hook also uses these repository integrations.
+				allowed = append(allowed, "pathlib", "shutil", "subprocess")
+			}
+			if got := interceptorImportViolations(t, source, allowed); len(got) != 0 {
+				t.Errorf("imports outside minimal Python allow-list: %v", got)
+			}
+		})
+	}
+}
+
+// TestEmittedEvasionImportAllowListRejectsUnknown plants every static import shape, never importing it.
+func TestEmittedEvasionImportAllowListRejectsUnknown(t *testing.T) {
+	for source, want := range map[string]string{
+		"import shlex\n": "shlex", "from shlex import split\n": "shlex",
+		"import os, shlex as words\n": "shlex", "if True:\n    import shlex\n": "shlex",
+		"import shlex.submodule\n": "shlex.submodule", "import json.tool\n": "json.tool",
+		"from json.tool import main\n": "json.tool", "from .json import loads\n": ".json",
+	} {
+		t.Run(source, func(t *testing.T) {
+			if got := interceptorImportViolations(t, source, minimalPythonImports); !slices.Equal(got, []string{want}) {
+				t.Errorf("planted import accepted: %v", got)
+			}
+		})
+	}
+}
+
+// TestEmittedEvasionMinimalPython replays document consumers with shlex explicitly unavailable.
+func TestEmittedEvasionMinimalPython(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	wrapper := filepath.Join(t.TempDir(), "minimal_python.py")
+	mustWrite(t, wrapper, `import builtins, sys
+original_import = builtins.__import__
+def minimal_import(name, *args, **kwargs):
+    """Reproduce the reduced interpreter without hiding unrelated import failures."""
+    if name == "shlex":
+        raise ModuleNotFoundError("minimal Python has no shlex")
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = minimal_import
+sys.argv = sys.argv[1:]
+with open(sys.argv[0], encoding="utf-8") as source:
+    exec(compile(source.read(), sys.argv[0], "exec"), {"__name__": "__main__", "__file__": sys.argv[0]})
+`)
+	for _, name := range []string{"bash quoted", "cat piped to bash", "commit -F - message data"} {
+		found := false
+		for _, tc := range evasionHeredocFeedCases(t) {
+			if tc.Name != name {
+				continue
+			}
+			found = true
+			t.Run(name, func(t *testing.T) {
+				got, stderr := runInterceptorOutput(t, python, wrapper, nil, nil, script, tc.Command)
+				t.Logf("minimal Python rc=%d want=%d", got, tc.Want)
+				if got != tc.Want {
+					t.Errorf("minimal Python rc=%d want=%d: %s", got, tc.Want, stderr)
+				}
+			})
+		}
+		if !found {
+			t.Fatalf("minimal Python corpus case missing: %s", name)
+		}
+	}
+}
+
+// recordMinimalPythonRendering preserves the prior hook and computes the new digest on explicit updates.
+func recordMinimalPythonRendering(t *testing.T) {
+	t.Helper()
+	recordEvasionRenderingAt(t, priorEvasionFixtures, "hooks.go", buildBlockEvasionPY())
+}
+
+// recordEvasionRenderingAt archives an outgoing rendering in fixturesDir and extends hooksPath.
+func recordEvasionRenderingAt(t *testing.T, fixturesDir, hooksPath, current string) {
+	t.Helper()
+	previous := readRootedText(t, fixturesDir, currentEvasionFixture)
+	if previous != current {
+		previousDigest := fixtureDigest(t, "outgoing rendering", []byte(previous))
+		archiveName := "before-" + previousDigest[:12] + ".block_evasion.py.txt"
+		prior := filepath.Join(fixturesDir, archiveName)
+		if _, err := os.Stat(prior); errors.Is(err, os.ErrNotExist) {
+			mustWrite(t, prior, previous)
+		} else if err != nil {
+			t.Fatalf("stat prior rendering archive %s: %v", archiveName, err)
+		} else if readRootedText(t, fixturesDir, archiveName) != previous {
+			t.Fatalf("prior rendering archive %s already contains different bytes", archiveName)
+		}
+	}
+	digest := fixtureDigest(t, "minimal Python rendering", []byte(current))
+	if _, exists := priorEvasionHookDigests[digest]; exists {
+		return
+	}
+	source := readRootedText(t, filepath.Dir(hooksPath), filepath.Base(hooksPath))
+	if strings.Contains(source, fmt.Sprintf("\t%q:", digest)) {
+		return
+	}
+	const marker = "var priorEvasionHookDigests = map[string]string{\n"
+	if strings.Count(source, marker) != 1 {
+		t.Fatal("prior evasion digest table boundary missing or ambiguous")
+	}
+	entry := fmt.Sprintf("\t%q: %q,\n", digest, "proven data-reader shapes and shell execution replay")
+	mustWrite(t, hooksPath, strings.Replace(source, marker, marker+entry, 1))
+}
+
+// TestEmittedEvasionGuardUpdater verifies 4-arg upgrades, digest archiving and consumer sync on scratch copies.
+func TestEmittedEvasionGuardUpdater(t *testing.T) {
+	canonical := strings.ReplaceAll(readRootedText(t, filepath.Join("..", ".."), evasionHookFile), "\r\n", "\n")
+	rendered := buildBlockEvasionPY()
+	t.Run("upgrade_four_argument_call", func(t *testing.T) {
+		const currentCall = "        exempt = pattern in READ_ONLY_EXEMPT_PATTERNS\n" +
+			"        text = judged if exempt else command_str\n" +
+			"        if search_command(\n" +
+			"            pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0], exempt\n" +
+			"        ):\n" +
+			"            reason = ("
+		const priorCall = "        text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else command_str\n" +
+			"        if search_command(pattern, text, segments, READ_ONLY_EXEMPT_PATTERNS[0]):\n" +
+			"            reason = ("
+		priorGuard := strings.Replace(canonical, currentCall, priorCall, 1)
+		if priorGuard == canonical {
+			t.Fatal("failed to construct prior four-argument guard")
+		}
+		upgraded := regenerateCanonicalEvasionGuard(t, priorGuard)
+		if err := checkCanonicalEvasionGuard(upgraded, rendered); err != nil || upgraded != canonical {
+			t.Fatalf("four-argument guard was not upgraded to canonical form: %v", err)
+		}
+		if rerun := regenerateCanonicalEvasionGuard(t, upgraded); rerun != canonical {
+			t.Fatal("rerun modified the current canonical guard form")
+		}
+	})
+	t.Run("archive_outgoing_rendering", func(t *testing.T) {
+		assertScratchRenderingArchive(t, rendered)
+	})
+	t.Run("canonical_consumer_table", func(t *testing.T) {
+		stale := strings.Replace(canonical, interceptorConsumers(), "HEREDOC_CONSUMERS = {\n    \"*\": \"shell\",\n}\n\n\n", 1)
+		if stale == canonical {
+			t.Fatal("failed to construct stale consumer table in canonical guard")
+		}
+		if err := checkCanonicalEvasionGuard(stale, rendered); err == nil {
+			t.Fatal("checkCanonicalEvasionGuard accepted drifted HEREDOC_CONSUMERS table")
+		}
+		refreshed := regenerateCanonicalEvasionGuard(t, stale)
+		if err := checkCanonicalEvasionGuard(refreshed, rendered); err != nil || refreshed != canonical {
+			t.Fatalf("updater did not refresh HEREDOC_CONSUMERS in canonical guard: %v", err)
+		}
+	})
+}
+
+// assertScratchRenderingArchive runs the rendering archive updater twice in t.TempDir.
+func assertScratchRenderingArchive(t *testing.T, rendered string) {
+	t.Helper()
+	scratch := t.TempDir()
+	fixturesDir := filepath.Join(scratch, "evasion")
+	originals := readFixtureDir(t, priorEvasionFixtures)
+	for name, data := range originals {
+		mustWrite(t, filepath.Join(fixturesDir, name), string(data))
+	}
+	hooksPath := filepath.Join(scratch, "hooks.go")
+	originalHooks := readRootedText(t, ".", "hooks.go")
+	mustWrite(t, hooksPath, originalHooks)
+	next := strings.Replace(rendered, "BLOCK_EXIT = 2", "BLOCK_EXIT = 2  # scratch update", 1)
+	recordEvasionRenderingAt(t, fixturesDir, hooksPath, next)
+	recordEvasionRenderingAt(t, fixturesDir, hooksPath, next)
+	outgoingDigest := fixtureDigest(t, "outgoing rendering", originals[currentEvasionFixture])
+	archiveName := "before-" + outgoingDigest[:12] + ".block_evasion.py.txt"
+	if got := readRootedText(t, fixturesDir, archiveName); got != string(originals[currentEvasionFixture]) {
+		t.Fatalf("archive %s does not hold outgoing rendering", archiveName)
+	}
+	for name, want := range originals {
+		if got := readRootedText(t, fixturesDir, name); got != string(want) {
+			t.Fatalf("historical fixture %s modified", name)
+		}
+	}
+	nextDigest := fixtureDigest(t, "next rendering", []byte(next))
+	updatedHooks := readRootedText(t, scratch, "hooks.go")
+	if strings.Count(updatedHooks, fmt.Sprintf("\t%q:", nextDigest)) != 1 {
+		t.Fatalf("digest %s not recorded once in scratch hooks.go", nextDigest)
+	}
+	for digest := range priorEvasionHookDigests {
+		if !strings.Contains(updatedHooks, fmt.Sprintf("\t%q:", digest)) {
+			t.Fatalf("existing digest %s removed from scratch hooks.go", digest)
+		}
+	}
+}
+
+// TestEmittedEvasionShellWords replays the Go reference corpus, including malformed-word refusals.
+func TestEmittedEvasionShellWords(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	corpus := filepath.Join("..", "agenthook", "testdata", "shell-words.json")
+	const program = `import json, runpy, sys
+hook = runpy.run_path(sys.argv[1])
+with open(sys.argv[2], encoding="utf-8") as source:
+    cases = json.load(source)
+for index in range(len(cases)):
+    case = cases[index]
+    try:
+        got = hook["shell_unquote_word"](case["word"])
+    except ValueError:
+        got = None
+    if got != case["want"]:
+        sys.exit(case["name"] + ": got " + repr(got) + ", want " + repr(case["want"]))
+`
+	result, err := util.RunCommandBytes(testsupport.DeadlineContext(t), "", python,
+		util.MaxCommandOutputBytes, "-B", "-c", program, script, corpus)
+	if err != nil {
+		t.Fatalf("replay emitted shell words: %v: %s", err, result.Stderr)
 	}
 }

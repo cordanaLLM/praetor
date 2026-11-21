@@ -892,12 +892,72 @@ with their command, so `git commit -m x 2>&1 | tail -n 1` passes while
 `TestEmittedEvasionCommitSegments`).
 
 Message and file operands (`-m`, `--message`, `-F`, `--file`, `-C`, `-c`, `--author`,
-`--date`, including attached values) and here-document bodies are data, excluded from
-short-option matching. Both `git commit -m 'mention -n here'` and a `git commit -F -`
+`--date`, including attached values) and here-document bodies consumed as data are excluded
+from short-option matching. Both `git commit -m 'mention -n here'` and a `git commit -F -`
 here-document containing `-n` pass. Executable substitutions in those operands are still
 inspected: `git commit -m "$(git commit -n)"` refuses. A word-starting shell comment ends
 at the newline; `git commit -m x # author's note` passes without treating its apostrophe
 as a quote (the same parity tests).
+
+Here-document and here-string bodies count as data only in two proven shapes: a simple
+top-level literal reader from `HeredocConsumers` / `HEREDOC_CONSUMERS`, whose later pipeline
+stages also read data until a parsed stdout redirection writes a literal file; or a
+substitution containing exactly one such reader inside a double-quoted data operand of a
+literal, unwrapped `git commit`. Groups, unmodeled wrappers, command-position substitutions
+and uncertain words select code. Function declarations and shell-state changes invalidate
+later data proofs. Everything else is judged as code. Executable expansions
+in unquoted data receive independent scans. An unquoted document fed to a shell keeps
+its whole body, including every inner document, in code context whenever the body contains
+a dollar sign, a backtick or a backslash-newline sequence. The structural allow-list requires
+all three sequences to be absent; it does not enumerate dangerous commands or expansion
+results (`shellDocumentLiteral` in `internal/agenthook/policy.go`, `document_literal` in
+the canonical and emitted Python). Quoted outer documents and unquoted bodies without
+these sequences retain the proven data-reader shapes. Backslash-newline joins happen before command
+word and descriptor tokenization, and before parsing an unquoted document fed to a shell.
+`TestEvasionShellOracle` replays the command corpora and a bounded deterministic product
+through all three policy forms and real Bash with a recording Git stub, filesystem isolation
+and no network; an allowed shell-executed bypass fails the test. Its 2,000-command bound
+retains the complete carrier product and includes 30 outer-expansion cases: one or two
+inner quoted documents, delimiter/blank/payload output, and dollar-command, backtick,
+parameter, arithmetic and continuation spellings. Arithmetic cannot emit an empty string
+directly, so its blank case uses a zero-length parameter slice with an arithmetic length.
+The remaining slots sample continuation/indent repeats. The recorder detector reads Git
+2.56.1's documented global and commit option arities, excludes option values and stops at
+the pathspec `--`; a log command's `--grep commit -n` is not a commit bypass. Linux replay requires
+`bash`, `bwrap` and permission to create unprivileged user namespaces; other platforms report
+why isolated execution cannot run. A sandbox probe skips only the corpus replay when user
+namespaces are unavailable (including restricted containers), naming the cause and unchecked
+replay in the test output; detector and probe-decision table tests still run.
+
+A data here-document ends only at the line the shell itself ends it on. The
+delimiter word is read by `util.ShellHereDocDelimiter` (`internal/util/shell_heredoc.go`,
+mirrored by `shell_here_doc_delimiter` in `.config/agent/hooks/block_evasion.py` and
+`internal/adopt/hooks.go`): a plain (`<<EOF`), whole single- or double-quoted (`<<'EOF'`,
+`<<"EOF"`) or leading-backslash (`<<\EOF`) word without inner quotes, escapes or expansions
+is accepted (`TestShellHereDocDelimiter_Positive` in `internal/util/shell_heredoc_test.go`,
+`TestPolicyDelimiterBraceRegression` in `internal/agenthook/policy_test.go`). Because the
+shell keeps inner quotes during quote removal (`cat <<'"EOF"'` or `cat <<"'true'"` ends at a
+line `"EOF"` or `'true'`, not `EOF` or `true`), a delimiter word with inner quotes, partial
+quoting (`cat <<'true'X`), an inner escape (`<<EO\F`), an expansion (`cat <<$end`), an
+unterminated quote (`cat <<'EOF`) or a missing word is refused rather than guessed
+(`TestShellHereDocDelimiter_Negative` in `internal/util/shell_heredoc_test.go`,
+`TestPolicyDelimiterBraceRegression`, `TestParityDelimiterBraceRegression` in
+`internal/agenthook/parity_test.go`, `TestEmittedDelimiterBraceRegression` in
+`internal/adopt/evasion_hook_test.go`). In an unquoted here-document, backslash-newline
+continuations in the body are joined before comparing with the delimiter, so `E\` followed by
+`OF` ends `<<EOF` and a command after that line is judged as a command, while in a quoted
+here-document (`<<'true'`) the backslash stays literal (`TestPolicyDelimiterBraceRegression`,
+`TestParityDelimiterBraceRegression`, `TestEmittedDelimiterBraceRegression`). An unquoted
+brace word up to and including the git subcommand, as in `git {commit,-n} -m x` or
+`{git,commit,-n,-m,x}`, or an expanding or unclosed brace word in a commit message
+(`git commit -m {msg,other}`, `git commit -m fix{1..3}`, `git commit -m fix{a..c}`,
+`git commit -m {msg,-n`), can split into a skip flag and is refused; quoted braces
+(`git commit -m '{a,b}'`), literal brace pairs without a depth-one comma or sequence
+(`git commit -m fix{docs}`), and braces in non-commit operands (`echo {a,b}`) pass
+(`TestPolicyDelimiterBraceRegression`, `TestParityDelimiterBraceRegression`,
+`TestEmittedDelimiterBraceRegression`; the earlier renderings replay in
+`TestEmittedDelimiterBracePriorReplay` and `TestEmittedBraceCommandPriorReplay` in
+`internal/adopt/evasion_hook_test.go`).
 
 When an expansion can supply an option or pathspec in the commit or `am` command itself,
 the short-flag scan conservatively retains the whole command. This includes quoted or

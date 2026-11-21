@@ -3,7 +3,10 @@ package agenthook
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -499,7 +502,7 @@ func fallbackSegmentCases() []struct {
 		{"am parameter", `git am $flags patch && tail -n 1`, 2},
 		{"own substitution", `git commit $(cat flags) -m x && tail -n 1`, 2},
 		{"own escape", `git commit -m a\b && tail -n 1`, 2},
-		{"own continuation", "git commit -m x\\\n && tail -n 1", 2},
+		{"own continuation", "git commit -m x\\\n && tail -n 1", 0},
 		{"single quoted newline", "git commit -m 'a\nb' && tail -n 1", 2},
 		{"double quoted newline", "git commit -m \"a\nb\" && tail -n 1", 2},
 		{"later newline", "git commit -m x && printf \"a\nb\" | tail -n 1", 0},
@@ -923,6 +926,8 @@ func splittingSegmentCase(name string) bool {
 		"runtime-only message parameter", "runtime-only positional array",
 		"substitution", "glob",
 		"am substitution",
+		"substitution flag", "backtick flag", "nested substitution flag",
+		"substitution separator flag", "positional substitution", "state function",
 	}, name)
 }
 
@@ -982,5 +987,300 @@ func redirectSegmentCases() []struct {
 		{"heredoc pending past bound", "git commit -F -" + strings.Repeat(" <<EOF", 17) + "\n" + strings.Repeat("EOF\n", 17) + "tail -n 1", 2},
 		// Parameter expansions within message data preserve segmentation.
 		{"substitution braces", `git commit -m "$(echo ${msg})" && tail -n 1`, 0},
+	}
+}
+
+// delimiterBraceCases covers exact heredoc words, body continuations and unknown brace arguments.
+func delimiterBraceCases() []struct {
+	name, command string
+	want          int
+} {
+	return append([]struct {
+		name, command string
+		want          int
+	}{
+		{"brace continuation", "git commit -m {message,\\\n-n}", 2},
+		{"partial delimiter", "cat <<'true'X\ndata\ntrueX\ngit commit -n -m msg\ntrue", 2},
+		{"literal delimiter quotes", "cat <<\"'true'\"\ndata\n'true'\ngit commit -n -m msg\ntrue", 2},
+		{"body continuation", "cat <<true\ntr\\\nue\ngit commit -n -m msg\ntrue", 2},
+		{"skip control", "git commit -n -m msg", 2},
+		{"message control", "git commit -m msg", 0},
+		{"unsupported delimiter expansion", "cat <<$end\ndata\n$end\ngit commit -m msg", 2},
+		{"unterminated delimiter quote", "cat <<'EOF\ngit commit -m msg", 2},
+		{"unknown brace word", "git commit -m {msg,other}", 2},
+		{"unterminated brace word", "git commit -m {msg,-n", 2},
+		{"quoted brace word", "git commit -m '{msg,-n}'", 0},
+		{"escaped delimiter", "git commit -F - <<\\EOF\n-n\nEOF", 0},
+		{"quoted body continuation", "cat <<'true'\ntr\\\nue\ntrue\ngit commit -m msg", 0},
+		{"even body escapes", "cat <<true\ntr\\\\\nue\ntrue\ngit commit -m msg", 0},
+		{"continued delimiter data", "git commit -F - <<EOF\ntext\\\nEOF\n-n\nEOF", 0},
+		{"continued delimiter tabs", "git commit -F - <<-EOF\n\tE\\\nOF\ngit commit -n\nEOF", 2},
+		{"brace subcommand", `git {commit,-n} -m msg`, 2},
+		// codespell:ignore-next-line ommit
+		{"partial brace subcommand", `git c{ommit,-n} -m msg`, 2},
+		{"brace command", `{git,commit,-n,-m,msg}`, 2},
+		{"partial brace command", `g{it,} commit -n -m msg`, 2},
+		{"quoted brace subcommand", `git '{commit,-n}' -m msg`, 0},
+		{"quoted brace message", `git commit -m '{a,b}'`, 0},
+		{"non git brace operand", `echo {a,b}`, 0},
+		// codespell:ignore-next-line ommit
+		{"brace subcommand after option", `git -C . c{ommit,-n} -m msg`, 2},
+		{"brace option value", `git -C {.,other} commit -m msg`, 2},
+		{"quoted brace option value", `git -C '{.,other}' commit -m msg`, 0},
+		{"double quoted brace subcommand", `git "{commit,-n}" -m msg`, 0},
+		{"double quoted brace message", `git commit -m "{a,b}"`, 0},
+		{"quoted brace command", `"g{it,}" commit -n -m msg`, 0},
+		{"escaped brace command", `g\{it,\} commit -n -m msg`, 0},
+		{"brace assignment control", `echo '{a,b}'; result=$?; echo done`, 0},
+		{"non git subcommand brace operand", `git status {a,b}`, 0},
+		{"brace group control", `{ echo ready; }`, 0},
+		{"brace group commit control", `{ git commit -m msg; }`, 0},
+		{"brace group skip flag", `{ git commit -n -m msg; }`, 2},
+		{"bare brace subcommand", `git { -m msg`, 2},
+		{"assignment brace data", `VALUE={a,b}`, 0},
+		{"brace command after assignment", `VALUE={a,b} {git,commit,-n,-m,msg}`, 2},
+		{"brace command inside group", `{ {git,commit,-n,-m,msg}; }`, 2},
+		{"brace option hides subcommand", `git -c {x.y=z,commit,-n} -m msg`, 2},
+		{"quoted option hides no subcommand", `git -c '{x.y=z,commit,-n}' -m msg`, 0},
+		{"non git operand names git", `echo git {commit,-n} -m msg`, 0},
+		{"git data operand names git", `git log git {commit,-n} -m msg`, 0},
+	}, roundSixDelimiterBraceCases()...)
+}
+
+// roundSixDelimiterBraceCases covers literal message braces, expanding braces and inner delimiter quotes.
+func roundSixDelimiterBraceCases() []struct {
+	name, command string
+	want          int
+} {
+	return []struct {
+		name, command string
+		want          int
+	}{
+		{"literal brace pair in commit message", `git commit -m fix{docs}`, 0},
+		{"brace comma list in commit message", `git commit -m fix{docs,tests}`, 2},
+		{"brace numeric sequence in commit message", `git commit -m fix{1..3}`, 2},
+		{"brace letter sequence in commit message", `git commit -m fix{a..c}`, 2},
+		{"nested braces with comma in commit message", `git commit -m fix{{a,b}}`, 2},
+		{"parameter expansion brace in commit message", `git commit -m fix${docs}`, 2},
+		{"unclosed brace in commit message", `git commit -m fix{docs`, 2},
+		{"single-quoted inner delimiter quotes", "cat <<'\"EOF\"'\ndata\n\"EOF\"\ngit commit -n -m msg\nEOF", 2},
+	}
+}
+
+// TestParityDelimiterBraceRegression checks the repository guard against exact Go verdicts.
+func TestParityDelimiterBraceRegression(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	builtin := policy(t)
+	for _, tc := range delimiterBraceCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}})
+			python := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
+			want := 0
+			if tc.want != 0 {
+				want = 1
+			}
+			if python.exit != want {
+				t.Errorf("guard rc=%d want=%d: %s", python.exit, want, python.stderr)
+			}
+			if got := builtin.Command(tc.command); (got.Outcome == Allow) != (tc.want == 0) {
+				t.Errorf("Go verdict: %+v, want rc=%d", got, tc.want)
+			}
+		})
+	}
+}
+
+// heredocFeedCases loads the shared acceptance rows without executing their commands.
+func heredocFeedCases(t *testing.T) []struct {
+	Name, Command string
+	Want          int
+} {
+	t.Helper()
+	data, err := os.ReadFile("testdata/heredoc-consumers.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name, Command string
+		Want          int
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	return cases
+}
+
+// TestParityEvasionHeredocFeed checks consumer ownership in both policy implementations.
+func TestParityEvasionHeredocFeed(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	builtin := policy(t)
+	for _, tc := range heredocFeedCases(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.Command}})
+			got := runGuardScript(t, interpreter, pythonGuard, payload, nil, guardEnvironment())
+			want := tc.Want / 2
+			t.Logf("canonical rc=%d want=%d", got.exit, want)
+			if got.exit != want {
+				t.Errorf("canonical rc=%d want=%d: %s", got.exit, want, got.stderr)
+			}
+			if verdict := builtin.Command(tc.Command); (verdict.Outcome == Allow) != (tc.Want == 0) {
+				t.Errorf("Go verdict: %+v, want rc=%d", verdict, tc.Want)
+			}
+		})
+	}
+}
+
+// readPythonGuard reads the canonical Python guard through a rooted handle.
+func readPythonGuard(t *testing.T) string {
+	t.Helper()
+	root, err := os.OpenRoot(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("open repository root: %v", err)
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			t.Errorf("close repository root: %v", closeErr)
+		}
+	}()
+	data, err := root.ReadFile(filepath.FromSlash(".config/agent/hooks/block_evasion.py"))
+	if err != nil {
+		t.Fatalf("read canonical guard: %v", err)
+	}
+	return string(data)
+}
+
+// parseCanonicalHeredocConsumers extracts the literal HEREDOC_CONSUMERS map from canonical guard source.
+func parseCanonicalHeredocConsumers(t *testing.T, source string) map[string]string {
+	t.Helper()
+	normalized := strings.ReplaceAll(source, "\r\n", "\n")
+	_, text, ok := strings.Cut(normalized, "HEREDOC_CONSUMERS = {\n")
+	body, _, closed := strings.Cut(text, "}\n")
+	if !ok || !closed {
+		t.Fatal("consumer table missing")
+	}
+	entries := regexp.MustCompile(`(?m)^    "([^"]+)": "([^"]+)",$`)
+	got := map[string]string{}
+	for _, pair := range entries.FindAllStringSubmatch(body, len(body)) {
+		got[pair[1]] = pair[2]
+	}
+	return got
+}
+
+// mutateCanonicalHeredocConsumers replaces the HEREDOC_CONSUMERS block and fails by name when unchanged.
+func mutateCanonicalHeredocConsumers(source, name, replacement string) (string, error) {
+	normalized := strings.ReplaceAll(source, "\r\n", "\n")
+	table := regexp.MustCompile(`(?s)HEREDOC_CONSUMERS = \{.*?\}\n`)
+	mutated := table.ReplaceAllLiteralString(normalized, replacement)
+	if mutated == normalized {
+		return "", fmt.Errorf("heredoc consumer mutation %s did not change the guard", name)
+	}
+	return mutated, nil
+}
+
+// TestParityEvasionHeredocConsumers compares the canonical literal table with Go policy.
+func TestParityEvasionHeredocConsumers(t *testing.T) {
+	lf := strings.ReplaceAll(readPythonGuard(t), "\r\n", "\n")
+	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+	for name, source := range map[string]string{"lf": lf, "crlf": crlf} {
+		t.Run(name, func(t *testing.T) {
+			if got := parseCanonicalHeredocConsumers(t, source); !maps.Equal(got, HeredocConsumers()) {
+				t.Errorf("consumer table differs: %v", got)
+			}
+		})
+	}
+	var quoted []string
+	for _, option := range admissionWrappers["env"].values {
+		quoted = append(quoted, strconv.Quote(option))
+	}
+	if want := "values = (" + strings.Join(quoted, ", ") + ")"; !strings.Contains(lf, want) {
+		t.Errorf("env value-option arities differ: want %s", want)
+	}
+}
+
+// TestParityEvasionHeredocConsumerMutants proves each canonical ownership barrier matters.
+func TestParityEvasionHeredocConsumerMutants(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	lf := strings.ReplaceAll(readPythonGuard(t), "\r\n", "\n")
+	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+	if _, err := mutateCanonicalHeredocConsumers("print(1)\n", "unchanged-table", "HEREDOC_CONSUMERS = {}\n"); err == nil || !strings.Contains(err.Error(), "unchanged-table") {
+		t.Fatalf("no-op mutation error = %v, want failure naming unchanged-table", err)
+	}
+	for style, source := range map[string]string{"lf": lf, "crlf": crlf} {
+		for _, tc := range []struct {
+			name, replacement, command string
+			want                       int
+		}{
+			{"empty", "HEREDOC_CONSUMERS = {}\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 1},
+			{"data as shells", `HEREDOC_CONSUMERS = {"*": "shell"}` + "\n", "git commit -F - <<'EOF'\ngit commit -n -m x\nEOF", 1},
+			{"unknown as data", `HEREDOC_CONSUMERS = {"*": "data"}` + "\n", "python3 - <<'EOF'\ngit commit -n -m x\nEOF", 1},
+			{"shell named as data", `HEREDOC_CONSUMERS = {"bash": "data"}` + "\n", "bash <<'EOF'\ngit commit -n -m x\nEOF", 0},
+		} {
+			t.Run(style+"/"+tc.name, func(t *testing.T) {
+				assertCanonicalHeredocConsumerMutant(t, interpreter, source, tc.name, tc.replacement, tc.command, tc.want)
+			})
+		}
+	}
+}
+
+// assertCanonicalHeredocConsumerMutant writes one mutated canonical guard and checks its verdict.
+func assertCanonicalHeredocConsumerMutant(t *testing.T, interpreter, source, name, replacement, command string, want int) {
+	t.Helper()
+	mutated, err := mutateCanonicalHeredocConsumers(source, name, replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "mutant.py")
+	if err := os.WriteFile(script, []byte(mutated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": command}})
+	got := runGuardScript(t, interpreter, script, payload, nil, guardEnvironment())
+	t.Logf("mutant rc=%d want=%d", got.exit, want)
+	if got.exit != want {
+		t.Errorf("mutant rc=%d want=%d: %s", got.exit, want, got.stderr)
+	}
+}
+
+// TestParityEvasionShellWords compares canonical unquoting with Go word by word; malformed input refuses.
+func TestParityEvasionShellWords(t *testing.T) {
+	const corpus = "testdata/shell-words.json"
+	data, err := os.ReadFile(corpus)
+	if err != nil {
+		t.Fatalf("read shell word corpus: %v", err)
+	}
+	var cases []struct {
+		Name, Word string
+		Want       *string
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatalf("decode shell word corpus: %v", err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			if tc.Want == nil {
+				if _, err := commandSegments("git commit -m " + tc.Word); err == nil {
+					t.Error("Go accepted malformed shell word")
+				}
+			} else if got := unquoteShellWord(tc.Word); got != *tc.Want {
+				t.Errorf("Go word %q want %q", got, *tc.Want)
+			}
+		})
+	}
+	const program = `import json, runpy, sys
+hook = runpy.run_path(sys.argv[1])
+with open(sys.argv[2], encoding="utf-8") as source:
+    cases = json.load(source)
+for index in range(len(cases)):
+    case = cases[index]
+    try:
+        got = hook["shell_unquote_word"](case["word"])
+    except ValueError:
+        got = None
+    if got != case["want"]:
+        sys.exit(case["name"] + ": got " + repr(got) + ", want " + repr(case["want"]))
+`
+	result, err := util.RunCommandBytes(testsupport.DeadlineContext(t), "", testsupport.PythonInterpreter(t),
+		util.MaxCommandOutputBytes, "-B", "-c", program, pythonGuard, corpus)
+	if err != nil {
+		t.Fatalf("replay canonical shell words: %v: %s", err, result.Stderr)
 	}
 }

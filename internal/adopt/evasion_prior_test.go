@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // priorEvasionFixtures holds every interceptor rendering a Praetor release wrote, one file per
@@ -17,6 +19,97 @@ const priorEvasionFixtures = "testdata/evasion"
 
 // currentEvasionFixture is the fixture holding the current rendering.
 const currentEvasionFixture = "current-rendering.block_evasion.py"
+
+// TestPriorEvasionFixturesUseDataExtension keeps frozen before- renderings out of source analysis.
+func TestPriorEvasionFixturesUseDataExtension(t *testing.T) {
+	fixtures := readFixtureDir(t, priorEvasionFixtures)
+	for name := range fixtures {
+		if strings.HasPrefix(name, "before-") && !strings.HasSuffix(name, ".py.txt") {
+			t.Errorf("prior rendering %s must use the .py.txt data extension", name)
+		}
+	}
+}
+
+// codacyEvasionExclusions returns every Codacy exclusion in data that hides an evasion fixture.
+func codacyEvasionExclusions(t *testing.T, data []byte, fixtures map[string][]byte) []string {
+	t.Helper()
+	var findings []string
+	for _, pattern := range parseCodacyExcludePatterns(t, data) {
+		findings = append(findings, matchCodacyEvasionPattern(pattern, fixtures)...)
+	}
+	return findings
+}
+
+// parseCodacyExcludePatterns decodes top-level and enabled engine exclusions from Codacy YAML.
+func parseCodacyExcludePatterns(t *testing.T, data []byte) []string {
+	t.Helper()
+	var scope struct {
+		ExcludePaths []string `yaml:"exclude_paths"`
+		Engines      map[string]struct {
+			Enabled      *bool    `yaml:"enabled"`
+			ExcludePaths []string `yaml:"exclude_paths"`
+		} `yaml:"engines"`
+	}
+	if err := yamlUnmarshal(data, &scope); err != nil {
+		t.Fatalf("decode Codacy scope: %v", err)
+	}
+	patterns := slices.Clone(scope.ExcludePaths)
+	for _, engine := range scope.Engines {
+		if engine.Enabled == nil || *engine.Enabled {
+			patterns = append(patterns, engine.ExcludePaths...)
+		}
+	}
+	return patterns
+}
+
+// matchCodacyEvasionPattern matches one exclusion pattern against evasion fixtures by whole path segments.
+func matchCodacyEvasionPattern(pattern string, fixtures map[string][]byte) []string {
+	const dir = "internal/adopt/testdata/evasion"
+	dirSegments := strings.Split(dir, "/")
+	cleaned := strings.TrimSuffix(strings.TrimPrefix(util.NormalizeSlashes(pattern), "./"), "/")
+	patSegments := strings.Split(cleaned, "/")
+	var findings []string
+	if len(patSegments) >= len(dirSegments) && slices.Equal(patSegments[:len(dirSegments)], dirSegments) {
+		findings = append(findings, pattern)
+	}
+	for name := range fixtures {
+		segments := strings.Split(dir+"/"+name, "/")
+		for end := 1; end <= len(segments); end++ {
+			if util.MatchGlobSegments(patSegments, segments[:end]) {
+				findings = append(findings, pattern+":"+name)
+			}
+		}
+	}
+	return findings
+}
+
+// TestEvasionFixturesRemainInCodacyScope refuses exclusions hiding any evasion fixture.
+func TestEvasionFixturesRemainInCodacyScope(t *testing.T) {
+	root := openFixtureRoot(t, filepath.Join("..", ".."))
+	data, err := root.ReadFile(".codacy.yml")
+	if err != nil {
+		t.Fatalf("read Codacy scope: %v", err)
+	}
+	fixtures := readFixtureDir(t, priorEvasionFixtures)
+	if findings := codacyEvasionExclusions(t, data, fixtures); len(findings) != 0 {
+		t.Errorf("Codacy exclusions hide evasion fixtures: %v", findings)
+	}
+	for _, tc := range []struct {
+		name, config string
+		want         bool
+	}{
+		{"engine-level exclusion", "engines:\n  bandit:\n    enabled: true\n    exclude_paths:\n      - \"internal/adopt/testdata/evasion/before-minimal-python.block_evasion.py.txt\"\n", true},
+		{"sibling folder", "exclude_paths:\n  - \"internal/adopt/testdata/evasion-archive/**\"\n", false},
+		{"top-level exclusion", "exclude_paths:\n  - \"internal/adopt/testdata/evasion/**\"\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := len(codacyEvasionExclusions(t, []byte(tc.config), fixtures)) > 0
+			if got != tc.want {
+				t.Fatalf("exclusion finding=%v want=%v", got, tc.want)
+			}
+		})
+	}
+}
 
 // adoptEvasionFixture adopts a fresh repository whose interceptor holds existing.
 func adoptEvasionFixture(t *testing.T, name, existing string, force bool) (string, *AdoptReport) {

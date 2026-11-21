@@ -1,6 +1,7 @@
 package adopt
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,18 +10,34 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// openFixtureRoot confines fixture reads to dir and reports cleanup failures.
+func openFixtureRoot(t *testing.T, dir string) *os.Root {
+	t.Helper()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatalf("open fixture root %s: %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close fixture root %s: %v", dir, err)
+		}
+	})
+	return root
+}
+
 // readFixtureDir returns every file directly under dir, keyed by its name.
 func readFixtureDir(t *testing.T, dir string) map[string][]byte {
 	t.Helper()
-	entries, err := os.ReadDir(dir)
+	root := openFixtureRoot(t, dir)
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("list fixture root %s: %v", dir, err)
 	}
 	fixtures := make(map[string][]byte, len(entries))
 	for _, entry := range entries {
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		data, err := root.ReadFile(entry.Name())
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("read fixture %s/%s: %v", dir, entry.Name(), err)
 		}
 		fixtures[entry.Name()] = data
 	}
