@@ -55,8 +55,15 @@ type RunBudget struct {
 	Devcontainer time.Duration
 	// Note says why StageBound differs from the default; it is empty when it does not.
 	Note string
-	// BoundOrigin names where StageBound came from: "default", "environment", or ".standards.yaml".
+	// BoundOrigin names where StageBound came from: "default", "environment", or ".standards.yaml"
+	// (including the evidence path and measured duration when a raised bound is in force).
 	BoundOrigin string
+	// EvidencePath is the repository-relative path from gate.declared_verify_evidence when a
+	// raised declared-verification bound (> 30m) is in force, and empty otherwise.
+	EvidencePath string
+	// MeasuredDuration is the measured suite duration read from EvidencePath when a raised
+	// declared-verification bound (> 30m) is in force, and zero otherwise.
+	MeasuredDuration time.Duration
 }
 
 // TestSuites is how many stage bounds the run deadline reserves for the test stage: Suites, and at
@@ -122,9 +129,9 @@ func resolveRepoRunBudget(ctx context.Context, raw, repoDir string) (RunBudget, 
 	if manifestErr != nil {
 		return budget, manifestErr
 	}
-	var declaredTimeout time.Duration
-	if manifest != nil && manifest.Gate != nil {
-		declaredTimeout = manifest.Gate.DeclaredVerifyTimeoutDuration()
+	var gatePolicy *config.GatePolicy
+	if manifest != nil {
+		gatePolicy = manifest.Gate
 	}
 	count, err := trackedGoModuleCount(ctx, repoDir)
 	if err != nil {
@@ -133,7 +140,7 @@ func resolveRepoRunBudget(ctx context.Context, raw, repoDir string) (RunBudget, 
 	hasCargo := util.FileExists(filepath.Join(repoDir, CargoLockFile))
 	hasNode := hasSingleNodeLockfile(repoDir)
 	if count == 0 && !hasCargo && !hasNode {
-		return applyDeclaredVerifyBudget(budget, raw, declaredTimeout), nil
+		return applyDeclaredVerifyBudget(budget, raw, gatePolicy), nil
 	}
 	suites := count
 	if hasCargo {
@@ -148,13 +155,27 @@ func resolveRepoRunBudget(ctx context.Context, raw, repoDir string) (RunBudget, 
 	return budget, nil
 }
 
-func applyDeclaredVerifyBudget(budget RunBudget, raw string, declaredTimeout time.Duration) RunBudget {
+// applyDeclaredVerifyBudget applies gate.declared_verify_timeout (and its committed evidence
+// when the bound exceeds MaxDeclaredVerifyTimeout) to budget for a declared-verification
+// repository when no environment override is set.
+func applyDeclaredVerifyBudget(budget RunBudget, raw string, gatePolicy *config.GatePolicy) RunBudget {
 	if strings.TrimSpace(raw) != "" {
 		budget.BoundOrigin = "environment"
 		return budget
 	}
+	declaredTimeout := gatePolicy.DeclaredVerifyTimeoutDuration()
 	if declaredTimeout > 0 {
 		budget.StageBound = declaredTimeout
+		evidencePath := gatePolicy.DeclaredVerifyEvidencePath()
+		measured := gatePolicy.DeclaredVerifyMeasuredDuration()
+		if declaredTimeout > config.MaxDeclaredVerifyTimeout && evidencePath != "" && measured > 0 {
+			budget.EvidencePath = evidencePath
+			budget.MeasuredDuration = measured
+			budget.BoundOrigin = fmt.Sprintf(".standards.yaml: evidence %s, measured %s", evidencePath, measured)
+			budget.Note = fmt.Sprintf("declared verification stage bound raised to %s by .standards.yaml (evidence %s, measured %s)",
+				declaredTimeout, evidencePath, measured)
+			return budget
+		}
 		budget.BoundOrigin = ".standards.yaml"
 		budget.Note = fmt.Sprintf("declared verification stage bound set to %s by .standards.yaml", declaredTimeout)
 		return budget

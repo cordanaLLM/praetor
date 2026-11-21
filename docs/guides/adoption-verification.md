@@ -1426,10 +1426,60 @@ Node lockfile selects a toolchain stage, and the target is declared, the stage r
   directory resolves outside it is refused, never followed. Where the stage worktree still lacks required dependencies, a real failure of
   `make verify-all` still fails the stage.
 - **Bound:** defaults to the race stage's default (`20m`), or can be declared in `.standards.yaml` via
-  `gate: declared_verify_timeout: <duration>` (e.g. `20m`, Go duration, positive and at most 30 minutes;
-  values above 30m or non-positive are refused naming the key, value, and ceiling).
+  `gate: declared_verify_timeout: <duration>` (e.g. `20m`, Go duration, positive and at most 30 minutes
+  without evidence; values above 30m without evidence or non-positive are refused naming the key, value,
+  and ceiling). When a repository's `make verify-all` genuinely takes longer than 30 minutes, an adopter
+  can raise `gate.declared_verify_timeout` above `30m` up to the hard cap of `60m`
+  (`config.MaxDeclaredVerifyTimeoutWithEvidence`) by committing a suite-length measurement and pointing
+  `gate.declared_verify_evidence` at its repository-relative path:
+  1. Measure `make verify-all` at the current commit (for example with `/usr/bin/time -p make verify-all`)
+     and write a single-document YAML file inside the repository (at most 4,096 bytes,
+     `config.MaxDeclaredVerifyEvidenceBytes`):
+     ```yaml
+     command: make verify-all
+     measured_duration: 38m
+     date: "2026-11-18"
+     commit: 0123456789abcdef0123456789abcdef01234567
+     ```
+  2. Commit the evidence file so it is tracked as a regular blob at `HEAD`, then declare both keys under
+     `gate:` in `.standards.yaml`:
+     ```yaml
+     gate:
+       declared_verify_timeout: 45m
+       declared_verify_evidence: docs/verify-evidence.yaml
+     ```
+  `config.ValidateGate` (`internal/config/gate.go`) enforces that `gate.declared_verify_evidence` is a
+  clean, relative forward-slash path inside the repository (no absolute path, no `..` parent step, no
+  symlink escaping the repository root; read through `util.InConfinedDirectory` and `util.ReadLimitedIn`),
+  is tracked as a regular file at `HEAD` (verified via
+  `git --literal-pathspecs ls-tree -z HEAD -- <path>` under `util.RunGitProbe`), and records a positive
+  `measured_duration` satisfying
+  `config.MinDeclaredVerifyEvidenceDuration (20m) <= measured_duration <= declared_verify_timeout <= config.MaxDeclaredVerifyTimeoutWithEvidence (60m)`
+  (a measurement below 20 minutes still has more than 50% headroom under the 30-minute ceiling and does
+  not justify a bound above 30 minutes; the declared bound must cover the measurement). Any timeout above
+  `60m`, any evidence key declared when `declared_verify_timeout` is omitted or at most `30m`, or any
+  unreadable, untracked, malformed, or escaping evidence file fails manifest validation naming the key,
+  the path, and the reason
+  (`TestValidateGate_Positive_RaisedBoundWithCommittedEvidence`,
+  `TestValidateGate_Negative_EvidenceAndCapRefusals`,
+  `TestValidateGate_Negative_PathContainmentRefusals`,
+  `TestValidateGate_Boundary_MeasuredDurationRelation` in `internal/config/gate_evidence_test.go`).
+  The raised bound applies only to the declared-verification stage of that repository; the race-detector
+  stage and `PRAETOR_TEST_STAGE_TIMEOUT` keep the 30-minute ceiling (`gating.MaxTestStageTimeout`,
+  `TestResolveRepoRunBudget_Boundary_ToolchainRepoKeeps30mCeiling`).
   `PRAETOR_TEST_STAGE_TIMEOUT` overrides the declared value when set. The whole-run deadline
   (`RunBudget`) reserves the declared bound so the run deadline does not cut the stage short (#314).
+  When a raised bound is in force, the passing stage line and any bound-cut failure message name the
+  declared bound, the evidence path, and the measured duration read from it (for example
+  <!-- praetor:docs-references:off docs/verify-evidence.yaml is an illustrative adopter evidence path -->
+  `make verify-all exited 0 (declared bound 45m0s, evidence docs/verify-evidence.yaml, measured 38m0s)`
+  and
+  `declared verification make verify-all did not finish within 45m0s (.standards.yaml: evidence docs/verify-evidence.yaml, measured 38m0s): ...`;
+  <!-- praetor:docs-references:on -->
+  `TestRunDeclaredVerifyStage_Positive_RaisedBoundOutputNamesEvidence`,
+  `TestRunDeclaredVerifyStage_Negative_RaisedBoundCutOutputNamesEvidence`); a repository without a raised
+  bound keeps today's output byte-for-byte
+  (`TestRunDeclaredVerifyStage_Boundary_UndeclaredRepoOutputByteIdentical`).
   When the bound fires, the stage's reason line names where the bound came from (`default`,
   `environment`, `.standards.yaml`). The bound covers creating the stage worktree too, so on a slow
   runner setup can be what hits it; that reason names the origin as well, for example

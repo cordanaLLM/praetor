@@ -76,7 +76,18 @@ func runDeclaredVerifyStage(ctx context.Context, cfg *stageConfig) (string, erro
 		return "", stageErr
 	}
 	cfg.declaredVerified = true
-	return declaredVerifyCommand + " exited 0", nil
+	return declaredVerifyPassMessage(budget), nil
+}
+
+// declaredVerifyPassMessage formats the stage message for a passed declared verification run.
+// When a raised bound (> 30m) is in force, the stage line names the declared bound, the evidence
+// path and the measured duration read from it; otherwise it prints today's message byte-for-byte.
+func declaredVerifyPassMessage(budget RunBudget) string {
+	if budget.EvidencePath != "" && budget.MeasuredDuration > 0 {
+		return fmt.Sprintf("%s exited 0 (declared bound %s, evidence %s, measured %s)",
+			declaredVerifyCommand, budget.StageBound, budget.EvidencePath, budget.MeasuredDuration)
+	}
+	return declaredVerifyCommand + " exited 0"
 }
 
 // declaredVerifyNotApplicable says why the stage runs nothing, or returns "" when it applies.
@@ -117,7 +128,7 @@ func declaredVerifyFailure(ctx context.Context, bound time.Duration, origin stri
 	outcome := "failed to run"
 	var exit interface{ ExitCode() int }
 	switch {
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+	case errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(context.Cause(ctx), errStageBoundFired):
 		outcome = fmt.Sprintf("did not finish within %s (%s)", bound, origin)
 	case errors.As(err, &exit):
 		outcome = fmt.Sprintf("exited %d", exit.ExitCode())

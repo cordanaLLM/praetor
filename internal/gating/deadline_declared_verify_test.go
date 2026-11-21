@@ -5,6 +5,8 @@
 package gating
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -169,5 +171,140 @@ func TestRunGatedPipeline_Positive_SlowVerifyUnderDeclaredBoundPasses(t *testing
 	got := stageNamed(t, rep, stageDeclaredVerify)
 	if got.Status != StagePassed || got.Message != "make verify-all exited 0" {
 		t.Fatalf("stage %s %q; want passed under the declared 30s bound", got.Status, got.Message)
+	}
+}
+
+// commitDeclaredTimeoutWithEvidence writes an evidence file and a manifest declaring timeout and
+// evidenceRel in dir, committing the evidence file when commitEvidence is true.
+func commitDeclaredTimeoutWithEvidence(t *testing.T, dir, timeout, evidenceRel, measured string, commitEvidence bool) string {
+	t.Helper()
+	if evidenceRel != "" && measured != "" {
+		evContent := fmt.Sprintf("command: make verify-all\nmeasured_duration: %s\ndate: \"2026-11-18\"\ncommit: 0123456789abcdef0123456789abcdef01234567\n", measured)
+		writeFile(t, filepath.Join(dir, filepath.FromSlash(evidenceRel)), evContent)
+		if commitEvidence {
+			treeGit(t, dir, "add", "--", evidenceRel)
+		}
+	}
+	manifest := fmt.Sprintf("version: 1\nrepository:\n  owner: fixture\n  name: fixture\nprofiles:\n  - pages-site\ngate:\n  declared_verify_timeout: %s\n", timeout)
+	if evidenceRel != "" {
+		manifest += fmt.Sprintf("  declared_verify_evidence: %q\n", evidenceRel)
+	}
+	writeFile(t, filepath.Join(dir, ".standards.yaml"), manifest)
+	treeGit(t, dir, "add", "--", ".standards.yaml")
+	treeGit(t, dir, "commit", "-q", "-m", "declare verify timeout with evidence")
+	return dir
+}
+
+// TestResolveRepoRunBudget_Positive_RaisedBoundWithEvidence verifies that a 45m or 60m bound with
+// committed evidence raises StageBound for a declared-verification repository only.
+func TestResolveRepoRunBudget_Positive_RaisedBoundWithEvidence(t *testing.T) {
+	dir := commitDeclaredTimeoutWithEvidence(t, committedAdmitRepo(t, "pyproject.toml"), "45m", "docs/verify-evidence.yaml", "38m", true)
+	budget, err := ResolveRepoRunBudget("", dir)
+	if err != nil {
+		t.Fatalf("ResolveRepoRunBudget returned error: %v", err)
+	}
+	if budget.StageBound != 45*time.Minute || budget.EvidencePath != "docs/verify-evidence.yaml" || budget.MeasuredDuration != 38*time.Minute {
+		t.Fatalf("budget = %+v; want 45m stage bound with docs/verify-evidence.yaml (38m)", budget)
+	}
+	if budget.Timeout() != 45*time.Minute+OtherStagesAllowance {
+		t.Errorf("budget.Timeout() = %s, want %s", budget.Timeout(), 45*time.Minute+OtherStagesAllowance)
+	}
+	for _, want := range []string{"45m0s", "docs/verify-evidence.yaml", "38m0s"} {
+		if !strings.Contains(budget.Note, want) {
+			t.Errorf("budget.Note %q does not contain %q", budget.Note, want)
+		}
+	}
+}
+
+// TestResolveRepoRunBudget_Boundary_ToolchainRepoKeeps30mCeiling verifies that a Go repository
+// does not receive the raised declared-verification bound.
+func TestResolveRepoRunBudget_Boundary_ToolchainRepoKeeps30mCeiling(t *testing.T) {
+	dir := deadlineMarkerFixture(t, []string{"go.mod"})
+	commitDeclaredTimeoutWithEvidence(t, dir, "45m", "docs/verify-evidence.yaml", "38m", true)
+	budget, err := ResolveRepoRunBudget("", dir)
+	if err != nil {
+		t.Fatalf("ResolveRepoRunBudget returned error: %v", err)
+	}
+	if budget.StageBound != TestStageTimeout || budget.EvidencePath != "" {
+		t.Fatalf("Go repository budget = %+v; want default %s race stage bound", budget, TestStageTimeout)
+	}
+}
+
+// blockedMakeVerify simulates a hung `make verify-all` command killed once its stage bound expires.
+func blockedMakeVerify(ran *bool, arm func()) commandRunner {
+	return func(runCtx context.Context, dir, name string, args ...string) (string, error) {
+		if name == "make" && len(args) > 0 && args[0] == declaredVerifyTarget {
+			*ran = true
+			if arm != nil {
+				arm()
+			}
+			<-runCtx.Done()
+			return "", errors.New("signal: killed")
+		}
+		return fakeRunner(&[]recordedCommand{}, "", nil)(runCtx, dir, name, args...)
+	}
+}
+
+// TestRunDeclaredVerifyStage_Positive_RaisedBoundOutputNamesEvidence verifies that when a raised
+// bound is in force, the passing stage message names the declared bound, evidence path, and measured duration.
+func TestRunDeclaredVerifyStage_Positive_RaisedBoundOutputNamesEvidence(t *testing.T) {
+	requireMake(t)
+	t.Setenv(TestStageTimeoutEnv, "")
+	dir := commitDeclaredTimeoutWithEvidence(t, declaredVerifyRepo(t, "@exit 0"), "45m", "docs/verify-evidence.yaml", "38m", true)
+	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
+	got := stageNamed(t, rep, stageDeclaredVerify)
+	want := "make verify-all exited 0 (declared bound 45m0s, evidence docs/verify-evidence.yaml, measured 38m0s)"
+	if rep.Status != StatusAdmitted || got.Status != StagePassed || got.Message != want {
+		t.Fatalf("status=%s stage=%s msg=%q; want %q", rep.Status, got.Status, got.Message, want)
+	}
+}
+
+// TestRunDeclaredVerifyStage_Negative_RaisedBoundCutOutputNamesEvidence verifies that when the
+// stage hits a raised bound, the failure message names the declared bound, evidence path, and measured duration.
+func TestRunDeclaredVerifyStage_Negative_RaisedBoundCutOutputNamesEvidence(t *testing.T) {
+	t.Setenv(TestStageTimeoutEnv, "")
+	dir := commitDeclaredTimeoutWithEvidence(t, declaredVerifyRepo(t, "@exit 0"), "45m", "docs/verify-evidence.yaml", "38m", true)
+	cfg, _ := newTestConfig(t, dir, false)
+	cfg.lookPath = func(string) (string, error) { return "make", nil }
+	var seen time.Duration
+	ran := false
+	cfg.run = blockedMakeVerify(&ran, holdStageBoundAt(cfg, time.Millisecond, &seen))
+	_, err := runDeclaredVerifyStage(context.Background(), cfg)
+	if err == nil || !ran {
+		t.Fatalf("expected hung declared verify to fail at bound: ran=%v err=%v", ran, err)
+	}
+	if seen != 45*time.Minute {
+		t.Errorf("stage requested bound %s, want 45m0s", seen)
+	}
+	wantPrefix := "declared verification make verify-all did not finish within 45m0s (.standards.yaml: evidence docs/verify-evidence.yaml, measured 38m0s):"
+	if !strings.HasPrefix(err.Error(), wantPrefix) {
+		t.Errorf("error = %q, want prefix %q", err.Error(), wantPrefix)
+	}
+}
+
+// TestRunDeclaredVerifyStage_Boundary_UndeclaredRepoOutputByteIdentical verifies that a repository
+// without a raised bound keeps the 30m ceiling and prints byte-identical pass and timeout messages.
+func TestRunDeclaredVerifyStage_Boundary_UndeclaredRepoOutputByteIdentical(t *testing.T) {
+	t.Setenv(TestStageTimeoutEnv, "")
+	dir := declaredVerifyRepo(t, "@exit 0")
+	budget, err := ResolveRepoRunBudget("", dir)
+	if err != nil || budget.StageBound != TestStageTimeout || MaxTestStageTimeout != 30*time.Minute {
+		t.Fatalf("undeclared budget = %+v, err = %v; want %s default under 30m ceiling", budget, err, TestStageTimeout)
+	}
+	if got := declaredVerifyPassMessage(budget); got != "make verify-all exited 0" {
+		t.Errorf("undeclared pass message = %q, want exact %q", got, "make verify-all exited 0")
+	}
+	cfg, _ := newTestConfig(t, dir, false)
+	cfg.lookPath = func(string) (string, error) { return "make", nil }
+	var seen time.Duration
+	ran := false
+	cfg.run = blockedMakeVerify(&ran, holdStageBoundAt(cfg, time.Millisecond, &seen))
+	_, cutErr := runDeclaredVerifyStage(context.Background(), cfg)
+	if cutErr == nil || !ran || seen != TestStageTimeout {
+		t.Fatalf("undeclared cut: ran=%v seen=%s err=%v", ran, seen, cutErr)
+	}
+	wantPrefix := "declared verification make verify-all did not finish within 20m0s (default):"
+	if !strings.HasPrefix(cutErr.Error(), wantPrefix) {
+		t.Errorf("undeclared timeout error = %q, want exact prefix %q", cutErr.Error(), wantPrefix)
 	}
 }
