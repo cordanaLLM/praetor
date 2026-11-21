@@ -14,6 +14,17 @@ var ownReleaseResolveCases = []struct {
 	config     string
 	wantErrSub string
 }{
+	{name: "inherited draft and force", config: `{"draft":true,"force-tag-creation":true,"packages":{".":{},"pkg":{}}}`},
+	{name: "package draft and force", config: `{"packages":{".":{"draft":true,"force-tag-creation":true}}}`},
+	{name: "draft false", config: `{"draft":false,"force-tag-creation":true,"packages":{".":{}}}`, wantErrSub: `package "." resolves neither`},
+	{name: "draft without force", config: `{"draft":true,"packages":{".":{}}}`, wantErrSub: `draft true but force-tag-creation not true`},
+	{name: "force without draft", config: `{"force-tag-creation":true,"packages":{".":{}}}`, wantErrSub: `package "." resolves neither`},
+	{name: "mixed with invalid package", config: `{"packages":{"a":{"skip-github-release":true},"b":{}}}`, wantErrSub: `package "b" resolves neither`},
+	{name: "draft string", config: `{"draft":"true","packages":{".":{}}}`, wantErrSub: `draft must be a boolean`},
+	{name: "force string despite skip", config: `{"skip-github-release":true,"packages":{".":{"force-tag-creation":"true"}}}`, wantErrSub: `force-tag-creation must be a boolean`},
+	{name: "mixed accepted forms", config: `{"packages":{"a":{"skip-github-release":true},"b":{"draft":true,"force-tag-creation":true}}}`},
+	{name: "draft override false", config: `{"draft":true,"force-tag-creation":true,"packages":{".":{"draft":false}}}`, wantErrSub: `package "." resolves neither`},
+
 	{
 		name:   "top-level true",
 		config: `{"skip-github-release":true,"packages":{".":{}}}`,
@@ -21,12 +32,12 @@ var ownReleaseResolveCases = []struct {
 	{
 		name:       "package false overrides",
 		config:     `{"skip-github-release":true,"packages":{".":{},"pkg":{"skip-github-release":false}}}`,
-		wantErrSub: `package "pkg" does not resolve skip-github-release to true`,
+		wantErrSub: `package "pkg" resolves neither skip-github-release nor draft with force-tag-creation to true`,
 	},
 	{
 		name:       "missing key",
 		config:     `{"packages":{".":{}}}`,
-		wantErrSub: `package "." does not resolve skip-github-release to true`,
+		wantErrSub: `package "." resolves neither skip-github-release nor draft with force-tag-creation to true`,
 	},
 	{
 		name:       "malformed JSON",

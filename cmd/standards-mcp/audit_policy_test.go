@@ -250,6 +250,27 @@ func TestServerAuditRunsTheReleaseTokenGate(t *testing.T) {
 		"[PASS] Release token: 1 release-please step takes token from a GitHub App token step.")
 }
 
+// TestServerAuditReleaseOwnPublisherDraftForm checks the draft and tag requirement through MCP.
+func TestServerAuditReleaseOwnPublisherDraftForm(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	workflow := "on: push\njobs:\n  release:\n    runs-on: ubuntu-latest\n    steps:\n" +
+		"      - id: app-token\n        uses: actions/create-github-app-token@v1\n        with:\n" +
+		"          client-id: ${{ vars.CLIENT_ID }}\n          private-key: ${{ secrets.KEY }}\n" +
+		"      - uses: googleapis/release-please-action@v4\n        with:\n" +
+		"          token: ${{ steps.app-token.outputs.token }}\n"
+	writeFixtureFile(t, root, ".github/workflows/release-please.yml", workflow)
+	writeFixtureFile(t, root, ".github/workflows/publish.yml", "on: push\njobs:\n  publish:\n"+
+		"    runs-on: ubuntu-latest\n    steps:\n      - uses: softprops/action-gh-release@v2\n")
+	writeFixtureFile(t, root, "release-please-config.json", `{"draft":true,"force-tag-creation":true,"packages":{".":{}}}`)
+	expectText(t, "draft with tag", callTool(t, srv, "standards_audit", nil),
+		"[PASS] release-own-publisher: release-please-config.json: every package hands release creation to the own publisher (draft with force-tag-creation)")
+	writeFixtureFile(t, root, "release-please-config.json", `{"draft":true,"packages":{".":{}}}`)
+	result := callTool(t, srv, "standards_audit", nil)
+	expectError(t, "draft without tag", result, "[FAIL] release-own-publisher:")
+	expectError(t, "draft without tag", result, "draft true but force-tag-creation not true")
+	expectError(t, "accepted forms", result, `set "skip-github-release": true, or both "draft": true and "force-tag-creation": true`)
+}
+
 // TestReleaseE2EAuditGates_MissingSectionSkips proves that releaseE2EAuditGates emits a skip
 // gate when release.e2e is omitted, and includes test level warnings when profiles are declared.
 func TestReleaseE2EAuditGates_MissingSectionSkips(t *testing.T) {

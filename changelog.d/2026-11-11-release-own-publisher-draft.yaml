@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+type: fixed
+title: The release-own-publisher audit also accepts a release-please package that creates a draft release with its tag (draft and force-tag-creation both true), beside skip-github-release.
