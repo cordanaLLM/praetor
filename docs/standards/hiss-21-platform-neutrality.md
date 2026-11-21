@@ -269,6 +269,9 @@ strings through `sh`, so it skips on Windows and states why: the strings are wri
 shell, and on Windows Codex and AGY run hooks through `cmd.exe` and Gemini CLI through
 PowerShell. An `sh` run on the leg's Git Bash would pass without showing what those clients do.
 The Windows leg therefore executes fewer tests than the other two.
+The list also includes `scripts/test_block_evasion_hook.py`, which runs the short-flag veto rows
+of `.config/agent/hooks/test_block_evasion.py` (quoted shell state text, real boundaries) on every
+leg with the standard library only, not a third-party test runner.
 
 ### The hook toolchain is declared, and the matrix asserts it
 
