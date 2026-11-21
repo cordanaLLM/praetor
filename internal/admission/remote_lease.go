@@ -53,6 +53,7 @@ func AdmitExecutorLease(name string) (concurrent int, release func() error, resu
 	return count, releaseLease, nil
 }
 
+// executorLeaseDir returns the private local runtime directory path used for holding executor lease files.
 func executorLeaseDir(name string) (string, error) {
 	if !validExecutorName(name) {
 		return "", fmt.Errorf("executor %s: invalid or reserved executor name", name)
@@ -74,6 +75,7 @@ func executorLeaseDir(name string) (string, error) {
 	return dir, nil
 }
 
+// ensurePrivateRuntimeDir ensures that the directory exists with 0700 permissions and is owned by the specified UID.
 func ensurePrivateRuntimeDir(dir string, uid int) error {
 	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a private runtime directory needs the owner search bit; 0o700 is least privilege
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
@@ -90,6 +92,7 @@ func ensurePrivateRuntimeDir(dir string, uid int) error {
 	return nil
 }
 
+// createExecutorLease generates and locks a unique lease file, returning its name and a release function.
 func createExecutorLease(name, dir string, root *os.Root) (string, func() error, error) {
 	var token [8]byte
 	if _, err := rand.Read(token[:]); err != nil {
@@ -123,6 +126,7 @@ func createExecutorLease(name, dir string, root *os.Root) (string, func() error,
 	return ownName, release, nil
 }
 
+// countExecutorLeases tallies the active advisory file locks currently held for the specified executor.
 func countExecutorLeases(name, ownName string, root *os.Root) (int, error) {
 	entries, err := readExecutorLeaseEntries(name, root)
 	if err != nil {
@@ -150,6 +154,7 @@ func countExecutorLeases(name, ownName string, root *os.Root) (int, error) {
 	return concurrent, nil
 }
 
+// readExecutorLeaseEntries reads up to maxExecutorLeaseFiles plus one directory entries from the lease root.
 func readExecutorLeaseEntries(name string, root *os.Root) ([]os.DirEntry, error) {
 	f, err := root.Open(".")
 	if err != nil {
@@ -165,6 +170,7 @@ func readExecutorLeaseEntries(name string, root *os.Root) ([]os.DirEntry, error)
 	return entries, nil
 }
 
+// probeExecutorLease tests whether a lease file is actively locked, removing stale unheld lock files.
 func probeExecutorLease(name string, root *os.Root, entryName string) (bool, error) {
 	unlock, busy, err := util.LockPrivateFile(root, entryName, os.O_RDONLY, "executor "+name+" lease")
 	if errors.Is(err, os.ErrNotExist) {

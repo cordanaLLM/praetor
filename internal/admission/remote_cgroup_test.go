@@ -24,8 +24,10 @@ import (
 
 const holdExecutorLeaseEnv = "PRAETOR_TEST_HOLD_EXECUTOR_LEASE"
 
+// listCores returns a pointer to the provided integer for testing optional core configuration.
 func listCores(n int) *int { return &n }
 
+// TestMeasuredExecutorCores_Positive_ListAndCgroup proves that core count resolves to the lower of list cores and cgroup quota.
 func TestMeasuredExecutorCores_Positive_ListAndCgroup(t *testing.T) {
 	got, source, err := measuredExecutorCores("home", listCores(30), []byte("1200000 100000"))
 	if err != nil || got != 12 || source != "list and pod cpu.max" {
@@ -33,6 +35,7 @@ func TestMeasuredExecutorCores_Positive_ListAndCgroup(t *testing.T) {
 	}
 }
 
+// TestMeasuredExecutorCores_Negative_NoListAndUnlimitedCPU proves that missing list cores with unlimited cgroup CPU fails closed.
 func TestMeasuredExecutorCores_Negative_NoListAndUnlimitedCPU(t *testing.T) {
 	for _, raw := range []string{"max", "max 100000"} {
 		_, _, err := measuredExecutorCores("home", nil, []byte(raw))
@@ -42,6 +45,7 @@ func TestMeasuredExecutorCores_Negative_NoListAndUnlimitedCPU(t *testing.T) {
 	}
 }
 
+// TestMeasuredExecutorCores_Boundary_SingleSource proves fallback to list cores or cgroup quotas when only one source is present.
 func TestMeasuredExecutorCores_Boundary_SingleSource(t *testing.T) {
 	got, source, err := measuredExecutorCores("home", listCores(8), []byte("max 100000"))
 	if err != nil || got != 8 || source != "list cores" {
@@ -57,6 +61,7 @@ func TestMeasuredExecutorCores_Boundary_SingleSource(t *testing.T) {
 	}
 }
 
+// TestRemoteExecutorHeadroom_Positive_CgroupCapsMemAvailable proves that cgroup memory limits cap available host RAM headroom.
 func TestRemoteExecutorHeadroom_Positive_CgroupCapsMemAvailable(t *testing.T) {
 	stats := sentinel.HostStats{RAMFreeBytes: 20 * gib}
 	maxBytes := []byte(strconv.FormatUint(16*gib, 10))
@@ -67,6 +72,7 @@ func TestRemoteExecutorHeadroom_Positive_CgroupCapsMemAvailable(t *testing.T) {
 	}
 }
 
+// TestRemoteExecutorHeadroom_Negative_UnreadableCgroup proves that missing or unlimited cgroup memory values produce an error.
 func TestRemoteExecutorHeadroom_Negative_UnreadableCgroup(t *testing.T) {
 	stats := sentinel.HostStats{RAMFreeBytes: 20 * gib}
 	if _, err := remoteExecutorHeadroom("home", stats, []byte("__MISSING__"), []byte("0")); err == nil {
@@ -77,6 +83,7 @@ func TestRemoteExecutorHeadroom_Negative_UnreadableCgroup(t *testing.T) {
 	}
 }
 
+// TestLimitsMemoryMaxBytes_Boundary_StepDefault proves parsing of standard memory limits into exact byte quantities.
 func TestLimitsMemoryMaxBytes_Boundary_StepDefault(t *testing.T) {
 	got, err := LimitsMemoryMaxBytes(Limits{MemoryHigh: "16G", MemoryMax: "24G", MemorySwapMax: "4G"})
 	if err != nil || got != 24*gib {
@@ -84,6 +91,7 @@ func TestLimitsMemoryMaxBytes_Boundary_StepDefault(t *testing.T) {
 	}
 }
 
+// TestStepParallelismJobs_Positive_TwoConcurrent proves that job slots divide evenly among concurrent admitted steps.
 func TestStepParallelismJobs_Positive_TwoConcurrent(t *testing.T) {
 	if got := StepParallelismJobs(12, 2); got != 6 {
 		t.Fatalf("jobs = %d", got)
@@ -93,6 +101,7 @@ func TestStepParallelismJobs_Positive_TwoConcurrent(t *testing.T) {
 	}
 }
 
+// exit255Error runs a shell command that exits with status 255 to produce a test ExitError.
 func exit255Error(t *testing.T) error {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -101,6 +110,7 @@ func exit255Error(t *testing.T) error {
 	return err
 }
 
+// TestRemoteRunFailure_Boundary_StepExit255NotLost proves that a step exiting 255 with an exit marker is reported as a step failure rather than an eviction.
 func TestRemoteRunFailure_Boundary_StepExit255NotLost(t *testing.T) {
 	w := &remoteStepStderr{}
 	if _, err := w.Write([]byte("praetor-admit-step-complete ")); err != nil {
@@ -115,6 +125,7 @@ func TestRemoteRunFailure_Boundary_StepExit255NotLost(t *testing.T) {
 	}
 }
 
+// TestRemoteRunFailure_Negative_SSH255WithoutMarker proves that an SSH exit code of 255 without an exit marker is classified as an eviction.
 func TestRemoteRunFailure_Negative_SSH255WithoutMarker(t *testing.T) {
 	code, ferr := remoteRunFailure(context.Background(), "home", false, exit255Error(t))
 	if code != 255 || ferr == nil || ferr.Error() != "executor home lost the step mid-run (evicted or unreachable)" {
@@ -151,6 +162,7 @@ func TestAdmitExecutorLease_Positive_TwoConcurrentSteps(t *testing.T) {
 	assertSingleStepAfterRelease(t, leaseDir)
 }
 
+// plantStaleExecutorLease writes an unheld lock file to simulate an orphaned executor lease in tests.
 func plantStaleExecutorLease(t *testing.T, runtimeDir, executor string) (string, string) {
 	t.Helper()
 	leaseDir := filepath.Join(runtimeDir, "praetor-admit-leases", executor)
@@ -165,6 +177,7 @@ func plantStaleExecutorLease(t *testing.T, runtimeDir, executor string) (string,
 	return leaseDir, stale
 }
 
+// assertSingleStepAfterRelease verifies that releasing a lease leaves the directory clean and permits subsequent acquisition.
 func assertSingleStepAfterRelease(t *testing.T, leaseDir string) {
 	t.Helper()
 	assertNoLeaseFiles(t, leaseDir)
@@ -172,6 +185,7 @@ func assertSingleStepAfterRelease(t *testing.T, leaseDir string) {
 	assertNoLeaseFiles(t, leaseDir)
 }
 
+// assertSingleLeaseRound acquires and immediately releases an executor lease to verify clean state.
 func assertSingleLeaseRound(t *testing.T) {
 	t.Helper()
 	concurrent, release, err := AdmitExecutorLease("home")
@@ -183,6 +197,7 @@ func assertSingleLeaseRound(t *testing.T) {
 	}
 }
 
+// TestAdmitExecutorLease_Negative_UnreadableLeaseDirectoryRefused proves that an unreadable lease directory is refused with an informative error.
 func TestAdmitExecutorLease_Negative_UnreadableLeaseDirectoryRefused(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("unreadable directory permission check requires non-root Unix")
@@ -213,6 +228,7 @@ func TestAdmitExecutorLease_Negative_UnreadableLeaseDirectoryRefused(t *testing.
 	}
 }
 
+// assertNoLeaseFiles asserts that no lease lock files remain in the specified directory.
 func assertNoLeaseFiles(t *testing.T, leaseDir string) {
 	t.Helper()
 	entries, err := os.ReadDir(leaseDir)
@@ -221,6 +237,7 @@ func assertNoLeaseFiles(t *testing.T, leaseDir string) {
 	}
 }
 
+// runSubprocessLeaseHolder runs the lease-holding loop when invoked as a subprocess holder.
 func runSubprocessLeaseHolder(t *testing.T) bool {
 	t.Helper()
 	name := os.Getenv(holdExecutorLeaseEnv)
@@ -243,6 +260,7 @@ func runSubprocessLeaseHolder(t *testing.T) bool {
 	return true
 }
 
+// startSubprocessLeaseHolder launches a background subprocess holding a lease and returns a stopper function.
 func startSubprocessLeaseHolder(t *testing.T, executor, testName string) func() {
 	t.Helper()
 	self, err := os.Executable()
@@ -285,6 +303,7 @@ func startSubprocessLeaseHolder(t *testing.T, executor, testName string) func() 
 	return stop
 }
 
+// TestAdmitExecutorLease_Boundary_TempDirFallbackAndCap proves fallback to temporary directory leases and adherence to scan file limits.
 func TestAdmitExecutorLease_Boundary_TempDirFallbackAndCap(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("remote executor leases require Unix advisory file locks")
@@ -305,6 +324,7 @@ func TestAdmitExecutorLease_Boundary_TempDirFallbackAndCap(t *testing.T) {
 	}
 }
 
+// TestMeasuredExecutorCores_Negative_NprocMutant proves that unconstrained nproc values are not mistakenly used over cgroup limits.
 func TestMeasuredExecutorCores_Negative_NprocMutant(t *testing.T) {
 	got, _, err := measuredExecutorCores("home", listCores(30), []byte("1200000 100000"))
 	if err != nil || got == 30 {

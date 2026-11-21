@@ -46,6 +46,7 @@ func RunRemote(ctx context.Context, executor Executor, step Step, timeout time.D
 	return runRemoteSnapshot(ctx, executor, step, snapshot, bundle, timeout, jobs, memoryMaxBytes)
 }
 
+// validateRemoteRun validates executor configuration, arguments, limits, and timeout durations prior to execution.
 func validateRemoteRun(executor Executor, step Step, timeout time.Duration, jobs int, memoryMaxBytes uint64) (int, uint64, error) {
 	if err := executor.validate(); err != nil {
 		return 0, 0, fmt.Errorf("executor %s: %w", executor.Name, err)
@@ -71,6 +72,7 @@ type gitSnapshot struct {
 	size                             int64
 }
 
+// bundleSnapshot creates a Git bundle stream containing HEAD and index objects for remote transmission.
 func bundleSnapshot(ctx context.Context, bundle *os.File) (gitSnapshot, error) {
 	ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
 	defer cancel()
@@ -99,6 +101,7 @@ func bundleSnapshot(ctx context.Context, bundle *os.File) (gitSnapshot, error) {
 	return snapshot, err
 }
 
+// readSnapshot reads Git commit and tree identifiers along with prefix path and object format information.
 func readSnapshot(ctx context.Context) (gitSnapshot, error) {
 	head, err := util.RunGit(ctx, "", "--no-lazy-fetch", "--no-replace-objects", "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
@@ -122,6 +125,7 @@ func readSnapshot(ctx context.Context) (gitSnapshot, error) {
 	return gitSnapshot{head: head, tree: tree, objectFormat: format, prefix: strings.TrimSuffix(string(out.Stdout), "\n")}, nil
 }
 
+// runRemoteSnapshot streams the Git bundle and executes the remote workspace command over SSH.
 func runRemoteSnapshot(ctx context.Context, executor Executor, step Step, snapshot gitSnapshot, bundle *os.File, timeout time.Duration, jobs int, memoryMaxBytes uint64) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout+remoteOverhead+time.Second)
 	defer cancel()
@@ -149,6 +153,7 @@ func runRemoteSnapshot(ctx context.Context, executor Executor, step Step, snapsh
 	return 0, errors.Join(copyErr, closeErr)
 }
 
+// closeLease closes an open lease file descriptor, ignoring already-closed errors.
 func closeLease(lease *os.File) error {
 	if err := lease.Close(); !errors.Is(err, os.ErrClosed) {
 		return err
@@ -156,6 +161,7 @@ func closeLease(lease *os.File) error {
 	return nil
 }
 
+// remoteCommand formats the POSIX shell invocation for setting up and running the remote workspace step.
 func remoteCommand(executor Executor, step Step, snapshot gitSnapshot, timeout time.Duration, jobs int, memoryMaxBytes uint64) string {
 	stepArgs := append([]string{"timeout", "--kill-after=5s", timeoutSeconds(timeout)}, step.Argv...)
 	args := []string{"timeout", "--kill-after=15s", timeoutSeconds(timeout + remoteOverhead), "sh", "-c", remoteWorkspaceScript,
@@ -169,6 +175,7 @@ func remoteCommand(executor Executor, step Step, snapshot gitSnapshot, timeout t
 	return strings.Join(args, " ")
 }
 
+// timeoutSeconds formats a time.Duration as a fractional seconds string suitable for the timeout command.
 func timeoutSeconds(d time.Duration) string {
 	return strconv.FormatFloat(d.Seconds(), 'f', 9, 64) + "s"
 }

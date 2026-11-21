@@ -32,6 +32,7 @@ func LimitsMemoryMaxBytes(l Limits) (uint64, error) {
 	return n * scale, nil
 }
 
+// memoryUnitScale returns the byte multiplier corresponding to a single-letter memory unit suffix.
 func memoryUnitScale(unit byte) (uint64, bool) {
 	switch unit {
 	case 'K', 'k':
@@ -63,6 +64,7 @@ func parseCgroupBytes(raw []byte) (uint64, bool, error) {
 	return value, false, nil
 }
 
+// errorsMissing constructs an error indicating a missing or unreadable cgroup metric.
 func errorsMissing(msg string) error { return fmt.Errorf("%s", msg) }
 
 // parseCPUMaxCores turns cgroup cpu.max "quota period" into a core count, or reports unlimited.
@@ -129,6 +131,7 @@ func remoteExecutorHeadroom(name string, stats sentinel.HostStats, memoryMax, me
 	return min(stats.RAMFreeBytes, cgroupFree), nil
 }
 
+// remoteProbeCommand constructs the shell command for reading load, memory, and cgroup metrics on a remote host.
 func remoteProbeCommand() string {
 	return "timeout --kill-after=1s 2s sh -c '" +
 		`cgroup=${PRAETOR_ADMIT_CGROUP_DIR:-/sys/fs/cgroup}; ` +
@@ -137,6 +140,7 @@ func remoteProbeCommand() string {
 		` done'`
 }
 
+// parseRemoteProbeSections splits probe output into sections for load, memory, and cgroup metrics.
 func parseRemoteProbeSections(out []byte) ([][]byte, error) {
 	chunks := bytes.Split(out, []byte(cgroupSectionEnd))
 	if len(chunks) < 6 {

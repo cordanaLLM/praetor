@@ -214,6 +214,7 @@ func needsSignalRootContext(command string, args []string) bool {
 	}
 }
 
+// agentNeedsSignalRootContext reports whether the agent subcommands require root context signal cancellation.
 func agentNeedsSignalRootContext(args []string) bool {
 	return len(args) > 0 && args[0] == "sandbox" || len(args) >= 2 && args[0] == "run" && isGatekeeperAgent(args[1])
 }

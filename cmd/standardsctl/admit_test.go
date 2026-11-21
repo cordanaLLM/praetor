@@ -106,6 +106,7 @@ func TestRunAdmit_Boundary_ExitStatusPassesThrough(t *testing.T) {
 	}
 }
 
+// TestRunAdmit_RemoteHeadroomAndGateStatus proves that remote admission selects the executor with the greatest headroom and preserves child exit codes.
 func TestRunAdmit_RemoteHeadroomAndGateStatus(t *testing.T) {
 	f := newAdmitFixture(t)
 	f.inventory(t, "adequate", "best", "busy", "down")
@@ -133,6 +134,7 @@ exit "$3"`, "gate", f.head, f.tree, fmt.Sprint(status), "argument with 'quotes' 
 	}
 }
 
+// TestRunAdmit_RemoteTieUsesLoadPerCore proves that tie-breaking between executors with equal headroom chooses the executor with lower load per core.
 func TestRunAdmit_RemoteTieUsesLoadPerCore(t *testing.T) {
 	f := newAdmitFixture(t)
 	f.inventory(t, "tie-small", "tie-large")
@@ -143,6 +145,7 @@ func TestRunAdmit_RemoteTieUsesLoadPerCore(t *testing.T) {
 	f.assertClean(t)
 }
 
+// TestRunAdmit_RemoteRefusesDownAndHeldByName proves that unresponsive or overloaded executors are refused with status 75 when wait timeout expires.
 func TestRunAdmit_RemoteRefusesDownAndHeldByName(t *testing.T) {
 	for _, name := range []string{"down", "busy", "incomplete", "slow"} {
 		t.Run(name, func(t *testing.T) {
@@ -157,6 +160,7 @@ func TestRunAdmit_RemoteRefusesDownAndHeldByName(t *testing.T) {
 	}
 }
 
+// TestRunAdmit_RemoteSlowExecutorDoesNotBlockHealthy proves that slow executor probes run concurrently and do not delay admission on healthy executors.
 func TestRunAdmit_RemoteSlowExecutorDoesNotBlockHealthy(t *testing.T) {
 	f := newAdmitFixture(t)
 	f.inventory(t, "slow", "best")
@@ -168,6 +172,7 @@ func TestRunAdmit_RemoteSlowExecutorDoesNotBlockHealthy(t *testing.T) {
 	f.assertClean(t)
 }
 
+// TestRunAdmit_RemoteTimeoutCleansWorkspace proves that steps exceeding the admission timeout are killed with status 124 and their workspace is removed.
 func TestRunAdmit_RemoteTimeoutCleansWorkspace(t *testing.T) {
 	f := newAdmitFixture(t)
 	f.inventory(t, "best")
@@ -178,6 +183,7 @@ func TestRunAdmit_RemoteTimeoutCleansWorkspace(t *testing.T) {
 	f.assertClean(t)
 }
 
+// TestRunAdmit_RemoteBuildParallelism proves that build parallelism dynamically scales with concurrent executor leases and stale locks are pruned.
 func TestRunAdmit_RemoteBuildParallelism(t *testing.T) {
 	if runAdmitSubprocessLeaseHolder(t) {
 		return
@@ -211,6 +217,7 @@ func TestRunAdmit_RemoteBuildParallelism(t *testing.T) {
 	f.assertClean(t)
 }
 
+// TestRunAdmit_RemoteUnreadableLeaseDirectoryRefused proves that an unreadable lease directory fails closed with an informative error.
 func TestRunAdmit_RemoteUnreadableLeaseDirectoryRefused(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("unreadable directory permission check requires non-root user")
@@ -237,6 +244,7 @@ func TestRunAdmit_RemoteUnreadableLeaseDirectoryRefused(t *testing.T) {
 	f.assertClean(t)
 }
 
+// assertNoAdmitLeaseFiles asserts that no lingering lease files exist in the specified directory.
 func assertNoAdmitLeaseFiles(t *testing.T, leaseDir string) {
 	t.Helper()
 	entries, err := os.ReadDir(leaseDir)
@@ -245,6 +253,7 @@ func assertNoAdmitLeaseFiles(t *testing.T, leaseDir string) {
 	}
 }
 
+// runAdmitSubprocessLeaseHolder acquires and holds an executor lease in a subprocess until standard input closes.
 func runAdmitSubprocessLeaseHolder(t *testing.T) bool {
 	t.Helper()
 	name := os.Getenv(admitHoldLeaseEnv)
@@ -267,6 +276,7 @@ func runAdmitSubprocessLeaseHolder(t *testing.T) bool {
 	return true
 }
 
+// startAdmitSubprocessLeaseHolder spawns a subprocess holding an executor lease and returns a cleanup function to release it.
 func startAdmitSubprocessLeaseHolder(t *testing.T, executor string) func() {
 	t.Helper()
 	self, err := os.Executable()
@@ -309,6 +319,7 @@ func startAdmitSubprocessLeaseHolder(t *testing.T, executor string) func() {
 	return stop
 }
 
+// TestRunAdmit_RemoteNoCoresRefused proves that executors lacking both configured core counts and cgroup quotas are refused.
 func TestRunAdmit_RemoteNoCoresRefused(t *testing.T) {
 	f := newAdmitFixture(t)
 	f.inventoryRaw(t, `{"name":"no-cores","ssh_host":"no-cores","ssh_user":"fixture","workspace_root":"`+f.root+`","memory_gib":64,"class":"cpu-offload"}`)
@@ -318,6 +329,7 @@ func TestRunAdmit_RemoteNoCoresRefused(t *testing.T) {
 	}
 }
 
+// TestRunAdmit_RemoteBadMemoryRefused proves that remote executors with missing, unreadable, or mismatched cgroup memory limits are refused.
 func TestRunAdmit_RemoteBadMemoryRefused(t *testing.T) {
 	for _, tc := range []struct{ host, want string }{
 		{"max-mem", "executor max-mem: pod memory.max max is not the step MemoryMax 25769803776"},
@@ -337,6 +349,7 @@ func TestRunAdmit_RemoteBadMemoryRefused(t *testing.T) {
 	}
 }
 
+// TestRunAdmit_RemoteEvictionAndFallback proves that unexpected remote disconnections fail closed unless local fallback is enabled.
 func TestRunAdmit_RemoteEvictionAndFallback(t *testing.T) {
 	needShell(t)
 	f := newAdmitFixture(t)
@@ -352,6 +365,7 @@ func TestRunAdmit_RemoteEvictionAndFallback(t *testing.T) {
 	_ = f
 }
 
+// TestRunAdmit_RemoteHeadroomUsesPodCgroup proves that available memory is capped by pod cgroup limits and unreadable cgroups are skipped.
 func TestRunAdmit_RemoteHeadroomUsesPodCgroup(t *testing.T) {
 	f := newAdmitFixture(t)
 	f.inventory(t, "headroom", "unreadable-cgroup")
@@ -363,6 +377,7 @@ func TestRunAdmit_RemoteHeadroomUsesPodCgroup(t *testing.T) {
 	_ = f
 }
 
+// TestRunAdmit_RemoteCancellationCleansWorkspace proves that cancelling root context aborts the remote execution and removes the remote workspace.
 func TestRunAdmit_RemoteCancellationCleansWorkspace(t *testing.T) {
 	f := newAdmitFixture(t)
 	f.inventory(t, "best")
@@ -391,6 +406,7 @@ func TestRunAdmit_RemoteCancellationCleansWorkspace(t *testing.T) {
 	f.assertClean(t)
 }
 
+// TestRunAdmit_ExecutorModeIsExplicit proves that remote execution requires an explicit inventory path or local flag, refusing unset configurations.
 func TestRunAdmit_ExecutorModeIsExplicit(t *testing.T) {
 	admitStubTools(t)
 	t.Setenv(admitExecutorEnv, "")
@@ -411,6 +427,7 @@ func TestRunAdmit_ExecutorModeIsExplicit(t *testing.T) {
 	assertNamedLocal(t, step)
 }
 
+// assertNamedLocal asserts that running admit with the given arguments executes locally with named status output.
 func assertNamedLocal(t *testing.T, args []string) {
 	t.Helper()
 	out, log, code := runAdmitCaptured(t, args...)
@@ -419,6 +436,7 @@ func assertNamedLocal(t *testing.T, args []string) {
 	}
 }
 
+// runAdmitCaptured dispatches the admit command with the provided arguments and captures stdout, stderr, and the resulting exit code.
 func runAdmitCaptured(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	var captureErr error
@@ -442,6 +460,7 @@ type admitFixture struct {
 	root, head, tree string
 }
 
+// newAdmitFixture sets up a temporary Git repository and mock environment for testing remote admission workflows.
 func newAdmitFixture(t *testing.T) admitFixture {
 	t.Helper()
 	admitStubTools(t)
@@ -478,6 +497,7 @@ func newAdmitFixture(t *testing.T) admitFixture {
 	return admitFixture{root: root, head: head, tree: tree}
 }
 
+// admitFixtureGit executes a Git command within the fixture directory using an isolated environment.
 func admitFixtureGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -493,6 +513,7 @@ func admitFixtureGit(t *testing.T, dir string, args ...string) string {
 	return out
 }
 
+// admitFixtureEnvironment returns an isolated environment with host Git variables stripped and global Git configs redirected.
 func admitFixtureEnvironment() []string {
 	env := util.FilterEnvironment(os.Environ(), func(name string) bool {
 		return strings.HasPrefix(strings.ToUpper(name), "GIT_")
@@ -500,6 +521,7 @@ func admitFixtureEnvironment() []string {
 	return append(env, "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
 }
 
+// admitStubTools installs mock executables for SSH, systemd, and system tools into the test environment's PATH.
 func admitStubTools(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -523,6 +545,7 @@ func admitStubTools(t *testing.T) {
 	rootCtx = ctx
 }
 
+// writeAdmitExecutable writes an executable script into the specified directory with 0700 permissions.
 func writeAdmitExecutable(t *testing.T, dir, name, body string) {
 	t.Helper()
 	file := writeFixtureFile(t, dir, name, body)
@@ -532,6 +555,7 @@ func writeAdmitExecutable(t *testing.T, dir, name, body string) {
 	}
 }
 
+// inventory generates an executors.json file containing standard definitions for the specified executor names.
 func (f admitFixture) inventory(t *testing.T, names ...string) {
 	t.Helper()
 	var entries []string
@@ -550,12 +574,14 @@ func (f admitFixture) inventory(t *testing.T, names ...string) {
 	t.Setenv(admitExecutorsEnv, file)
 }
 
+// inventoryRaw writes verbatim executor JSON entries into the fixture's executors.json configuration file.
 func (f admitFixture) inventoryRaw(t *testing.T, entries ...string) {
 	t.Helper()
 	file := writeFixtureFile(t, t.TempDir(), "executors.json", "["+strings.Join(entries, ",")+"]")
 	t.Setenv(admitExecutorsEnv, file)
 }
 
+// assertClean asserts that all workspace directories created during remote execution were cleaned up.
 func (f admitFixture) assertClean(t *testing.T) {
 	t.Helper()
 	if files, err := os.ReadDir(f.root); err != nil || len(files) != 0 {

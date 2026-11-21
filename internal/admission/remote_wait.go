@@ -74,6 +74,7 @@ type RemoteAdmitInfo struct {
 	Jobs       int
 }
 
+// validate checks that the RemoteWaiter has valid executors, positive intervals, and a log writer.
 func (w RemoteWaiter) validate() error {
 	if len(w.Executors) == 0 || len(w.Executors) > maxExecutors || w.Poll <= 0 || w.MaxWait <= 0 || w.Log == nil {
 		return errors.New("invalid remote admission waiter")
@@ -81,12 +82,14 @@ func (w RemoteWaiter) validate() error {
 	return nil
 }
 
+// waitForNextReading sleeps for the polling interval or until context cancellation, reporting whether time remains.
 func waitForNextReading(ctx context.Context, poll time.Duration) bool {
 	deadline, _ := ctx.Deadline()
 	remaining := time.Until(deadline)
 	return remaining > 0 && SleepContext(ctx, min(poll, remaining)) == nil && time.Until(deadline) > 0
 }
 
+// logExecutorWait writes formatted admission retry reasons to the provided log writer.
 func logExecutorWait(log io.Writer, label, reasons string) error {
 	if reasons == "" {
 		return nil
@@ -95,6 +98,7 @@ func logExecutorWait(log io.Writer, label, reasons string) error {
 	return err
 }
 
+// choose selects the eligible executor offering the most memory headroom, breaking ties with load per core.
 func (w RemoteWaiter) choose(readings []executorReading) (Executor, RemoteAdmitInfo, Verdict, []string) {
 	var selected Executor
 	var best Verdict
@@ -134,6 +138,7 @@ func (w RemoteWaiter) choose(readings []executorReading) (Executor, RemoteAdmitI
 	return selected, bestInfo, best, skipped
 }
 
+// probeExecutors queries all configured remote executors concurrently to obtain system statistics.
 func probeExecutors(ctx context.Context, executors []Executor) []executorReading {
 	ctx, cancel := context.WithTimeout(ctx, executorProbeTimeout)
 	defer cancel()
@@ -150,6 +155,7 @@ func probeExecutors(ctx context.Context, executors []Executor) []executorReading
 	return readings
 }
 
+// receiveReading retrieves an executor reading from a channel or returns context expiration errors.
 func receiveReading(ctx context.Context, result <-chan executorReading) executorReading {
 	select {
 	case reading := <-result:
@@ -164,6 +170,7 @@ func receiveReading(ctx context.Context, result <-chan executorReading) executor
 	}
 }
 
+// probeExecutor connects to a remote executor via SSH to collect resource statistics and cgroup limits.
 func probeExecutor(ctx context.Context, e Executor) executorReading {
 	const procOutputLimit = 64 << 10
 	if err := e.validate(); err != nil {
@@ -198,6 +205,7 @@ func probeExecutor(ctx context.Context, e Executor) executorReading {
 	return executorReading{stats: stats, cores: cores, coreSource: source}
 }
 
+// sshArgs constructs standard hardened SSH command-line arguments for remote executor execution.
 func (e Executor) sshArgs(command string) []string {
 	return []string{"-T", "-oBatchMode=yes", "-oConnectTimeout=2", "-oConnectionAttempts=1",
 		"-oStrictHostKeyChecking=yes", "-oClearAllForwardings=yes", "-oForwardAgent=no", "-oControlPath=none",

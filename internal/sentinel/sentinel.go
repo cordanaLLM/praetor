@@ -297,10 +297,12 @@ func ReadLinuxAdmissionStats(loadavg, meminfo io.Reader) (HostStats, error) {
 	return stats, nil
 }
 
+// validLoadAverage reports whether load is non-negative and finite.
 func validLoadAverage(load float64) bool {
 	return load >= 0 && !math.IsInf(load, 0)
 }
 
+// admissionMemory parses required RAM and swap fields from meminfo for admission decisions.
 func admissionMemory(meminfo io.Reader) (HostStats, error) {
 	values, err := meminfoValues(meminfo)
 	if err != nil {
@@ -360,6 +362,7 @@ func parseMeminfo(r io.Reader) (uint64, uint64, error) {
 	return total, free, nil
 }
 
+// memoryField parses a single kB meminfo key-value line, returning its name and byte value.
 func memoryField(line string) (string, uint64, bool) {
 	parts := strings.Fields(line)
 	if len(parts) != 3 || parts[2] != "kB" {

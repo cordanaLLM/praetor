@@ -22,6 +22,7 @@ const hogEnv = "ADMISSION_TEST_HOG"
 
 const testExecutor = `{"name":"edge","ssh_host":"edge.example.invalid","ssh_user":"builder","workspace_root":"/scratch/builds","cores":1,"memory_gib":1,"class":"cpu-offload"}`
 
+// TestReadExecutors_JSONSchema proves that ReadExecutors enforces the JSON schema, catches duplicates, and rejects malformed fields.
 func TestReadExecutors_JSONSchema(t *testing.T) {
 	for _, tc := range []struct{ name, json, want string }{
 		{"minimum", "[" + testExecutor + "]", ""},
@@ -47,6 +48,7 @@ func TestReadExecutors_JSONSchema(t *testing.T) {
 	}
 }
 
+// assertReadExecutorsCase asserts that ReadExecutors returns the expected error substring or valid executor attributes.
 func assertReadExecutorsCase(t *testing.T, name string, executors []Executor, err error, want string) {
 	t.Helper()
 	if want != "" {
@@ -61,6 +63,7 @@ func assertReadExecutorsCase(t *testing.T, name string, executors []Executor, er
 	}
 }
 
+// TestRemoteReadings_RequireMeasuredThresholds proves that admission statistics parsing requires valid measured units and numeric thresholds.
 func TestRemoteReadings_RequireMeasuredThresholds(t *testing.T) {
 	const memory = "MemTotal: 12582912 kB\nMemAvailable: 12582912 kB\nSwapTotal: 15728640 kB\nSwapFree: 15728640 kB\n"
 	for _, tc := range []struct {

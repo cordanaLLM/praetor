@@ -57,6 +57,7 @@ func runAdmit(args []string) error {
 	return runRemoteAdmit(opts, os.Getenv(admitExecutorsEnv))
 }
 
+// runLocalAdmit waits for local host admission and runs the step on the workstation.
 func runLocalAdmit(opts admitOptions) error {
 	ctx, cancel := commandContext(opts.wait)
 	defer cancel()
@@ -75,6 +76,7 @@ func runLocalAdmit(opts admitOptions) error {
 	return childExitStatus(admission.Run(stepCtx, admission.DefaultStep(label, opts.argv, opts.limits)))
 }
 
+// runRemoteAdmit loads the remote executor list, waits for an admitted host, and executes the step remotely.
 func runRemoteAdmit(opts admitOptions, path string) error {
 	if path == "" {
 		return fmt.Errorf("%s must name the remote executor list, or use --local", admitExecutorsEnv)
@@ -96,6 +98,7 @@ func runRemoteAdmit(opts admitOptions, path string) error {
 	return runAdmittedRemoteStep(opts, executor, info, verdict)
 }
 
+// runAdmittedRemoteStep acquires an executor lease, calculates job parallelism, and executes the step on the admitted remote host.
 func runAdmittedRemoteStep(opts admitOptions, executor admission.Executor, info admission.RemoteAdmitInfo, verdict admission.Verdict) (resultErr error) {
 	concurrent, releaseLease, err := admission.AdmitExecutorLease(executor.Name)
 	if err != nil {
@@ -124,11 +127,13 @@ func runAdmittedRemoteStep(opts admitOptions, executor admission.Executor, info 
 	return admitStatus(code, err)
 }
 
+// logAdmitted writes the local admission timestamp, label, and verdict reason to standard error.
 func logAdmitted(label string, verdict admission.Verdict) error {
 	_, err := fmt.Fprintf(os.Stderr, "%s admitted %s: %s\n", time.Now().Format("15:04:05"), label, verdict.Reason)
 	return err
 }
 
+// logAdmittedRemote writes the remote admission details, core count source, and concurrency parameters to standard error.
 func logAdmittedRemote(label, executor string, info admission.RemoteAdmitInfo, verdict admission.Verdict) error {
 	line := fmt.Sprintf("%s admitted %s on %s: %s; cores %d from %s; %d concurrent step(s); -j%d GOMAXPROCS=%d",
 		time.Now().Format("15:04:05"), label, executor, verdict.Reason, info.Cores, info.CoreSource, info.Concurrent, info.Jobs, info.Jobs)
@@ -136,6 +141,7 @@ func logAdmittedRemote(label, executor string, info admission.RemoteAdmitInfo, v
 	return err
 }
 
+// admitStatus converts a non-zero exit code into an exitStatusError, logging and joining any accompanying error.
 func admitStatus(code int, err error) error {
 	if code == 0 {
 		return err
@@ -192,6 +198,7 @@ func parseAdmit(args []string) (admitOptions, error) {
 	return opts, opts.validate()
 }
 
+// admitPolicy constructs an admission policy from GiB thresholds and load average, refusing values exceeding maxAdmitGiB or negative loads.
 func admitPolicy(minAvail, minSwap uint64, maxLoad float64) (admission.Policy, error) {
 	if minAvail > maxAdmitGiB || minSwap > maxAdmitGiB || maxLoad < 0 || math.IsNaN(maxLoad) || math.IsInf(maxLoad, 0) {
 		return admission.Policy{}, fmt.Errorf("--min-available-gib and --min-swap-free-gib must be at most %d, --max-load finite and at least 0", maxAdmitGiB)
@@ -199,6 +206,7 @@ func admitPolicy(minAvail, minSwap uint64, maxLoad float64) (admission.Policy, e
 	return admission.Policy{MinAvailableBytes: minAvail << 30, MinSwapFreeBytes: minSwap << 30, MaxLoad1: maxLoad}, nil
 }
 
+// validate checks that durations are positive, timeout does not exceed MaxRemoteStepTimeout, and resource limits are valid.
 func (o admitOptions) validate() error {
 	if o.wait <= 0 || o.poll <= 0 || o.timeout <= 0 {
 		return errors.New("--wait, --poll and --timeout must be positive")

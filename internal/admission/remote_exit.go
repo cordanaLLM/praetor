@@ -26,6 +26,7 @@ type remoteStepStderr struct {
 	stepFinished bool
 }
 
+// Write scans standard error output for the step completion marker and forwards bytes to the inner writer.
 func (w *remoteStepStderr) Write(p []byte) (int, error) {
 	combined := append(append([]byte(nil), w.tail...), p...)
 	if hasStepExitMarker(combined) {
@@ -42,6 +43,7 @@ func (w *remoteStepStderr) Write(p []byte) (int, error) {
 	return w.inner.Write(p)
 }
 
+// hasStepExitMarker reports whether buffer contains the step completion marker followed by a non-negative exit code.
 func hasStepExitMarker(buf []byte) bool {
 	idx := bytes.LastIndex(buf, []byte(remoteStepExitPrefix))
 	if idx < 0 {
@@ -55,6 +57,7 @@ func hasStepExitMarker(buf []byte) bool {
 	return err == nil && code >= 0
 }
 
+// remoteRunFinished reports whether the remote execution completed its step or exited with a non-SSH error code.
 func remoteRunFinished(stepFinished bool, err error) bool {
 	if stepFinished {
 		return true
@@ -66,6 +69,7 @@ func remoteRunFinished(stepFinished bool, err error) bool {
 	return false
 }
 
+// remoteRunFailure evaluates an SSH execution failure, distinguishing between clean step completion and executor loss.
 func remoteRunFailure(ctx context.Context, name string, stepFinished bool, err error) (int, error) {
 	if err == nil {
 		return 0, nil

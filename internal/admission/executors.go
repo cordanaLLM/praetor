@@ -69,6 +69,7 @@ func ReadExecutors(filename string) ([]Executor, error) {
 	return executors, nil
 }
 
+// validate checks that the executor attributes conform to name, network, path, core, memory, and class constraints.
 func (e Executor) validate() error {
 	switch {
 	case !validExecutorName(e.Name):
@@ -87,10 +88,12 @@ func (e Executor) validate() error {
 	return nil
 }
 
+// validExecutorName reports whether name is an allowed alphanumeric identifier and not the reserved name local.
 func validExecutorName(name string) bool {
 	return name != "local" && executorName.MatchString(name)
 }
 
+// validSSHHost reports whether host is a zoneless IP address or valid hostname without consecutive dots.
 func validSSHHost(host string) bool {
 	if addr, err := netip.ParseAddr(host); err == nil {
 		return addr.Zone() == ""
@@ -98,6 +101,7 @@ func validSSHHost(host string) bool {
 	return sshHostName.MatchString(host) && !strings.Contains(host, "..")
 }
 
+// validWorkspaceRoot reports whether root is a clean absolute Linux directory path below root without control characters.
 func validWorkspaceRoot(root string) bool {
 	return len(root) <= maxWorkspacePath && path.IsAbs(root) && root != "/" && path.Clean(root) == root &&
 		strings.IndexFunc(root, unicode.IsControl) == -1
