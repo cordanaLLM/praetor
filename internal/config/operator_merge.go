@@ -261,13 +261,15 @@ func (c *ClientSettings) targets() map[string]any {
 	return map[string]any{"clients.mode": &c.Mode, "clients.verified_max_age": &c.VerifiedMaxAge, "clients.govern": &c.Govern}
 }
 
+// targets maps hook setting paths to their destination fields for policy merging.
 func (h *HookSettings) targets() map[string]any {
 	return map[string]any{
 		"hooks.scope": &h.Scope, "hooks.command_policy.deny": &h.CommandPolicy.Deny, "hooks.python": &h.Python,
 		"hooks.admission.enforce": &h.Admission.Enforce, "hooks.admission.scope_form": &h.Admission.ScopeForm,
 		"hooks.admission.max_jobs_divisor": &h.Admission.MaxJobsDivisor, "hooks.admission.commands": &h.Admission.Commands,
-		"hooks.merge.helper":      &h.Merge.Helper,
-		"hooks.worktrees.enforce": &h.Worktrees.Enforce,
+		"hooks.merge.helper":       &h.Merge.Helper,
+		"hooks.worktrees.enforce":  &h.Worktrees.Enforce,
+		"hooks.background.enforce": &h.Background.Enforce,
 	}
 }
 

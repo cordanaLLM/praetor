@@ -51,3 +51,49 @@ func TestShellCode_Boundary_EmptyBoundAndCRLF(t *testing.T) {
 		t.Fatalf("CRLF %q vs LF %q", crlf, lf)
 	}
 }
+
+// TestShellInspection_Positive_ExecutableContexts checks code and literal payload source.
+func TestShellInspection_Positive_ExecutableContexts(t *testing.T) {
+	script := "echo ${v:-$(sh -c 'job &')}\ncat <<EOF\n$(job &)\nEOF"
+	code, sources, ok := ShellInspection(script, 10)
+	if !ok || !strings.Contains(code, "job &") || !strings.Contains(strings.Join(sources, "\n"), "sh -c 'job &'") {
+		t.Fatalf("inspection: code=%q sources=%q ok=%t", code, sources, ok)
+	}
+}
+
+// TestShellInspection_Negative_Unreadable checks fail-closed syntax and bounded nesting.
+func TestShellInspection_Negative_Unreadable(t *testing.T) {
+	for _, script := range []string{`echo "open`, "cat <<EOF\n$(job\nEOF", "cat <<EOF\n$(cat <<INNER)\nEOF", strings.Repeat("$(", 33)} {
+		if _, _, ok := ShellInspection(script, 10); ok {
+			t.Fatalf("accepted %q", script)
+		}
+	}
+}
+
+// TestShellInspection_Boundary_DataAndLines checks exact bounds and inert heredoc text.
+func TestShellInspection_Boundary_DataAndLines(t *testing.T) {
+	for _, script := range []string{`(( a & b ))`, `echo $(( a & b ))`, "cat <<'EOF'\n$(job &)\nEOF", "cat <<EOF\njob &\nEOF"} {
+		code, _, ok := ShellInspection(script, 3)
+		if !ok || strings.Contains(code, "&") {
+			t.Fatalf("data inspection %q: %q %t", script, code, ok)
+		}
+	}
+	if _, _, ok := ShellInspection("a\nb\nc", 2); ok {
+		t.Fatal("accepted excessive lines")
+	}
+}
+
+// TestJoinShellContinuations_CommentBoundary plants PR 1958's physical-comment regression.
+func TestJoinShellContinuations_CommentBoundary(t *testing.T) {
+	for _, tc := range []struct{ script, want string }{
+		{"# comment \\\njob &", "# comment \\\njob &"},
+		{"echo foo\\\nbar", "echo foobar"},
+		{"echo foo\\\r\nbar", "echo foobar"},
+		{"echo 'a\\\nb'", "echo 'a\\\nb'"},
+		{"echo x\\ # comment\\\njob &", "echo x\\ # commentjob &"},
+	} {
+		if got := JoinShellContinuations(tc.script); got != tc.want {
+			t.Fatalf("join %q: %q, want %q", tc.script, got, tc.want)
+		}
+	}
+}

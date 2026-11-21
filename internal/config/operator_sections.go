@@ -91,6 +91,13 @@ type HookSettings struct {
 	Admission     AdmissionSettings     `json:"admission,omitzero"`
 	Merge         MergeSettings         `json:"merge,omitzero"`
 	Worktrees     WorktreeSettings      `json:"worktrees,omitzero"`
+	Background    BackgroundSettings    `json:"background,omitzero"`
+}
+
+// BackgroundSettings opts in to refusing bare shell background operators.
+// Off by default: clients track background tasks, or hosts use systemd user units.
+type BackgroundSettings struct {
+	Enforce bool `json:"enforce"`
 }
 
 // MergeSettings names the operator's merge helper. Empty leaves direct merges allowed.
