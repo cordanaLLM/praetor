@@ -5,6 +5,8 @@
 package hiss
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -22,6 +24,8 @@ import (
 // open quote or substitution, and a here-document waiting for its closing line.
 
 const (
+	// maxHereDocLineBytes bounds the splitter’s scan of one physical line.
+	maxHereDocLineBytes = 1 << 20
 	// maxShellNesting bounds the stack of open quotes and substitutions (HISS-02).
 	maxShellNesting = 32
 	// maxShellHeredocs bounds the here-documents one line may open (HISS-02).
@@ -55,6 +59,7 @@ type shellFrame struct {
 type shellHeredoc struct {
 	delimiter string
 	stripTabs bool
+	quoted    bool
 }
 
 // shellLexer carries the cross-line state of one script.
@@ -68,6 +73,7 @@ type shellLexer struct {
 	// misread records a construct the lexer could not follow: a delimiter it cannot read, or a
 	// bound exceeded. The file is then declined.
 	misread bool
+	spans   [][2]int
 }
 
 // line returns the code of one physical line, or reports that the line belongs to a
@@ -245,7 +251,9 @@ func (l *shellLexer) redirect(text string, i int, b *strings.Builder) int {
 		return i + 3
 	case text[i] == '<' && strings.HasPrefix(rest, "<"):
 		b.WriteString("<<")
-		return l.heredoc(text, i+2)
+		end := l.heredoc(text, i+2)
+		l.spans = append(l.spans, [2]int{hereDocRedirectStart(text, i), end})
+		return end
 	}
 	b.WriteByte(text[i])
 	return i + 1
@@ -262,12 +270,12 @@ func (l *shellLexer) heredoc(text string, i int) int {
 	for i < len(text) && (text[i] == ' ' || text[i] == '\t') {
 		i++
 	}
-	delimiter, _, width, err := util.ShellHereDocDelimiter(text[i:])
+	delimiter, quoted, width, err := util.ShellHereDocDelimiter(text[i:])
 	if err != nil || len(l.pending) >= maxShellHeredocs {
 		l.misread = true
 		return len(text)
 	}
-	h.delimiter = delimiter
+	h.delimiter, h.quoted = delimiter, quoted
 	l.pending = append(l.pending, h)
 	return i + width
 }
@@ -379,4 +387,224 @@ func (l *shellLexer) arith(text string, i int, frame *shellFrame, b *strings.Bui
 		b.WriteByte(text[i])
 	}
 	return i + 1
+}
+
+// HereDoc contains a body and its owning command word.
+type HereDoc struct {
+	Text    string
+	Command string
+	// Reason names an unproven ownership or file-flow shape; proof readers omit it.
+	Reason     string
+	quoted     bool
+	nested     bool
+	data       bool
+	appendFile bool
+	pipedWrite bool
+	// executes marks a forwarding pipe or a literal file invoked later.
+	executes bool
+	// targets and offset retain literal output names and their definition boundary.
+	targets   []string
+	offset    int
+	codeStart int
+}
+
+// Data selects the raw prose path; unquoted substitutions can still execute.
+// Reason separately names unproven ownership or file flow.
+func (h HereDoc) Data() bool {
+	return h.data && !h.executes
+}
+
+var hereDocCommand = regexp.MustCompile(`^\s*(?:[a-zA-Z_][a-zA-Z0-9_]*=(?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>])*\s+)*([^\s;&|<>()]+)`)
+
+// hereDocSplit accumulates the lexer's bounded body and code output.
+type hereDocSplit struct {
+	lexer  shellLexer
+	code   strings.Builder
+	docs   []HereDoc
+	bodies []strings.Builder
+}
+
+// SplitHereDocs emits proven shell input and executable data substitutions.
+// Unproven bodies stay out of execution evidence; returned Reason names their shape.
+func SplitHereDocs(script string) (string, []HereDoc, error) {
+	if len(script) > 1<<20 {
+		return "", nil, fmt.Errorf("here-document reader exceeds byte limit")
+	}
+	split := hereDocSplit{}
+	for i := 0; len(script) > 0 && i < 100001; i++ {
+		if i == 100000 {
+			return "", nil, fmt.Errorf("here-document reader exceeds line limit")
+		}
+		end := strings.IndexByte(script, '\n')
+		if end < 0 {
+			end = len(script)
+		} else {
+			end++
+		}
+		if err := split.line(script[:end]); err != nil {
+			return "", nil, err
+		}
+		script = script[end:]
+	}
+	return split.finish()
+}
+
+// finish validates the final delimiter and follows bounded literal file invocations.
+func (s *hereDocSplit) finish() (string, []HereDoc, error) {
+	if len(s.lexer.bodies) > 0 {
+		return "", nil, fmt.Errorf("unterminated here-document")
+	}
+	for i := 0; i < len(s.docs) && i < maxShellHeredocs; i++ {
+		s.docs[i].Text = s.bodies[i].String()
+	}
+	expanded, err := hereDocExpansionCode(s.code.String(), s.docs)
+	if err != nil {
+		return "", nil, err
+	}
+	code, err := followHereDocFiles(expanded, s.docs)
+	if err != nil {
+		return "", nil, err
+	}
+	return code, s.docs, nil
+}
+
+// line passes each physical line through the existing lexer and preserves its newline.
+func (s *hereDocSplit) line(raw string) error {
+	line := strings.TrimSuffix(strings.TrimSuffix(raw, "\n"), "\r")
+	if len(line) > maxHereDocLineBytes {
+		return fmt.Errorf("here-document line exceeds reader limit")
+	}
+	if len(s.lexer.bodies) > 0 {
+		before := len(s.lexer.bodies)
+		s.lexer.line(line)
+		if len(s.lexer.bodies) == before {
+			index := len(s.docs) - before
+			body := &s.bodies[index]
+			body.WriteString(raw)
+			if s.docs[index].executes {
+				s.code.WriteString(line)
+			}
+		}
+	} else if err := s.codeLine(line); err != nil {
+		return err
+	}
+	if strings.HasSuffix(raw, "\n") {
+		s.code.WriteByte('\n')
+	}
+	return nil
+}
+
+// codeLine removes lexer-recognized redirects and records their command words.
+func (s *hereDocSplit) codeLine(line string) error {
+	s.lexer.spans = nil
+	s.lexer.line(line)
+	if s.lexer.misread {
+		return fmt.Errorf("here-document or shell nesting exceeds reader limit or has invalid delimiter")
+	}
+	if len(s.docs)+len(s.lexer.spans) > maxShellHeredocs {
+		return fmt.Errorf("here-document count exceeds %d", maxShellHeredocs)
+	}
+	var filtered strings.Builder
+	pos := 0
+	for i := 0; i < len(s.lexer.spans) && i < maxShellHeredocs; i++ {
+		span := s.lexer.spans[i]
+		filtered.WriteString(line[pos:span[0]])
+		pos = span[1]
+	}
+	filtered.WriteString(line[pos:])
+	text := filtered.String()
+	for i := 0; i < len(s.lexer.spans) && i < maxShellHeredocs; i++ {
+		doc := hereDocOwner(line, s.lexer.spans, i)
+		doc.quoted = s.lexer.bodies[i].quoted
+		doc.codeStart = s.code.Len() + hereDocCodeOffset(s.lexer.spans, doc.codeStart)
+		doc.offset = s.code.Len() + hereDocCodeOffset(s.lexer.spans, doc.offset)
+		s.docs = append(s.docs, doc)
+		s.bodies = append(s.bodies, strings.Builder{})
+	}
+	s.code.WriteString(text)
+	return nil
+}
+
+// hereDocOwner finds the redirect's command word and whether its pipe feeds a shell.
+func hereDocOwner(line string, spans [][2]int, index int) HereDoc {
+	line = util.StripLineComment(line, "#")
+	start, end, nested := hereDocOwnerBounds(line, spans[index][0])
+	shape := readHereDocShape(line, spans, start, end)
+	doc := classifyHereDoc(shape, index, line[end:])
+	doc.offset, doc.codeStart, doc.nested = hereDocDefinitionEnd(line, end, doc.pipedWrite), start, nested
+	return doc
+}
+
+// hereDocDefinitionEnd places piped file definitions at the end of their receiving stage.
+func hereDocDefinitionEnd(line string, end int, piped bool) int {
+	if !piped || end >= len(line) {
+		return end
+	}
+	_, recvEnd := hereDocCommandBounds(line[end+1:], 0)
+	return end + 1 + recvEnd
+}
+
+// hereDocCommandBounds selects the unquoted command boundaries around one redirect.
+func hereDocCommandBounds(line string, offset int) (int, int) {
+	start, end, _ := hereDocOwnerBounds(line, offset)
+	return start, end
+}
+
+// hereDocOwnerBounds retains nested ownership for consumers that cannot flatten its scope.
+func hereDocOwnerBounds(line string, offset int) (int, int, bool) {
+	start, end := 0, len(line)
+	var quote QuoteStepper
+	for i := 0; i < len(line) && i < maxHereDocLineBytes; i++ {
+		if hereDocOpenCommand(line, i, &quote) {
+			if i < offset {
+				start = i + 2
+			}
+			i++
+			continue
+		}
+		if hereDocCommandCode(quote) && strings.ContainsRune(";&|()", rune(line[i])) {
+			if i < offset {
+				start = i + 1
+			} else {
+				end = i
+				break
+			}
+		}
+		i = quote.Step(line, i)
+	}
+	return start, end, quote.depth > 0
+}
+
+// hereDocOpenCommand opens a nested command's syntax even inside an outer quoted operand.
+func hereDocOpenCommand(line string, at int, quote *QuoteStepper) bool {
+	if quote.OpenQuote() == '\'' || !strings.HasPrefix(line[at:], "$(") || strings.HasPrefix(line[at:], "$((") {
+		return false
+	}
+	quote.push(shellCommand)
+	return true
+}
+
+// hereDocCommandCode distinguishes substitution code from its enclosing quoted string.
+func hereDocCommandCode(quote QuoteStepper) bool {
+	frame := quote.top()
+	return frame == nil || frame.ctx == shellCommand || frame.ctx == shellBacktick
+}
+
+// hereDocCodeOffset discounts removed redirect spans before a definition boundary.
+func hereDocCodeOffset(spans [][2]int, end int) int {
+	removed := 0
+	for i := 0; i < len(spans) && i < maxShellHeredocs; i++ {
+		if spans[i][1] <= end {
+			removed += spans[i][1] - spans[i][0]
+		}
+	}
+	return end - removed
+}
+
+// hereDocBase normalizes an absolute command name for data detection.
+func hereDocBase(word string) string {
+	if i := strings.LastIndex(word, "/"); i >= 0 {
+		return word[i+1:]
+	}
+	return word
 }

@@ -331,3 +331,18 @@ func TestShellWords_Boundary(t *testing.T) {
 		t.Fatalf("expand = %q", got)
 	}
 }
+
+// TestBuildWarningsHereDocs measures a compiler lane only when its body executes.
+func TestBuildWarningsHereDocs(t *testing.T) {
+	checkHereDocReader(t, "gcc -Werror -c main.c", func(script string) bool {
+		steps := "      - run: |\n          " + strings.ReplaceAll(strings.TrimSuffix(script, "\n"), "\n", "\n          ") + "\n"
+		lanes := measureLanes(t, map[string]string{"ci.yml": buildJob(steps)})
+		if len(lanes) == 0 {
+			return false
+		}
+		if len(lanes) != 1 || !lanes[0].Fatal {
+			t.Fatalf("want one fatal compiler lane: %+v", lanes)
+		}
+		return true
+	})
+}

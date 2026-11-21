@@ -17,6 +17,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -75,6 +76,7 @@ type ghWriteCall struct {
 	files   []ghTextFile
 	fileErr string
 	dir     string
+	bodies  []hiss.HereDoc
 }
 
 // ghDirPolicy holds the resolved trusted organisations, missing-list flag, diagnostic
@@ -96,15 +98,12 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 	if baseDir == "" {
 		baseDir = root
 	}
-	calls, err := collectGHWriteCalls(canonical.Command, baseDir)
-	if err != nil {
-		return forgeTextDeny("shell reader: "+err.Error(), false)
-	}
-	if len(calls) == 0 {
-		return Verdict{Outcome: Allow}
+	calls, hidden := prepareForgeTextCalls(ctx, canonical.Command, baseDir, in)
+	if hidden.Outcome != Allow {
+		return hidden
 	}
 	dirPolicies := make(map[string]ghDirPolicy, len(calls))
-	var notices []string
+	notices := appendUniqueNotice(nil, hidden.Notice)
 	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
 		dirPolicy, ok := dirPolicies[calls[i].dir]
 		if !ok {
@@ -118,6 +117,35 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 		notices = appendUniqueNotice(notices, verdict.Notice)
 	}
 	return Verdict{Outcome: Allow, Notice: strings.Join(notices, "; ")}
+}
+
+// prepareForgeTextCalls attaches data prose and preserves the hidden-body verdict notice.
+// Executing bodies already enter collectGHWriteCalls through the shared shell reader.
+func prepareForgeTextCalls(ctx context.Context, command, baseDir string, in Invocation) ([]ghWriteCall, Verdict) {
+	calls, err := collectGHWriteCalls(command, baseDir)
+	if err != nil {
+		return nil, forgeTextDeny("shell reader: "+err.Error(), false)
+	}
+	_, bodies, err := hiss.SplitHereDocs(command)
+	if err != nil {
+		return nil, forgeTextDeny("shell reader: "+err.Error(), false)
+	}
+	hidden := judgeHiddenHereDocs(ctx, bodies, baseDir, in)
+	if hidden.Outcome != Allow {
+		return nil, hidden
+	}
+	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
+		calls[i].bodies = bodies
+	}
+	return calls, hidden
+}
+
+// judgeHiddenHereDocs applies the base policy to write-shaped data bodies.
+func judgeHiddenHereDocs(ctx context.Context, bodies []hiss.HereDoc, dir string, in Invocation) Verdict {
+	if !hasHiddenGHWrite(bodies) {
+		return Verdict{Outcome: Allow}
+	}
+	return judgeResolvedGHWriteCall(ctx, ghWriteCall{bodies: bodies}, resolveGHDirPolicy(ctx, dir, in.Getenv))
 }
 
 // appendUniqueNotice appends notice to notices when notice is non-empty and not already present.
@@ -163,6 +191,9 @@ func judgeResolvedGHWriteCall(ctx context.Context, call ghWriteCall, dirPolicy g
 // judgeGHWriteCall checks a single ghWriteCall and its named files against own, refusing
 // file collection errors, unreadable or oversized files, and foreign forge references.
 func judgeGHWriteCall(ctx context.Context, call ghWriteCall, own []string, noOrgList bool) Verdict {
+	if finding := heredocFinding(call.bodies, own); finding != "" {
+		return forgeTextDeny(finding, noOrgList)
+	}
 	if call.fileErr != "" {
 		return forgeTextDeny(call.fileErr, noOrgList)
 	}
@@ -240,7 +271,7 @@ func loadOperatorForgeSettings(ctx context.Context, getenv func(string) string) 
 // per subshell level and returns every scoped gh write call, refusing commands exceeding limits.
 func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 	fields, err := shellFieldsForGH(command)
-	if err != nil || len(fields) == 0 {
+	if err != nil {
 		return nil, err
 	}
 	var calls []ghWriteCall
@@ -260,7 +291,8 @@ func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 		if closers > 0 {
 			segWords = trimSegmentTrailingParens(segWords, closers)
 		}
-		call, nextDir, ok := parseSegmentGHCall(command, segWords, dirStack[len(dirStack)-1])
+		dir := dirStack[len(dirStack)-1]
+		call, nextDir, ok := parseSegmentGHCall(command, segWords, dir)
 		dirStack[len(dirStack)-1] = nextDir
 		if ok {
 			calls = append(calls, call)
@@ -546,10 +578,17 @@ func shellWordsText(words []string) string {
 	return strings.Join(unquoted, " ")
 }
 
-// shellFieldsForGH splits command into shell words with forge.ShellFields, refusing any
-// forge.ErrShellReadLimit error, commands over maxForgeTextWords, or parse errors on commands matching ghWriteWordPattern.
+// shellFieldsForGH shares proven body and field reading, adding the forge-write uncertainty policy.
+// Reader bounds and write-shaped parse failures refuse before named files are collected.
 func shellFieldsForGH(command string) ([]string, error) {
-	fields, err := forge.ShellFields(command)
+	code, docs, err := hiss.SplitHereDocs(command)
+	if err == nil {
+		code, err = forgeTextHereDocCode(code, docs)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", forge.ErrShellReadLimit, err)
+	}
+	fields, err := hiss.ShellCodeFields(code)
 	if err != nil {
 		if errors.Is(err, forge.ErrShellReadLimit) || ghWriteWordPattern.MatchString(command) {
 			return nil, err
@@ -560,6 +599,35 @@ func shellFieldsForGH(command string) ([]string, error) {
 		return nil, fmt.Errorf("command exceeds %d shell words", maxForgeTextWords)
 	}
 	return fields, nil
+}
+
+// forgeTextHereDocCode refuses write-shaped uncertainty; proven substitutions already enter code.
+func forgeTextHereDocCode(code string, docs []hiss.HereDoc) (string, error) {
+	for i := 0; i < len(docs) && i < maxForgeTextWords; i++ {
+		if docs[i].Reason != "" && unprovenHereDocWrite(docs[i].Text) {
+			return "", fmt.Errorf("here-document: %s", docs[i].Reason)
+		}
+	}
+	return code, nil
+}
+
+// unprovenHereDocWrite applies the existing word decoder before judging uncertain source.
+// Non-shell prose can contain open quotes; its bounded raw words still screen write shapes.
+func unprovenHereDocWrite(text string) bool {
+	text = joinedHereDocText(text)
+	if ghWriteWordPattern.MatchString(text) {
+		return true
+	}
+	fields, err := hiss.ShellCodeFields(text)
+	if err != nil {
+		fields = strings.Fields(text)
+	}
+	return len(fields) > maxForgeTextWords || ghWriteWordPattern.MatchString(shellWordsText(fields))
+}
+
+// joinedHereDocText shares shell continuation removal between hidden and unproven body checks.
+func joinedHereDocText(text string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(text, "\\\r\n", ""), "\\\n", "")
 }
 
 // parseSegmentGHCall inspects one command segment, updates workDir on cd or pushd, and
@@ -862,4 +930,25 @@ func readForgeTextFile(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// hasHiddenGHWrite detects write-shaped data after shell continuations are joined.
+func hasHiddenGHWrite(docs []hiss.HereDoc) bool {
+	for i := 0; i < len(docs) && i < maxForgeTextWords; i++ {
+		joined := joinedHereDocText(docs[i].Text)
+		if docs[i].Data() && ghWriteWordPattern.MatchString(joined) {
+			return true
+		}
+	}
+	return false
+}
+
+// heredocFinding returns the first foreign reference in the supplied bodies.
+func heredocFinding(bodies []hiss.HereDoc, own []string) string {
+	for i := 0; i < len(bodies) && i < maxForgeTextWords; i++ {
+		if findings := forge.ForeignReferenceFindings(bodies[i].Text, "here-document", own); bodies[i].Data() && len(findings) > 0 {
+			return findings[0]
+		}
+	}
+	return ""
 }

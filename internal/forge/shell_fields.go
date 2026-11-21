@@ -1,95 +1,39 @@
 package forge
 
 import (
-	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/hiss"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // ErrShellReadLimit identifies a script whose bounded reader cannot inspect every word.
-var ErrShellReadLimit = errors.New("run script exceeds shell reader limit")
+var ErrShellReadLimit = hiss.ErrShellReadLimit
 
-// ShellFields reads shell words and control operators without executing or expanding them.
-// Quotes and escapes stay in words; quoted whitespace and operators stay literal. Comments
-// are removed, backslash-newline continues a command, and an unquoted newline becomes ";".
+// ShellFields reads shell words for enforcing consumers, refusing named unproven bodies.
+// Quotes and escapes stay in words; comments and escaped newlines are removed.
 // Operators ;, &, &&, | and || are separate fields even without surrounding whitespace.
-// The forge's shellWords/parseShellCommand readers consume these same fields. More than
-// maxRunScriptFields fields or an unclosed quote is an error, never a partial result.
 func ShellFields(script string) ([]string, error) {
-	script, err := util.StripHashComments(strings.ReplaceAll(script, "\r\n", "\n"))
+	return shellFields(script, true)
+}
+
+// ProvenShellFields reads execution evidence, withholding credit from unproven bodies.
+// Workflow proof readers use this direction; enforcement and claim readers use ShellFields.
+func ProvenShellFields(script string) ([]string, error) {
+	return shellFields(script, false)
+}
+
+// shellFields applies the consumer's named safe default to the shared ownership decision.
+func shellFields(script string, refuseUnproven bool) ([]string, error) {
+	script, docs, err := hiss.SplitHereDocs(script)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrShellReadLimit, err)
 	}
-	script = strings.ReplaceAll(script, "\\\n", "")
-	scan := shellFieldReader{start: -1}
-	for i := 0; i < len(script); i++ {
-		i = scan.step(script, i)
-		if scan.stepper.ExceededLimit() {
-			return nil, fmt.Errorf("%w: nesting exceeds shell reader limit", ErrShellReadLimit)
-		}
-		if len(scan.fields) > maxRunScriptFields {
-			return nil, fmt.Errorf("%w: %d fields", ErrShellReadLimit, maxRunScriptFields)
+	if refuseUnproven {
+		for i := 0; i < len(docs) && i < hiss.MaxShellFields; i++ {
+			if docs[i].Reason != "" {
+				return nil, fmt.Errorf("%w: here-document: %s", ErrShellReadLimit, docs[i].Reason)
+			}
 		}
 	}
-	scan.word(script, len(script))
-	if scan.stepper.ExceededLimit() {
-		return nil, fmt.Errorf("%w: nesting exceeds shell reader limit", ErrShellReadLimit)
-	}
-	if scan.stepper.Open() {
-		return nil, fmt.Errorf("run script has an unclosed quote")
-	}
-	if len(scan.fields) > maxRunScriptFields {
-		return nil, fmt.Errorf("%w: %d fields", ErrShellReadLimit, maxRunScriptFields)
-	}
-	return scan.fields, nil
-}
-
-type shellFieldReader struct {
-	fields  []string
-	start   int
-	stepper hiss.QuoteStepper
-}
-
-func (r *shellFieldReader) step(script string, i int) int {
-	c := script[i]
-	if r.stepper.InQuote() || strings.ContainsRune("'\"\\", rune(c)) {
-		if r.start < 0 {
-			r.start = i
-		}
-		return r.stepper.Step(script, i)
-	}
-	if strings.ContainsRune(" \t\r\v\f", rune(c)) {
-		r.word(script, i)
-		return i
-	}
-	if strings.ContainsRune(";&|\n", rune(c)) {
-		return r.operator(script, i)
-	}
-	if r.start < 0 {
-		r.start = i
-	}
-	return i
-}
-
-func (r *shellFieldReader) operator(script string, i int) int {
-	r.word(script, i)
-	op := string(script[i])
-	if op == "\n" {
-		op = ";"
-	} else if (op == "&" || op == "|") && i+1 < len(script) && script[i+1] == script[i] {
-		i++
-		op += op
-	}
-	r.fields = append(r.fields, op)
-	return i
-}
-
-func (r *shellFieldReader) word(script string, end int) {
-	if r.start >= 0 {
-		r.fields = append(r.fields, script[r.start:end])
-		r.start = -1
-	}
+	return hiss.ShellCodeFields(script)
 }

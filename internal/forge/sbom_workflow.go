@@ -12,13 +12,14 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"go.yaml.in/yaml/v3"
 )
 
 const (
 	goreleaserActionPath = "goreleaser/goreleaser-action"
 	goreleaserBinary     = "goreleaser"
-	maxRunScriptFields   = 4096
+	maxRunScriptFields   = hiss.MaxShellFields
 	// praetorNoticesSubcommand is the sbom subcommand that renders THIRD-PARTY-NOTICES.md
 	// tables and writes no SBOM document. runSBOM in cmd/standardsctl/supplychain.go
 	// dispatches to it only when it is the first argument after sbom.
@@ -148,7 +149,7 @@ func actionPath(uses string) string {
 
 // scriptFields is the internal entry point for the shared shell field reader.
 func scriptFields(run string) ([]string, error) {
-	return ShellFields(run)
+	return ProvenShellFields(run)
 }
 
 // runInvokesSBOMGenerator reports whether a run script's fields invoke a generator that

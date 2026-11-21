@@ -29,6 +29,7 @@ func repositoryWithManifest(t *testing.T, manifestYAML string) string {
 // and fails the test if any filesystem write fails.
 func writeTestFixtureFile(t *testing.T, path, content string) {
 	t.Helper()
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +103,24 @@ func TestForgeTextRefsRefusedPerForm(t *testing.T) {
 	writeRefusedFormFixtures(t, root)
 
 	cases := []struct{ name, command, wantSpan string }{
+		{"missing heredoc file case 03", "cat > missing-body.md <<'EOF'\nsafe\nEOF\ngh pr comment 9 --body-file missing-body.md", "missing-body.md"},
+		{"missing variable heredoc file case 08", "D=a\ncat > $D/missing-body.md <<'EOF'\nsafe\nEOF\ngh pr comment 9 --body-file $D/missing-body.md", "$D/missing-body.md"},
+		{"variable spelling bypass", "D=a\ncat > $D/body.md <<'EOF'\nsafe\nEOF\nprintf '%s' 'outside-org/project#47' > a/body.md\ngh pr comment 9 --body-file $D/body.md", "$D/body.md"},
+		{"split gh in piped heredoc", "cat <<'EOF' | bash\ng\\\nh pr comment 9 --body \"See outside-org/project#51\"\nEOF\n", "outside-org/project#51"},
+		{"split gh CRLF in piped heredoc", "cat <<'EOF' | bash\ng\\\r\nh pr comment 9 --body \"See outside-org/project#51\"\nEOF\n", "outside-org/project#51"},
+		{"absolute cat missing file", "/usr/bin/cat > missing-body.md <<'EOF'\nsafe\nEOF\ngh pr comment 9 --body-file missing-body.md", "missing-body.md"},
+		{"substitution in data", "cat <<EOF\nreviewer's note $(gh pr comment 9 --body \"outside-org/project#42\")\nEOF", "outside-org/project#42"},
+		{"continued pipe write", "cat <<'EOF' | bash\ngh \\\npr comment 9 --body \"See outside-org/project#50\"\nEOF", "outside-org/project#50"},
+		{"unrelated heredoc foreign", "cat <<EOF\noutside-org/project#47\nEOF\ngh pr comment 9 --body safe", "outside-org/project#47"},
+		{"heredoc variable file foreign", "D=.\ncat > $D/body.md <<'EOF'\nreviewer's outside-org/project#43\nEOF\ngh pr comment 9 --body-file $D/body.md", "outside-org/project#43"},
+		{"heredoc tabs foreign", "gh pr comment 9 --body-file - <<-'EOF'\n\treviewer's outside-org/project#44\n\tEOF\n", "outside-org/project#44"},
+		{"heredoc double quoted foreign", "gh pr comment 9 --body-file - <<\"EOF\"\nreviewer's outside-org/project#45\nEOF\n", "outside-org/project#45"},
+		{"gh write inside a sh heredoc", "sh <<EOF\ngh pr comment 9 --body \"See outside-org/project#48\"\nEOF\n", "outside-org/project#48"},
+		{"gh write inside a cat heredoc piped to bash", "cat <<'EOF' | bash\ngh pr comment 9 --body \"See outside-org/project#47\"\nEOF\n", "outside-org/project#47"},
+		{"gh write inside a heredoc script then run", "cat > run.sh <<'EOF'\ngh pr comment 9 --body \"See outside-org/project#48\"\nEOF\nbash run.sh\n", "outside-org/project#48"},
+		{"gh write inside a bash heredoc", "bash <<'EOF'\ngh pr comment 9 --body \"See outside-org/project#46\"\nEOF\n", "outside-org/project#46"},
+		{"quoted argument inside a bash heredoc", "bash <<'EOF'\ngh pr comment 9 --body \"See outside-org/project#49\"\nEOF\n", "outside-org/project#49"},
+		{"heredoc written file foreign", "cat > body.md <<'EOF'\nreviewer's outside-org/project#42\nEOF\ngh pr comment 9 --body-file body.md", "outside-org/project#42"},
 		{"inline owner/repo#N in --body", `gh issue create --title "Bug report" --body "Reproduces outside-org/project#42 on Linux"`, `outside-org/project#42`},
 		{"github.com/<outside>/<repo>/issues/N in --title", `gh pr create --title "Follow up on https://github.com/outside-org/project/issues/19" --body "Clean fix"`, `https://github.com/outside-org/project/issues/19`},
 		{"github.com/<outside>/<repo>/pull/N in --body-file", `gh pr edit 12 --body-file pr-body.md`, `https://github.com/outside-org/project/pull/77`},
@@ -135,13 +154,21 @@ func TestForgeTextRefsRefusedPerForm(t *testing.T) {
 // numbers, plain text, code spans, code fences, and read-only gh calls are allowed.
 func TestForgeTextRefsAcceptedCases(t *testing.T) {
 	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\nforge:\n  own_organizations:\n    - fleet-org\n    - second-fleet\n")
-	writeTestFixtureFile(t, filepath.Join(root, "good-body.md"),
+	writeTestFixtureFile(t, filepath.Join(root, "body.md"),
 		" fleet reference fleet-org/other#12, local #9, code `outside-org/project#42`, and fence:\n```\nhttps://github.com/outside-org/project/issues/99\n```\n")
 
+	writeTestFixtureFile(t, filepath.Join(root, "$D", "body.md"), "Clean text.\n")
 	cases := []struct {
 		name    string
 		command string
 	}{
+		{name: "python heredoc apostrophe without gh", command: "python3 - <<'EOF'\nreviewer's\nEOF\n"},
+		{name: "assignment heredoc written file apostrophe", command: "FOO=1 cat > body.md <<'EOF'\nreviewer's note\nEOF\ngh pr comment 9 --body-file body.md"},
+		{name: "heredoc written file apostrophe", command: "cat > body.md <<'EOF'\nreviewer's note\nEOF\ncd . && gh pr comment 9 --body-file body.md"},
+		{name: "heredoc written file quotes and substitution", command: "cat > body.md <<'EOF'\nit's \"quoted\" and $(not run)\nEOF\ngh pr comment 9 --body-file body.md"},
+		{name: "heredoc variable file apostrophe", command: "D=.\ncat > $D/body.md <<'EOF'\nreviewer's note\nEOF\ngh pr comment 9 --body-file $D/body.md"},
+		{name: "heredoc strip tabs", command: "gh pr comment 9 --body-file - <<-'EOF'\n\treviewer's note\n\tEOF\n"},
+		{name: "heredoc double quoted", command: "gh pr comment 9 --body-file - <<\"EOF\"\nreviewer's note\nEOF\n"},
 		{
 			name:    "fleet organisation reference from manifest",
 			command: `gh issue create --title "Track fleet-org/other#12" --body "Also https://github.com/second-fleet/service/pull/34 and repo-owner/governed-repo#5"`,
@@ -160,7 +187,7 @@ func TestForgeTextRefsAcceptedCases(t *testing.T) {
 		},
 		{
 			name:    "body file with fleet refs and code spans",
-			command: `gh pr create --title "Clean PR" --body-file good-body.md`,
+			command: `gh pr create --title "Clean PR" --body-file body.md`,
 		},
 		{
 			name:    "gh pr view read command",
@@ -186,6 +213,15 @@ func TestForgeTextRefsAcceptedCases(t *testing.T) {
 	}
 }
 
+// TestForgeTextRefsDataProse permits write-shaped prose without foreign references.
+func TestForgeTextRefsDataProse(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\n")
+	response := runPreToolCommand(t, root, "cat <<'EOF'\nmention gh pr comment in prose\nEOF\ngh pr comment 9 --body safe", nil)
+	if response.ExitCode != 0 {
+		t.Fatalf("expected allow: %s", response.Stderr)
+	}
+}
+
 // TestForgeTextRefsBoundaryAndFailClosedCases verifies that unreadable files, shell reader
 // errors on gh writes, and exceeded file, segment or word bounds fail closed.
 func TestForgeTextRefsBoundaryAndFailClosedCases(t *testing.T) {
@@ -195,6 +231,8 @@ func TestForgeTextRefsBoundaryAndFailClosedCases(t *testing.T) {
 		command  string
 		wantPath string
 	}{
+		{"unterminated heredoc", "gh pr comment 9 --body-file - <<'EOF'\ntext\n", "unterminated"},
+		{"unresolved heredoc path", "cat > $D/body.md <<'EOF'\ntext\nEOF\ngh pr comment 9 --body-file $D/other.md", "$D/other.md"},
 		{"unreadable --body-file", `gh issue create --title "Title" --body-file missing-body.md`, "missing-body.md"},
 		{"unreadable gh api --input", `gh api repos/fleet-org/governed-repo/issues/1/comments --input absent.json`, "absent.json"},
 		{"unreadable $(cat <path>)", `gh pr comment 3 --body "$(cat no-such-file.md)"`, "no-such-file.md"},
@@ -530,4 +568,258 @@ func TestForgeTextRefsUnbalancedSubshellBoundary(t *testing.T) {
 
 	extraResp := runPreToolCommand(t, root, `(cd sub ; true)) ; gh issue comment 9 --body-file body.md`, nil)
 	assertForgeTextDenied(t, extraResp, "outside-org/project#42")
+}
+
+// TestForgeTextRefsBodyFileOverwrite refuses equivalent-path overwrites without executing shell code.
+func TestForgeTextRefsBodyFileOverwrite(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second, body string
+		exists, allowed           bool
+	}{
+		{"dot then plain missing", "./missing-body.md", "missing-body.md", "outside-org/project#47", false, false},
+		{"plain then dot missing", "missing-body.md", "./missing-body.md", "outside-org/project#47", false, false},
+		{"dot then plain changed", "./missing-body.md", "missing-body.md", "outside-org/project#47", true, false},
+		{"plain then dot changed", "missing-body.md", "./missing-body.md", "outside-org/project#47", true, false},
+		{"fleet control", "./missing-body.md", "missing-body.md", "fleet-org/project#47", true, true},
+		{"plain control", "missing-body.md", "./missing-body.md", "safe", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.exists {
+				writeTestFixtureFile(t, filepath.Join(root, "missing-body.md"), tc.body)
+			}
+			command := "cat > " + tc.first + " <<'EOF'\nsafe\nEOF\necho '" + tc.body + "' > " + tc.second + "\ngh pr comment 9 --body-file " + tc.first
+			calls, err := collectGHWriteCalls(command, root)
+			if err != nil || len(calls) != 1 {
+				t.Fatalf("collect writes: %#v, %v", calls, err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			verdict := judgeGHWriteCall(ctx, calls[0], []string{"fleet-org"}, false)
+			if (verdict.Outcome == Allow) != tc.allowed {
+				t.Fatalf("verdict = %#v; want allow %v", verdict, tc.allowed)
+			}
+			if !tc.allowed && !strings.Contains(verdict.Reason, "missing-body.md") {
+				t.Fatalf("refusal must name body file: %s", verdict.Reason)
+			}
+		})
+	}
+}
+
+// TestForgeTextRefsExecutingHereDocs judges executing bodies like direct write commands.
+func TestForgeTextRefsExecutingHereDocs(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "foreign.md"), "outside-org/project#42")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "clean.md"), "own-org/project#42")
+	cases := []struct {
+		name, body, span string
+		deny             bool
+	}{
+		{"foreign file", "gh pr comment 9 --body-file foreign.md", "outside-org/project#42", true},
+		{"missing file", "gh pr comment 9 --body-file missing.md", "missing.md", true},
+		{"concatenated foreign", "gh pr comment 9 --body 'outside-org'/project#42", "outside-org/project#42", true},
+		{"continued foreign", "gh pr comment 9 --body outside-org/proj\\\nect#42", "outside-org/project#42", true},
+		{"clean file", "gh pr comment 9 --body-file clean.md", "", false},
+		{"existing file", "gh pr comment 9 --body-file clean.md", "", false},
+		{"concatenated own", "gh pr comment 9 --body 'own-org'/project#42", "", false},
+		{"continued own", "gh pr comment 9 --body own-org/proj\\\nect#42", "", false},
+	}
+	for i := 0; i < len(cases) && i < 8; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) { checkExecutingForgeBody(t, root, tc.body, tc.span, tc.deny) })
+	}
+}
+
+// checkExecutingForgeBody compares bounded code paths with the direct command verdict.
+func checkExecutingForgeBody(t *testing.T, root, body, span string, deny bool) {
+	t.Helper()
+	for _, tc := range []struct{ name, script string }{
+		{"direct", "cd sub\n" + body},
+		{"shell stdin", "cd sub\nbash <<'EOF'\n" + body + "\nEOF\n"},
+		{"cat pipe", "cd sub\ncat <<'EOF' | bash\n" + body + "\nEOF\n"},
+		{"tee pipe", "cd sub\ntee copy <<'EOF' | bash\n" + body + "\nEOF\n"},
+		{"script file", "cat > run.sh <<'EOF'\n" + body + "\nEOF\ncd sub\nbash ../run.sh\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := runPreToolCommand(t, root, tc.script, nil)
+			if deny {
+				assertForgeTextDenied(t, response, span)
+			} else if response.ExitCode != 0 {
+				t.Fatalf("allowed body refused: %s", response.Stderr)
+			}
+		})
+	}
+}
+
+// checkAgentHereDocReader compares execution visibility across bounded body flows.
+func checkAgentHereDocReader(t *testing.T, body string, read func(string) bool) {
+	t.Helper()
+	for _, tc := range []struct {
+		name, script string
+		want         bool
+	}{
+		{"cat pipe", "cat <<'EOF' | bash\n" + body + "\nEOF\n", true},
+		{"tee pipe", "tee copy <<'EOF' | bash\n" + body + "\nEOF\n", true},
+		{"shell stdin", "bash <<'EOF'\n" + body + "\nEOF\n", true},
+		{"data", "cat > note <<'EOF'\n" + body + "\nEOF\n", false},
+		{"script file", "cat > run.sh <<'EOF'\n" + body + "\nEOF\nbash run.sh\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := read(tc.script); got != tc.want {
+				t.Fatalf("reader got %v; want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestForgeTextRefsHereDocData retains raw prose checks without inspecting hypothetical files.
+func TestForgeTextRefsHereDocData(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	writeTestFixtureFile(t, filepath.Join(root, "foreign.md"), "outside-org/project#42")
+	writeTestFixtureFile(t, filepath.Join(root, "clean.md"), "own-org/project#42")
+	for _, tc := range []struct {
+		body string
+		deny bool
+	}{
+		{"gh pr comment 9 --body-file foreign.md", false},
+		{"gh pr comment 9 --body-file missing.md", false},
+		{"gh pr comment 9 --body 'outside-org'/project#42", false},
+		{"gh pr comment 9 --body outside-org/proj\\\nect#42", false},
+		{"gh pr comment 9 --body-file clean.md", false},
+		{"gh pr comment 9 --body 'own-org'/project#42", false},
+		{"gh pr comment 9 --body own-org/proj\\\nect#42", false},
+		{"gh pr comment 9 --body outside-org/project#42", true},
+	} {
+		response := runPreToolCommand(t, root, "cat > note <<'EOF'\n"+tc.body+"\nEOF\n", nil)
+		if tc.deny {
+			assertForgeTextDenied(t, response, "outside-org/project#42")
+		} else if response.ExitCode != 0 {
+			t.Errorf("data refused: %s", response.Stderr)
+		}
+	}
+	response := runPreToolCommand(t, root, "cat > $SCRIPT <<'EOF'\ngh pr comment 9 --body-file missing.md\nEOF\nbash $SCRIPT\n", nil)
+	assertForgeTextDenied(t, response, "unproven redirect target")
+}
+
+// TestForgeTextRefsRound3Substitutions checks expanding data through the real hook.
+func TestForgeTextRefsRound3Substitutions(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	writeTestFixtureFile(t, filepath.Join(root, "foreign.md"), "outside-org/project#42")
+	for _, tc := range []struct {
+		name, delimiter, body string
+		deny                  bool
+	}{
+		{"T1 unquoted substitution", "EOF", "$(gh pr comment 9 --body-file foreign.md)", true},
+		{"T1 unquoted backtick", "EOF", "`gh pr comment 9 --body-file foreign.md`", true},
+		{"T1 quoted twin", "'EOF'", "$(gh pr comment 9 --body-file foreign.md)", false},
+		{"T1 innocent substitution", "EOF", "$(printf clean)", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := runPreToolCommand(t, root, "cat <<"+tc.delimiter+"\n"+tc.body+"\nEOF\n", nil)
+			if tc.deny {
+				assertForgeTextDenied(t, response, "outside-org/project#42")
+			} else if response.ExitCode != 0 {
+				t.Fatalf("allowed data refused: %s", response.Stderr)
+			}
+		})
+	}
+}
+
+// TestForgeTextRefsRound3Unproven refuses a write-shaped body when ownership cannot be proved.
+func TestForgeTextRefsRound3Unproven(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	for _, program := range []string{"gh", "g'h'", "g\\\nh"} {
+		t.Run(program, func(t *testing.T) {
+			response := runPreToolCommand(t, root, "mystery <<'EOF'\n"+program+" pr comment 9 --body-file missing.md\nEOF\n", nil)
+			assertForgeTextDenied(t, response, "unproven here-document owner: mystery")
+		})
+	}
+}
+
+// TestForgeTextRefsRound3ExpansionDirectories pins expansion-time directories and child scope.
+func TestForgeTextRefsRound3ExpansionDirectories(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	writeTestFixtureFile(t, filepath.Join(root, "foreign.md"), "Clean note")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "foreign.md"), "outside-org/project#42")
+	writeTestFixtureFile(t, filepath.Join(root, "unsafe.md"), "outside-org/project#42")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "unsafe.md"), "Clean note")
+	for _, tc := range []struct {
+		name, script string
+		deny         bool
+	}{
+		{"sibling substitution scope clean", "cat <<EOF\n$(cd sub; true) $(gh pr comment 9 --body-file foreign.md)\nEOF\n", false},
+		{"sibling substitution scope foreign", "cat <<EOF\n$(cd sub; true) $(gh pr comment 9 --body-file unsafe.md)\nEOF\n", true},
+		{"before later cd", "cat <<EOF\n$(gh pr comment 9 --body-file foreign.md)\nEOF\ncd sub\n", false},
+		{"after earlier cd", "cd sub\ntee copy <<EOF\n$(gh pr comment 9 --body-file 'foreign.md')\nEOF\n", true},
+		{"nested command", "cat <<EOF\n$(printf '%s' \"$(gh pr comment 9 --body-file sub/foreign.md)\")\nEOF\n", true},
+		{"literal apostrophe", "cat <<EOF\nit's $(gh pr comment 9 --body-file sub/foreign.md)\nEOF\n", true},
+		{"escaped expansion", "cat <<EOF\n\\$(gh pr comment 9 --body-file sub/foreign.md)\nEOF\n", false},
+		{"child directory stays child", "cat <<EOF\n$(cd sub; gh pr comment 9 --body-file ../foreign.md)\nEOF\ngh pr comment 9 --body-file foreign.md\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := runPreToolCommand(t, root, tc.script, nil)
+			if tc.deny {
+				assertForgeTextDenied(t, response, "outside-org/project#42")
+			} else if response.ExitCode != 0 {
+				t.Fatalf("allowed expansion refused: %s", response.Stderr)
+			}
+		})
+	}
+}
+
+// TestForgeTextRefsRound3NestedDirectoryUnproven refuses an unprovable nested expansion scope.
+func TestForgeTextRefsRound3NestedDirectoryUnproven(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	command := "cat <<EOF\n$(cd sub; printf '%s' \"$(gh pr comment 9 --body-file missing.md)\")\nEOF\n"
+	assertForgeTextDenied(t, runPreToolCommand(t, root, command, nil), "unproven nested substitution directory state")
+}
+
+// TestForgeTextRefsHereDocEvidenceDefault prevents shared-reader uncertainty becoming execution proof.
+func TestForgeTextRefsHereDocEvidenceDefault(t *testing.T) {
+	for _, tc := range []struct {
+		owner string
+		want  bool
+	}{
+		{"bash", true}, {"cat", false}, {"mystery", false},
+	} {
+		t.Run(tc.owner, func(t *testing.T) {
+			if got := commandMatches("git push", tc.owner+" <<'EOF'\ngit push\nEOF\n"); got != tc.want {
+				t.Fatalf("evidence %v; want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestForgeTextRefsRound3NonStdinUnproven refuses a descriptor body an explicit source may execute.
+func TestForgeTextRefsRound3NonStdinUnproven(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	command := "cat 2<<'A' <<'B' | bash\ngh pr comment 9 --body-file foreign.md\nA\nsource /dev/fd/2\nB\n"
+	assertForgeTextDenied(t, runPreToolCommand(t, root, command, nil), "unproven non-stdin here-document descriptor")
+}
+
+// TestForgeTextRefsRound3CatOperandsUnproven refuses a script write outside the stdin-copy proof.
+func TestForgeTextRefsRound3CatOperandsUnproven(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	command := "cat -- > run.sh <<'EOF'\ngh pr comment 9 --body-file foreign.md\nEOF\nbash run.sh\n"
+	assertForgeTextDenied(t, runPreToolCommand(t, root, command, nil), "unproven cat stdin operands")
+}
+
+// TestForgeTextRefsRound3PipedFileUnproven refuses unsupported downstream file definitions.
+func TestForgeTextRefsRound3PipedFileUnproven(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	for _, receiver := range []string{"tee run.sh", "cat > run.sh"} {
+		t.Run(receiver, func(t *testing.T) {
+			command := "cat <<'EOF' | " + receiver + "\ngh pr comment 9 --body-file foreign.md\nEOF\nbash run.sh\n"
+			assertForgeTextDenied(t, runPreToolCommand(t, root, command, nil), "unproven piped file definition")
+		})
+	}
+}
+
+// TestForgeTextRefsRound3AppendedScope keeps one script's directory state across append fragments.
+func TestForgeTextRefsRound3AppendedScope(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [own-org]\n")
+	writeTestFixtureFile(t, filepath.Join(root, "foreign.md"), "Clean note")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "foreign.md"), "outside-org/project#42")
+	command := "cat > run.sh <<'A'\ncd sub\nA\ncat >> run.sh <<'B'\ngh pr comment 9 --body-file foreign.md\nB\nbash run.sh\n"
+	assertForgeTextDenied(t, runPreToolCommand(t, root, command, nil), "outside-org/project#42")
 }

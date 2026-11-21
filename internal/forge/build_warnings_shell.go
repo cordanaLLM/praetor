@@ -38,9 +38,8 @@ type wrapperSpec struct {
 // documents it: sudo(8), env(1), nice(1), time(1), exec (bash(1)) and timeout(1), whose one
 // operand is the duration.
 var commandWrappers = map[string]wrapperSpec{
-	"sudo": {valueOptions: addNames(nil, []string{"-C", "--close-from", "-D", "--chdir", "-g", "--group", "-h", "--host",
-		"-p", "--prompt", "-R", "--chroot", "-T", "--command-timeout", "-U", "--other-user", "-u", "--user"})},
-	"env":     {valueOptions: addNames(nil, []string{"-u", "--unset", "-C", "--chdir", "-S", "--split-string", "-a", "--argv0"})},
+	"sudo":    {valueOptions: hiss.ShellWrapperOptions["sudo"].ValueOptions()},
+	"env":     {valueOptions: hiss.ShellWrapperOptions["env"].ValueOptions()},
 	"nice":    {valueOptions: addNames(nil, []string{"-n", "--adjustment"})},
 	"time":    {valueOptions: addNames(nil, []string{"-f", "--format", "-o", "--output"})},
 	"exec":    {valueOptions: addNames(nil, []string{"-a"})},
@@ -278,7 +277,7 @@ type envReach struct {
 
 // sudoValueLetters are the short sudo options that take a value, which a cluster such as -uroot
 // carries attached.
-const sudoValueLetters = "CDghpRTUu"
+var sudoValueLetters = hiss.ShellWrapperOptions["sudo"].ValueShort
 
 // option records what one wrapper option does to the environment (sudoOption, envOption).
 func (r *envReach) option(wrapper, option, value string) {

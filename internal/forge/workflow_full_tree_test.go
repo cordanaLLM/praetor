@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/hiss"
+
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
@@ -154,4 +156,69 @@ func TestAuditWorkflowTriggers_FullTree_PreCommitAction(t *testing.T) {
 	if out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": scoped})); strings.Contains(out, "full-tree command") {
 		t.Errorf("scoped pre-commit/action must pass:\n%s", out)
 	}
+}
+
+// TestFullTreeHereDocs sees a full-tree command only when its body executes.
+func TestFullTreeHereDocs(t *testing.T) {
+	checkHereDocReader(t, "pre-commit run --all-files", func(script string) bool {
+		_, got := findFullTreeStepCommand(script)
+		return got
+	})
+}
+
+// TestFullTreeRound3Comments checks comment-only and comment-prefixed fragments.
+func TestFullTreeRound3Comments(t *testing.T) {
+	for _, tc := range []struct {
+		name, script string
+		want         bool
+	}{
+		{"T2 comment first", "# setup\npre-commit run --all-files\n", true},
+		{"T2 shebang first", "#!/bin/bash\npre-commit run --all-files\n", true},
+		{"T2 comments only", "# pre-commit run --all-files\n# setup\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if command, got := findFullTreeStepCommand(tc.script); got != tc.want {
+				t.Fatalf("command %q, got %v; want %v", command, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFullTreeRound3Unproven withholds execution credit for an unknown stdin owner.
+func TestFullTreeRound3Unproven(t *testing.T) {
+	script := "mystery <<'EOF'\npre-commit run --all-files\nEOF\n"
+	if command, got := findFullTreeStepCommand(script); got {
+		t.Fatalf("unproven body credited: %q", command)
+	}
+	_, docs, splitErr := hiss.SplitHereDocs("mystery <<'EOF'\nbody\nEOF\n")
+	if splitErr != nil || len(docs) != 1 || docs[0].Reason != "unproven here-document owner: mystery" {
+		t.Fatalf("missing unproven reason: %#v, %v", docs, splitErr)
+	}
+
+}
+
+// TestFullTreeRound3UnprovenReadFailure prevents fallback credit for an unreadable body.
+func TestFullTreeRound3UnprovenReadFailure(t *testing.T) {
+	t.Run("unterminated body", func(t *testing.T) {
+		if command, got := findFullTreeStepCommand("cat <<'EOF'\npre-commit run --all-files\n"); got {
+			t.Fatalf("unproven body credited by fallback: %q", command)
+		}
+	})
+}
+
+// TestWorkflowHereDocConsumerDefaults pins opposite safe answers and their shared reason.
+func TestWorkflowHereDocConsumerDefaults(t *testing.T) {
+	script := "mystery <<'EOF'\npre-commit run --all-files\nEOF\n"
+	t.Run("enforcement refuses", func(t *testing.T) {
+		fields, err := ShellFields(script)
+		if fields != nil || err == nil || !strings.Contains(err.Error(), "unproven here-document owner: mystery") {
+			t.Fatalf("enforcement default: %q, %v", fields, err)
+		}
+	})
+	t.Run("proof withholds credit", func(t *testing.T) {
+		fields, err := ProvenShellFields(script)
+		if err != nil || strings.Contains(strings.Join(fields, " "), "pre-commit") {
+			t.Fatalf("proof default: %q, %v", fields, err)
+		}
+	})
 }

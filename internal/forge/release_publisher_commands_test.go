@@ -127,3 +127,14 @@ func TestGhCommandPublishesRelease(t *testing.T) {
 		})
 	}
 }
+
+// TestReleasePublisherHereDocs sees executing releases and ignores text written as data.
+func TestReleasePublisherHereDocs(t *testing.T) {
+	checkHereDocReader(t, "gh release create v1", func(script string) bool {
+		got, err := scriptPublishesRelease(script)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	})
+}

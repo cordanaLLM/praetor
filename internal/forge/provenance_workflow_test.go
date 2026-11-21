@@ -392,3 +392,14 @@ func TestMeasureProvenanceSkipsWhatNeverRuns(t *testing.T) {
 		})
 	}
 }
+
+// TestProvenanceHereDocs sees generated provenance in executing bodies only.
+func TestProvenanceHereDocs(t *testing.T) {
+	checkHereDocReader(t, "praetorctl provenance -out p.json", func(script string) bool {
+		job := jobProvenance{}
+		if err := job.read(t.Context(), t.TempDir(), &workflowStep{Run: script}); err != nil {
+			t.Fatal(err)
+		}
+		return job.generated
+	})
+}

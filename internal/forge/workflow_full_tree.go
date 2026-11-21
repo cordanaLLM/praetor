@@ -5,6 +5,7 @@
 package forge
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -14,11 +15,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
-)
-
-const (
-	// maxRunScriptLines bounds the lines read from one run: body (HISS-02).
-	maxRunScriptLines = 512
 )
 
 var scheduleSubstrings = []string{
@@ -231,26 +227,19 @@ func fullTreeStepCommand(step workflowStep) (string, bool) {
 	return "", false
 }
 
-// findFullTreeStepCommand searches the script line-by-line for full-tree commands
-// (engine-hiss18-full-tree-on-pr-20261027).
+// findFullTreeStepCommand reads the whole script so data bodies cannot become commands.
 func findFullTreeStepCommand(script string) (string, bool) {
-	lines := strings.Split(script, "\n")
-	for i := 0; i < len(lines) && i < maxRunScriptLines; i++ {
-		if cmd, found := findFullTreeCommandInLine(lines[i]); found {
-			return cmd, true
-		}
-	}
-	return "", false
+	return findFullTreeCommandInLine(script)
 }
 
-// findFullTreeCommandInLine inspects a single line for full-tree command invocations
+// findFullTreeCommandInLine inspects a shell fragment, including multiline here-documents, for full-tree invocations
 // (engine-hiss18-full-tree-on-pr-20261027).
 func findFullTreeCommandInLine(line string) (string, bool) {
 	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+	if trimmed == "" {
 		return "", false
 	}
-	fields, err := ShellFields(trimmed)
+	fields, err := ProvenShellFields(trimmed)
 	if err == nil {
 		commands := scriptCommands(fields)
 		for i := 0; i < len(commands) && i < maxRunScriptFields; i++ {
@@ -260,6 +249,9 @@ func findFullTreeCommandInLine(line string) (string, bool) {
 				return matched, true
 			}
 		}
+		return "", false
+	}
+	if errors.Is(err, ErrShellReadLimit) {
 		return "", false
 	}
 	return fullTreeFallbackMatch(trimmed)

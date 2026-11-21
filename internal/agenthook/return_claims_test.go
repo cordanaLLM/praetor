@@ -21,6 +21,7 @@ const testReviewBrief = "goal: review changes\ninputs: internal/agenthook\nretur
 func writeTestLines(t *testing.T, root, rel string, count int, header string) {
 	t.Helper()
 	full := filepath.Join(root, filepath.FromSlash(rel))
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- fixture directories need owner traversal; 0o700 grants no group or other access
 	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -415,4 +416,9 @@ func TestReturnClaims_Boundary_NonRegularCitationNotReportedAsOversized(t *testi
 	if !strings.Contains(stderr, "source must be regular") {
 		t.Fatalf("expected 'source must be regular' in stderr, got %q", stderr)
 	}
+}
+
+// TestExecutionClaimsHereDocs matches claimed executions only in executing bodies.
+func TestExecutionClaimsHereDocs(t *testing.T) {
+	checkAgentHereDocReader(t, "go test ./example", func(script string) bool { return commandMatches("go test ./example", script) })
 }

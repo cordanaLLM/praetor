@@ -38,3 +38,8 @@ func TestScriptHookRuns(t *testing.T) {
 		}
 	}
 }
+
+// TestHookRunsHereDocs sees an executing hook runner and ignores data.
+func TestHookRunsHereDocs(t *testing.T) {
+	checkHereDocReader(t, "lefthook run pre-push", func(script string) bool { return len(scriptHookRuns(script)) == 1 })
+}
