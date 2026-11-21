@@ -16,7 +16,8 @@ import (
 // BuildPolicy compiles the command policy for one hooks section: the built-in rules plus
 // hooks.command_policy.deny, the merge-helper rule when hooks.merge.helper is set,
 // the heavy-step check when hooks.admission.enforce is set, and
-// the git worktree add location check when hooks.worktrees.enforce is set. A
+// the git worktree add location check when hooks.worktrees.enforce is set, and the
+// bare background rule when hooks.background.enforce is set. A
 // zero HookSettings compiles the built-in rules alone, so a caller that has not loaded any
 // settings document still fails closed rather than nil.
 func BuildPolicy(hooks config.HookSettings) (*Policy, error) {
@@ -31,6 +32,7 @@ func BuildPolicy(hooks config.HookSettings) (*Policy, error) {
 		policy.rules = append(policy.rules, mergeHelperRule(hooks.Merge.Helper))
 	}
 	policy.worktrees = newWorktreeCheck(hooks.Worktrees)
+	policy.background = hooks.Background.Enforce
 	return policy, nil
 }
 

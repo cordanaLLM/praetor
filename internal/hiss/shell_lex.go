@@ -43,6 +43,8 @@ const (
 	shellBacktick
 	shellArithExpansion
 	shellArithCommand
+	shellHeredocText
+	shellParamQuoted
 )
 
 // shellFrame is one open span: its kind and the brackets its own text opened.
@@ -55,6 +57,7 @@ type shellFrame struct {
 type shellHeredoc struct {
 	delimiter string
 	stripTabs bool
+	quoted    bool
 }
 
 // shellLexer carries the cross-line state of one script.
@@ -68,6 +71,8 @@ type shellLexer struct {
 	// misread records a construct the lexer could not follow: a delimiter it cannot read, or a
 	// bound exceeded. The file is then declined.
 	misread bool
+	// inspect blanks arithmetic operators while retaining executable substitutions.
+	inspect bool
 }
 
 // line returns the code of one physical line, or reports that the line belongs to a
@@ -81,9 +86,14 @@ func (l *shellLexer) line(text string) (string, bool) {
 	for i := 0; i < len(text); {
 		i = l.step(text, i, &b)
 	}
+	l.finishLine()
+	return b.String(), false
+}
+
+// finishLine starts pending heredocs only after a complete logical command line.
+func (l *shellLexer) finishLine() {
 	l.bodies = append(l.bodies, l.pending...)
 	l.pending = l.pending[:0]
-	return b.String(), false
 }
 
 // bodyLine reads one line of a here-document body, closing it at its delimiter line.
@@ -144,9 +154,11 @@ func (l *shellLexer) step(text string, i int, b *strings.Builder) int {
 	case shellDouble:
 		return l.double(text, i, b)
 	case shellParam:
-		return l.param(text, i, frame)
+		return l.param(text, i, frame, b)
 	case shellArithExpansion, shellArithCommand:
 		return l.arith(text, i, frame, b)
+	case shellHeredocText, shellParamQuoted:
+		return l.heredocText(text, i, b)
 	case shellBacktick:
 		if text[i] == '`' {
 			l.pop()
@@ -177,7 +189,7 @@ func (l *shellLexer) code(text string, i int, b *strings.Builder) int {
 	case '(', ')':
 		return l.paren(text, i, b)
 	case '#':
-		if i == 0 || strings.IndexByte(" \t;&|()<>", text[i-1]) >= 0 {
+		if shellCommentBoundary(b.String()) {
 			return len(text)
 		}
 	}
@@ -262,12 +274,12 @@ func (l *shellLexer) heredoc(text string, i int) int {
 	for i < len(text) && (text[i] == ' ' || text[i] == '\t') {
 		i++
 	}
-	delimiter, _, width, err := util.ShellHereDocDelimiter(text[i:])
+	delimiter, quoted, width, err := util.ShellHereDocDelimiter(text[i:])
 	if err != nil || len(l.pending) >= maxShellHeredocs {
 		l.misread = true
 		return len(text)
 	}
-	h.delimiter = delimiter
+	h.delimiter, h.quoted = delimiter, quoted
 	l.pending = append(l.pending, h)
 	return i + width
 }
@@ -335,14 +347,17 @@ func (l *shellLexer) double(text string, i int, b *strings.Builder) int {
 }
 
 // param reads the inside of ${...}, whose quotes and nested braces do not close it.
-func (l *shellLexer) param(text string, i int, frame *shellFrame) int {
+func (l *shellLexer) param(text string, i int, frame *shellFrame, b *strings.Builder) int {
+	if next, ok := l.nestedExpansion(text, i, b); ok {
+		return next
+	}
 	switch text[i] {
 	case '\\':
 		return i + 2
 	case '"':
 		l.push(shellDouble)
 	case '\'':
-		l.push(shellSingle)
+		l.openParameterQuote()
 	case '{':
 		frame.depth++
 	case '}':
@@ -358,7 +373,10 @@ func (l *shellLexer) param(text string, i int, frame *shellFrame) int {
 // arith reads an arithmetic expansion, which is blanked, or an arithmetic command, which is
 // kept as written, up to the )) that closes it.
 func (l *shellLexer) arith(text string, i int, frame *shellFrame, b *strings.Builder) int {
-	keep := frame.ctx == shellArithCommand
+	if next, ok := l.nestedExpansion(text, i, b); ok {
+		return next
+	}
+	keep := frame.ctx == shellArithCommand && !l.inspect
 	switch text[i] {
 	case '(':
 		frame.depth++
@@ -379,4 +397,53 @@ func (l *shellLexer) arith(text string, i int, frame *shellFrame, b *strings.Bui
 		b.WriteByte(text[i])
 	}
 	return i + 1
+}
+
+// nestedExpansion keeps executable substitutions inside otherwise blanked expansions.
+func (l *shellLexer) nestedExpansion(text string, i int, b *strings.Builder) (int, bool) {
+	if text[i] == '$' && (strings.HasPrefix(text[i+1:], "(") || strings.HasPrefix(text[i+1:], "{")) {
+		return l.dollar(text, i, b), true
+	}
+	if text[i] == '`' {
+		return l.openQuote('`', i, b), true
+	}
+	return i, false
+}
+
+// heredocText applies expanding-heredoc rules: quotes are data; only shell escapes and expansions act.
+func (l *shellLexer) heredocText(text string, i int, b *strings.Builder) int {
+	if l.top().ctx == shellParamQuoted && text[i] == '\'' {
+		l.pop()
+		return i + 1
+	}
+	if text[i] == '\\' && i+1 < len(text) && strings.ContainsRune("$`\\", rune(text[i+1])) {
+		return i + 2
+	}
+	if next, ok := l.nestedExpansion(text, i, b); ok {
+		return next
+	}
+	return i + 1
+}
+
+// openParameterQuote preserves literal single quotes outside inherited expansion contexts.
+// Inside double quotes, arithmetic or expanding heredocs, shell dialects differ; inspect
+// substitutions conservatively rather than letting a quoted fragment hide execution.
+func (l *shellLexer) openParameterQuote() {
+	if l.inspect && l.inheritedExpansion() {
+		l.push(shellParamQuoted)
+		return
+	}
+	l.push(shellSingle)
+}
+
+func (l *shellLexer) inheritedExpansion() bool {
+	for i := len(l.stack) - 1; i >= 0 && i < maxShellNesting; i-- {
+		switch l.stack[i].ctx {
+		case shellCommand, shellBacktick:
+			return false
+		case shellDouble, shellHeredocText, shellArithExpansion, shellArithCommand:
+			return true
+		}
+	}
+	return false
 }

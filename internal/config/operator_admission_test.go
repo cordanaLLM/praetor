@@ -95,33 +95,45 @@ func TestOperatorAdmission_Boundary_MergedBoundAndDefault(t *testing.T) {
 	}
 }
 
+// TestOperatorWorktrees_3D verifies worktree enforcement merges monotonically, rejects invalid settings, and defaults off.
 func TestOperatorWorktrees_3D(t *testing.T) {
-	// Positive: a layer opts in to hooks.worktrees.enforce.
-	policy, err := loadAdmissionLayers(t, "hooks:\n  worktrees:\n    enforce: false\n",
-		"hooks:\n  worktrees:\n    enforce: true\n")
+	testOperatorEnforcement(t, "worktrees", func(hooks HookSettings) bool { return hooks.Worktrees.Enforce })
+}
+
+// TestOperatorBackground_3D verifies background enforcement merges monotonically, rejects invalid settings, and defaults off.
+func TestOperatorBackground_3D(t *testing.T) {
+	testOperatorEnforcement(t, "background", func(hooks HookSettings) bool { return hooks.Background.Enforce })
+}
+
+// testOperatorEnforcement checks shared enforcement guarantees across operator policy layers.
+func testOperatorEnforcement(t *testing.T, section string, enforced func(HookSettings) bool) {
+	t.Helper()
+	document := func(value string) string { return "hooks: {" + section + ": {enforce: " + value + "}}\n" }
+	policy, err := loadAdmissionLayers(t, document("false"), document("true"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !policy.OperatorSettings().Hooks.Worktrees.Enforce {
-		t.Fatalf("worktrees settings %+v", policy.OperatorSettings().Hooks.Worktrees)
+	if !enforced(policy.OperatorSettings().Hooks) {
+		t.Fatalf("%s enforcement unset", section)
 	}
 
-	// Negative: once a layer turns worktree enforcement on, a later layer cannot loosen it;
-	// unknown keys and non-boolean values fail.
-	_, err = loadAdmissionLayers(t, "hooks: {worktrees: {enforce: true}}\n", "hooks: {worktrees: {enforce: false}}\n")
+	// Once enabled by a layer, enforcement cannot be loosened by a later layer.
+	_, err = loadAdmissionLayers(t, document("true"), document("false"))
 	if err == nil || !strings.Contains(err.Error(), "fleet") || !strings.Contains(err.Error(), "workstation") {
-		t.Fatalf("turning worktrees.enforce off in a later layer must fail naming both layers: %v", err)
+		t.Fatalf("turning %s.enforce off must fail naming both layers: %v", section, err)
 	}
-	if _, err := loadAdmissionLayers(t, "hooks: {worktrees: {unknown: true}}\n", ""); err == nil {
-		t.Fatal("unknown hooks.worktrees key accepted")
+	if _, err := loadAdmissionLayers(t, "hooks: {"+section+": {unknown: true}}\n", ""); err == nil {
+		t.Fatalf("unknown hooks.%s key accepted", section)
 	}
-	if _, err := loadAdmissionLayers(t, "hooks: {worktrees: {enforce: maybe}}\n", ""); err == nil {
-		t.Fatal("non-boolean hooks.worktrees.enforce accepted")
+	if _, err := loadAdmissionLayers(t, document("maybe"), ""); err == nil {
+		t.Fatalf("non-boolean hooks.%s.enforce accepted", section)
 	}
 
-	// Boundary: omitted hooks.worktrees leaves Enforce false.
 	defaultPolicy, err := loadAdmissionLayers(t, "hooks: {scope: governed}\n", "")
-	if err != nil || defaultPolicy.OperatorSettings().Hooks.Worktrees.Enforce {
-		t.Fatalf("default worktrees settings %+v, %v", defaultPolicy.OperatorSettings().Hooks.Worktrees, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enforced(defaultPolicy.OperatorSettings().Hooks) {
+		t.Fatalf("default %s enforcement enabled", section)
 	}
 }

@@ -1333,6 +1333,46 @@ both allowed forms (`TestWorktrees_Positive_DeclaredDevRootWorktreeAllowed`,
 `TestWorktrees_Negative_UnparsableWorktreeAddFailsClosed` in
 `internal/agenthook/worktrees_test.go`).
 
+## Background processes
+
+Bare background enforcement is off by default. A host enables it with
+`hooks.background.enforce: true` in an [operator layer](effective-policy.md#operator-settings).
+The pre-tool command policy then refuses bare `&` control operators, including `job &`,
+`a & b`, `(job > log 2>&1 &)` and `{ job & }`. The `bare-background` refusal names the
+setting and directs the agent to its client's background-task mechanism or a systemd
+user unit, so the process remains tracked.
+
+Logical AND (`&&`), fd redirections (`>&`, `2>&1`) and stderr pipes (`|&`) remain
+allowed. A redirect-both operator (`&>` or `&>>`) is allowed only inside an explicitly
+named `bash -c` or `zsh -c` payload. With an unknown shell, or a POSIX shell such as
+`dash`, it fails closed because `&` can start a background job. Bitwise `&` in
+arithmetic commands (`(( a & b ))`) and expansions (`$(( a & b ))`) remains allowed.
+Command substitutions within arithmetic are inspected.
+
+The check inspects literal `-c` payloads of `sh`, `bash`, `zsh`, `dash`, `ash`, `ksh`
+and `mksh`, a single literal `eval` argument, and nested shell invocations through a
+bounded work queue. Dynamic payloads, multiple `eval` arguments, ambiguous options,
+shell redirections, string-reparsing wrapper options (`env -S`, `flock -c`) and shell input
+from stdin fail closed. Unknown wrapper options and expanding wrapper arguments also fail closed. Wrapper
+options use quote-removed values; options after the wrapped command remain arguments. Admission wrappers with `--` are traversed.
+Script-file contents are outside this command-line check. Quoted arguments to ordinary commands remain data,
+including URL queries and text that merely mentions a background command.
+
+Executable command and backtick substitutions remain checked inside parameter
+expansions, arithmetic and unquoted heredoc bodies. Ordinary heredoc text, quoted
+heredoc bodies, escaped ampersands and comments do not trigger this rule. A backslash
+at the end of a comment does not hide the next physical line.
+
+Before parsing or joining continuations, commands over 1 MiB or 4,096 physical lines
+fail closed with named `background byte bound` or `background physical-line bound`
+reasons. Nested payload inspection permits eight levels, at most 4,096 queued scopes
+and an 8 MiB cumulative source budget; the lexer bounds nesting to 32 frames and
+pending heredocs to 16. Unreadable shell input, including an unfinished quote,
+substitution or heredoc, also fails closed while enforcement is enabled. Once a layer
+enables enforcement, a later layer cannot disable it. Positive, negative and boundary
+cases are covered in `internal/agenthook/background_test.go`; operator-layer validation
+is covered in `internal/config/operator_admission_test.go`.
+
 ## Record mode
 
 Set `PRAETOR_HOOK_RECORD_DIR` to a private, writable directory and every hook call, for

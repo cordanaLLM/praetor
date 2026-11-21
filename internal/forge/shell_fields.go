@@ -14,7 +14,8 @@ var ErrShellReadLimit = errors.New("run script exceeds shell reader limit")
 
 // ShellFields reads shell words and control operators without executing or expanding them.
 // Quotes and escapes stay in words; quoted whitespace and operators stay literal. Comments
-// are removed, backslash-newline continues a command, and an unquoted newline becomes ";".
+// are removed; backslash-newline continues outside single quotes, and an unquoted newline
+// becomes ";". Single-quoted backslash-newline pairs stay literal, including in payloads.
 // Operators ;, &, &&, | and || are separate fields even without surrounding whitespace.
 // The forge's shellWords/parseShellCommand readers consume these same fields. More than
 // maxRunScriptFields fields or an unclosed quote is an error, never a partial result.
@@ -23,7 +24,6 @@ func ShellFields(script string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrShellReadLimit, err)
 	}
-	script = strings.ReplaceAll(script, "\\\n", "")
 	scan := shellFieldReader{start: -1}
 	for i := 0; i < len(script); i++ {
 		i = scan.step(script, i)
@@ -50,10 +50,16 @@ func ShellFields(script string) ([]string, error) {
 type shellFieldReader struct {
 	fields  []string
 	start   int
+	joined  strings.Builder
 	stepper hiss.QuoteStepper
 }
 
+// step consumes the byte at i and returns the next index: it drops a backslash-newline outside single quotes,
+// keeps quoted bytes in the current word, ends a word at blanks and reads operators.
 func (r *shellFieldReader) step(script string, i int) int {
+	if r.continuation(script, i) {
+		return i + 1
+	}
 	c := script[i]
 	if r.stepper.InQuote() || strings.ContainsRune("'\"\\", rune(c)) {
 		if r.start < 0 {
@@ -74,6 +80,19 @@ func (r *shellFieldReader) step(script string, i int) int {
 	return i
 }
 
+// continuation joins only active pairs; escaped backslashes are consumed by QuoteStepper.
+// Save word fragments before skipping bytes so continuation removal never splits a word.
+func (r *shellFieldReader) continuation(script string, i int) bool {
+	if r.stepper.OpenQuote() == '\'' || !strings.HasPrefix(script[i:], "\\\n") {
+		return false
+	}
+	if r.start >= 0 {
+		r.joined.WriteString(script[r.start:i])
+		r.start = i + 2
+	}
+	return true
+}
+
 func (r *shellFieldReader) operator(script string, i int) int {
 	r.word(script, i)
 	op := string(script[i])
@@ -87,9 +106,11 @@ func (r *shellFieldReader) operator(script string, i int) int {
 	return i
 }
 
+// word closes the open word at end, joined with any fragments kept across a removed continuation.
 func (r *shellFieldReader) word(script string, end int) {
 	if r.start >= 0 {
-		r.fields = append(r.fields, script[r.start:end])
+		r.fields = append(r.fields, r.joined.String()+script[r.start:end])
+		r.joined.Reset()
 		r.start = -1
 	}
 }

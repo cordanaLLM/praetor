@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// TestShellFields covers quoting, comments, operators and backslash-newline continuations inside and outside quotes.
 func TestShellFields(t *testing.T) {
 	for _, tc := range []struct {
 		name, script string
@@ -16,6 +17,11 @@ func TestShellFields(t *testing.T) {
 		{"quotes", `git -C "a  b; c" -c 'key=x|y' status`, []string{"git", "-C", `"a  b; c"`, "-c", "'key=x|y'", "status"}},
 		{"comments", "git status # cd hidden\ncd real", []string{"git", "status", ";", "cd", "real"}},
 		{"continuation", "git sta\\\ntus", []string{"git", "status"}},
+		{"single quoted continuation", "bash -c '# comment \\\njob &'", []string{"bash", "-c", "'# comment \\\njob &'"}},
+		{"double quoted continuation", "echo \"a\\\nb\"", []string{"echo", `"ab"`}},
+		{"leading continuation", "\\\necho ok", []string{"echo", "ok"}},
+		{"repeated continuation", "a\\\nb\\\nc", []string{"abc"}},
+		{"escaped backslash newline", "echo a\\\\\nb", []string{"echo", `a\\`, ";", "b"}},
 		{"escaped", `echo a\;b \"x`, []string{"echo", `a\;b`, `\"x`}},
 		{"20w token line", `token="$(printf '%s' "$token_response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"`, []string{`token="$(printf '%s' "$token_response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"`}},
 		{"nested command substitution", `"$(echo "x y")"`, []string{`"$(echo "x y")"`}},
