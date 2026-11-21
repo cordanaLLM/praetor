@@ -150,9 +150,9 @@ function runSources(root, { values }) {
 }
 
 /** Check the configured built site for rendered diagrams. */
-function runSite(_root, { values }) {
+function runSite(root, { values }) {
   if (!values.config || !values.docs || !values.site) throw new UsageError('site needs --config, --docs and --site');
-  const { errors, diagrams } = checkSite(values.config, values.docs, values.site, values.base);
+  const { errors, diagrams } = checkSite(values.config, values.docs, values.site, values.base, root);
   return report(errors, `${diagrams} diagram(s) under ${values.docs} render.`);
 }
 

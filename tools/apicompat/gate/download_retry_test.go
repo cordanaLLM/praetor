@@ -28,6 +28,7 @@ type mockTracker struct {
 	failErr   error
 }
 
+// run dispatches the go command to the mock tracker, counting downloads and list calls.
 func (m *mockTracker) run(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
 	if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
 		m.downloads++
@@ -36,11 +37,11 @@ func (m *mockTracker) run(ctx context.Context, dir string, stdout, errOut io.Wri
 		}
 		return nil
 	}
-	if len(args) >= 1 && args[0] == "list" {
+	if len(args) >= 2 && args[0] == "list" && args[1] == "-export" {
 		m.lists++
 		return nil
 	}
-	return nil
+	return runTool(ctx, dir, stdout, errOut, name, args...)
 }
 
 // Positive: first download fails then succeeds on attempt 2, list runs once, one wait of 5 s.
@@ -121,7 +122,7 @@ func TestBuildModule_Boundary_CancelDuringWaitReturnsAtOnce(t *testing.T) {
 			cancel()
 			return errors.New("initial failure")
 		}
-		return nil
+		return runTool(runCtx, dir, stdout, errOut, name, args...)
 	}
 
 	start := time.Now()
@@ -137,23 +138,23 @@ func TestBuildModule_Boundary_CancelDuringWaitReturnsAtOnce(t *testing.T) {
 }
 
 // Negative: exception for module plus download failure still fails gate.
-func TestGate_Negative_ExceptionForModulePlusDownloadFailureStillFailsGate(t *testing.T) {
+func TestCompareEach_CancelledContextWithLiveExceptionReturnsFatalError(t *testing.T) {
 	t.Parallel()
 	repo := repository{
 		root:  retryFixtureRoot(t, "excepted"),
 		today: time.Now().UTC(),
 		exceptions: []exception{
-			{Path: "excepted/go.mod", Reason: "needs libfoo", Expires: "2099-12-31"},
+			{Path: "excepted/go.mod", Reason: "known broken build", Expires: "2099-12-31"},
 		},
-		runner: func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-			if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
-				return errors.New("proxy error")
-			}
-			return nil
-		},
-		wait: func(ctx context.Context, d time.Duration) error {
-			return nil
-		},
+		wait: func(ctx context.Context, d time.Duration) error { return nil },
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	repo.runner = func(runCtx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 1 && args[0] == "list" {
+			cancel()
+			return context.Canceled
+		}
+		return nil
 	}
 	plan := modulePlan{
 		compared: []module{
@@ -163,12 +164,235 @@ func TestGate_Negative_ExceptionForModulePlusDownloadFailureStillFailsGate(t *te
 	stdout := &printer{w: io.Discard}
 	stderr := &printer{w: io.Discard}
 
-	results, err := compareEach(t.Context(), repo, plan, "checker", checkerSites{}, nil, stdout, stderr)
+	results, err := compareEach(ctx, repo, plan, "checker", checkerSites{}, nil, stdout, stderr)
 	if err == nil {
-		t.Fatalf("compareEach succeeded (results = %+v), want failure when download fails even with live exception", results)
+		t.Fatalf("compareEach succeeded (results = %+v), want error when ctx is cancelled during build", results)
 	}
-	if !strings.Contains(err.Error(), "excepted") || !strings.Contains(err.Error(), "3 attempts") {
-		t.Errorf("error %q does not name excepted module and attempts", err.Error())
+	if !strings.Contains(err.Error(), "excepted") {
+		t.Errorf("error %q does not keep module context", err.Error())
+	}
+	for _, res := range results {
+		if res.notCompared != "" {
+			t.Errorf("result has notCompared = %q, want no excuse on cancelled context", res.notCompared)
+		}
+	}
+}
+
+// isModDownload reports whether args represent a go mod download invocation.
+func isModDownload(args []string) bool {
+	return len(args) >= 2 && args[0] == "mod" && args[1] == "download"
+}
+
+// isGoListModules reports whether args represent a go list -m invocation.
+func isGoListModules(args []string) bool {
+	return len(args) >= 2 && args[0] == "list" && args[1] == "-m"
+}
+
+// isGoListExport reports whether args represent a go list -export invocation.
+func isGoListExport(args []string) bool {
+	return len(args) >= 2 && args[0] == "list" && args[1] == "-export"
+}
+
+// assertCompareEachDownloadError verifies that compareEach returns a download error naming the module and retry count.
+func assertCompareEachDownloadError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("compareEach succeeded, want error when download fails without exception")
+	}
+	if !strings.Contains(err.Error(), "mod") || !strings.Contains(err.Error(), "3 attempts") {
+		t.Errorf("error %q does not name module and attempts", err.Error())
+	}
+}
+
+// assertCompareEachDownloadExcused verifies that compareEach excuses the failed download when a live exception covers it.
+func assertCompareEachDownloadExcused(t *testing.T, results []result, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("compareEach failed: %v, want live exception to excuse failure", err)
+	}
+	if len(results) != 1 || !strings.Contains(results[0].notCompared, "excepted until 2099-12-31: needs libfoo") {
+		t.Fatalf("results = %+v, want notCompared note with exception", results)
+	}
+}
+
+// failingDownloadRunner is a go command runner that always fails mod download.
+func failingDownloadRunner(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+	if isModDownload(args) {
+		return errors.New("persistent download error")
+	}
+	return runTool(ctx, dir, stdout, errOut, name, args...)
+}
+
+// runCompareEachDownloadTest exercises compareEach with a persistently failing download runner.
+func runCompareEachDownloadTest(t *testing.T, excepted, wantError bool) {
+	t.Helper()
+	repo := repository{
+		root:   retryFixtureRoot(t, "mod"),
+		today:  time.Now().UTC(),
+		runner: failingDownloadRunner,
+		wait:   func(ctx context.Context, d time.Duration) error { return nil },
+	}
+	if excepted {
+		repo.exceptions = []exception{
+			{Path: "mod/go.mod", Reason: "needs libfoo", Expires: "2099-12-31"},
+		}
+	}
+	plan := modulePlan{
+		compared: []module{
+			{dir: "mod", path: "example.com/mod"},
+		},
+	}
+	stdout := &printer{w: io.Discard}
+	stderr := &printer{w: io.Discard}
+
+	results, err := compareEach(t.Context(), repo, plan, "checker", checkerSites{}, nil, stdout, stderr)
+	if wantError {
+		assertCompareEachDownloadError(t, err)
+		return
+	}
+	assertCompareEachDownloadExcused(t, results, err)
+}
+
+// TestCompareEach_DownloadFailureExcusesOrErrors verifies that a persistent download failure is excused by a live exception and errors without one.
+func TestCompareEach_DownloadFailureExcusesOrErrors(t *testing.T) {
+	t.Parallel()
+	t.Run("with-live-exception", func(t *testing.T) {
+		runCompareEachDownloadTest(t, true, false)
+	})
+	t.Run("without-exception", func(t *testing.T) {
+		runCompareEachDownloadTest(t, false, true)
+	})
+}
+
+// retryReportWriter fails only the first retry diagnostic, then accepts later writes.
+type retryReportWriter struct {
+	err    error
+	output strings.Builder
+}
+
+func (w *retryReportWriter) Write(data []byte) (int, error) {
+	if w.err != nil && strings.Contains(string(data), "(attempt 1 of 3)") {
+		err := w.err
+		w.err = nil
+		return 0, err
+	}
+	return w.output.Write(data)
+}
+
+// TestCompareEach_RetryReportWriteFailure keeps report failures fatal across both retry paths.
+func TestCompareEach_RetryReportWriteFailure(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []string{"download", "list"} {
+		for _, tc := range []struct {
+			name                 string
+			failReport, excepted bool
+		}{
+			{"transient-live-exception", true, true},
+			{"working-live-exception", false, true},
+			{"working-no-exception", false, false},
+		} {
+			t.Run(operation+"/"+tc.name, func(t *testing.T) {
+				checkRetryReportFailure(t, operation, tc.failReport, tc.excepted)
+			})
+		}
+	}
+}
+
+// checkRetryReportFailure checks report errors, live exceptions expiring today, and build errors.
+func checkRetryReportFailure(t *testing.T, operation string, failReport, excepted bool) {
+	t.Helper()
+	buildErr := errors.New("simulated build failure")
+	reportErr := errors.New("simulated report write failure")
+	repo := repository{
+		root:   retryFixtureRoot(t, "mod"),
+		today:  time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC),
+		wait:   func(context.Context, time.Duration) error { return nil },
+		runner: retryFailureRunner(operation, buildErr),
+	}
+	if excepted {
+		repo.exceptions = []exception{{Path: "mod/go.mod", Reason: "known broken build", Expires: "2026-11-13"}}
+	}
+	writer := &retryReportWriter{}
+	if failReport {
+		writer.err = reportErr
+	}
+	plan := modulePlan{compared: []module{{dir: "mod", path: "example.com/mod"}}}
+	results, err := compareEach(t.Context(), repo, plan, "unused", checkerSites{}, nil, &printer{w: io.Discard}, &printer{w: writer})
+	if failReport {
+		assertFatalRetryReport(t, writer, results, err, reportErr)
+		return
+	}
+	assertRetryBuildResult(t, writer, results, err, buildErr, excepted)
+}
+
+// assertFatalRetryReport verifies a transient write failure cannot excuse a module.
+func assertFatalRetryReport(t *testing.T, writer *retryReportWriter, results []result, err, reportErr error) {
+	t.Helper()
+	if !errors.Is(err, reportErr) || !strings.Contains(err.Error(), "write retry diagnostic") || len(results) != 0 {
+		t.Fatalf("report failure excused: results = %+v, err = %v; want fatal report write error", results, err)
+	}
+	if strings.Contains(writer.output.String(), "was not compared") {
+		t.Fatal("report failure reached the exception warning")
+	}
+	if _, err := writer.Write([]byte("later write succeeds\n")); err != nil {
+		t.Fatalf("writer failure must be transient: %v", err)
+	}
+}
+
+// assertRetryBuildResult verifies ordinary build errors retain their exception handling.
+func assertRetryBuildResult(t *testing.T, writer *retryReportWriter, results []result, err, buildErr error, excepted bool) {
+	t.Helper()
+	if excepted {
+		if err != nil || len(results) != 1 || results[0].notCompared == "" || !strings.Contains(writer.output.String(), "was not compared") {
+			t.Fatalf("live exception lost: results = %+v, err = %v", results, err)
+		}
+		return
+	}
+	if !errors.Is(err, buildErr) || len(results) != 0 {
+		t.Fatalf("ordinary build failure changed: results = %+v, err = %v", results, err)
+	}
+}
+
+// retryFailureRunner fails the selected retry operation without downloading dependencies.
+func retryFailureRunner(operation string, buildErr error) toolRunner {
+	return func(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
+		if isGoListModules(args) {
+			return runTool(ctx, dir, stdout, stderr, name, args...)
+		}
+		if (operation == "download" && isModDownload(args)) || (operation == "list" && isGoListExport(args)) {
+			return buildErr
+		}
+		return nil
+	}
+}
+
+// TestDownloadModule_CancelledContextAfterFailedRunReturnsDownloadErrorWithoutRetryMessage verifies that a cancelled context after a failed run reports the download error without a retry note.
+func TestDownloadModule_CancelledContextAfterFailedRunReturnsDownloadErrorWithoutRetryMessage(t *testing.T) {
+	t.Parallel()
+	root := retryFixtureRoot(t, "mod")
+	modDir := filepath.Join(root, "mod")
+	ctx, cancel := context.WithCancel(t.Context())
+	runner := func(runCtx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
+			cancel()
+			return errors.New("simulated run failure")
+		}
+		return runTool(runCtx, dir, stdout, errOut, name, args...)
+	}
+	var stderr strings.Builder
+	err := downloadModule(ctx, modDir, "mod", &stderr, runner, defaultWait)
+	if err == nil {
+		t.Fatal("downloadModule succeeded, want downloadError")
+	}
+	var dlErr *downloadError
+	if !errors.As(err, &dlErr) {
+		t.Fatalf("err = %v (%T), want *downloadError", err, err)
+	}
+	if dlErr.attempts != 1 {
+		t.Errorf("dlErr.attempts = %d, want 1", dlErr.attempts)
+	}
+	if strings.Contains(stderr.String(), "attempt 1 of 3") {
+		t.Errorf("stderr contains retry message: %q, want none on context cancel", stderr.String())
 	}
 }
 
@@ -226,9 +450,26 @@ func writeTestModuleFiles(t *testing.T, dir, gomod, src, testSrc string) {
 	}
 }
 
-// Positive: test-only go.mod requirements are never prefetched before go list -export.
-func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
-	t.Parallel()
+// assertNoDownloadsAndOneList verifies that no mod download was attempted and exactly one list call was made.
+func assertNoDownloadsAndOneList(t *testing.T, downloadCalls [][]string, lists int) {
+	t.Helper()
+	if len(downloadCalls) != 0 || lists != 1 {
+		t.Fatalf("downloadCalls = %v, lists = %d; want no download calls and 1 list", downloadCalls, lists)
+	}
+}
+
+// assertNeededModuleDownloaded verifies that exactly the needed module was downloaded.
+func assertNeededModuleDownloaded(t *testing.T, downloadCalls [][]string) {
+	t.Helper()
+	wantArgs := []string{"mod", "download", "example.com/needed@v1.2.3"}
+	if len(downloadCalls) != 1 || !slices.Equal(downloadCalls[0], wantArgs) {
+		t.Fatalf("downloadCalls = %v, want [%v]", downloadCalls, wantArgs)
+	}
+}
+
+// testBuildModuleSkipsTestOnlyRequirements verifies that buildModule does not download test-only requirements.
+func testBuildModuleSkipsTestOnlyRequirements(t *testing.T) {
+	t.Helper()
 	root := t.TempDir()
 	fssnapDir := filepath.Join(root, "hw", "fssnap")
 	gomod := "module example.com/hw/fssnap\n\ngo 1.26.0\n\nrequire github.com/stretchr/testify v1.9.0\n"
@@ -239,7 +480,10 @@ func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
 	var downloadCalls [][]string
 	var lists int
 	failDownload := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
+		if isGoListModules(args) {
+			return runTool(ctx, dir, stdout, errOut, name, args...)
+		}
+		if isModDownload(args) {
 			downloadCalls = append(downloadCalls, slices.Clone(args))
 			return errors.New("testify proxy unavailable")
 		}
@@ -249,14 +493,24 @@ func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
 	if err := buildModule(t.Context(), root, "hw/fssnap", io.Discard, failDownload, defaultWait); err != nil {
 		t.Fatalf("buildModule failed on test-only requirement: %v", err)
 	}
-	if len(downloadCalls) != 0 || lists != 1 {
-		t.Fatalf("downloadCalls = %v, lists = %d; want no download calls and 1 list", downloadCalls, lists)
-	}
+	assertNoDownloadsAndOneList(t, downloadCalls, lists)
+}
 
+// testBuildModuleMixedRequirements verifies that buildModule downloads only non-test requirements.
+func testBuildModuleMixedRequirements(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	fssnapDir := filepath.Join(root, "hw", "fssnap")
 	mixedGomod := "module example.com/hw/fssnap\n\ngo 1.26.0\n\nrequire (\n\texample.com/needed v1.2.3\n\tgithub.com/stretchr/testify v1.9.0\n)\n"
+	testSrc := "package fssnap\n\nimport _ \"github.com/stretchr/testify/assert\"\n"
 	writeTestModuleFiles(t, fssnapDir, mixedGomod, "package fssnap\n\nimport _ \"example.com/needed/sub\"\n", testSrc)
+
+	var downloadCalls [][]string
 	recordDownload := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
+		if isGoListModules(args) {
+			return runTool(ctx, dir, stdout, errOut, name, args...)
+		}
+		if isModDownload(args) {
 			downloadCalls = append(downloadCalls, slices.Clone(args))
 		}
 		return nil
@@ -264,10 +518,14 @@ func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
 	if err := buildModule(t.Context(), root, "hw/fssnap", io.Discard, recordDownload, defaultWait); err != nil {
 		t.Fatalf("buildModule failed on mixed requirements: %v", err)
 	}
-	wantArgs := []string{"mod", "download", "example.com/needed@v1.2.3"}
-	if len(downloadCalls) != 1 || !slices.Equal(downloadCalls[0], wantArgs) {
-		t.Fatalf("downloadCalls = %v, want [%v]", downloadCalls, wantArgs)
-	}
+	assertNeededModuleDownloaded(t, downloadCalls)
+}
+
+// Positive: test-only go.mod requirements are never prefetched before go list -export.
+func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
+	t.Parallel()
+	t.Run("test-only", testBuildModuleSkipsTestOnlyRequirements)
+	t.Run("mixed", testBuildModuleMixedRequirements)
 }
 
 // Boundary: download retries stay within the 60-minute CI job and divide remaining context budget.
@@ -343,6 +601,9 @@ func TestBuildModule_LocalReplaceVersionSelection(t *testing.T) {
 	writeTestModuleFiles(t, modDir, gomod, src, "package mod\n\nimport _ \"example.com/testonly\"\n")
 	var gotArgs []string
 	rec := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+			return runTool(ctx, dir, stdout, errOut, name, args...)
+		}
 		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
 			gotArgs = slices.Clone(args)
 		}
@@ -401,7 +662,10 @@ func TestBuildModule_RejectsIncompleteScan(t *testing.T) {
 			modDir := filepath.Join(root, "mod")
 			plantIncompleteScan(t, modDir, kind)
 			calls := 0
-			runner := func(context.Context, string, io.Writer, io.Writer, string, ...string) error {
+			runner := func(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
+				if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+					return runTool(ctx, dir, stdout, stderr, name, args...)
+				}
 				calls++
 				return nil
 			}
@@ -517,22 +781,39 @@ func TestCollectNonTestImports_NodeModulesOverLimit(t *testing.T) {
 	}
 }
 
-// TestBuildModule_RetriesGoListExport pins backoff and retries on transient go list export errors.
-func TestBuildModule_RetriesGoListExport(t *testing.T) {
-	t.Parallel()
+// assertTransientListRetries verifies that a transient list failure was retried once with a 5s backoff.
+func assertTransientListRetries(t *testing.T, lists int, waits []time.Duration) {
+	t.Helper()
+	if lists != 2 || !slices.Equal(waits, []time.Duration{5 * time.Second}) {
+		t.Fatalf("lists = %d, waits = %v; want 2 and [5s]", lists, waits)
+	}
+}
+
+// assertPersistentListError verifies that a persistent list failure surfaces as a build error.
+func assertPersistentListError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), "its packages do not build at HEAD") {
+		t.Fatalf("buildModule error = %v, want build error after retry limit", err)
+	}
+}
+
+// testBuildModuleRetriesGoListExportTransient verifies that buildModule retries a transient go list export failure.
+func testBuildModuleRetriesGoListExportTransient(t *testing.T) {
+	t.Helper()
 	root := t.TempDir()
 	modDir := filepath.Join(root, "mod")
 	writeTestModuleFiles(t, modDir, "module example.com/mod\n\ngo 1.26.0\n", "package mod\n", "package mod\n")
 	var lists int
 	var waits []time.Duration
 	flakyList := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if len(args) >= 1 && args[0] == "list" {
+		if isGoListExport(args) {
 			lists++
 			if lists == 1 {
 				return errors.New("transient indirect module proxy timeout")
 			}
+			return nil
 		}
-		return nil
+		return runTool(ctx, dir, stdout, errOut, name, args...)
 	}
 	wait := func(ctx context.Context, d time.Duration) error {
 		waits = append(waits, d)
@@ -541,18 +822,31 @@ func TestBuildModule_RetriesGoListExport(t *testing.T) {
 	if err := buildModule(t.Context(), root, "mod", io.Discard, flakyList, wait); err != nil {
 		t.Fatalf("buildModule failed on transient go list error: %v", err)
 	}
-	if lists != 2 || !slices.Equal(waits, []time.Duration{5 * time.Second}) {
-		t.Fatalf("lists = %d, waits = %v; want 2 and [5s]", lists, waits)
-	}
+	assertTransientListRetries(t, lists, waits)
+}
+
+// testBuildModuleRetriesGoListExportPersistent verifies that buildModule fails after exhausting retries on a persistent go list export error.
+func testBuildModuleRetriesGoListExportPersistent(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	modDir := filepath.Join(root, "mod")
+	writeTestModuleFiles(t, modDir, "module example.com/mod\n\ngo 1.26.0\n", "package mod\n", "package mod\n")
 	alwaysFailList := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if len(args) >= 1 && args[0] == "list" {
+		if isGoListExport(args) {
 			return errors.New("compile error")
 		}
-		return nil
+		return runTool(ctx, dir, stdout, errOut, name, args...)
 	}
-	if err := buildModule(t.Context(), root, "mod", io.Discard, alwaysFailList, wait); err == nil || !strings.Contains(err.Error(), "its packages do not build at HEAD") {
-		t.Fatalf("buildModule error = %v, want build error after retry limit", err)
-	}
+	wait := func(ctx context.Context, d time.Duration) error { return nil }
+	err := buildModule(t.Context(), root, "mod", io.Discard, alwaysFailList, wait)
+	assertPersistentListError(t, err)
+}
+
+// TestBuildModule_RetriesGoListExport pins backoff and retries on transient go list export errors.
+func TestBuildModule_RetriesGoListExport(t *testing.T) {
+	t.Parallel()
+	t.Run("transient-retry-succeeds", testBuildModuleRetriesGoListExportTransient)
+	t.Run("persistent-failure-fails", testBuildModuleRetriesGoListExportPersistent)
 }
 
 // TestCollectNonTestImports_TotalDirectoryLimit pins refusal when directory entries exceed the global limit.
@@ -588,6 +882,9 @@ func TestBuildModule_SkipsUnimportedIndirectRequirements(t *testing.T) {
 	}
 	var downloads [][]string
 	runner := func(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
+		if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+			return runTool(ctx, dir, stdout, stderr, name, args...)
+		}
 		if args[0] == "mod" {
 			downloads = append(downloads, slices.Clone(args))
 		}
@@ -656,7 +953,71 @@ func TestBuildModule_RejectsSymlinkWithoutRequirements(t *testing.T) {
 		t.Fatal(err)
 	}
 	plantIncompleteScan(t, dir, "symlink")
-	if _, _, err := moduleDownloadArgs(t.Context(), dir); err == nil {
+	if _, _, err := moduleDownloadArgs(t.Context(), dir, nil); err == nil {
 		t.Fatal("non-regular Go source accepted when requirements are empty")
 	}
+}
+
+// TestModuleDownloadArgs_UsesInjectedRunner verifies injected toolRunner is passed to effectiveBuildContext.
+func TestModuleDownloadArgs_UsesInjectedRunner(t *testing.T) {
+	t.Parallel()
+	root := retryFixtureRoot(t, "mod")
+	modDir := filepath.Join(root, "mod")
+	called := false
+	runner := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		called = true
+		return runTool(ctx, dir, stdout, errOut, name, args...)
+	}
+	_, _, err := moduleDownloadArgs(t.Context(), modDir, runner)
+	if err != nil {
+		t.Fatalf("moduleDownloadArgs failed: %v", err)
+	}
+	if !called {
+		t.Fatal("moduleDownloadArgs did not invoke injected toolRunner")
+	}
+}
+
+// TestDeadlineChild is a subprocess used to exercise an actual killed process.
+func TestDeadlineChild(t *testing.T) {
+	if len(os.Args) > 0 && os.Args[len(os.Args)-1] == "deadline-child" {
+		time.Sleep(10 * time.Second)
+	}
+}
+
+// TestRunToolDeadlineFatal verifies a subprocess timeout cannot be excused.
+func TestRunToolDeadlineFatal(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := t.Context()
+	err = runToolWithTimeout(parent, t.TempDir(), io.Discard, io.Discard, 100*time.Millisecond, executable, "-test.run=^TestDeadlineChild$", "--", "deadline-child")
+	if parent.Err() != nil {
+		t.Fatalf("parent context ended: %v", parent.Err())
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("runTool error = %v, want context.DeadlineExceeded", err)
+	}
+	repo := repository{today: time.Now().UTC(), exceptions: []exception{{Path: "mod/go.mod", Reason: "known failure", Expires: "2099-12-31"}}}
+	target := module{dir: "mod", path: "example.com/mod"}
+	_, fatal := buildFailureResult(parent, repo, target, err, &printer{w: io.Discard}, &printer{w: io.Discard})
+	if !errors.Is(fatal, context.DeadlineExceeded) {
+		t.Errorf("buildFailureResult error = %v, want fatal deadline", fatal)
+	}
+}
+
+// TestRetryModuleGoAttemptDeadlines preserves each expired attempt's context error.
+func TestRetryModuleGoAttemptDeadlines(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		parent := t.Context()
+		run := func(ctx context.Context, _ string, _, _ io.Writer, _ string, _ ...string) error {
+			<-ctx.Done()
+			return errors.New("signal: killed")
+		}
+		wait := func(context.Context, time.Duration) error { return nil }
+		count, err := retryModuleGo(parent, "unused", "mod", "download", nil, time.Millisecond, io.Discard, run, wait)
+		if parent.Err() != nil || count != downloadAttempts || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("parent = %v, attempts = %d, error = %v; want live parent, all attempts and deadline", parent.Err(), count, err)
+		}
+	})
 }

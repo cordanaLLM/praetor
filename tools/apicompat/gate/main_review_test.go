@@ -64,7 +64,10 @@ func TestBuildModule_SelectedTaggedImports(t *testing.T) {
 		t.Fatal(err)
 	}
 	var downloads [][]string
-	runner := func(_ context.Context, _ string, _, _ io.Writer, _ string, args ...string) error {
+	runner := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+			return runTool(ctx, dir, stdout, errOut, name, args...)
+		}
 		if args[0] == "mod" {
 			downloads = append(downloads, slices.Clone(args))
 		}
@@ -273,7 +276,10 @@ func TestBuildModule_OperationTimeoutCaps(t *testing.T) {
 				defer cancel()
 			}
 			root := retryFixtureRoot(t, "mod")
-			runner := func(attemptCtx context.Context, _ string, _, _ io.Writer, _ string, args ...string) error {
+			runner := func(attemptCtx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+				if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+					return runTool(attemptCtx, dir, stdout, errOut, name, args...)
+				}
 				assertOperationTimeout(t, attemptCtx, args[0], tc.budget)
 				return nil
 			}

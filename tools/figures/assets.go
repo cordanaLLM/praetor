@@ -196,6 +196,8 @@ var priorDigests = map[string]string{
 	"bf2646129a0c5923daad5b36fdae6b0d7abd7748e6150a2b846a0f51d09fe0c8": Directory + "/mkdocs_hook.py",
 	// VENDOR.md while lines 33, 123, 128, 135 still named the engine-only player directory and bundle step.
 	"89e498132bbf2b9ec15d91b8043395dfe02c352580b89affe8b4a3d7fe13f454": Directory + "/third_party/interfig/VENDOR.md",
+	// VENDOR.md while the revert sentence still named the engine-only player bundle.
+	"9b6023d769b0afa2e157ce58412390aab9e45c5418c97e7bd00a41bf2f8c112f": Directory + "/third_party/interfig/VENDOR.md",
 	// Assets before the release host check, Astro locked-player fetch and unreleased-pin docs.
 	"9387798626f5e7ee522be147d140bbc14a6d42ada1cdc7d49ba719ad58447f20": Directory + "/mkdocs_hook.py",
 	"8db774ed65d587aefeffdae6d2bcc227d9bd3c7a61d01f51bd1580dd1445cdde": Directory + "/astro.mjs",
@@ -222,6 +224,10 @@ var priorDigests = map[string]string{
 	"bef335fc666fcb8561473298eb38e1cf3dbfecf678c503100535a2df41ff8bff": Directory + "/checks.mjs",
 	// checks.mjs before its Codacy path-rule suppression comments.
 	"912d4b111b3e2b9025ef8e365f19bf9adb160f86c2595fe6c5cd9dcba0cc9ea0": Directory + "/checks.mjs",
+	// checks.mjs before keepDeadlinesFatal and nested player state; fixture: figures-checks-before-deadlines-fatal.mjs.txt.
+	"59acd5716bc87bde4ecacab62fb35a6db31815799f40081530e6744bcd9e8997": Directory + "/checks.mjs",
+	// build.mjs before site checks used the root main was given; fixture: figures-build-before-site-root.mjs.txt.
+	"43e50ee72d570d659588d9f4ee96f7ea2604c23110fd34c6ff48b6a66e9862a8": Directory + "/build.mjs",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md

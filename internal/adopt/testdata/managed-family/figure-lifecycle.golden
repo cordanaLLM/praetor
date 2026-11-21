@@ -4,7 +4,7 @@ action create tools/figures/third_party/interfig/upstream/LICENSE :: Scaffolded 
 action create tools/figures/README.md :: Scaffolded locked figure engine asset
 action create tools/figures/player.lock.json :: Scaffolded locked figure engine asset
 action append .gitattributes :: Preserved existing rules and placed the managed attribute block at the tail
-file tools/figures/build.mjs sha256:43e50ee72d570d659588d9f4ee96f7ea2604c23110fd34c6ff48b6a66e9862a8
+file tools/figures/build.mjs sha256:e8c09bfe3661715bacb332c637fb106d2bc847cca5d3972b0bdeab6d4af68122
 file tools/figures/player.lock.json sha256:49a6183f22f233769a39c7b500d508f07ed2c7231c264f6f459dc25de77507ad
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
 file tools/figures/README.md sha256:2fc7cf35293505b09e409a37b470c4ac1d5307ec5efcab6b454b5a8a50078d1b
@@ -15,7 +15,7 @@ action reconcile tools/figures/third_party/interfig/upstream/LICENSE :: Existing
 action reconcile tools/figures/README.md :: Existing figure engine asset preserved; audit verifies canonical text
 action reconcile tools/figures/player.lock.json :: Existing figure engine asset preserved; audit verifies canonical text
 action reconcile .gitattributes :: Managed attribute block already at the tail
-file tools/figures/build.mjs sha256:43e50ee72d570d659588d9f4ee96f7ea2604c23110fd34c6ff48b6a66e9862a8
+file tools/figures/build.mjs sha256:e8c09bfe3661715bacb332c637fb106d2bc847cca5d3972b0bdeab6d4af68122
 file tools/figures/player.lock.json sha256:49a6183f22f233769a39c7b500d508f07ed2c7231c264f6f459dc25de77507ad
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
 file tools/figures/README.md sha256:2fc7cf35293505b09e409a37b470c4ac1d5307ec5efcab6b454b5a8a50078d1b
@@ -37,7 +37,7 @@ action reconcile tools/figures/third_party/interfig/upstream/LICENSE :: Existing
 action reconcile tools/figures/README.md :: Existing figure engine asset preserved; audit verifies canonical text
 action reconcile tools/figures/player.lock.json :: Existing figure engine asset preserved; audit verifies canonical text
 action reconcile .gitattributes :: Managed attribute block already at the tail
-file tools/figures/build.mjs sha256:43e50ee72d570d659588d9f4ee96f7ea2604c23110fd34c6ff48b6a66e9862a8
+file tools/figures/build.mjs sha256:e8c09bfe3661715bacb332c637fb106d2bc847cca5d3972b0bdeab6d4af68122
 file tools/figures/player.lock.json sha256:49a6183f22f233769a39c7b500d508f07ed2c7231c264f6f459dc25de77507ad
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
 file tools/figures/README.md sha256:2fc7cf35293505b09e409a37b470c4ac1d5307ec5efcab6b454b5a8a50078d1b
@@ -66,7 +66,7 @@ action create tools/figures/third_party/interfig/upstream/LICENSE :: Scaffolded 
 action create tools/figures/README.md :: Scaffolded locked figure engine asset
 action create tools/figures/player.lock.json :: Scaffolded locked figure engine asset
 action append .gitattributes :: Preserved existing rules and refreshed the managed attribute block at the tail to the rules of this run
-file tools/figures/build.mjs sha256:43e50ee72d570d659588d9f4ee96f7ea2604c23110fd34c6ff48b6a66e9862a8
+file tools/figures/build.mjs sha256:e8c09bfe3661715bacb332c637fb106d2bc847cca5d3972b0bdeab6d4af68122
 file tools/figures/player.lock.json sha256:49a6183f22f233769a39c7b500d508f07ed2c7231c264f6f459dc25de77507ad
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
 file tools/figures/README.md sha256:2fc7cf35293505b09e409a37b470c4ac1d5307ec5efcab6b454b5a8a50078d1b
