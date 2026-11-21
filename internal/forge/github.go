@@ -257,8 +257,10 @@ func (g *GitHubDriver) rulesetName(branch string) string {
 }
 
 type ghRulesetRaw struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	SourceType string `json:"source_type"`
+	Source     string `json:"source"`
 	// Enforcement is active, evaluate or disabled; GitHub applies the rules of an active
 	// ruleset only.
 	Enforcement string `json:"enforcement"`
@@ -314,22 +316,51 @@ func (g *GitHubDriver) walkRulesets(ctx context.Context, listPath string, visit 
 	})
 }
 
-// findRulesetID returns the id of the repository ruleset named name, or 0 when absent. It
-// reads every page of the listing: a ruleset past the first page must be updated in place,
-// never duplicated by a second POST.
+// findRulesetID returns the id of the repository-owned ruleset named name, or 0 when absent.
+// Every page is read to refuse duplicate repository-owned names. Inherited rulesets cannot
+// supply this id; a matching name with unread scope is an error, never proof of absence.
 func (g *GitHubDriver) findRulesetID(ctx context.Context, listPath, name string) (int, error) {
+	repository, err := g.TargetRepository()
+	if err != nil {
+		return 0, err
+	}
 	id := 0
-	err := g.walkRulesets(ctx, listPath, func(ruleset ghRulesetRaw) bool {
-		if ruleset.Name == name {
-			id = ruleset.ID
+	var lookupErr error
+	err = g.walkRulesets(ctx, listPath, func(ruleset ghRulesetRaw) bool {
+		if ruleset.Name != name {
+			return false
+		}
+		owned, scopeErr := ruleset.repositoryOwned(repository)
+		if scopeErr != nil {
+			lookupErr = scopeErr
 			return true
 		}
+		if !owned {
+			return false
+		}
+		if id != 0 {
+			lookupErr = fmt.Errorf("repository %s has duplicate ruleset %q: ids %d and %d", repository, name, id, ruleset.ID)
+			return true
+		}
+		id = ruleset.ID
 		return false
 	})
 	if err != nil {
 		return 0, err
 	}
+	if lookupErr != nil {
+		return 0, lookupErr
+	}
 	return id, nil
+}
+
+// repositoryOwned verifies ownership from the listing without narrowing aggregate protection
+// reads. GitHub's repository rulesets API includes inherited rulesets by default.
+func (r ghRulesetRaw) repositoryOwned(repository string) (bool, error) {
+	if r.SourceType == "" || r.Source == "" {
+		return false, fmt.Errorf("ruleset %q id %d has unread scope (source_type=%q, source=%q)", r.Name, r.ID, r.SourceType, r.Source)
+	}
+	return r.SourceType == "Repository" && strings.EqualFold(r.Source, repository), nil
 }
 
 // protectedRefs returns the ref patterns the ruleset for branch must include.

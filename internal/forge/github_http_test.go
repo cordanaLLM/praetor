@@ -306,8 +306,9 @@ func TestGitHubDriver_ReconcileProtection_Positive_CreatesWithStatusChecks(t *te
 	}
 }
 
+// TestGitHubDriver_ReconcileProtection_Positive_UpdatesExistingRuleset updates the repository's own managed ruleset in place.
 func TestGitHubDriver_ReconcileProtection_Positive_UpdatesExistingRuleset(t *testing.T) {
-	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 42, "name": "main-branch-protection"}}})
+	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 42, "name": "main-branch-protection", "source_type": "Repository", "source": "acme/widgets"}}})
 
 	policy := &config.BranchProtectionPolicy{RequiredApprovingReviewers: 1}
 	if err := gh.ReconcileProtection(context.Background(), "main", policy); err != nil {
@@ -366,7 +367,7 @@ func TestGitHubDriver_ReconcileProtection_Boundary_NoStatusChecksConfigured(t *t
 func liveProtectionRuleset() map[string]any {
 	return map[string]any{
 		"id": 42, "name": RepositoryRulesetName, "target": "branch", "enforcement": "active",
-		"source_type": "Repository", "node_id": "RRS_x",
+		"source_type": "Repository", "source": "acme/widgets", "node_id": "RRS_x",
 		"bypass_actors": []any{map[string]any{"actor_id": 5, "actor_type": "Team", "bypass_mode": "always"}},
 		"conditions": map[string]any{"ref_name": map[string]any{
 			"include": []any{"refs/heads/main", "refs/heads/release-*"},
@@ -461,6 +462,7 @@ func TestGitHubDriver_ReconcileProtection_Boundary_SingleMaintainerLowersLiveRev
 	}
 }
 
+// TestGitHubDriver_ReconcileProtection_Negative_ReadbackAndLiveRuleset refuses a read-back that does not converge and an unreadable live ruleset.
 func TestGitHubDriver_ReconcileProtection_Negative_ReadbackAndLiveRuleset(t *testing.T) {
 	policy := &config.BranchProtectionPolicy{}
 	// A forge that accepts the PUT but keeps the stale ruleset fails the readback.
@@ -468,7 +470,7 @@ func TestGitHubDriver_ReconcileProtection_Negative_ReadbackAndLiveRuleset(t *tes
 	gh, _ := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, index int) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/rulesets"):
-			writeJSON(t, w, http.StatusOK, []map[string]any{{"id": 42, "name": RepositoryRulesetName}})
+			writeJSON(t, w, http.StatusOK, []map[string]any{{"id": 42, "name": RepositoryRulesetName, "source_type": "Repository", "source": "acme/widgets"}})
 		case r.Method == http.MethodGet:
 			writeJSON(t, w, http.StatusOK, stale)
 		default:
@@ -513,9 +515,10 @@ func TestGitHubDriver_ReconcileProtection_Negative_ReadbackAndLiveRuleset(t *tes
 	}
 }
 
+// TestGitHubDriver_ReconcileProtection_Boundary_BareLiveRuleset reconciles a live ruleset that carries only the required fields.
 func TestGitHubDriver_ReconcileProtection_Boundary_BareLiveRuleset(t *testing.T) {
 	// A live ruleset with no conditions and no rules merges to exactly the desired one.
-	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 7, "name": RepositoryRulesetName}}})
+	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 7, "name": RepositoryRulesetName, "source_type": "Repository", "source": "acme/widgets"}}})
 	gh.RulesetName, gh.ProtectedRefs = RepositoryRulesetName, RepositoryRulesetRefs("main")
 	if err := gh.ReconcileProtection(context.Background(), "main", &config.BranchProtectionPolicy{}); err != nil {
 		t.Fatalf("reconcile: %v", err)

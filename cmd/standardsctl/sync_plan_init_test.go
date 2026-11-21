@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -280,6 +281,7 @@ type forgeStub struct {
 	rulesStatus     int
 	rulesUnenforced bool
 	branchMissing   bool
+	reverseRulesets bool
 }
 
 const forgeStubRepo = "/repos/acme/widgets/"
@@ -370,7 +372,8 @@ func (s *forgeStub) serveBranchRules(w http.ResponseWriter, branch string) {
 			if !isObject {
 				continue
 			}
-			entry := map[string]any{"type": rule["type"], "ruleset_id": id, "ruleset_source_type": "Repository", "ruleset_source": "acme/widgets"}
+			scope := stubRulesetEntry(id, doc)
+			entry := map[string]any{"type": rule["type"], "ruleset_id": id, "ruleset_source_type": scope["source_type"], "ruleset_source": scope["source"]}
 			if params, present := rule["parameters"]; present {
 				entry["parameters"] = params
 			}
@@ -422,6 +425,16 @@ func (s *forgeStub) serveLegacyProtection(w http.ResponseWriter) {
 	}
 }
 
+// withBypassList stores a ruleset as GitHub does: a body written without bypass_actors reads back
+// with an empty list to a caller with write access to the ruleset.
+func withBypassList(body map[string]any) map[string]any {
+	if _, present := body["bypass_actors"]; !present {
+		body["bypass_actors"] = []any{}
+	}
+	return body
+}
+
+// serveRuleset answers the ruleset listing and item reads of the stub forge, with source_type and source on each entry.
 func (s *forgeStub) serveRuleset(w http.ResponseWriter, method, rest string, body map[string]any) {
 	id := 0
 	if rest != "" {
@@ -432,22 +445,76 @@ func (s *forgeStub) serveRuleset(w http.ResponseWriter, method, rest string, bod
 	}
 	switch {
 	case method == http.MethodGet && id == 0:
-		list := make([]map[string]any, 0, len(s.rulesets))
-		for rid, doc := range s.rulesets {
-			list = append(list, map[string]any{"id": rid, "name": doc["name"], "enforcement": doc["enforcement"]})
-		}
-		stubRespond(w, http.StatusOK, list)
+		s.serveRulesetList(w)
 	case method == http.MethodGet:
 		stubRespond(w, http.StatusOK, s.rulesets[id])
 	case method == http.MethodPost:
 		id = len(s.rulesets) + 1
 		body["id"] = id
-		s.rulesets[id] = body
+		s.rulesets[id] = withBypassList(body)
 		stubRespond(w, http.StatusCreated, body)
 	default:
 		body["id"] = id
-		s.rulesets[id] = body
+		s.rulesets[id] = withBypassList(body)
 		stubRespond(w, http.StatusOK, body)
+	}
+}
+
+// stubRulesetEntry supplies the scope GitHub adds to repository ruleset listings; an explicit
+// nil scope field plants an omitted API field instead of the default repository scope.
+func stubRulesetEntry(id int, doc map[string]any) map[string]any {
+	entry := map[string]any{"id": id, "name": doc["name"], "enforcement": doc["enforcement"]}
+	for _, key := range [2]string{"source_type", "source"} {
+		value, present := doc[key]
+		if !present {
+			value = "Repository"
+			if key == "source" {
+				value = "acme/widgets"
+			}
+		}
+		if value != nil {
+			entry[key] = value
+		}
+	}
+	return entry
+}
+
+// serveRulesetList returns deterministic, bounded listing pages with explicit ownership.
+func (s *forgeStub) serveRulesetList(w http.ResponseWriter) {
+	const maxStubRulesets = 1000
+	if len(s.rulesets) > maxStubRulesets {
+		stubRespond(w, http.StatusInternalServerError, map[string]any{"message": "too many fixture rulesets"})
+		return
+	}
+	ids := slices.Sorted(maps.Keys(s.rulesets))
+	if s.reverseRulesets {
+		slices.Reverse(ids)
+	}
+	list := make([]map[string]any, 0, len(ids))
+	for i := 0; i < len(ids) && i < maxStubRulesets; i++ {
+		id := ids[i]
+		list = append(list, stubRulesetEntry(id, s.rulesets[id]))
+	}
+	stubRespond(w, http.StatusOK, list)
+}
+
+// TestSync_ForgeStubRulesetListing_Boundary exercises the fixture's scalar listing bound.
+func TestSync_ForgeStubRulesetListing_Boundary(t *testing.T) {
+	stub := &forgeStub{rulesets: make(map[int]map[string]any, 1001)}
+	for i := 0; i < 1000; i++ {
+		stub.rulesets[i] = map[string]any{"name": "other"}
+	}
+	for i := 0; i < 2; i++ {
+		response := httptest.NewRecorder()
+		stub.serveRulesetList(response)
+		want := http.StatusOK
+		if i == 1 {
+			want = http.StatusInternalServerError
+		}
+		if response.Code != want {
+			t.Fatalf("listing %d entries: status %d, want %d", len(stub.rulesets), response.Code, want)
+		}
+		stub.rulesets[1000] = map[string]any{"name": "other"}
 	}
 }
 
