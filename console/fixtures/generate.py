@@ -37,7 +37,7 @@ def card(i):
     row = {"id": f"C{i + 1}", "title": f"{verb} {obj} {LONG_TOKEN}" if i == 0 else f"{verb} {obj}", "state": pick(STATES, i), "where": pick(WHERE, i),
            "act": f"{verb.lower()} {obj} in {pick(REPOS, i)}", "say": f"{verb.lower()} done",
            "detail": f"Synthetic card {i + 1}: {verb.lower()} {obj}. Nothing here is real data.",
-           "why_now": f"{obj.capitalize()} blocks {1 + i % 4} follow-up items.",
+           "why_now": f"{obj.capitalize()} blocks {1 + i % 4} follow-up items" + (f" {LONG_TOKEN}." if i == 0 else "."),
            "consequence_if_skipped": "The follow-up items stay blocked.", "est_minutes": 1 + (i * 7) % 60,
            "source": f"fixture:{i + 1}", "probe_kind": pick(PROBES, i)}
     if i % 3 == 0:
@@ -49,7 +49,7 @@ def card(i):
 
 def graph(nodes):
     """Synthetic plan graph for `nodes` ready items; the first quick win and frontier title carry LONG_TOKEN."""
-    totals ={s: {"nodes": n, "units": float(n * 3)} for s, n in
+    totals = {s: {"nodes": n, "units": float(n * 3)} for s, n in
               (("waiting", 7), ("active", 12), ("ready", nodes), ("blocked", 20), ("done", 41))}
     wins = [{"kind": pick(("node", "steering", "research"), i), "id": f"N{i + 1}", "title": f"{pick(VERBS, i)} {LONG_TOKEN}" if i == 0 else f"{pick(VERBS, i)} {pick(OBJECTS, i + 2)}",
              "gain": 1 + i % 5, "effort": 1 + (i * 2) % 5, "clarity": pick(("clear", "partial"), i), "reason": "synthetic",

@@ -19,6 +19,10 @@ for (const tab of TABS) {
 		test.skip(!info.project.name.endsWith('-phone'), 'Phone viewport check');
 		await page.setViewportSize({ width: 360, height: 900 });
 		await ready(page, tab);
+		// Each click flips aria-expanded, so iterate the stable set and skip open ones.
+		for (const toggle of await page.locator('button.toggle').all()) {
+			if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+		}
 		await page.locator('details').evaluateAll((items) => {
 			for (const item of items) (item as HTMLDetailsElement).open = true;
 		});
@@ -30,21 +34,33 @@ for (const tab of TABS) {
 		);
 		const result = await page.evaluate(() => {
 			const root = document.documentElement;
-			const widest = [...document.querySelectorAll('*')].reduce((a, b) =>
-				b.getBoundingClientRect().right > a.getBoundingClientRect().right ? b : a
-			);
-			return {
-				scroll: root.scrollWidth,
-				client: root.clientWidth,
-				tag: widest.tagName,
-				id: widest.id,
-				className: widest.getAttribute('class')
+			const limit = root.clientWidth + 0.5;
+			// A clipping ancestor hides overflow from scrollWidth, so read each element's right edge;
+			// content inside an intentional horizontal scroller is exempt.
+			const scrolls = (el: Element) => {
+				for (let p = el.parentElement; p; p = p.parentElement) {
+					const x = getComputedStyle(p).overflowX;
+					if (x === 'auto' || x === 'scroll') return true;
+				}
+				return false;
 			};
+			const past = [...document.querySelectorAll('body *')]
+				.filter((el) => {
+					const r = el.getBoundingClientRect();
+					return r.width > 0 && r.right > limit && !scrolls(el);
+				})
+				.slice(0, 5)
+				.map(
+					(el) =>
+						`${el.tagName}.${el.getAttribute('class') ?? ''} right=${Math.round(el.getBoundingClientRect().right)}`
+				);
+			return { scroll: root.scrollWidth, client: root.clientWidth, past };
 		});
 		expect(
 			result.scroll,
-			`${tab}: scrollWidth ${result.scroll}, clientWidth ${result.client}; widest ${result.tag}#${result.id}.${result.className}`
+			`${tab}: scrollWidth ${result.scroll}, clientWidth ${result.client}`
 		).toBeLessThanOrEqual(result.client);
+		expect(result.past, `${tab}: elements past the ${result.client}px viewport`).toEqual([]);
 	});
 }
 
