@@ -146,7 +146,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: '@sveltejs/adapter-static'
-      version: 4.0.0
+      version: 4.0.1
       language: typescript
       ecosystem: npm
       capability: ui.external.sveltejs_adapter_static

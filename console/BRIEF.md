@@ -14,8 +14,8 @@ The console is the one screen the operator of a Praetor fleet reads: what needs 
 
 ## Stack
 
-- SvelteKit with Svelte 5 runes, `@sveltejs/adapter-static` (prerendered, no server), TypeScript, pnpm with a committed lockfile. Pin exact versions (checked 2026-10-19: `@sveltejs/kit` 3.1.0, `svelte` 5.57.2, `@sveltejs/adapter-static` 4.0.0).
-- Components from `golusoris/sveltesentio` on npm, exact pins: `@sveltesentio/ui` 0.8.0 (tag `ui-v0.8.0`) for controls, `@sveltesentio/realtime` 0.7.0 for live refresh over server-sent events. Read their READMEs and use what they provide before you write a component of your own.
+- SvelteKit with Svelte 5 runes, `@sveltejs/adapter-static` (prerendered, no server), TypeScript, pnpm with a committed lockfile. Pin exact versions in [console/package.json](package.json); [console/pnpm-lock.yaml](pnpm-lock.yaml) locks the resolved dependencies. Read those files for the pinned versions.
+- Components from `golusoris/sveltesentio` on npm: `@sveltesentio/ui` for controls, `@sveltesentio/realtime` for live refresh over server-sent events, at the exact pins in [console/package.json](package.json). Read their READMEs and use what they provide before you write a component of your own.
 - Look and feel: the design tokens of `cordanaLLM/Aegis-OS` at `ui/concordia-tokens` (`concordia-tokens.css`: colour, type, spacing, the 3 px focus ring), and the visual language of its Forum shell described in that repository's `docs/adr/0004-native-p05-shell-on-gpui.md` (take the look, not the code: that shell is native). Both repositories are public; copy only what you need, keep its licence notice, add the source to `REUSE.toml` and to `docs/credits.yaml` with the upstream commit.
 - Modern, calm, dark and light themes following the system setting with a manual switch; phone first, then wider layouts.
 - No heavy chart library. Small inline SVG is enough.
@@ -39,7 +39,7 @@ The console is the one screen the operator of a Praetor fleet reads: what needs 
 
 ## Quality gates (CI, all in this pull request)
 
-- **Accessibility: WCAG 2.2 AA and EN 301 549.** Playwright with `@axe-core/playwright` (pin `axe-core` 4.14.0) on every tab in both themes and at phone and desktop width, plus a keyboard-path test (tab order reaches every control, the palette opens and closes), contrast, and `prefers-reduced-motion` honoured. Commit one planted failing page (an image without alt text and a low-contrast button) under a test-only route and prove the job fails on it; the real pages must pass.
+- **Accessibility: WCAG 2.2 AA and EN 301 549.** Playwright with `@axe-core/playwright` and `axe-core` at the exact pins in [console/package.json](package.json) on every tab in both themes and at phone and desktop width, plus a keyboard-path test (tab order reaches every control, the palette opens and closes), contrast, and `prefers-reduced-motion` honoured. Commit one planted failing page (an image without alt text and a low-contrast button) under a test-only route and prove the job fails on it; the real pages must pass.
 - **Bundle budget:** initial JavaScript at most 150 KB gzip, measured on the built output and enforced in CI; prove the check with a planted overrun (a test that imports a large module into a fixture build) that fails it.
 - **Unit tests** for data loading, schema errors, view-state keeping across a live update, and the copy button.
 - A GitHub Actions workflow `console.yml` that runs only when `console/**` changes: install with the lockfile, lint, type check, unit tests, build, bundle budget, accessibility. Pin actions by commit SHA like the other workflows here. It must not be a required check for changes outside `console/`.

@@ -227,6 +227,30 @@ entries:
     packages: ["npm:left-pad"]
 `
 
+// Positive and negative: the production reader keeps the console manifest's case for the exact
+// pin comparison while the path texts stay lower-cased for path matching.
+func TestReadCreditPathTextsKeepsConsoleManifestCase(t *testing.T) {
+	root := t.TempDir()
+	testsupport.InitGitRepoWithOrigin(t, root, "")
+	writeRepoFile(t, root, consoleManifestFile, `{"devDependencies":{"@sveltejs/kit":"5.57.3-RC.1"}}`)
+	entry := CreditEntry{Name: "SvelteKit", Paths: []string{consoleManifestFile}, Packages: []string{"npm:@sveltejs/kit"}}
+	for detail, want := range map[string]string{"kit 5.57.3-RC.1": "", "kit 5.57.3-rc.1": "pins 5.57.3-RC.1"} {
+		entry.Detail = detail
+		credits := Credits{Entries: []CreditEntry{entry}}
+		texts, manifests, err := readCreditPathTexts(context.Background(), root, credits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(texts[consoleManifestFile], "5.57.3-rc.1") {
+			t.Fatalf("path text is not lower-cased: %q", texts[consoleManifestFile])
+		}
+		err = checkConsoleCreditVersions(UpstreamCreditSources{Credits: credits, PathTexts: texts, ManifestTexts: manifests})
+		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+			t.Fatalf("%s: err = %v; want %q", detail, err, want)
+		}
+	}
+}
+
 // writeRepoFile writes content to rel below root.
 func writeRepoFile(t *testing.T, root, rel, content string) {
 	t.Helper()

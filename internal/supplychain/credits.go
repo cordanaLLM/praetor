@@ -6,8 +6,14 @@ package supplychain
 
 import (
 	"fmt"
+	"maps"
+	"path"
+	"regexp"
+	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/nodemanifest"
+	"github.com/cordanaLLM/praetor/internal/semver"
 	"github.com/cordanaLLM/praetor/internal/util"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 )
@@ -18,6 +24,9 @@ import (
 // G101 hardcoded-credential rule reads in a constant's name.
 const AcknowledgementsFile = "docs/credits.md"
 
+// consoleManifestFile is the source of the console's exact dependency pins.
+const consoleManifestFile = "console/package.json"
+
 // creditsPlayerAnchor marks that row: the player it names as the packages' use.
 var creditsPlayerAnchor = "`" + figureassets.PlayerDirectory + "/player.js`"
 
@@ -25,8 +34,10 @@ var creditsPlayerAnchor = "`" + figureassets.PlayerDirectory + "/player.js`"
 // the committed player bundles as "<name> <version>", at the version the figure lock installs
 // (figurePlayerRows, the rows RenderNotices writes into NoticesFile). A dependency bump moves the
 // lock, the rebuilt player's license file and the notices together; this holds the hand-written
-// credits row to the same sources, so it cannot keep naming the outgoing versions.
-func CheckCredits(credits string, sources NoticeSources) error {
+// credits row to the same sources, so it cannot keep naming the outgoing versions. Console
+// entries in upstream must name their packages at the pins console/package.json declares;
+// entries without version text need no version claim.
+func CheckCredits(credits string, sources NoticeSources, upstream UpstreamCreditSources) error {
 	components, err := figurePlayerRows(sources.FigureLicenses, sources.FigureLock)
 	if err != nil {
 		return err
@@ -46,7 +57,142 @@ func CheckCredits(credits string, sources NoticeSources) error {
 		return fmt.Errorf("%s: the row for %s does not name %s; write each package at the version %s installs",
 			AcknowledgementsFile, creditsPlayerAnchor, strings.Join(missing, ", "), figureLockFile)
 	}
+	return checkConsoleCreditVersions(upstream)
+}
+
+// checkConsoleCreditVersions extends the credits comparison to entries using the console.
+// The existing manifest reader refuses duplicate keys rather than choosing a pin silently.
+func checkConsoleCreditVersions(sources UpstreamCreditSources) error {
+	usesConsole := func(entry CreditEntry) bool { return slices.Contains(entry.Paths, consoleManifestFile) }
+	if !slices.ContainsFunc(sources.Credits.Entries, usesConsole) {
+		return nil
+	}
+	manifest, err := nodemanifest.ParseManifest([]byte(sources.ManifestTexts[consoleManifestFile]))
+	if err != nil {
+		return fmt.Errorf("parse %s for credits: %w", consoleManifestFile, err)
+	}
+	pins := map[string]string{}
+	for _, group := range manifest.Groups() {
+		maps.Copy(pins, group)
+	}
+	for index, entry := range sources.Credits.Entries {
+		if usesConsole(entry) {
+			if err := checkConsoleCreditEntry(entry, index, pins); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+// checkConsoleCreditEntry compares every version claim of an entry's own npm packages,
+// including each pinned package a scope-only identifier such as npm:@scope covers.
+func checkConsoleCreditEntry(entry CreditEntry, index int, pins map[string]string) error {
+	for _, id := range entry.Packages {
+		if !strings.HasPrefix(id, "npm:") {
+			continue
+		}
+		for _, name := range consoleCoveredNames(id, pins) {
+			for _, version := range consoleDetailVersions(entry.Detail, name) {
+				pin, exists := pins[name]
+				if !exists {
+					return fmt.Errorf("%s names %s %s; %s has no pin for that package", entry.label(index), name, version, consoleManifestFile)
+				}
+				if version != pin {
+					return fmt.Errorf("%s names %s %s; %s pins %s", entry.label(index), name, version, consoleManifestFile, pin)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// consoleCoveredNames lists the package names whose claims an npm package identifier answers
+// for: the name itself when the manifest pins it or pins nothing it covers, otherwise every
+// pinned package the identifier covers by CreditEntry.answers (npm:@scope covers @scope/kit).
+func consoleCoveredNames(id string, pins map[string]string) []string {
+	name := strings.TrimPrefix(id, "npm:")
+	if _, exact := pins[name]; exact {
+		return []string{name}
+	}
+	single := CreditEntry{Packages: []string{id}}
+	var covered []string
+	for pinned := range pins {
+		if single.answers(InventoryItem{Kind: inventoryNPM, ID: pinned}) {
+			covered = append(covered, pinned)
+		}
+	}
+	if len(covered) == 0 {
+		return []string{name}
+	}
+	slices.Sort(covered)
+	return covered
+}
+
+// consoleDetailVersions reads full or scope-shortened "<name> <version>" terms and a bare
+// version (the entry's packages share that claim). Separated comparators and compound ranges
+// stay in the claim; Markdown link destinations never count.
+func consoleDetailVersions(detail, name string) []string {
+	text := util.MarkdownLinkRe.ReplaceAllString(detail, "$1")
+	text = strings.NewReplacer("`", "", ",", " ", ";", " ", "(", " ", ")", " ", "||", " || ").Replace(text)
+	fields := strings.Fields(text)
+	var versions []string
+	for index := range fields {
+		claim, next, ok := consoleVersionClaim(fields, index)
+		if !ok {
+			continue
+		}
+		if index == 0 && next == len(fields) || index > 0 && (fields[index-1] == name || fields[index-1] == path.Base(name)) {
+			versions = append(versions, claim)
+		}
+	}
+	return versions
+}
+
+// consoleVersionClaim reads every version term of a claim starting at index, keeping standalone
+// comparators and range joiners (||, -) with the claim up to the next package name.
+func consoleVersionClaim(fields []string, index int) (string, int, bool) {
+	claim, next, ok := consoleVersionTerm(fields, index)
+	if !ok {
+		return "", index, false
+	}
+	for step := 0; step < len(fields) && next < len(fields); step++ {
+		joiner, start := "", next
+		if fields[next] == "||" || fields[next] == "-" {
+			joiner, start = " "+fields[next], next+1
+		}
+		term, after, ok := consoleVersionTerm(fields, start)
+		if !ok {
+			break
+		}
+		claim += joiner + " " + term
+		next = after
+	}
+	return claim, next, true
+}
+
+// consoleVersionValue matches the version part of a console credit term after any comparator:
+// digits, optionally dot-separated (a bare major such as 3 is a version, not an exact pin), with an
+// optional prerelease or build suffix, never a digit-leading package name such as 7zip-bin.
+var consoleVersionValue = regexp.MustCompile(`^v?\d+(?:\.\d+)*(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
+
+// consoleVersionTerm reads one version term (with any standalone comparator) starting at index.
+func consoleVersionTerm(fields []string, index int) (string, int, bool) {
+	if index >= len(fields) {
+		return "", index, false
+	}
+	field := strings.TrimSuffix(fields[index], ".")
+	next := index + 1
+	operator, value := semver.CutOperator(field)
+	if operator != "" && value == "" && next < len(fields) {
+		field += " " + strings.TrimSuffix(fields[next], ".")
+		_, value = semver.CutOperator(field)
+		next++
+	}
+	if !consoleVersionValue.MatchString(strings.TrimSpace(value)) {
+		return "", index, false
+	}
+	return field, next, true
 }
 
 // creditsPlayerRow returns the one table row of credits that names the committed player.
