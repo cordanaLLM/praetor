@@ -151,6 +151,8 @@ func TestCreditsRejectStaleConsoleVersions(t *testing.T) {
 		"kit 3.1":                         "SvelteKit) names @sveltejs/kit 3.1; console/package.json pins 3.1.1",
 		"kit 3.1.01":                      "SvelteKit) names @sveltejs/kit 3.1.01; console/package.json pins 3.1.1",
 		"kit ^3.1.1":                      "SvelteKit) names @sveltejs/kit ^3.1.1; console/package.json pins 3.1.1",
+		"kit 3.1.1 || 3.1.0":              "SvelteKit) names @sveltejs/kit 3.1.1 || 3.1.0; console/package.json pins 3.1.1",
+		"kit 3.1.0 || 3.1.1":              "SvelteKit) names @sveltejs/kit 3.1.0 || 3.1.1; console/package.json pins 3.1.1",
 	} {
 		t.Run(detail, func(t *testing.T) {
 			err := CheckCredits(playerCreditsRow([]string{"react 19.0.0"}), renderFixtureSources(), consoleCreditsFixture(detail))
@@ -180,7 +182,8 @@ func TestCreditsRejectSeparatedConsoleComparators(t *testing.T) {
 func TestCreditsAcceptMatchingOrUnversionedConsoleDetails(t *testing.T) {
 	for _, detail := range []string{
 		"kit 3.1.1", "kit", "kit ^", "kit >=", "kit >= current", "other-kit >= 3.1.0", "@other/kit ^ 3.1.1",
-		"kit 3.1.1, adapter-static 4.0.0", "@sveltejs/kit 3.1.1; @sveltejs/adapter-static 4.0.0",
+		"kit 3.1.1, adapter-static 4.0.0", "kit 3.1.1, other 2.0.0",
+		"@sveltejs/kit 3.1.1; @sveltejs/adapter-static 4.0.0",
 		"`kit` `3.1.1`, (adapter-static 4.0.0)", "", "framework and static adapter",
 		"other-kit 3.1.0, @other/kit 3.1.0, unrelated 1.0.0",
 	} {
@@ -203,6 +206,7 @@ func TestCreditsConsoleManifestBoundaries(t *testing.T) {
 		want     string
 	}{
 		"bare match":      {[]string{consoleManifestFile}, []string{"npm:svelte"}, "5.57.3", `{"dependencies":{"svelte":"5.57.3"}}`, ""},
+		"two named pins":  {[]string{consoleManifestFile}, []string{"npm:@sveltejs/kit", "npm:other"}, "kit 3.1.1, other 2.0.0", `{"dependencies":{"@sveltejs/kit":"3.1.1","other":"2.0.0"}}`, ""},
 		"bare stale":      {[]string{consoleManifestFile}, []string{"npm:svelte"}, "5.57.2", `{"dependencies":{"svelte":"5.57.3"}}`, "names svelte 5.57.2; console/package.json pins 5.57.3"},
 		"second path":     {[]string{"other/package.json", consoleManifestFile}, []string{"npm:svelte"}, "svelte 5.57.2", `{"dependencies":{"svelte":"5.57.3"}}`, "pins 5.57.3"},
 		"peer pin":        {[]string{consoleManifestFile}, []string{"npm:svelte"}, "svelte 5.57.3", `{"peerDependencies":{"svelte":"5.57.3"}}`, ""},

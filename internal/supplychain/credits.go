@@ -129,35 +129,65 @@ func consoleCoveredNames(id string, pins map[string]string) []string {
 }
 
 // consoleDetailVersions reads full or scope-shortened "<name> <version>" terms and a bare
-// version (the entry's packages share that claim). Separated comparators stay in the claim;
-// Markdown link destinations never count.
+// version (the entry's packages share that claim). Separated comparators and compound ranges
+// stay in the claim; Markdown link destinations never count.
 func consoleDetailVersions(detail, name string) []string {
 	text := util.MarkdownLinkRe.ReplaceAllString(detail, "$1")
-	text = strings.NewReplacer("`", "", ",", " ", ";", " ", "(", " ", ")", " ").Replace(text)
+	text = strings.NewReplacer("`", "", ",", " ", ";", " ", "(", " ", ")", " ", "||", " || ").Replace(text)
 	fields := strings.Fields(text)
 	var versions []string
 	for index := range fields {
-		field := consoleVersionClaim(fields, index)
-		_, value := semver.CutOperator(field)
-		value = strings.TrimPrefix(strings.TrimSpace(value), "v")
-		if len(value) == 0 || value[0] < '0' || value[0] > '9' {
+		claim, next, ok := consoleVersionClaim(fields, index)
+		if !ok {
 			continue
 		}
-		if len(fields) == 1 || index > 0 && (fields[index-1] == name || fields[index-1] == path.Base(name)) {
-			versions = append(versions, field)
+		if index == 0 && next == len(fields) || index > 0 && (fields[index-1] == name || fields[index-1] == path.Base(name)) {
+			versions = append(versions, claim)
 		}
 	}
 	return versions
 }
 
-// consoleVersionClaim keeps a standalone comparator and its following version together.
-func consoleVersionClaim(fields []string, index int) string {
-	field := strings.TrimSuffix(fields[index], ".")
-	operator, value := semver.CutOperator(field)
-	if operator != "" && value == "" && index+1 < len(fields) {
-		return field + " " + strings.TrimSuffix(fields[index+1], ".")
+// consoleVersionClaim reads every version term of a claim starting at index, keeping standalone
+// comparators and range joiners (||, -) with the claim up to the next package name.
+func consoleVersionClaim(fields []string, index int) (string, int, bool) {
+	claim, next, ok := consoleVersionTerm(fields, index)
+	if !ok {
+		return "", index, false
 	}
-	return field
+	for step := 0; step < len(fields) && next < len(fields); step++ {
+		joiner, start := "", next
+		if fields[next] == "||" || fields[next] == "-" {
+			joiner, start = " "+fields[next], next+1
+		}
+		term, after, ok := consoleVersionTerm(fields, start)
+		if !ok {
+			break
+		}
+		claim += joiner + " " + term
+		next = after
+	}
+	return claim, next, true
+}
+
+// consoleVersionTerm reads one version term (with any standalone comparator) starting at index.
+func consoleVersionTerm(fields []string, index int) (string, int, bool) {
+	if index >= len(fields) {
+		return "", index, false
+	}
+	field := strings.TrimSuffix(fields[index], ".")
+	next := index + 1
+	operator, value := semver.CutOperator(field)
+	if operator != "" && value == "" && next < len(fields) {
+		field += " " + strings.TrimSuffix(fields[next], ".")
+		_, value = semver.CutOperator(field)
+		next++
+	}
+	value = strings.TrimPrefix(strings.TrimSpace(value), "v")
+	if len(value) == 0 || value[0] < '0' || value[0] > '9' {
+		return "", index, false
+	}
+	return field, next, true
 }
 
 // creditsPlayerRow returns the one table row of credits that names the committed player.
