@@ -6,14 +6,19 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
 )
+
+// errInvalidArchivePath fails closed when stat does not reject a NUL-bearing path candidate.
+var errInvalidArchivePath = errors.New("invalid archive worktree path")
 
 // archiveWorktreeOps supplies the listing and context-bounded filesystem inspection.
 type archiveWorktreeOps struct {
@@ -132,9 +137,15 @@ func archiveRecordDone(ctx context.Context, line string, statusColumn int) (bool
 	if strings.HasPrefix(line, "|") {
 		return archiveTableDone(ctx, line, statusColumn)
 	}
+	_, done := archiveCompletionRecord(line)
+	return done, nil
+}
+
+// archiveCompletionRecord returns the description after a supported leading completion marker.
+func archiveCompletionRecord(line string) (string, bool) {
 	first := strings.TrimPrefix(line, "- ")
-	marker, _, closed := strings.Cut(first, "]")
-	return closed && (marker == "[DONE" || strings.HasPrefix(marker, "[DONE ")), nil
+	marker, description, closed := strings.Cut(first, "]")
+	return description, closed && (marker == "[DONE" || strings.HasPrefix(marker, "[DONE "))
 }
 
 // archiveTableDone ignores status-looking pipe cells inside the shared Markdown code spans.
@@ -168,24 +179,50 @@ func archiveRowPaths(ctx context.Context, row string) ([]string, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if path := archivePathField(fields[i]); path != "" {
+		path, err := archivePathField(fields[i])
+		if err != nil {
+			return nil, err
+		}
+		if path != "" {
 			paths = append(paths, path)
 		}
 	}
 	return paths, nil
 }
 
-// archivePathField decodes escaped pipes before removing wrappers and cleaning the complete path.
-// Embedded spaces survive; native, slash and UNC path spellings share the same field grammar.
-func archivePathField(field string) string {
+// archiveRawPathField decodes escaped pipes and strips paired wrappers around a path candidate.
+func archiveRawPathField(field string) string {
 	field = strings.ReplaceAll(field, `\|`, "|")
 	field = strings.TrimSpace(field)
 	start := archivePathStart(field)
 	if start < 0 {
 		return ""
 	}
-	path := archiveUnwrapPath(strings.TrimSpace(field[:start]), strings.TrimSpace(field[start:]))
-	return filepath.Clean(filepath.FromSlash(path))
+	return archiveUnwrapPath(strings.TrimSpace(field[:start]), strings.TrimSpace(field[start:]))
+}
+
+// archivePathField unwraps and cleans before rejecting only impossible total argument lengths.
+// Component limits and equivalent spellings are decided by the bounded filesystem inspection.
+func archivePathField(field string) (string, error) {
+	return archiveCleanPath(archiveRawPathField(field))
+}
+
+// archiveCleanPath rejects embedded NUL bytes before lexical cleaning and total-length bounds.
+func archiveCleanPath(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	if strings.IndexByte(path, 0) >= 0 {
+		if _, err := statArchivePath(path); err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("inspect archive worktree %s: %w", path, errInvalidArchivePath)
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(path))
+	if !archivePathWithinBounds(cleaned) {
+		return "", nil
+	}
+	return cleaned, nil
 }
 
 // archiveUnwrapPath removes only paired wrappers immediately surrounding the whole path.
@@ -205,20 +242,71 @@ func archiveUnwrapPath(prefix, path string) string {
 	return path
 }
 
-// archivePathStart accepts a field boundary before native roots, drive letters and slash paths.
+// archivePathStart applies the host's path spelling rules before cleaning or filesystem inspection.
 func archivePathStart(field string) int {
-	start := strings.IndexAny(field, `/\`)
-	if start < 0 {
+	return archivePathStartForPlatform(field, runtime.GOOS)
+}
+
+// archivePathStartForPlatform accepts boundary-rooted paths and drive prefixes, plus Windows relative backslash paths, excluding prose separators and bare backslashes.
+func archivePathStartForPlatform(field, platform string) int {
+	separator := strings.IndexAny(field, `/\`)
+	if separator < 0 || strings.Trim(field, `\`) == "" {
 		return -1
 	}
+	if archivePathSeparatorInProse(field, separator) {
+		return -1
+	}
+	start := archiveNativePathStart(field, separator, platform)
+	if start < 0 || !archiveFieldBoundary(field, start) {
+		return -1
+	}
+	if start > 0 && strings.HasPrefix(field[start-1:], "://") {
+		return -1
+	}
+	return start
+}
+
+// archiveNativePathStart includes drive prefixes and the first Windows relative component.
+func archiveNativePathStart(field string, separator int, platform string) int {
+	if start := archiveDrivePathStart(field, separator); start != separator {
+		return start
+	}
+	if platform != "windows" || field[separator] != '\\' || archiveFieldBoundary(field, separator) {
+		return separator
+	}
+	component := strings.LastIndexAny(field[:separator], "`\"'([:=") + 1
+	start := archiveDrivePathStart(field, component)
+	prefix := field[start:separator]
+	trimmed := strings.TrimLeft(prefix, " \t")
+	explicit := start < component || archiveUnwrapPath(field[:start], field[start:]) != field[start:]
+	if strings.ContainsAny(trimmed, " \t") && !explicit {
+		return -1
+	}
+	return start + len(prefix) - len(trimmed)
+}
+
+// archivePathSeparatorInProse preserves leading spaces in rooted, wrapped and labelled paths.
+func archivePathSeparatorInProse(field string, separator int) bool {
+	if !archiveFieldBoundary(field, separator) {
+		return false
+	}
+	if separator+1 >= len(field) || !strings.ContainsAny(field[separator+1:separator+2], " 	") {
+		return false
+	}
+	prefix := strings.TrimSpace(field[:separator])
+	if description, _, checkbox := taskCheckbox(prefix + " "); checkbox && strings.TrimSpace(description) == "" {
+		return false
+	}
+	if description, done := archiveCompletionRecord(prefix); done && strings.TrimSpace(description) == "" {
+		return false
+	}
+	return prefix != "" && !strings.ContainsAny(prefix[len(prefix)-1:], "`\"'([:=")
+}
+
+// archiveDrivePathStart includes a drive prefix only at a complete field boundary.
+func archiveDrivePathStart(field string, start int) int {
 	if start >= 2 && field[start-1] == ':' && archiveFieldBoundary(field, start-2) {
-		start -= 2
-	}
-	if !archiveFieldBoundary(field, start) {
-		return -1
-	}
-	if start > 0 && field[start-1] == ':' && start+1 < len(field) && field[start+1] == '/' {
-		return -1
+		return start - 2
 	}
 	return start
 }
@@ -316,7 +404,11 @@ func existingArchiveWorktree(ctx context.Context, entry worktree.WorktreeInfo, o
 		}
 		path = decoded
 	}
-	result, err := ops.inspect(ctx, filepath.Clean(filepath.FromSlash(path)))
+	cleaned, err := archiveCleanPath(path)
+	if err != nil || cleaned == "" {
+		return "", err
+	}
+	result, err := ops.inspect(ctx, cleaned)
 	if err != nil {
 		return "", err
 	}

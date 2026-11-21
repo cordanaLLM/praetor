@@ -250,12 +250,19 @@ Covered by `internal/state/recorded_commit_test.go`, the
 `cmd/standardsctl/standardsctl_test.go` and
 `TestArchiveCompletedTasks_CreatesPrivateBacklog` in `internal/state/tasks_test.go`.
 
-Archive recognizes completed checkboxes (`[x]` and `[X]`), a table status cell equal to `DONE` or starting with `DONE —`, and a leading `[DONE ...]` record outside code fences. Completion words in prose, descriptions and code spans stay in place. It compares whole path fields, preserving spaces and resolving equivalent spellings through existing ancestors. Before writing, it revalidates a fresh bounded Git worktree listing and checks directory existence under the archive deadline; a failed or oversized listing or a stalled lookup aborts without removing rows. For each live
+Archive recognizes completed checkboxes (`[x]` and `[X]`), a table status cell equal to `DONE` or starting with `DONE —`, and a leading `[DONE ...]` record outside code fences. Completion words in prose, descriptions and code spans stay in place. It compares whole path fields, preserving spaces and resolving equivalent spellings through existing ancestors. In bullet rows and table cells, a path candidate starts at a field boundary with a root or drive prefix, or with a Windows relative backslash path; a standalone separator within prose or a field of only backslashes is excluded, and Windows spellings include drive paths (`C:\repo` or drive-relative `C:repo\topic`), current-drive roots (`\repo`), UNC (`\\server\share`), and extended paths (`\\?\C:\repo` or `\\?\UNC\server\share`). A name the operating system cannot represent counts as no existing path, so completed prose rows can still be archived; candidates are unwrapped and cleaned lexically before inspection. A candidate holding a NUL byte is rejected as an invalid path before cleaning and before the total-length check, preserving all rows. A cleaned path exceeding the operating system’s total argument ceiling counts as absent without a filesystem call: 4095 bytes on Linux, 1023 bytes on macOS, or 32767 UTF-16 code units on Windows. Other hosts defer to the operating system. Every remaining candidate uses the same bounded canonical inspection, including paths with redundant segments, symlinked parents, or native case and root-relative spellings. The operating system decides component limits: Unix missing and `syscall.ENAMETOOLONG` stat errors count as absence; the Windows native list is `ERROR_FILE_NOT_FOUND` (2), `ERROR_PATH_NOT_FOUND` (3), `ERROR_BAD_NETPATH` (53, preserving Go’s missing-path behavior), `ERROR_INVALID_NAME` (123), and `ERROR_FILENAME_EXCED_RANGE` (206). Every other stat error, including access denied, sharing violations and device failures, keeps all rows and returns the error. Before writing, it revalidates a fresh bounded Git worktree listing and checks directory existence under the archive deadline; a failed or oversized listing or a stalled lookup aborts without removing rows. For each live
 worktree named by path in a completed row, an existing unarchived row is kept;
 otherwise the last matching row in document order stays verbatim in `OPEN.md`,
 including its id, path, branch, last step and next step. This retention does not
 reopen a completed task. Rows naming removed worktrees can be archived. A file
-with no archivable rows is unchanged. See `TestArchiveLiveWorktree`,
+with no archivable rows is unchanged. A rooted path whose first component starts
+with a space also stays intact after a standalone leading completion record, such
+as `[DONE]` or `- [DONE — fixture]`. Windows relative fields with spaces before
+the first backslash require paired whole-field wrappers (for example,
+`path: "relative worktree\child"`) or an explicit drive-relative prefix
+(`C:relative worktree\child`); ambiguous unwrapped prose remains excluded.
+See `TestArchiveLeadingSpaceWorktree`, `TestArchivePathCandidatePlatforms`,
+`TestArchiveWindowsRelativeRetention`, `TestArchiveLiveWorktree`,
 `TestArchiveWorktreeExistingRow`, `TestArchiveRemovedWorktree` and
 `TestArchiveNoDoneRowsUnchanged` in `internal/state/archive_worktrees_test.go`.
 
