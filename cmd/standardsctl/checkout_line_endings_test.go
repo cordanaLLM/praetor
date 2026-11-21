@@ -95,7 +95,7 @@ func TestCheckoutLineEndings_Negative_CRLFContentEditStillFails(t *testing.T) {
 	if _, err := checkoutPolicy(t, f); !errors.Is(err, config.ErrLockDigestMismatch) {
 		t.Fatalf("effective policy of an edited CRLF archetype: %v", err)
 	}
-	writeFixtureFile(t, f.dir, "CLAUDE.md", strings.Replace(readFixtureFile(t, f.dir, "CLAUDE.md"), "Keep functions small.", "Keep functions large.", 1))
+	writeFixtureFile(t, f.dir, "CLAUDE.md", strings.Replace(readFixtureFile(t, f.dir, "CLAUDE.md"), "@AGENTS.md", "@missing.md", 1))
 	_, err := runCompileContextCmd(t, f.dir, "--verify")
 	mustErrContain(t, err, "target CLAUDE.md is out of sync")
 }

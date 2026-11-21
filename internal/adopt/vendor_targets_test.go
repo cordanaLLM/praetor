@@ -46,10 +46,9 @@ func backupNamedIn(t *testing.T, repoPath, detail string) string {
 	return filepath.Join(repoPath, filepath.FromSlash(rel))
 }
 
-// Positive: a hand-edited CLAUDE.md is rewritten on a plain run, since audit demands its exact
-// bytes, but its edit is folded into AGENTS.md first (#1073), so the new projection carries the
-// edit and the backup is not its only copy; the dry run before it plans that and writes neither
-// file nor a backup. The other vendor files are only synchronized.
+// TestAdopt_Positive_HandEditedVendorFileOnPlainRunReplacedWithBackup preserves authored
+// text in AGENTS.md and the backup, then restores the pointer without copying that text.
+// The preceding dry run writes neither canonical text, vendor text nor backup.
 func TestAdopt_Positive_HandEditedVendorFileOnPlainRunReplacedWithBackup(t *testing.T) {
 	const note = "Local note an operator added by hand."
 	repoPath, source := adoptedRepo(t, "vendor-edit")
@@ -58,23 +57,22 @@ func TestAdopt_Positive_HandEditedVendorFileOnPlainRunReplacedWithBackup(t *test
 	edited := mustRead(t, full) + note + "\n"
 	mustWrite(t, full, edited)
 
-	preview := readoptWith(t, repoPath, source, AdoptOptions{DryRun: true})
-	planned := replacedEntry(t, preview, vendorContextFile)
-	if mustRead(t, full) != edited || mustRead(t, filepath.Join(repoPath, agentsFile)) != agents ||
-		fileExists(backupNamedIn(t, repoPath, planned.Details)) {
-		t.Fatal("dry run wrote the vendor file, AGENTS.md or a backup")
-	}
+	requireVendorDryRunPreservesFiles(t, repoPath, source, agents, edited)
 
 	rep := readoptWith(t, repoPath, source, AdoptOptions{})
 	entry := replacedEntry(t, rep, vendorContextFile)
-	if strings.Contains(entry.Details, "removed") {
-		t.Fatalf("replace detail %q drops a line", entry.Details)
+	if !strings.Contains(entry.Details, "removed") {
+		t.Fatalf("replace detail %q omits the line moved to canonical context", entry.Details)
 	}
 	if got := mustRead(t, backupNamedIn(t, repoPath, entry.Details)); got != edited {
 		t.Fatalf("backup = %q, want the hand-edited file", got)
 	}
-	if !strings.Contains(mustRead(t, filepath.Join(repoPath, agentsFile)), note) || !strings.Contains(mustRead(t, full), note) {
-		t.Fatal("the hand edit was not folded into AGENTS.md and its new projection")
+	if !strings.Contains(mustRead(t, filepath.Join(repoPath, agentsFile)), note) || strings.Contains(mustRead(t, full), note) {
+		t.Fatal("the hand edit must survive in AGENTS.md without being copied into its pointer")
+	}
+	requireCurrentVendorPointers(t, repoPath)
+	if !strings.Contains(mustRead(t, full), "@AGENTS.md") {
+		t.Fatal("restored projection lacks its canonical import")
 	}
 	// AGENTS.md is written once by the harness step, as a replacement whose backup holds the
 	// bytes the run found; only it and the vendor file are replaced.
@@ -85,6 +83,17 @@ func TestAdopt_Positive_HandEditedVendorFileOnPlainRunReplacedWithBackup(t *test
 	}
 	if got := mustRead(t, backupNamedIn(t, repoPath, folded.Details)); got != agents {
 		t.Fatalf("AGENTS.md backup = %q, want the bytes the run found", got)
+	}
+}
+
+// requireVendorDryRunPreservesFiles checks canonical, vendor and backup bytes before applying.
+func requireVendorDryRunPreservesFiles(t *testing.T, repoPath, source, agents, edited string) {
+	t.Helper()
+	preview := readoptWith(t, repoPath, source, AdoptOptions{DryRun: true})
+	planned := replacedEntry(t, preview, vendorContextFile)
+	if mustRead(t, filepath.Join(repoPath, vendorContextFile)) != edited || mustRead(t, filepath.Join(repoPath, agentsFile)) != agents ||
+		fileExists(backupNamedIn(t, repoPath, planned.Details)) {
+		t.Fatal("dry run wrote the vendor file, AGENTS.md or a backup")
 	}
 }
 
@@ -154,6 +163,7 @@ func TestAdopt_Boundary_PriorProjectionIsSynchronizedNotReplaced(t *testing.T) {
 // returns the real directory behind it.
 func plantBackupRootLink(t *testing.T, repoPath string) string {
 	t.Helper()
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- private fixture directory needs owner traversal.
 	if err := os.MkdirAll(filepath.Join(repoPath, workingDirPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -209,5 +219,13 @@ func TestAdopt_3D_ForcedEditedCatalogFileReplacedWithBackup(t *testing.T) {
 	if !strings.Contains(entry.Details, `(-1/+0 lines, removed "# local policy note")`) ||
 		mustRead(t, backupNamedIn(t, repoPath, entry.Details)) != edited || mustRead(t, full) != pinned {
 		t.Fatalf("catalog replace detail %q, backup or restored bytes wrong", entry.Details)
+	}
+}
+
+// requireCurrentVendorPointers verifies pointer bytes against the actual canonical source.
+func requireCurrentVendorPointers(t *testing.T, repoPath string) {
+	t.Helper()
+	if err := compiler.NewTranspiler().VerifyContext(t.Context(), filepath.Join(repoPath, agentsFile), repoPath); err != nil {
+		t.Fatalf("vendor pointers differ from the canonical projections: %v", err)
 	}
 }

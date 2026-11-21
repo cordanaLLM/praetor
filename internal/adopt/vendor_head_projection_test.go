@@ -22,8 +22,8 @@ func commitAll(t *testing.T, repoPath string) {
 	fixtureGit(t, repoPath, "update-ref", "HEAD", commit)
 }
 
-// editAgentsLine rewrites one line of the adopted AGENTS.md without running compile-context, so
-// the vendor files stay the projection of the text before the edit.
+// editAgentsLine changes shared text and adds client-owned text without recompiling.
+// The owned section makes the pointer projection stale; shared edits alone leave it current.
 func editAgentsLine(t *testing.T, repoPath string) {
 	t.Helper()
 	agents := filepath.Join(repoPath, agentsFile)
@@ -32,12 +32,11 @@ func editAgentsLine(t *testing.T, repoPath string) {
 	if edited == harness {
 		t.Fatal("fixture edit did not apply")
 	}
-	mustWrite(t, agents, edited)
+	mustWrite(t, agents, edited+"\n## Claude Code\n- Client policy after the edit.\n")
 }
 
-// Positive: after AGENTS.md is edited past its committed text, a plain re-adoption synchronizes
-// CLAUDE.md, still the projection of the committed AGENTS.md, to the edited one: no replace,
-// no backup.
+// TestAdopt_Positive_CommittedProjectionIsSynchronizedNotReplaced refreshes a pointer
+// with changed client-owned text from HEAD without replacing it or copying shared policy.
 func TestAdopt_Positive_CommittedProjectionIsSynchronizedNotReplaced(t *testing.T) {
 	repoPath, source := adoptedRepo(t, "vendor-head")
 	commitAll(t, repoPath)
@@ -47,9 +46,10 @@ func TestAdopt_Positive_CommittedProjectionIsSynchronizedNotReplaced(t *testing.
 		t.Fatalf("projection of the committed AGENTS.md replaced: %+v", replaced)
 	}
 	if !hasAction(rep, vendorContextFile, actionReconcile) ||
-		!strings.Contains(mustRead(t, filepath.Join(repoPath, vendorContextFile)), "Before concluding every turn:") {
+		!strings.Contains(mustRead(t, filepath.Join(repoPath, vendorContextFile)), "- Client policy after the edit.") {
 		t.Fatalf("vendor file not synchronized to the edited AGENTS.md: %+v", rep.ActionDetails)
 	}
+	requireCurrentVendorPointers(t, repoPath)
 	if _, err := os.Lstat(filepath.Join(repoPath, filepath.FromSlash(adoptBackupRoot))); !os.IsNotExist(err) {
 		t.Fatalf("backup root created without a replace (lstat err=%v)", err)
 	}
@@ -70,9 +70,8 @@ func TestAdopt_Negative_HandEditOverCommittedProjectionIsReplaced(t *testing.T) 
 	}
 }
 
-// Boundary: without a commit there is no HEAD text, so the same AGENTS.md edit leaves CLAUDE.md
-// matching no projection; the run still succeeds and takes the conservative reading, a replace
-// with a backup.
+// TestAdopt_Boundary_UnbornHeadFallsBackToReplaceWithBackup preserves the conservative
+// backup for a stale client-owned projection when HEAD cannot identify its original bytes.
 func TestAdopt_Boundary_UnbornHeadFallsBackToReplaceWithBackup(t *testing.T) {
 	repoPath, source := adoptedRepo(t, "vendor-unborn")
 	editAgentsLine(t, repoPath)

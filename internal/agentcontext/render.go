@@ -24,7 +24,7 @@ const maxCanonicalLines = MaxLineBudget * (len(vendorTargets) + 1)
 type TargetFile struct {
 	RelativePath string
 	Content      string
-	LineCount    int
+	LineCount    int // Physical projection lines; loaded context budgets also include canonical text.
 	// Remove marks a file the write deletes instead of writing: Content is empty.
 	Remove bool
 }
@@ -37,18 +37,23 @@ type CompileResult struct {
 	// They are neither written nor verified, so a projection the repository deleted stays
 	// deleted.
 	NotApplicable []string
-	// Layered reports that AGENTS.md carries band markers, so the files emit the head, the
-	// config band and the tail in that order. An unmarked source compiles in source order.
+	// Layered reports that AGENTS.md carries band markers. Client-only sections join the
+	// config band; shared bands remain in the canonical file.
 	Layered bool
 }
 
 // Transpiler compiles canonical AGENTS.md into vendor-native agent configurations.
 type Transpiler struct {
+	// MaxLines bounds the complete context each selected client loads.
 	MaxLines int
 	// ReadImport resolves a repository-root-relative import through a bounded reader.
 	ReadImport func(string) (string, error)
 	// ProjectDocBytes counts the bytes of the largest tracked nested AGENTS.md chain known to the compiler.
 	ProjectDocBytes int
+	// ProjectDocLines counts the largest nested chain by physical lines, independently of bytes.
+	ProjectDocLines int
+	// ProjectDocLineChain names the deepest file of the largest chain by lines.
+	ProjectDocLineChain string
 	// ProjectDocChain names the deepest file of that chain, for the refusal.
 	ProjectDocChain string
 	// Clients selects the projections CompileContent emits, by agent client id. nil emits
@@ -68,7 +73,8 @@ func NewTranspiler() *Transpiler {
 
 // vendorTarget pairs a compiled file with the agent client that reads it and the AGENTS.md
 // `## <Vendor>` heading that belongs to that file alone. Every line outside such a section is
-// shared by all targets. Client ids reuse internal/clientid where the client is known there;
+// shared by all clients, with fullContent targets receiving it in their projection.
+// Client ids reuse internal/clientid where the client is known there;
 // Cursor, Copilot and Windsurf have a projection but no client setup adapter. personaDir is
 // the directory the client reads agent personas from (compiler.CompileAgentSurfaces copies
 // .agents/agents there); Cursor and Windsurf read none. skillDir is the directory the client
@@ -77,22 +83,37 @@ func NewTranspiler() *Transpiler {
 // Copilot and Windsurf each read .agents/skills (their skills documentation, checked
 // 2026-10-06), so their skillDir is empty.
 type vendorTarget struct {
-	client      string
-	path        string
-	section     string
-	prefix      string
-	personaDir  string
-	skillDir    string
-	importDepth int
+	client       string
+	path         string
+	section      string
+	prefix       string
+	personaDir   string
+	skillDir     string
+	importDepth  int
+	nativeAgents bool
+	fullContent  bool
 }
 
+// Canonical loading mechanisms fetched 2026-11-15 from official client documentation:
+// Claude Code: https://code.claude.com/docs/en/memory (@file, relative to containing file,
+// four hops). Keep the import even where optional native AGENTS.md loading is available.
+// Cursor: https://cursor.com/docs/rules (native AGENTS.md; @mentions are not imports).
+// Copilot: https://docs.github.com/en/copilot/reference/custom-instructions-support
+// (checked 2026-11-18: IDE chat and code review include surfaces without AGENTS.md support;
+// copilot-instructions.md must carry shared and Copilot-owned instructions in full).
+// Windsurf: https://docs.windsurf.com/llms-full.txt, AGENTS.md section (native, root always-on;
+// the standalone /windsurf/cascade/agents-md page redirected to an inaccessible page).
+// Gemini CLI: https://geminicli.com/docs/cli/gemini-md/ (@file, file-relative) and
+// https://geminicli.com/docs/reference/memport/ (default five-level import limit).
+// Codex: https://developers.openai.com/codex/guides/agents-md/ (native AGENTS.md discovery).
+// No target needs the sentence fallback today; undocumented clients must use it.
 var vendorTargets = [6]vendorTarget{
 	{client: string(clientid.Claude), path: "CLAUDE.md", section: "Claude Code", personaDir: ".claude/agents", skillDir: ".claude/skills", importDepth: 4},
-	{client: "cursor", path: ".cursor/rules/hiss-invariants.mdc", section: "Cursor", prefix: cursorFrontmatter},
-	{client: "copilot", path: ".github/copilot-instructions.md", section: "GitHub Copilot", personaDir: ".github/agents"},
-	{client: "windsurf", path: ".windsurfrules", section: "Windsurf"},
+	{client: "cursor", path: ".cursor/rules/hiss-invariants.mdc", section: "Cursor", prefix: cursorFrontmatter, nativeAgents: true},
+	{client: "copilot", path: ".github/copilot-instructions.md", section: "GitHub Copilot", personaDir: ".github/agents", fullContent: true},
+	{client: "windsurf", path: ".windsurfrules", section: "Windsurf", nativeAgents: true},
 	{client: string(clientid.Gemini), path: ".gemini/GEMINI.md", section: "Gemini", personaDir: ".gemini/agents", importDepth: 5},
-	{client: string(clientid.Codex), path: ".codex/rules.md", section: "Codex", personaDir: ".codex/agents"},
+	{client: string(clientid.Codex), path: ".codex/rules.md", section: "Codex", personaDir: ".codex/agents", nativeAgents: true},
 }
 
 type clientSizeCap struct {
@@ -271,8 +292,11 @@ func targetPaths(targets []vendorTarget) []string {
 // VendorTarget is one compiled vendor context file: its slash-separated path relative to the
 // repository root and the name of the AGENTS.md `## <Vendor>` section that belongs to it alone.
 type VendorTarget struct {
-	Path    string
-	Section string
+	Path        string `json:"path"`
+	Section     string `json:"section"`
+	Client      string `json:"client"`
+	FullContent bool   `json:"full_content"`
+	PointerText string `json:"pointer_text"`
 }
 
 // VendorTargets returns the files CompileContent writes for a client selection, in compile
@@ -298,14 +322,15 @@ func AllVendorTargets() []VendorTarget {
 func exportTargets(selected []vendorTarget) []VendorTarget {
 	targets := make([]VendorTarget, 0, len(selected))
 	for _, target := range selected {
-		targets = append(targets, VendorTarget{Path: target.path, Section: target.section})
+		targets = append(targets, VendorTarget{Path: target.path, Section: target.section,
+			Client: target.client, FullContent: target.fullContent, PointerText: ProjectionFrame(target.path)})
 	}
 	return targets
 }
 
 // CompileContent synthesizes vendor-specific files directly from in-memory markdown content.
-// Each target keeps the shared body and its own `## <Vendor>` section in place; every other
-// vendor's section is removed, so guidance written for one agent never reaches another.
+// Pointer targets keep their own `## <Vendor>` section; fullContent targets also copy shared text.
+// Native AGENTS.md readers need no pointer beyond the generated notice.
 // A source in one consistent line-ending style compiles as its LF form, so a CRLF checkout of
 // AGENTS.md yields the projections of its LF blob rather than LF headers above CRLF lines; a
 // source with mixed endings compiles as it is.
@@ -314,12 +339,10 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := t.checkCanonicalSize(targets, len(content)); err != nil {
-		return nil, err
-	}
 	if strings.TrimSpace(content) == "" {
 		return nil, fmt.Errorf("canonical AGENTS.md content is empty")
 	}
+	selected := t.withCanonical(content)
 	if lf, _, err := util.NormalizeLineEndingsStrict(content); err == nil {
 		content = lf
 	}
@@ -328,11 +351,11 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 		return nil, err
 	}
 	bands, layered := scanBands(lines)
-	files, err := t.renderTargets(targets, func(section string) string {
+	files, err := selected.renderTargets(targets, func(target vendorTarget) string {
 		if layered {
-			return layoutBands(lines, owners, bands, section)
+			return layoutBands(lines, owners, bands, target.section, target.fullContent)
 		}
-		return selectVendorLines(lines, owners, section)
+		return selectVendorLines(lines, owners, target.section, target.fullContent)
 	})
 	if err != nil {
 		return nil, err
@@ -345,8 +368,26 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	}, nil
 }
 
-func (t *Transpiler) checkCanonicalSize(targets []vendorTarget, contentBytes int) error {
-	if !slices.ContainsFunc(targets, func(target vendorTarget) bool { return target.client == string(clientid.Codex) }) {
+// withCanonical binds imports of AGENTS.md to the source snapshot being compiled.
+// Pure callers need no filesystem reader for this first hop; nested imports still do.
+// Bind before projection normalization so caps count the canonical bytes clients actually read.
+func (t *Transpiler) withCanonical(content string) *Transpiler {
+	selected := *t
+	selected.ReadImport = func(name string) (string, error) {
+		if name == CanonicalFile {
+			return content, nil
+		}
+		if t.ReadImport == nil {
+			return "", fmt.Errorf("no repository reader")
+		}
+		return t.ReadImport(name)
+	}
+	return &selected
+}
+
+// checkCanonicalSize applies Codex's cap to its projection, canonical source and largest nested chain.
+func (t *Transpiler) checkCanonicalSize(target vendorTarget, contentBytes int) error {
+	if target.client != string(clientid.Codex) {
 		return nil
 	}
 	err := checkClientSize(CanonicalFile, contentBytes+t.ProjectDocBytes)
@@ -358,11 +399,17 @@ func (t *Transpiler) checkCanonicalSize(targets []vendorTarget, contentBytes int
 
 // renderTargets renders every target through body, visiting them in the order the render env
 // chooses and returning the files in registry order whatever that order was.
-func (t *Transpiler) renderTargets(targets []vendorTarget, body func(section string) string) ([]TargetFile, error) {
+func (t *Transpiler) renderTargets(targets []vendorTarget, body func(vendorTarget) string) ([]TargetFile, error) {
 	files := make([]TargetFile, len(targets))
 	for _, i := range t.Env.order(len(targets)) {
 		target := targets[i]
-		text := target.prefix + generatedHeader + body(target.section)
+		text := target.prefix + generatedHeader + target.canonicalReference()
+		if own := strings.Trim(body(target), "\n"); own != "" {
+			if target.canonicalReference() != "" {
+				text += "\n"
+			}
+			text += own + "\n"
+		}
 		depth := strings.Count(target.path, "/")
 		if depth > 0 {
 			text = rewriteRelativeLinks(text, depth)
@@ -371,13 +418,24 @@ func (t *Transpiler) renderTargets(targets []vendorTarget, body func(section str
 		if err != nil {
 			return nil, err
 		}
-		count := countLines(text)
-		if count > t.MaxLines {
-			return nil, fmt.Errorf("target file %s exceeds max line budget (%d > %d)", target.path, count, t.MaxLines)
-		}
-		files[i] = TargetFile{RelativePath: target.path, Content: text, LineCount: count}
+		files[i] = TargetFile{RelativePath: target.path, Content: text, LineCount: countLines(text)}
 	}
 	return files, nil
+}
+
+// canonicalReference omits full-content references, then selects imports, native loading or a sentence.
+// Imports remain root-relative until prepareImports validates and relocates them.
+func (target vendorTarget) canonicalReference() string {
+	if target.fullContent {
+		return ""
+	}
+	if target.importDepth > 0 {
+		return "@" + CanonicalFile + "\n"
+	}
+	if target.nativeAgents {
+		return ""
+	}
+	return "Read AGENTS.md for canonical agent instructions.\n"
 }
 
 // ownVendorLines splits content into lines and labels each one with the vendor section that
@@ -407,11 +465,11 @@ func ownVendorLines(content string) ([]string, []string, error) {
 	return lines, owners, nil
 }
 
-// selectVendorLines rejoins the shared lines plus the lines owned by section.
-func selectVendorLines(lines, owners []string, section string) string {
+// selectVendorLines selects owned lines and, for full-content projections, shared lines.
+func selectVendorLines(lines, owners []string, section string, shared bool) string {
 	kept := make([]string, 0, len(lines))
 	for i := range lines {
-		if owners[i] == "" || owners[i] == section {
+		if ownsContextLine(owners[i], section, shared) {
 			kept = append(kept, lines[i])
 		}
 	}
@@ -457,13 +515,22 @@ func IsCompiledProjection(text string) bool {
 	return strings.Contains(text, generatedNotice)
 }
 
-// ProjectionFrame returns the text compile-context writes into the projection at path around
-// what it takes from AGENTS.md: the target's prefix, such as the Cursor rule frontmatter, and the
-// generated header. A path no target names gets the header alone.
+// ProjectionFrame returns the generated metadata around a client's own instructions:
+// frontmatter, notice and canonical reference. Adoption excludes these lines when folding
+// user edits back into AGENTS.md, so an import cannot become a canonical self-import.
+// A path no target names gets the header alone.
 func ProjectionFrame(path string) string {
 	for i := 0; i < len(vendorTargets); i++ {
-		if vendorTargets[i].path == path {
-			return vendorTargets[i].prefix + generatedHeader
+		target := vendorTargets[i]
+		if target.path == path {
+			ref := target.canonicalReference()
+			if target.importDepth > 0 {
+				ref = target.importLine(CanonicalFile) + "\n"
+			}
+			if ref != "" {
+				ref += "\n"
+			}
+			return target.prefix + generatedHeader + ref
 		}
 	}
 	return generatedHeader

@@ -29,6 +29,49 @@ def tool_text(response, *, error=False):
                      if item.get("type") == "text")
 
 
+def context_projections(client):
+    """Read projection loading contracts from the engine's existing client registry."""
+    report = json.loads(tool_text(client.call("standards_client_capabilities", {})))
+    projections = report["context_projections"]
+    require(0 < len(projections) <= 64, "empty or oversized projection registry")
+    return projections
+
+
+def compiled_context(root, projections):
+    """Require policy in canonical text and either a valid pointer or full projection."""
+    source = root / "AGENTS.md"
+    require(source.is_file() and SENTINEL in source.read_text(),
+            "compile_context lost canonical content in AGENTS.md")
+    for index in range(min(len(projections), 64)):
+        projection = projections[index]
+        relative = projection["path"]
+        target = root / relative
+        require(target.is_file(), f"compile_context did not write {relative}")
+        text = target.read_text()
+        if projection["full_content"]:
+            valid = SENTINEL in text
+        else:
+            valid = bool(projection["pointer_text"].strip()) and text.strip() == projection["pointer_text"].strip()
+        require(valid, f"compile_context wrote neither canonical content nor a valid pointer to {relative}")
+
+
+def invalid_context_checks(root, projections):
+    """Plant both false-success shapes; restore each fixture even when a check fails."""
+    for relative in (projections[0]["path"], "AGENTS.md"):
+        target = root / relative
+        original = target.read_bytes()
+        try:
+            target.write_text("invalid compiled context\n")
+            try:
+                compiled_context(root, projections)
+            except RuntimeError:
+                continue
+            raise RuntimeError("MCP preflight failed: accepted invalid compiled context in " + relative)
+        finally:
+            target.write_bytes(original)
+    return ["missing canonical content and invalid projection rejected"]
+
+
 def fixture_checks(client, root):
     """Prove observable reads, writes, readback, and rejection of false successes."""
     source = root / "AGENTS.md"
@@ -36,18 +79,17 @@ def fixture_checks(client, root):
     (root / "fixture.go").write_text("package fixture\nfunc DevMCPMarker() {}\n")
     text = tool_text(client.call("standards_inspect_symbols", {"path": "fixture.go"}))
     require("DevMCPMarker" in text, "inspection did not read the fixture symbol")
+    projections = context_projections(client)
     tool_text(client.call("standards_compile_context", {}))
-    for relative in OUTPUTS:
-        target = root / relative
-        require(target.is_file() and SENTINEL in target.read_text(),
-                f"compile_context did not write canonical content to {relative}")
+    compiled_context(root, projections)
+    negatives = invalid_context_checks(root, projections)
     tool_text(client.call("standards_compile_context", {"verify_only": True}))
     (root / "CLAUDE.md").write_text("drift\n")
     tool_text(client.call("standards_compile_context", {"verify_only": True}), error=True)
     require((root / "CLAUDE.md").read_text() == "drift\n", "verify_only changed content")
     tool_text(client.call("standards_inspect_symbols", {"path": 42}), error=True)
     tool_text(client.call("standards_inspect_symbols", {"path": "../"}), error=True)
-    return ["fixture symbol read", "six compiled outputs read back",
+    return negatives + ["fixture symbol read", "registry-declared compiled outputs read back",
             "context verify accepts sync and rejects drift without writes",
             "invalid argument and outside-root path rejected"]
 

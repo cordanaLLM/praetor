@@ -8,9 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 )
 
+// TestMergeAgentsPreflightsProjectionBeforeWrite refuses an oversized loaded context before any write.
 func TestMergeAgentsPreflightsProjectionBeforeWrite(t *testing.T) {
 	repo := newTestRepo(t, "harness-budget")
 	path := filepath.Join(repo, agentsFile)
@@ -28,9 +30,7 @@ func TestMergeAgentsPreflightsProjectionBeforeWrite(t *testing.T) {
 		vendorBefore[vendor] = mustRead(t, filepath.Join(repo, vendor))
 	}
 	s := &adoptSession{repoPath: repo, repoName: "fixture", arch: "framework", report: &AdoptReport{}, verification: &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}}, opts: AdoptOptions{Force: false}}
-	if err := reconcileAgentHarness(context.Background(), s); err == nil {
-		t.Fatal("oversized merged context accepted")
-	}
+	requireHarnessBudgetFailure(t, reconcileAgentHarness(context.Background(), s))
 	if got := mustRead(t, path); got != before {
 		t.Fatal("oversized preflight changed canonical AGENTS.md")
 	}
@@ -41,6 +41,7 @@ func TestMergeAgentsPreflightsProjectionBeforeWrite(t *testing.T) {
 	}
 }
 
+// TestForceHarnessPreflightPreservesRecognizedTail refuses oversized force refreshes without losing the tail.
 func TestForceHarnessPreflightPreservesRecognizedTail(t *testing.T) {
 	repo := newTestRepo(t, "harness-force-budget")
 	path := filepath.Join(repo, agentsFile)
@@ -53,9 +54,7 @@ func TestForceHarnessPreflightPreservesRecognizedTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &adoptSession{repoPath: repo, repoName: "fixture", arch: "framework", report: &AdoptReport{}, verification: &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}}, opts: AdoptOptions{Force: true}}
-	if err := reconcileAgentHarness(context.Background(), s); err == nil {
-		t.Fatal("oversized force replacement accepted")
-	}
+	requireHarnessBudgetFailure(t, reconcileAgentHarness(context.Background(), s))
 	if got := mustRead(t, path); got != initial {
 		t.Fatal("force preflight changed canonical AGENTS.md")
 	}
@@ -83,16 +82,14 @@ func TestKeptHarnessFoldPreflightsProjectionBeforeWrite(t *testing.T) {
 	}
 	path, claude := filepath.Join(repo, agentsFile), filepath.Join(repo, "CLAUDE.md")
 	mustWrite(t, path, harness)
-	// 192 lines keep the folded AGENTS.md inside the document budget the splice checks, while its
-	// Cursor projection, frontmatter and header added, exceeds the projection budget.
+	// 192 lines keep the folded AGENTS.md inside the document budget the splice checks, while
+	// the Cursor projection plus canonical text exceeds the client's loaded line budget.
 	var authored strings.Builder
 	for i := 0; i < 192; i++ {
 		fmt.Fprintf(&authored, "authored rule %d\n", i)
 	}
 	mustWrite(t, claude, authored.String())
-	if err := reconcileAgentHarness(context.Background(), s); err == nil || !strings.Contains(err.Error(), "context composition cannot produce valid projections") {
-		t.Fatalf("oversized folded context not refused by the projection check: %v", err)
-	}
+	requireHarnessBudgetFailure(t, reconcileAgentHarness(context.Background(), s))
 	if mustRead(t, path) != harness || mustRead(t, claude) != authored.String() {
 		t.Fatal("a refused fold changed AGENTS.md or CLAUDE.md")
 	}
@@ -116,54 +113,58 @@ func TestMergeAgentsProjectionAcceptsShortTail(t *testing.T) {
 	}
 }
 
+// TestValidateHarnessProjectionExactBudget accepts exactly the loaded line budget and refuses one more line.
 func TestValidateHarnessProjectionExactBudget(t *testing.T) {
 	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var exact string
 	base := strings.TrimSuffix(harness, "\n") + "\n"
-	initial, compileErr := compiler.NewTranspiler().CompileContent(base)
-	if compileErr != nil {
-		t.Fatal(compileErr)
+	initial, err := compiler.NewTranspiler().CompileContent(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullContent := map[string]bool{}
+	for _, target := range agentcontext.AllVendorTargets() {
+		fullContent[target.Path] = target.FullContent
 	}
 	maxLines := 0
 	for _, file := range initial.Files {
-		if file.LineCount > maxLines {
-			maxLines = file.LineCount
+		// The registry decides what a client loads: a full-content projection alone, a pointer
+		// with the canonical file. Import substitutions replace the pointer line.
+		loaded := file.LineCount
+		if !fullContent[file.RelativePath] {
+			loaded += strings.Count(base, "\n") + 1
 		}
+		if file.RelativePath == "CLAUDE.md" || file.RelativePath == ".gemini/GEMINI.md" {
+			loaded--
+		}
+		maxLines = max(maxLines, loaded)
 	}
-	for n := compiler.MaxLineBudget - maxLines - 2; n <= compiler.MaxLineBudget-maxLines+2; n++ {
-		if n < 0 {
-			continue
-		}
-		candidate := base + strings.Repeat("x\n", n)
-		result, compileErr := compiler.NewTranspiler().CompileContent(candidate)
-		if compileErr != nil {
-			continue
-		}
-		maxLines := 0
-		for _, file := range result.Files {
-			if file.LineCount > maxLines {
-				maxLines = file.LineCount
-			}
-		}
-		if maxLines == compiler.MaxLineBudget {
-			exact = candidate
-			break
-		}
-	}
-	if exact == "" {
-		t.Fatal("failed to construct exact line-budget fixture")
-	}
+	exact := base + strings.Repeat("x\n", compiler.MaxLineBudget-maxLines)
 	if err := validateHarnessProjectionForClients(exact, nil); err != nil {
-		t.Fatalf("exact projection budget rejected: %v", err)
+		t.Fatalf("exact loaded budget rejected: %v", err)
 	}
-	if err := validateHarnessProjectionForClients(exact+"overflow\n", nil); err == nil {
-		t.Fatal("projection over budget accepted")
-	}
+	requireHarnessBudgetFailure(t, validateHarnessProjectionForClients(exact+"overflow\n", nil))
 }
 
+// requireHarnessBudgetFailure requires the client path, measured lines and cap in a preflight refusal.
+func requireHarnessBudgetFailure(t *testing.T, err error) {
+	t.Helper()
+	for _, want := range []string{"context composition cannot produce valid projections", "max line budget (", " > 300)"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("loaded context refusal missing %q: %v", want, err)
+		}
+	}
+	for _, path := range agentcontext.VendorTargetPaths() {
+		if strings.Contains(err.Error(), "target file "+path+" ") {
+			return
+		}
+	}
+	t.Fatalf("loaded context refusal lacks a client file: %v", err)
+}
+
+// TestResolveAgentsContentPreflightHonorsDryRun refuses oversized dry runs without changing canonical text.
 func TestResolveAgentsContentPreflightHonorsDryRun(t *testing.T) {
 	repo := newTestRepo(t, "harness-dry-run-budget")
 	path := filepath.Join(repo, agentsFile)
@@ -180,9 +181,8 @@ func TestResolveAgentsContentPreflightHonorsDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveAgentsContent(context.Background(), s, harness); err == nil {
-		t.Fatal("dry-run oversized context accepted")
-	}
+	_, err = resolveAgentsContent(context.Background(), s, harness)
+	requireHarnessBudgetFailure(t, err)
 	if got := mustRead(t, path); got != initial {
 		t.Fatal("dry-run preflight changed canonical AGENTS.md")
 	}

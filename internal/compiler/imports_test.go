@@ -44,10 +44,12 @@ func assertCompilerImportError(t *testing.T, err error, wants ...string) {
 	}
 }
 
+// TestCompileAndVerifyRefuseOversizedGeminiProjection caps the expanded canonical import.
 func TestCompileAndVerifyRefuseOversizedGeminiProjection(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "AGENTS.md")
-	writeCanonicalFixture(t, source, strings.Repeat("x", 25000-len(agentcontext.ProjectionFrame(".gemini/GEMINI.md"))))
+	frame := strings.TrimSuffix(agentcontext.ProjectionFrame(".gemini/GEMINI.md"), "@../AGENTS.md\n\n")
+	writeCanonicalFixture(t, source, strings.Repeat("x", 25000-len(frame)-1))
 	tr := NewTranspiler()
 	tr.Clients = []string{"gemini"}
 	_, err := tr.CompileContext(t.Context(), source)
@@ -58,10 +60,11 @@ func TestCompileAndVerifyRefuseOversizedGeminiProjection(t *testing.T) {
 	assertCompilerImportError(t, err, ".gemini/GEMINI.md", "client size cap")
 }
 
+// TestProjectDocCapIncludesKnownNestedContexts counts canonical and projection bytes with nested documents.
 func TestProjectDocCapIncludesKnownNestedContexts(t *testing.T) {
 	for _, size := range []int{32767, 32768, 32769} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
-			root := nestedRepo(t, map[string]string{"sub/AGENTS.md": strings.Repeat("x", size-len(lintTerseAgents))})
+			root := nestedRepo(t, map[string]string{"sub/AGENTS.md": strings.Repeat("x", size-len(lintTerseAgents)-codexProjectionBytes())})
 			tr := NewTranspiler()
 			tr.Clients = []string{"codex"}
 			_, err := tr.CompileContext(t.Context(), filepath.Join(root, "AGENTS.md"))
@@ -105,10 +108,10 @@ func TestProjectDocCapChain_Negative_DeepChainRefusedAndNamed(t *testing.T) {
 	assertCompilerImportError(t, err, "AGENTS.md", "client size cap", "a/b/c/AGENTS.md")
 }
 
-// Boundary: a chain exactly at the cap passes, one byte more is refused.
+// TestProjectDocCapChain_Boundary_ExactCap includes the projection before judging the exact loaded cap.
 func TestProjectDocCapChain_Boundary_ExactCap(t *testing.T) {
 	part1 := 10000
-	part2 := 32768 - len(lintTerseAgents) - part1
+	part2 := 32768 - len(lintTerseAgents) - codexProjectionBytes() - part1
 	files := func(second int) map[string]string {
 		return map[string]string{"a/AGENTS.md": strings.Repeat("a", part1), "a/b/AGENTS.md": strings.Repeat("b", second)}
 	}
@@ -142,5 +145,46 @@ func TestCompileContextProjectionsRefusesImportBeforeWrites(t *testing.T) {
 	assertCompilerImportError(t, err, "bulk.md", ".gemini/GEMINI.md", "client size cap")
 	if output.Len() != 0 {
 		t.Fatalf("refused compilation reported writes: %s", &output)
+	}
+}
+
+// codexProjectionBytes returns the emitted native wrapper bytes included in the loaded cap.
+func codexProjectionBytes() int {
+	return len(strings.TrimRight(agentcontext.ProjectionFrame(".codex/rules.md"), "\n") + "\n")
+}
+
+// TestProjectDocLineCapIncludesNestedChain counts the deepest loaded path, never sibling sums.
+func TestProjectDocLineCapIncludesNestedChain(t *testing.T) {
+	for _, total := range []int{299, 300, 301} {
+		t.Run(fmt.Sprint(total), func(t *testing.T) {
+			projection := strings.TrimRight(agentcontext.ProjectionFrame(".codex/rules.md"), "\n") + "\n"
+			rootLines := strings.Count(lintTerseAgents, "\n") + 1
+			projectionLines := strings.Count(projection, "\n") + 1
+			nestedLines := total - rootLines - projectionLines
+			root := nestedRepo(t, map[string]string{
+				"a/AGENTS.md":     strings.Repeat("x\n", 99),
+				"a/b/AGENTS.md":   strings.Repeat("y\n", nestedLines-101),
+				"other/AGENTS.md": strings.Repeat("z", 10000),
+			})
+			tr := NewTranspiler()
+			tr.Clients = []string{"codex"}
+			source := filepath.Join(root, "AGENTS.md")
+			res, err := tr.CompileContext(t.Context(), source)
+			if total > MaxLineBudget {
+				assertCompilerImportError(t, err, "max line budget (301 > 300)", "a/b/AGENTS.md")
+				_, err = tr.VerifyCompiled(t.Context(), source, root)
+				assertCompilerImportError(t, err, "max line budget (301 > 300)")
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tr.WriteOutputsContext(t.Context(), res, root); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tr.VerifyCompiled(t.Context(), source, root); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

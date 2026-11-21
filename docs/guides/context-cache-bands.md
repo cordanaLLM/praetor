@@ -23,10 +23,20 @@ head. Then run `praetorctl compile-context`.
 | config | the text register block, `## <Client>` sections | a manifest or client edit |
 | tail | verification commands, repository-state text | the repository changes |
 
-`compile-context` writes the static generated header first, then head, config and tail, for
-all six vendor files, whatever order the source wrote the bands in. The markers do not appear
-in the compiled files. Blank lines at a band edge are trimmed and the bands are joined by one
-blank line.
+The bands order `AGENTS.md` itself and any full-content projection compiled from it. Pointer
+vendor files (`CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.windsurfrules`,
+`.gemini/GEMINI.md` and `.codex/rules.md`) refer to `AGENTS.md` instead of copying shared
+text (an `@AGENTS.md` or `@../AGENTS.md` import, native `AGENTS.md` reading, or the fallback
+sentence `"Read AGENTS.md for canonical agent instructions."` for an undocumented target in
+`canonicalReference` in `internal/agentcontext/render.go`), and keep only their static
+generated header and their own `## <Client>` section in the config band. Copilot's
+`.github/copilot-instructions.md` sets `fullContent: true` in `internal/agentcontext/render.go`
+and copies the shared head, config and tail bands with its `## GitHub Copilot` section in the
+config band (`TestProjectionLoadingContract` in `internal/agentcontext/pointer_test.go`,
+`TestBandsEmitHeadConfigTailInOrderForEveryVendorFile` in `internal/agentcontext/bands_test.go`),
+because Copilot IDE chat and code review include surfaces that do not load `AGENTS.md`. The
+markers do not appear in the compiled files. Blank lines at a band edge are trimmed and the
+bands are joined by one blank line.
 
 ## Reference
 
@@ -82,20 +92,30 @@ on 2026-10-28.
 
 | File | Cap | Source |
 | :--- | :--- | :--- |
-| `AGENTS.md` plus tracked nested files on one root-to-directory path | 32,768 bytes together | Codex CLI [`agents_md.rs`](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/agents_md.rs) and [`config/mod.rs`](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/config/mod.rs), `project_doc_max_bytes` default |
+| `.codex/rules.md` plus `AGENTS.md` and tracked nested files on one root-to-directory path | 32,768 bytes together | Codex CLI [`agents_md.rs`](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/agents_md.rs) and [`config/mod.rs`](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/config/mod.rs), `project_doc_max_bytes` default |
 | `.gemini/GEMINI.md` | 24,000 bytes after import expansion | [Antigravity rules](https://antigravity.google/docs/rules); Antigravity reads this file too, so the strictest reader wins |
-| `.windsurfrules` | 12,000 Unicode characters | [Windsurf documentation](https://docs.windsurf.com/llms-full.txt), workspace rule limit |
+| `.windsurfrules` plus `AGENTS.md` | 12,000 Unicode characters | [Windsurf documentation](https://docs.windsurf.com/llms-full.txt), workspace rule limit |
 
 The remaining vendor targets have no documented hard size cap in this registry.
-Generated headers count toward projection caps. The existing line budget still
-applies. A refusal names the file, measured size, unit and cap, for example:
-`target file .gemini/GEMINI.md exceeds client size cap (25000 bytes > 24000)`. An `AGENTS.md`
+Generated headers count toward the loaded context caps. Every client's line
+budget also counts the text it loads: its projection plus `AGENTS.md` for native
+readers (Cursor, Windsurf and Codex, plus any sentence-fallback target) in
+`directSize` (`internal/agentcontext/imports.go`) and the largest tracked nested
+`AGENTS.md` chain for Codex (`checkLoadedSize`), the full-content projection
+alone for Copilot (`directSize`, `TestCopilotLoadedLineBudget` in
+`internal/agentcontext/pointer_test.go`; issue #2029 tracks the Copilot cloud
+agent, which loads both `.github/copilot-instructions.md` and `AGENTS.md`), or
+the expanded imports for Claude Code and Gemini CLI (`expandedSize`). Client-owned
+sections count wherever loaded, including both files when a native reader loads
+both. `TargetFile.LineCount` continues to describe the emitted file alone; the
+loaded line budget is checked separately by the renderer. A refusal names the file, measured size, unit and cap, for example:
+`target file .gemini/GEMINI.md exceeds client size cap (25000 bytes > 24000)`. A Codex `AGENTS.md`
 refusal also names the deepest file of the largest nested chain, the path to trim.
 
 A standalone `@path` line outside fenced code is an import. Paths resolve from
 the repository root. Claude Code and Gemini CLI keep that line; their sizes
 include the imported content in place of the line, including nested imports.
-Cursor, Copilot, Windsurf and Codex rules instead receive
+Client-only imports in Cursor, Copilot, Windsurf and Codex rules instead receive
 `See path (read on demand).` Fenced examples, indented lines and inline mentions
 remain unchanged. This translation adds no automatically loaded content for
 clients without `@path` expansion.
@@ -104,14 +124,15 @@ Expansion uses an iterative stack, refuses cycles, and allows four import hops
 for Claude Code and five for Gemini CLI. Missing or unreadable imports name the
 path. Reads use the compiler's confined, deadline-bound snapshot reader, limited
 to 1 MiB per file; traversal is bounded to 256 imports per projection. These
-safety bounds also apply to clients without a documented size cap. Import
+safety bounds also apply to import-capable clients without a documented size cap. Import
 behavior sources: [Claude Code memory](https://code.claude.com/docs/en/memory)
 and [Gemini CLI context files](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md),
 checked for issue #1674 on 2026-10-28.
 
 Regression evidence: `internal/agentcontext/imports_test.go` covers byte and
-character boundaries, translation, fenced examples, expansion, cycles, missing
-files and depth limits; `internal/compiler/imports_test.go` exercises real file
+character boundaries, canonical-plus-projection line boundaries for all six
+clients, nested and repeated import line budgets, translation, fenced examples,
+expansion, cycles, missing files and depth limits; `internal/compiler/imports_test.go` exercises real file
 reads, nested project documents, compile/write/readback and verification refusal.
 
 ## Adopted repositories

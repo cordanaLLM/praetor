@@ -131,7 +131,7 @@ func TestCompileContextProjections_Negative_LintsTheWrittenSource(t *testing.T) 
 	if strings.Contains(out.String(), "completed successfully") {
 		t.Fatalf("a failed lint printed success:\n%s", out.String())
 	}
-	if !strings.Contains(readFixtureText(t, filepath.Join(root, "CLAUDE.md")), "Two implementations") {
+	if !strings.Contains(readFixtureText(t, filepath.Join(root, "CLAUDE.md")), "@AGENTS.md") {
 		t.Fatal("the targets must still be written")
 	}
 }

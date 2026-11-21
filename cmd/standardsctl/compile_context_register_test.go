@@ -22,6 +22,7 @@ func staleRegisterBlock(t *testing.T, dir string) {
 	writeFixtureFile(t, dir, "AGENTS.md", strings.Replace(source, marker, marker+"Write however you like.\n", 1))
 }
 
+// TestCompileContextRegister_Positive keeps the rendered register in AGENTS.md alone.
 func TestCompileContextRegister_Positive(t *testing.T) {
 	dir := newContextFixture(t, false)
 	writeFixtureFile(t, dir, ".standards.yaml", "version: 1\nregister:\n  tasks:\n    ci_debugging: docs\n")
@@ -31,10 +32,14 @@ func TestCompileContextRegister_Positive(t *testing.T) {
 		t.Fatalf("compile-context: %v\n%s", err, out)
 	}
 	mustContain(t, out, "[SPLICED]", "text register")
-	for _, rel := range []string{"AGENTS.md", "CLAUDE.md", ".codex/rules.md"} {
+	source := readFixtureFile(t, dir, "AGENTS.md")
+	if strings.Count(source, config.RegisterBlockStart) != 1 || !strings.Contains(source, "ci_debugging") {
+		t.Fatalf("canonical register block differs: %s", source)
+	}
+	for _, rel := range []string{"CLAUDE.md", ".codex/rules.md"} {
 		content := readFixtureFile(t, dir, rel)
-		if strings.Count(content, config.RegisterBlockStart) != 1 || !strings.Contains(content, "ci_debugging") {
-			t.Errorf("%s must carry the block rendered from the manifest once:\n%s", rel, content)
+		if strings.Contains(content, config.RegisterBlockStart) || strings.Contains(content, "ci_debugging") {
+			t.Errorf("%s copied the canonical register block:\n%s", rel, content)
 		}
 	}
 	if out, err = runCompileContextCmd(t, dir, "--verify"); err != nil {

@@ -69,6 +69,12 @@ func TestCompileContent_Boundary_ClientSelectionAbsentEmptyOversized(t *testing.
 		t.Fatalf("empty selection: %d files, %d not applicable", len(none.Files), len(none.NotApplicable))
 	}
 
+	requireClientSelectionLimit(t, tr)
+}
+
+// requireClientSelectionLimit refuses one extra selection and accepts exactly the bound.
+func requireClientSelectionLimit(t *testing.T, tr *Transpiler) {
+	t.Helper()
 	tr.Clients = make([]string, maxSelectedClients+1)
 	for i := range tr.Clients {
 		tr.Clients[i] = "claude"
@@ -209,11 +215,13 @@ type sizeCapCase struct {
 	wantErr []string
 }
 
+// sizeCapCases exercises caps only on text loaded by selected clients.
 func sizeCapCases() []sizeCapCase {
-	overWindsurf := sizedSource(80, 180) // 14,412 characters: over windsurf (12,000), under gemini (24,000)
-	overCodex := sizedSource(200, 170)   // 34,012 bytes: over the AGENTS.md cap (32,768)
-	exactCodex := "# Harness\n\n" + strings.Repeat("a", 32768-len("# Harness\n\n")-1) + "\n"
-	exactWindsurf := strings.Repeat("a", 12000-len(generatedHeader))
+	overWindsurf := "## Windsurf\n" + strings.Repeat(strings.Repeat("a", 179)+"\n", 80) // 14,412 characters: over windsurf (12,000), under gemini (24,000)
+	overCodex := sizedSource(200, 170)                                                  // 34,012 bytes: over the AGENTS.md cap (32,768)
+	frameBytes := len(strings.TrimRight(generatedHeader, "\n") + "\n")
+	exactCodex := "# Harness\n\n" + strings.Repeat("a", 32768-frameBytes-len("# Harness\n\n")-1) + "\n"
+	exactWindsurf := strings.Repeat("a", 12000-frameBytes)
 	return []sizeCapCase{
 		{"undeclared windsurf over cap passes", []string{"claude", "codex", "gemini"}, overWindsurf, nil},
 		{"no selection still caps windsurf", nil, overWindsurf, []string{".windsurfrules", "> 12000"}},

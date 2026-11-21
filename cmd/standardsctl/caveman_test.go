@@ -725,8 +725,8 @@ func TestCavemanCheckContextKindInference_Boundary(t *testing.T) {
 	dir := t.TempDir()
 	note := writeFixtureFile(t, dir, "candidate-note.md", cavemanContextOnly)
 	wantCavemanVerdict(t, note, "PASS", "context", "--root", dir, "--kind=context")
-	repoRoot := filepath.Join("..", "..")
-	wantCavemanVerdict(t, filepath.Join(repoRoot, "CLAUDE.md"), "FAIL", "message", "--root", repoRoot, "-kind", "message")
+	claude := writeFixtureFile(t, dir, "CLAUDE.md", cavemanContextOnly)
+	wantCavemanVerdict(t, claude, "FAIL", "message", "--root", dir, "-kind", "message")
 
 	agents := writeFixtureFile(t, dir, "AGENTS.md", cavemanContextOnly)
 	writeFixtureFile(t, dir, "nested/candidate-note.md", cavemanContextOnly)

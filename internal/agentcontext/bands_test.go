@@ -39,40 +39,43 @@ func compileFixture(t *testing.T, source string) *CompileResult {
 	return result
 }
 
+// TestBandsEmitHeadConfigTailInOrderForEveryVendorFile keeps shared bands canonical.
 func TestBandsEmitHeadConfigTailInOrderForEveryVendorFile(t *testing.T) {
 	for _, file := range compileFixture(t, bandFixture).Files {
-		if !strings.HasPrefix(file.Content, testFrontmatterFor(file.RelativePath)+testHeader+"# Harness") {
-			t.Fatalf("%s: static header or title not first: %q", file.RelativePath, file.Content)
+		frame := strings.TrimRight(testFrontmatterFor(file.RelativePath)+testHeader, "\n") + "\n"
+		if !strings.HasPrefix(file.Content, frame) {
+			t.Fatalf("%s: missing frame: %q", file.RelativePath, file.Content)
 		}
-		head := strings.Index(file.Content, "Head text.")
-		config := strings.Index(file.Content, "Config text.")
-		tail := strings.Index(file.Content, "Tail text.")
-		if head < 0 || head >= config || config >= tail {
-			t.Fatalf("%s: band order head=%d config=%d tail=%d", file.RelativePath, head, config, tail)
+		for _, shared := range []string{"Head text.", "Config text.", "Tail text."} {
+			if strings.Contains(file.Content, shared) != testFullContentFor(file.RelativePath) {
+				t.Fatalf("%s: copied shared band %q", file.RelativePath, shared)
+			}
 		}
-		if strings.Contains(file.Content, "praetor:") {
-			t.Fatalf("%s: marker leaked into the compiled file", file.RelativePath)
-		}
+	}
+	text := canonicalBandLayout(t, bandFixture)
+	head, config, tail := strings.Index(text, "Head text."), strings.Index(text, "Config text."), strings.Index(text, "Tail text.")
+	if head < 0 || head >= config || config >= tail {
+		t.Fatalf("canonical band order head=%d config=%d tail=%d", head, config, tail)
 	}
 }
 
+// TestBandsJoinWithOneBlankLineAndKeepTheFinalNewline pins the canonical band layout.
 func TestBandsJoinWithOneBlankLineAndKeepTheFinalNewline(t *testing.T) {
-	for _, file := range compileFixture(t, bandFixture).Files {
-		if strings.Contains(file.Content, "\n\n\n") || !strings.HasSuffix(file.Content, "\n\nTail text.\n") {
-			t.Fatalf("%s: band joins left a gap or lost the tail: %q", file.RelativePath, file.Content)
-		}
+	text := canonicalBandLayout(t, bandFixture)
+	if strings.Contains(text, "\n\n\n") || !strings.HasSuffix(text, "\n\nTail text.\n") {
+		t.Fatalf("canonical band joins changed: %q", text)
 	}
 }
 
+// TestVendorSectionJoinsTheConfigBandOfItsOwnFileOnly retains only the matching section.
 func TestVendorSectionJoinsTheConfigBandOfItsOwnFileOnly(t *testing.T) {
 	for _, file := range compileFixture(t, bandFixture).Files {
 		isClaude := file.RelativePath == "CLAUDE.md"
 		if strings.Contains(file.Content, "Claude only.") != isClaude {
 			t.Fatalf("%s: vendor section placement wrong", file.RelativePath)
 		}
-		c := file.Content
-		if isClaude && !strings.Contains(c, "Config text.\n\n## Claude Code\nClaude only.\n\nTail text.") {
-			t.Fatalf("vendor section is not in the config band: %q", c)
+		if isClaude && !strings.HasSuffix(file.Content, "## Claude Code\nClaude only.\n") {
+			t.Fatalf("vendor section changed: %q", file.Content)
 		}
 	}
 }
@@ -87,6 +90,7 @@ var endingCases = map[string]string{
 	"config then blank tail": "# H\n\n" + BandConfigMarker + "\nConfig.\n\n" + BandTailMarker + "\n\n",
 }
 
+// TestLayeredOutputEndsWithNewlineExactlyWhenTheSourceDoes pins canonical layout endings.
 func TestLayeredOutputEndsWithNewlineExactlyWhenTheSourceDoes(t *testing.T) {
 	for name, source := range endingCases {
 		for _, trimmed := range []bool{false, true} {
@@ -94,11 +98,9 @@ func TestLayeredOutputEndsWithNewlineExactlyWhenTheSourceDoes(t *testing.T) {
 			if trimmed {
 				text = strings.TrimRight(source, "\n")
 			}
-			for _, file := range compileFixture(t, text).Files {
-				body := strings.TrimPrefix(file.Content, testFrontmatterFor(file.RelativePath)+testHeader)
-				if strings.HasSuffix(body, "\n") != !trimmed || strings.HasSuffix(body, "\n\n") {
-					t.Fatalf("%s (trimmed=%v) %s: ending wrong: %q", name, trimmed, file.RelativePath, body)
-				}
+			body := canonicalBandLayout(t, text)
+			if strings.HasSuffix(body, "\n") != !trimmed || strings.HasSuffix(body, "\n\n") {
+				t.Fatalf("%s (trimmed=%v): ending wrong: %q", name, trimmed, body)
 			}
 		}
 	}
@@ -111,6 +113,7 @@ func testFrontmatterFor(path string) string {
 	return ""
 }
 
+// TestUnmarkedSourceKeepsSourceOrder preserves unmarked metadata without copying policy.
 func TestUnmarkedSourceKeepsSourceOrder(t *testing.T) {
 	source := "# Harness\nTail first.\n\n## Config\nConfig second.\n"
 	result, err := NewTranspiler().CompileContent(source)
@@ -120,7 +123,7 @@ func TestUnmarkedSourceKeepsSourceOrder(t *testing.T) {
 	if result.Layered {
 		t.Fatal("unmarked source reported layered")
 	}
-	if got := result.Files[0].Content; got != testHeader+source {
+	if got := result.Files[0].Content; got != testHeader+"@AGENTS.md\n" {
 		t.Fatalf("unmarked source changed: %q", got)
 	}
 	if _, ok, err := HeadBand(source); ok || err != nil {
@@ -128,13 +131,14 @@ func TestUnmarkedSourceKeepsSourceOrder(t *testing.T) {
 	}
 }
 
+// TestMarkerInsideFenceOpensNoBand leaves fenced markers literal in the canonical source.
 func TestMarkerInsideFenceOpensNoBand(t *testing.T) {
 	source := "# Harness\n\n```\n" + BandTailMarker + "\n```\n"
 	result, err := NewTranspiler().CompileContent(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Layered || !strings.Contains(result.Files[0].Content, BandTailMarker) {
+	if result.Layered || strings.Contains(result.Files[0].Content, BandTailMarker) {
 		t.Fatalf("fenced marker acted as a marker: %+v", result)
 	}
 }
@@ -182,43 +186,26 @@ func TestEnvOrderIsAPermutation(t *testing.T) {
 	}
 }
 
+// TestHeadEditChangesOnlyHeadBytes changes full-content projections after a shared head edit.
 func TestHeadEditChangesOnlyHeadBytes(t *testing.T) {
 	edited := strings.Replace(bandFixture, "Head text.", "Head text, edited longer.", 1)
-	before, err := NewTranspiler().CompileContent(bandFixture)
-	if err != nil {
-		t.Fatal(err)
-	}
-	after, err := NewTranspiler().CompileContent(edited)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := compileFixture(t, bandFixture)
+	after := compileFixture(t, edited)
 	for i := range before.Files {
-		a, b := before.Files[i].Content, after.Files[i].Content
-		at := strings.Index(a, "Head text.")
-		if a[:at] != b[:at] {
-			t.Fatalf("%s: bytes before the edit moved", before.Files[i].RelativePath)
-		}
-		if a[strings.Index(a, "Config text."):] != b[strings.Index(b, "Config text."):] {
-			t.Fatalf("%s: bytes after the head moved", before.Files[i].RelativePath)
+		if changed := before.Files[i] != after.Files[i]; changed != testFullContentFor(before.Files[i].RelativePath) {
+			t.Fatalf("%s: shared head edit changed=%v", before.Files[i].RelativePath, changed)
 		}
 	}
 }
 
+// TestConfigEditLeavesHeadBytesAlone changes full-content projections after a shared config edit.
 func TestConfigEditLeavesHeadBytesAlone(t *testing.T) {
 	edited := strings.Replace(bandFixture, "Config text.", "Config text, edited.", 1)
-	before, err := NewTranspiler().CompileContent(bandFixture)
-	if err != nil {
-		t.Fatal(err)
-	}
-	after, err := NewTranspiler().CompileContent(edited)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := compileFixture(t, bandFixture)
+	after := compileFixture(t, edited)
 	for i := range before.Files {
-		a, b := before.Files[i].Content, after.Files[i].Content
-		cut := strings.Index(a, "Config text.")
-		if a[:cut] != b[:cut] {
-			t.Fatalf("%s: a config edit moved head bytes", before.Files[i].RelativePath)
+		if changed := before.Files[i] != after.Files[i]; changed != testFullContentFor(before.Files[i].RelativePath) {
+			t.Fatalf("%s: shared config edit changed=%v", before.Files[i].RelativePath, changed)
 		}
 	}
 }
@@ -360,7 +347,7 @@ func TestLayoutBands_RelocatedVendorSectionWithoutTrailingBlankLine(t *testing.T
 	if claude == "" {
 		t.Fatal("CLAUDE.md missing from compilation result")
 	}
-	want := "Head.\n\n## Claude Code\nClaude only.\n\nConfig.\n"
+	want := "@AGENTS.md\n\n## Claude Code\nClaude only.\n"
 	if !strings.HasSuffix(claude, want) {
 		t.Fatalf("CLAUDE.md vendor section glued: got %q, want suffix %q", claude, want)
 	}
@@ -388,6 +375,7 @@ var vendorBandFixture = strings.Join([]string{
 	"",
 }, "\n")
 
+// TestVendorSectionsInHeadAndTailRelocateToConfigBand retains client-only sections across bands.
 func TestVendorSectionsInHeadAndTailRelocateToConfigBand(t *testing.T) {
 	result, err := NewTranspiler().CompileContent(vendorBandFixture)
 	if err != nil {
@@ -404,7 +392,7 @@ func TestVendorSectionsInHeadAndTailRelocateToConfigBand(t *testing.T) {
 		if !isClaude {
 			continue
 		}
-		want := "Head text.\n\n## Claude Code\nClaude head section.\n\nConfig text.\n\n## Claude Code\nClaude tail section.\n\nTail text.\n"
+		want := "@AGENTS.md\n\n## Claude Code\nClaude head section.\n\n## Claude Code\nClaude tail section.\n"
 		if !strings.HasSuffix(c, want) {
 			t.Fatalf("%s: vendor sections not relocated into the config band, got %q", file.RelativePath, c)
 		}
@@ -454,4 +442,19 @@ func TestInsertIntoConfigBand(t *testing.T) {
 	if got, layered := InsertIntoConfigBand("# H\nPlain.\n", section); layered || got != "# H\nPlain.\n" {
 		t.Fatalf("unmarked source changed: %q, %v", got, layered)
 	}
+}
+
+// canonicalBandLayout exercises shared-band formatting without emitting shared policy.
+func canonicalBandLayout(t *testing.T, source string) string {
+	t.Helper()
+	lines, owners, err := ownVendorLines(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bands, _ := scanBands(lines)
+	return layoutBands(lines, owners, bands, "", false)
+}
+
+func testFullContentFor(path string) bool {
+	return path == ".github/copilot-instructions.md"
 }
