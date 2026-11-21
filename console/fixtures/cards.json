@@ -4,13 +4,13 @@
  "cards": [
   {
    "id": "C1",
-   "title": "Review the release notes",
+   "title": "Review the release notes alphabetagammadeltaepsilonzetaetathetaalphabetagammadeltaepsilonzetaetathetaalphabetagammadeltaepsilonzetaetatheta",
    "state": "now",
    "where": "anywhere",
    "act": "review the release notes in example/alpha",
    "say": "review done",
    "detail": "Synthetic card 1: review the release notes. Nothing here is real data.",
-   "why_now": "The release notes blocks 1 follow-up items.",
+   "why_now": "The release notes blocks 1 follow-up items alphabetagammadeltaepsilonzetaetathetaalphabetagammadeltaepsilonzetaetathetaalphabetagammadeltaepsilonzetaetatheta.",
    "consequence_if_skipped": "The follow-up items stay blocked.",
    "est_minutes": 1,
    "source": "fixture:1",

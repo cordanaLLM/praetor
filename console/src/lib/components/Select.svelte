@@ -38,6 +38,9 @@ A labelled native select: keyboard and screen-reader behaviour come from the pla
 	}
 
 	select {
+		min-width: 0;
+		max-width: 100%;
+		overflow-wrap: anywhere;
 		min-height: 44px;
 		padding: 0 var(--space-2);
 		border: 1px solid var(--color-input);

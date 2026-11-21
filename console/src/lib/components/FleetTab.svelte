@@ -90,6 +90,8 @@ Agent sessions (repository, state, idle minutes, memory, latest line) and the ho
 	}
 
 	.holds li {
+		min-width: 0;
+		overflow-wrap: anywhere;
 		padding: var(--space-1) var(--space-3);
 		border: 1px solid var(--color-border);
 		border-radius: 999px;
@@ -97,6 +99,8 @@ Agent sessions (repository, state, idle minutes, memory, latest line) and the ho
 	}
 
 	.session {
+		min-width: 0;
+		overflow-wrap: anywhere;
 		display: grid;
 		grid-template-columns: 1fr auto;
 		gap: var(--space-1) var(--space-3);

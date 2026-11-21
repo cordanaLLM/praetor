@@ -111,4 +111,8 @@ Operator cards, filtered and grouped by state or place, in the order the produce
 		display: grid;
 		gap: var(--space-3);
 	}
+	li {
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
 </style>

@@ -53,6 +53,8 @@ Open DECISION and ASK ids, oldest first, with who sent them and when.
 	}
 
 	.row {
+		min-width: 0;
+		overflow-wrap: anywhere;
 		display: grid;
 		grid-template-columns: auto 1fr;
 		gap: var(--space-1) var(--space-3);

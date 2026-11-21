@@ -128,6 +128,8 @@ filtered by class, goal, status and repository and by the search box.
 	}
 
 	.row {
+		min-width: 0;
+		overflow-wrap: anywhere;
 		display: grid;
 		gap: var(--space-1);
 		padding: var(--space-3) var(--space-4);
