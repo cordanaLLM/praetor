@@ -50,22 +50,24 @@ const (
 type settingKind uint8
 
 const (
-	kindText    settingKind = iota // string scalar
-	kindBool                       // boolean scalar, canonical "true" or "false"
-	kindInt                        // integer scalar, canonical base-10 digits
-	kindList                       // sequence of strings
-	kindArgv                       // sequence of candidates: a string or a sequence of strings
-	kindEntry                      // clients.selected.<id>, framework.targets.<language>: lists the entry, holds its keys
-	kindMapping                    // a nested mapping with keys of its own
+	kindText          settingKind = iota // string scalar
+	kindBool                             // boolean scalar, canonical "true" or "false"
+	kindInt                              // integer scalar, canonical base-10 digits
+	kindList                             // sequence of strings
+	kindArgv                             // sequence of candidates: a string or a sequence of strings
+	kindPRTitleLimits                    // sequence of repository title-limit records
+	kindEntry                            // clients.selected.<id>, framework.targets.<language>: lists the entry, holds its keys
+	kindMapping                          // a nested mapping with keys of its own
 )
 
 type mergeRule uint8
 
 const (
-	ruleReplace  mergeRule = iota // a later layer replaces the value
-	ruleTighten                   // once a layer sets strict, a later layer cannot move away
-	ruleAppend                    // lists append, de-duplicated, bound applied to the result
-	ruleConflict                  // two different non-empty values are an error
+	ruleReplace       mergeRule = iota // a later layer replaces the value
+	ruleTighten                        // once a layer sets strict, a later layer cannot move away
+	ruleAppend                         // lists append, de-duplicated, bound applied to the result
+	rulePRTitleLimits                  // repository-keyed records, later layer wins
+	ruleConflict                       // two different non-empty values are an error
 )
 
 type settingCheck func(layer string, setting OperatorSetting) error
@@ -134,6 +136,7 @@ var operatorSpecs = map[string]settingSpec{
 	"framework.targets.*.checkout":          {host: true, check: frameworkCheckout},
 	"framework.migration_branch":            {check: optional(branchName)},
 	"forge":                                 {kind: kindMapping},
+	"forge.pr_title_limits":                 {kind: kindPRTitleLimits, rule: rulePRTitleLimits, maxItems: MaxPRTitleLimits, check: prTitleLimitsSetting},
 	"forge.own_organizations":               {kind: kindList, maxItems: MaxOwnOrganizations, check: ownOrganizationList},
 	"forge.default_owner":                   {check: optional(githubOwner)},
 	"forge.reconcile_repos":                 {kind: kindList, maxItems: MaxReconcileRepos, check: repositoryList},

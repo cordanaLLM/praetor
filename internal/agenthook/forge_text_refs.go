@@ -69,12 +69,17 @@ type ghTextFile struct {
 }
 
 // ghWriteCall holds the raw command text, resolved file arguments and any file-collection
-// refusal for a single scoped gh write invocation.
+// refusal for a single scoped gh write invocation, plus arguments and create classification.
 type ghWriteCall struct {
-	raw     string
-	files   []ghTextFile
-	fileErr string
-	dir     string
+	raw           string
+	files         []ghTextFile
+	fileErr       string
+	dir           string
+	prCreate      bool
+	args          []string
+	repoEnv       *string
+	wrapped       bool
+	prefixUnknown bool
 }
 
 // ghDirPolicy holds the resolved trusted organisations, missing-list flag, diagnostic
@@ -108,7 +113,7 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
 		dirPolicy, ok := dirPolicies[calls[i].dir]
 		if !ok {
-			dirPolicy = resolveGHDirPolicy(ctx, calls[i].dir, in.Getenv)
+			dirPolicy = resolveGHDirPolicy(ctx, calls[i].dir, in)
 			dirPolicies[calls[i].dir] = dirPolicy
 		}
 		verdict := judgeResolvedGHWriteCall(ctx, calls[i], dirPolicy)
@@ -130,12 +135,12 @@ func appendUniqueNotice(notices []string, notice string) []string {
 
 // resolveGHDirPolicy resolves the repository root and trusted organisations for dir once.
 // Commands outside any git repository keep an empty root so no arbitrary directory manifest is loaded.
-func resolveGHDirPolicy(ctx context.Context, dir string, getenv func(string) string) ghDirPolicy {
+func resolveGHDirPolicy(ctx context.Context, dir string, in Invocation) ghDirPolicy {
 	root, err := repositoryRoot(ctx, dir)
 	if err != nil {
 		return ghDirPolicy{err: err}
 	}
-	own, noOrgList, notice, err := resolveHookOwnOrganizations(ctx, root, getenv)
+	own, noOrgList, notice, err := resolveHookOwnOrganizations(ctx, root, in)
 	if errors.Is(err, errHookOperatorForgeSettings) {
 		return ghDirPolicy{err: err}
 	}
@@ -196,8 +201,8 @@ func forgeTextDeny(detail string, noOrgList bool) Verdict {
 // resolveHookOwnOrganizations resolves the trusted forge organisations from operator
 // settings, the command manifest and repository identity. Invalid manifests contribute only a
 // finding; their organisations are never trusted.
-func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(string) string) ([]string, bool, string, error) {
-	opForge, err := loadOperatorForgeSettings(ctx, getenv)
+func resolveHookOwnOrganizations(ctx context.Context, root string, in Invocation) ([]string, bool, string, error) {
+	opForge, err := loadOperatorForgeSettings(ctx, in)
 	if err != nil {
 		return nil, false, "", fmt.Errorf("%w: %w", errHookOperatorForgeSettings, err)
 	}
@@ -205,7 +210,7 @@ func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(s
 	if root != "" {
 		manifestPath = filepath.Join(root, manifestName)
 	}
-	resolved, err := forge.ResolveOwnOrganizationSources(ctx, root, manifestPath, opForge.OwnOrganizations, getenv)
+	resolved, err := forge.ResolveOwnOrganizationSources(ctx, root, manifestPath, opForge.OwnOrganizations, in.Getenv)
 	notice := ""
 	if resolved.ManifestProblem != nil {
 		sources := strings.Join(resolved.Sources, ", ")
@@ -218,9 +223,16 @@ func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(s
 	return resolved.Organizations, noOrgList, notice, err
 }
 
-// loadOperatorForgeSettings loads operator-level forge settings when fleet or workstation
-// config environment variables are set, refusing invalid operator policy files.
-func loadOperatorForgeSettings(ctx context.Context, getenv func(string) string) (config.ForgeSettings, error) {
+// loadOperatorForgeSettings uses CLI-selected settings, refusing selection errors; callers
+// without selected settings retain environment-only loading and validation.
+func loadOperatorForgeSettings(ctx context.Context, in Invocation) (config.ForgeSettings, error) {
+	if in.SettingsError != nil {
+		return config.ForgeSettings{}, in.SettingsError
+	}
+	if in.Forge != nil {
+		return *in.Forge, nil
+	}
+	getenv := in.Getenv
 	if getenv == nil {
 		return config.ForgeSettings{}, nil
 	}
@@ -565,7 +577,7 @@ func shellFieldsForGH(command string) ([]string, error) {
 // parseSegmentGHCall inspects one command segment, updates workDir on cd or pushd, and
 // extracts a ghWriteCall when the segment invokes a scoped gh write subcommand, refusing non-gh or unscoped segments.
 func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghWriteCall, string, bool) {
-	word, args, cmdDir, _, _ := walkCommandWords(words, workDir)
+	word, args, cmdDir, _, wrapped := walkCommandWords(words, workDir)
 	if word == "cd" || word == "pushd" {
 		if dirs := changeDirectoryTarget(args, cmdDir); len(dirs) > 0 && dirs[0].dir != "" {
 			return ghWriteCall{}, dirs[0].dir, false
@@ -584,7 +596,9 @@ func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghW
 	if readsStdin {
 		raw = fullCommand
 	}
-	return ghWriteCall{raw: raw, files: files, fileErr: fileErr, dir: cmdDir}, workDir, true
+	prCreate := subcmd == "pr" && unquoteShellWord(args[len(args)-len(rest)-1]) == "create"
+	repoEnv, prefixUnknown := ghCommandRepository(words[:len(words)-len(args)-1])
+	return ghWriteCall{raw: raw, files: files, fileErr: fileErr, dir: cmdDir, prCreate: prCreate, args: args, repoEnv: repoEnv, wrapped: wrapped, prefixUnknown: prefixUnknown}, workDir, true
 }
 
 // classifyGHCall identifies the gh subcommand and remaining arguments for a scoped write
@@ -605,11 +619,11 @@ func classifyGHCall(args []string) (string, []string, bool) {
 }
 
 // nextGHPositional returns the next non-flag positional token in args starting at start,
-// skipping -R/--repo values and flag tokens and refusing when no positional token remains.
+// skipping value-taking global options and flag tokens, refusing absent positional tokens.
 func nextGHPositional(args []string, start int) (string, int, bool) {
 	for i := start; i < len(args) && i < maxForgeTextWords; i++ {
 		tok := unquoteTarget(args[i])
-		if tok == "-R" || tok == "--repo" {
+		if tok == "-R" || tok == "--repo" || tok == "--hostname" {
 			i++
 			continue
 		}
@@ -774,7 +788,7 @@ func extractFlagFile(subcmd string, args []string, i int) (string, int, bool, bo
 // flagValue parses separate, inline (=) or attached short flag values at args[i] for
 // names, refusing a matched flag whose value is missing or empty.
 func flagValue(args []string, i int, short string, names ...string) (string, int, bool, bool) {
-	tok := unquoteTarget(args[i])
+	tok := unquoteShellWord(args[i])
 	for j := 0; j < len(names) && j < 4; j++ {
 		if tok == names[j] {
 			if i+1 >= len(args) {
@@ -786,10 +800,51 @@ func flagValue(args []string, i int, short string, names ...string) (string, int
 			return val, i, true, val != ""
 		}
 	}
-	if short != "" && strings.HasPrefix(tok, short) && len(tok) > len(short) {
+	return shortFlagValue(args, i, tok, short)
+}
+
+// shortFlagValue preserves direct shorthands and reads a value after create's boolean cluster.
+func shortFlagValue(args []string, i int, tok, short string) (string, int, bool, bool) {
+	if short == "" || strings.HasPrefix(tok, "--") {
+		return "", i, false, false
+	}
+	if strings.HasPrefix(tok, short) && len(tok) > len(short) {
 		return tok[len(short):], i, true, true
 	}
-	return "", i, false, false
+	option, tail, _ := ghCreateShortOption(tok)
+	if option != short {
+		return "", i, false, false
+	}
+	if tail != "" {
+		value := strings.TrimPrefix(tail, "=")
+		return value, i, true, value != ""
+	}
+	if i+1 < len(args) {
+		return args[i+1], i + 1, true, true
+	}
+	return tok, i, true, false
+}
+
+// ghCreateShortOption stops at the first value shorthand or unknown cluster member.
+// Create shorthands: cli/cli v2.104.0 pkg/cmd/pr/create/create.go; R: pkg/cmd/pr/pr.go.
+// https://github.com/cli/cli/blob/v2.104.0/pkg/cmd/pr/create/create.go
+// Cobra v1.10.2 command.go adds boolean h. pflag v1.1.0 flag.go consumes the remaining value.
+func ghCreateShortOption(tok string) (option, tail, unknown string) {
+	if !strings.HasPrefix(tok, "-") || strings.HasPrefix(tok, "--") {
+		return "", "", ""
+	}
+	for j := 1; j < len(tok); j++ {
+		if strings.ContainsRune("tRabFBHrlpmT", rune(tok[j])) {
+			return "-" + tok[j:j+1], tok[j+1:], ""
+		}
+		if !strings.ContainsRune("defwh", rune(tok[j])) {
+			return "", "", "-" + tok[j:j+1]
+		}
+		if j+1 < len(tok) && tok[j+1] == '=' {
+			return "", "", ""
+		}
+	}
+	return "", "", ""
 }
 
 // extractAPIFieldFile extracts the file path from a gh api key=@path field assignment,
