@@ -8,7 +8,9 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -72,9 +74,65 @@ func AuditRenovateEngineBumps(ctx context.Context, root string) (string, error) 
 		return "", fmt.Errorf("[FAIL] renovate-engine-bumps: %s: %w", rel, err)
 	}
 	if changed {
-		return "", fmt.Errorf("[FAIL] renovate-engine-bumps: %s missing effective packageRules entry %q: matchPackageNames=%v, enabled=false; run praetorctl adopt", rel, renovateEngineDescription, renovateEngineNames())
+		return renovateEngineMissing(ctx, rel, data, renovateEngineNow())
 	}
 	return "[PASS] renovate-engine-bumps: " + rel + " disables engine packages; updates arrive through coordinated adoption.", nil
+}
+
+// renovateEngineGraceUntil ends the grace for a managed engine rule that covers the former engine identity but
+// not yet the moved one (order finding-renovate-engine-bumps-tekmora-red-main-20261121): every renovate.json
+// adopted before the move to tekmora/praetor lacks the moved names, so the tightened audit failed clean adopter
+// mains. Their next adoption adds the names; after this date the audit fails as for any uncovered name.
+var renovateEngineGraceUntil = time.Date(2026, time.December, 1, 0, 0, 0, 0, time.UTC)
+
+// renovateEngineNow is the audit clock; tests pin it to either side of renovateEngineGraceUntil.
+var renovateEngineNow = time.Now
+
+// movedEngineNames are the package names the move to the current forge owner added to the managed rule.
+func movedEngineNames() []string {
+	return []string{engineForgeRepository, engineForgeRepository + "/**"}
+}
+
+// renovateEngineMissing reports an engine rule that does not cover every engine name: a warning while only the
+// moved names are missing before the grace ends, otherwise the failure that names the full entry.
+func renovateEngineMissing(ctx context.Context, rel string, data []byte, now time.Time) (string, error) {
+	uncovered, err := renovateEngineUncovered(ctx, data)
+	if err == nil && len(uncovered) > 0 && now.Before(renovateEngineGraceUntil) && onlyMovedEngineNames(uncovered) {
+		return fmt.Sprintf("[WARN] renovate-engine-bumps: %s covers the former engine identity but not %v; run praetorctl adopt before %s, after which this fails",
+			rel, uncovered, renovateEngineGraceUntil.Format(time.DateOnly)), nil
+	}
+	return "", fmt.Errorf("[FAIL] renovate-engine-bumps: %s missing effective packageRules entry %q: matchPackageNames=%v, enabled=false; run praetorctl adopt", rel, renovateEngineDescription, renovateEngineNames())
+}
+
+// onlyMovedEngineNames reports whether every uncovered name is one the move added.
+func onlyMovedEngineNames(uncovered []string) bool {
+	moved := movedEngineNames()
+	for _, name := range uncovered {
+		if !slices.Contains(moved, name) {
+			return false
+		}
+	}
+	return true
+}
+
+// renovateEngineUncovered lists the engine package names that no disabling packageRules entry covers.
+func renovateEngineUncovered(ctx context.Context, data []byte) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	text, _, err := normalizeRenovateDocument(data)
+	if err != nil {
+		return nil, err
+	}
+	root, err := clientjson.DecodeObject([]byte(text))
+	if err != nil {
+		return nil, err
+	}
+	rules, err := renovatePackageRules(root)
+	if err != nil {
+		return nil, err
+	}
+	return uncoveredRenovateValues(rules, renovateEngineNames(), "matchPackageNames"), nil
 }
 
 // mergeRenovateAdoptionRules orchestrates adoption rules, engine bumps disablement, and workflow pin managers into Renovate configuration.
