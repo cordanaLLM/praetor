@@ -5,6 +5,7 @@
 package admission
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"path"
@@ -17,12 +18,17 @@ import (
 )
 
 const (
-	maxExecutorListBytes = 64 << 10
-	maxExecutors         = 32
-	maxExecutorCores     = 1 << 16
-	maxExecutorMemoryGiB = 1 << 20
-	maxWorkspacePath     = 4096
+	maxExecutorListBytes  = 64 << 10
+	maxExecutors          = 32
+	maxExecutorCores      = 1 << 16
+	maxExecutorMemoryGiB  = 1 << 20
+	maxWorkspacePath      = 4096
+	executorLeasesDir     = "praetor-admit-leases"
+	maxExecutorLeaseFiles = 256
 )
+
+// ErrExecutorLeaseCap is raised when an executor's lease directory exceeds maxExecutorLeaseFiles lock files.
+var ErrExecutorLeaseCap = errors.New("lease directory exceeds lock file limit")
 
 var (
 	executorName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)

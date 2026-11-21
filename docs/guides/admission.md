@@ -86,8 +86,10 @@ subdirectory with a detached HEAD and the staged changes visible. Unstaged and u
 stay on the workstation. Remote steps are noninteractive and stream stdout and stderr back over SSH.
 Build parallelism is `cores` divided by concurrent admitted steps on that executor (at least one
 job), passed as `MAKEFLAGS=-jN` and `GOMAXPROCS=N`; the admission line names the executor, core
-source, concurrent steps and jobs. If the SSH session ends without the step's exit status (for
-example SSH status 255, a reset, or the pod gone), admit fails with `executor <name> lost the step
+source, concurrent steps and jobs. Up to 256 lease lock files are scanned per executor, and a
+lease directory past that bound refuses admission by name rather than undercounting active steps.
+If the SSH session ends without the step's exit status (for example SSH status 255, wrapper signal
+exit 129, 130 or 143, a reset, or the pod gone), admit fails with `executor <name> lost the step
 mid-run (evicted or unreachable)` and does not rerun on its own. Pass `--fallback=local` to run the
 step on the workstation instead; the command prints the substitution on stderr. The remote session
 removes its working directory when it exits. Use named local mode for steps that require the

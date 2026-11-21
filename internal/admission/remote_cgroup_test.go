@@ -101,25 +101,32 @@ func TestStepParallelismJobs_Positive_TwoConcurrent(t *testing.T) {
 	}
 }
 
-// exit255Error runs a shell command that exits with status 255 to produce a test ExitError.
-func exit255Error(t *testing.T) error {
+// exitCodeError runs a shell command exiting with status to produce a real exec.ExitError.
+func exitCodeError(t *testing.T, status int) error {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := util.RunCommand(ctx, "", "sh", "-c", "exit 255")
+	_, err := util.RunCommand(ctx, "", "sh", "-c", "exit "+strconv.Itoa(status))
 	return err
 }
 
-// TestRemoteRunFailure_Boundary_StepExit255NotLost proves that a step exiting 255 with an exit marker is reported as a step failure rather than an eviction.
-func TestRemoteRunFailure_Boundary_StepExit255NotLost(t *testing.T) {
+// stepStderrWithMarker returns a remoteStepStderr after writing the completion marker for status.
+func stepStderrWithMarker(t *testing.T, status int) *remoteStepStderr {
+	t.Helper()
 	w := &remoteStepStderr{}
 	if _, err := w.Write([]byte("praetor-admit-step-complete ")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.Write([]byte("255\n")); err != nil {
+	if _, err := w.Write([]byte(strconv.Itoa(status) + "\n")); err != nil {
 		t.Fatal(err)
 	}
-	code, ferr := remoteRunFailure(context.Background(), "home", w.stepFinished, exit255Error(t))
+	return w
+}
+
+// TestRemoteRunFailure_Boundary_StepExit255NotLost proves that a step exiting 255 with an exit marker is reported as a step failure rather than an eviction.
+func TestRemoteRunFailure_Boundary_StepExit255NotLost(t *testing.T) {
+	w := stepStderrWithMarker(t, 255)
+	code, ferr := remoteRunFailure(context.Background(), "home", w.stepFinished, exitCodeError(t, 255))
 	if ferr != nil || code != 255 {
 		t.Fatalf("step 255 = %d %v", code, ferr)
 	}
@@ -127,9 +134,45 @@ func TestRemoteRunFailure_Boundary_StepExit255NotLost(t *testing.T) {
 
 // TestRemoteRunFailure_Negative_SSH255WithoutMarker proves that an SSH exit code of 255 without an exit marker is classified as an eviction.
 func TestRemoteRunFailure_Negative_SSH255WithoutMarker(t *testing.T) {
-	code, ferr := remoteRunFailure(context.Background(), "home", false, exit255Error(t))
+	code, ferr := remoteRunFailure(context.Background(), "home", false, exitCodeError(t, 255))
 	if code != 255 || ferr == nil || ferr.Error() != "executor home lost the step mid-run (evicted or unreachable)" {
 		t.Fatalf("eviction = %d %v", code, ferr)
+	}
+}
+
+// TestRemoteRunFailure_WrapperTerminationAndCompletedStatuses proves that statuses 129, 130 and 143
+// without the completion marker are classified as executor loss, while completed steps keep their status.
+func TestRemoteRunFailure_WrapperTerminationAndCompletedStatuses(t *testing.T) {
+	for _, status := range []int{143, 130, 129} {
+		assertMarkerlessExecutorLoss(t, status)
+		assertCompletedWithMarker(t, status)
+	}
+	w0 := stepStderrWithMarker(t, 0)
+	if code, ferr := remoteRunFailure(context.Background(), "home", w0.stepFinished, nil); ferr != nil || code != 0 || !w0.stepFinished {
+		t.Fatalf("completed 0 with marker = (%d, %v, finished=%v)", code, ferr, w0.stepFinished)
+	}
+	if code, ferr := remoteRunFailure(context.Background(), "home", false, exitCodeError(t, 1)); ferr != nil || code != 1 {
+		t.Fatalf("marker-less setup exit 1 = (%d, %v), want (1, nil)", code, ferr)
+	}
+}
+
+// assertMarkerlessExecutorLoss verifies that a signal-trap or SSH exit status without a marker reports ErrExecutorLost.
+func assertMarkerlessExecutorLoss(t *testing.T, status int) {
+	t.Helper()
+	code, ferr := remoteRunFailure(context.Background(), "home", false, exitCodeError(t, status))
+	if !errors.Is(ferr, ErrExecutorLost) || code != 255 ||
+		ferr.Error() != "executor home lost the step mid-run (evicted or unreachable)" {
+		t.Fatalf("marker-less %d = (%d, %v), want executor loss", status, code, ferr)
+	}
+}
+
+// assertCompletedWithMarker verifies that an exit status accompanied by the completion marker returns that status cleanly.
+func assertCompletedWithMarker(t *testing.T, status int) {
+	t.Helper()
+	w := stepStderrWithMarker(t, status)
+	code, ferr := remoteRunFailure(context.Background(), "home", w.stepFinished, exitCodeError(t, status))
+	if ferr != nil || code != status {
+		t.Fatalf("completed %d with marker = (%d, %v), want (%d, nil)", status, code, ferr, status)
 	}
 }
 
@@ -303,24 +346,76 @@ func startSubprocessLeaseHolder(t *testing.T, executor, testName string) func() 
 	return stop
 }
 
-// TestAdmitExecutorLease_Boundary_TempDirFallbackAndCap proves fallback to temporary directory leases and adherence to scan file limits.
-func TestAdmitExecutorLease_Boundary_TempDirFallbackAndCap(t *testing.T) {
+// TestAdmitExecutorLease_Boundary_TempDirFallbackAndExactCap proves fallback to temporary directory
+// leases and exact counting up to maxExecutorLeaseFiles total lock files.
+func TestAdmitExecutorLease_Boundary_TempDirFallbackAndExactCap(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("remote executor leases require Unix advisory file locks")
+	}
+	if runSubprocessLeaseHolder(t) {
+		return
 	}
 	t.Setenv("XDG_RUNTIME_DIR", "")
 	tmpDir := t.TempDir()
 	t.Setenv("TMPDIR", tmpDir)
 	assertSingleLeaseRound(t)
 	leaseDir := filepath.Join(tmpDir, "praetor-admit-"+strconv.Itoa(os.Getuid()), executorLeasesDir, "home")
-	for i := range maxExecutorLeaseFiles + 4 {
+	stopOther := startSubprocessLeaseHolder(t, "home", "TestAdmitExecutorLease_Boundary_TempDirFallbackAndExactCap")
+	plantStaleLockCount(t, leaseDir, maxExecutorLeaseFiles-2)
+	concurrent, release, err := AdmitExecutorLease("home")
+	if err != nil || concurrent != 2 {
+		t.Fatalf("at 256 lock files: concurrent=%d err=%v, want 2 nil", concurrent, err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	stopOther()
+	assertNoLeaseFiles(t, leaseDir)
+}
+
+// TestAdmitExecutorLease_Negative_PastCapRefused proves that 257 or more lock files refuse admission
+// by executor name without returning a partial count or leaving the caller's lock file behind.
+func TestAdmitExecutorLease_Negative_PastCapRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("remote executor leases require Unix advisory file locks")
+	}
+	if runSubprocessLeaseHolder(t) {
+		return
+	}
+	runtimeDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	stopOther := startSubprocessLeaseHolder(t, "home", "TestAdmitExecutorLease_Negative_PastCapRefused")
+	defer stopOther()
+	leaseDir := filepath.Join(runtimeDir, executorLeasesDir, "home")
+	plantStaleLockCount(t, leaseDir, maxExecutorLeaseFiles-1)
+	assertRefusedAtLeaseCap(t, leaseDir, maxExecutorLeaseFiles)
+	if err := os.WriteFile(filepath.Join(leaseDir, "extra-stale.lock"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assertRefusedAtLeaseCap(t, leaseDir, maxExecutorLeaseFiles+1)
+}
+
+// assertRefusedAtLeaseCap verifies that AdmitExecutorLease refuses with ErrExecutorLeaseCap and removes its own lock file.
+func assertRefusedAtLeaseCap(t *testing.T, leaseDir string, wantRemaining int) {
+	t.Helper()
+	concurrent, release, err := AdmitExecutorLease("home")
+	if !errors.Is(err, ErrExecutorLeaseCap) || !strings.Contains(err.Error(), "executor home:") ||
+		concurrent != 0 || release != nil {
+		t.Fatalf("past cap (%d existing + own): concurrent=%d release=%v err=%v", wantRemaining, concurrent, release != nil, err)
+	}
+	entries, readErr := os.ReadDir(leaseDir)
+	if readErr != nil || len(entries) != wantRemaining {
+		t.Fatalf("own lock file was not cleaned up on refusal: got %d files, want %d (%v)", len(entries), wantRemaining, readErr)
+	}
+}
+
+// plantStaleLockCount writes n unheld .lock files into leaseDir for cap boundary tests.
+func plantStaleLockCount(t *testing.T, leaseDir string, n int) {
+	t.Helper()
+	for i := range n {
 		if err := os.WriteFile(filepath.Join(leaseDir, strconv.Itoa(i)+"-stale.lock"), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-	}
-	assertSingleLeaseRound(t)
-	if entries, err := os.ReadDir(leaseDir); err != nil || len(entries) != 4 {
-		t.Fatalf("wanted 4 unprobed files past cap %d, got %d (%v)", maxExecutorLeaseFiles, len(entries), err)
 	}
 }
 

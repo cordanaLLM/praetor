@@ -21,11 +21,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const (
-	executorLeasesDir     = "praetor-admit-leases"
-	maxExecutorLeaseFiles = 256
-)
-
 // AdmitExecutorLease creates and locks a per-step lease file under the user's runtime directory
 // (<dir>/praetor-admit-leases/<executor>/<pid>-<random>.lock) and returns the inclusive count of
 // live steps holding a flock lease on that executor across processes, along with a release
@@ -126,24 +121,18 @@ func createExecutorLease(name, dir string, root *os.Root) (string, func() error,
 	return ownName, release, nil
 }
 
-// countExecutorLeases tallies the active advisory file locks currently held for the specified executor.
+const maxExecutorLeaseDirEntries = 1024
+
+// countExecutorLeases tallies the active advisory file locks currently held for the specified
+// executor, refusing admission when lock files exceed maxExecutorLeaseFiles.
 func countExecutorLeases(name, ownName string, root *os.Root) (int, error) {
-	entries, err := readExecutorLeaseEntries(name, root)
+	peers, err := peerExecutorLeaseNames(name, ownName, root)
 	if err != nil {
 		return 0, err
 	}
 	concurrent := 1
-	read := 0
-	for i := 0; i < len(entries) && i < maxExecutorLeaseFiles+1; i++ {
-		entryName := entries[i].Name()
-		if entryName == ownName || !strings.HasSuffix(entryName, ".lock") {
-			continue
-		}
-		if read >= maxExecutorLeaseFiles {
-			break
-		}
-		read++
-		held, err := probeExecutorLease(name, root, entryName)
+	for i := 0; i < len(peers) && i < maxExecutorLeaseFiles; i++ {
+		held, err := probeExecutorLease(name, root, peers[i])
 		if err != nil {
 			return 0, err
 		}
@@ -154,18 +143,45 @@ func countExecutorLeases(name, ownName string, root *os.Root) (int, error) {
 	return concurrent, nil
 }
 
-// readExecutorLeaseEntries reads up to maxExecutorLeaseFiles plus one directory entries from the lease root.
+// peerExecutorLeaseNames lists peer .lock filenames in root and refuses when total .lock files exceed maxExecutorLeaseFiles.
+func peerExecutorLeaseNames(name, ownName string, root *os.Root) ([]string, error) {
+	entries, err := readExecutorLeaseEntries(name, root)
+	if err != nil {
+		return nil, err
+	}
+	peers := make([]string, 0, min(len(entries), maxExecutorLeaseFiles))
+	lockFiles := 0
+	for i := 0; i < len(entries) && i < maxExecutorLeaseDirEntries; i++ {
+		entryName := entries[i].Name()
+		if !strings.HasSuffix(entryName, ".lock") {
+			continue
+		}
+		lockFiles++
+		if lockFiles > maxExecutorLeaseFiles {
+			return nil, fmt.Errorf("executor %s: %w (%d)", name, ErrExecutorLeaseCap, maxExecutorLeaseFiles)
+		}
+		if entryName != ownName {
+			peers = append(peers, entryName)
+		}
+	}
+	return peers, nil
+}
+
+// readExecutorLeaseEntries reads up to maxExecutorLeaseDirEntries plus one directory entries from the lease root.
 func readExecutorLeaseEntries(name string, root *os.Root) ([]os.DirEntry, error) {
 	f, err := root.Open(".")
 	if err != nil {
 		return nil, fmt.Errorf("executor %s: lease directory: %w", name, err)
 	}
-	entries, readErr := f.ReadDir(maxExecutorLeaseFiles + 1)
+	entries, readErr := f.ReadDir(maxExecutorLeaseDirEntries + 1)
 	if errors.Is(readErr, io.EOF) {
 		readErr = nil
 	}
 	if err := errors.Join(readErr, f.Close()); err != nil {
 		return nil, fmt.Errorf("executor %s: lease directory: %w", name, err)
+	}
+	if len(entries) > maxExecutorLeaseDirEntries {
+		return nil, fmt.Errorf("executor %s: %w (%d)", name, ErrExecutorLeaseCap, maxExecutorLeaseFiles)
 	}
 	return entries, nil
 }

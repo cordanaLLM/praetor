@@ -244,6 +244,28 @@ func TestRunAdmit_RemoteUnreadableLeaseDirectoryRefused(t *testing.T) {
 	f.assertClean(t)
 }
 
+// TestRunAdmit_RemoteLeaseCapRefused proves that exceeding the executor lease scan cap refuses admission by name without running the step.
+func TestRunAdmit_RemoteLeaseCapRefused(t *testing.T) {
+	f := newAdmitFixture(t)
+	f.inventory(t, "home")
+	leaseDir := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "praetor-admit-leases", "home")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a lease directory needs the owner search bit; 0o700 is least privilege
+	if err := os.MkdirAll(leaseDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 256 {
+		if err := os.WriteFile(filepath.Join(leaseDir, fmt.Sprintf("%d-stale.lock", i)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, log, code := runAdmitCaptured(t, "--", "sh", "-c", "echo ran")
+	if code != 1 || out != "" || strings.Contains(log, "admitted ") ||
+		!strings.Contains(log, "executor home: lease directory exceeds lock file limit") {
+		t.Fatalf("lease cap refusal: %d %q %q", code, out, log)
+	}
+	f.assertClean(t)
+}
+
 // assertNoAdmitLeaseFiles asserts that no lingering lease files exist in the specified directory.
 func assertNoAdmitLeaseFiles(t *testing.T, leaseDir string) {
 	t.Helper()
@@ -349,20 +371,37 @@ func TestRunAdmit_RemoteBadMemoryRefused(t *testing.T) {
 	}
 }
 
-// TestRunAdmit_RemoteEvictionAndFallback proves that unexpected remote disconnections fail closed unless local fallback is enabled.
+// TestRunAdmit_RemoteEvictionAndFallback proves that unexpected remote disconnections and marker-less
+// wrapper terminations fail closed unless local fallback is enabled, while completed 143 steps keep 143.
 func TestRunAdmit_RemoteEvictionAndFallback(t *testing.T) {
 	needShell(t)
+	for _, host := range []string{"evict", "term-evict"} {
+		t.Run(host, func(t *testing.T) {
+			assertEvictionAndLocalFallback(t, host)
+		})
+	}
 	f := newAdmitFixture(t)
-	f.inventory(t, "evict")
+	f.inventory(t, "best")
+	out, log, code := runAdmitCaptured(t, "--fallback", "local", "--", "sh", "-c", "exit 143")
+	if code != 143 || out != "" || strings.Contains(log, "lost the step mid-run") || strings.Contains(log, "admission fallback") {
+		t.Fatalf("completed step 143: %d %q %q", code, out, log)
+	}
+	f.assertClean(t)
+}
+
+// assertEvictionAndLocalFallback verifies that host fails as lost without --fallback and reruns locally with --fallback local.
+func assertEvictionAndLocalFallback(t *testing.T, host string) {
+	t.Helper()
+	f := newAdmitFixture(t)
+	f.inventory(t, host)
 	out, log, code := runAdmitCaptured(t, "--", "sh", "-c", "echo ran")
-	if code == 0 || !strings.Contains(log, "executor evict lost the step mid-run (evicted or unreachable)") || strings.Contains(out, "ran") {
-		t.Fatalf("eviction without fallback: %d %q %q", code, out, log)
+	if code == 0 || !strings.Contains(log, "executor "+host+" lost the step mid-run (evicted or unreachable)") || strings.Contains(out, "ran") {
+		t.Fatalf("eviction (%s) without fallback: %d %q %q", host, code, out, log)
 	}
 	out, log, code = runAdmitCaptured(t, "--fallback", "local", "--min-available-gib", "0", "--min-swap-free-gib", "0", "--max-load", "0", "--", "sh", "-c", "echo planted-local")
-	if code != 0 || out != "planted-local\n" || !strings.Contains(log, "admission fallback: running on local after executor evict lost the step mid-run") {
-		t.Fatalf("eviction with fallback: %d %q %q", code, out, log)
+	if code != 0 || out != "planted-local\n" || !strings.Contains(log, "admission fallback: running on local after executor "+host+" lost the step mid-run") {
+		t.Fatalf("eviction (%s) with fallback: %d %q %q", host, code, out, log)
 	}
-	_ = f
 }
 
 // TestRunAdmit_RemoteHeadroomUsesPodCgroup proves that available memory is capped by pod cgroup limits and unreadable cgroups are skipped.
@@ -639,7 +678,7 @@ case "$command" in
             slow) exec sleep 15 ;;
             headroom) available=20971520; memmax=17179869184; memcur=10737418240 ;;
             unreadable-cgroup) memmax=__UNREADABLE__ ;;
-            evict|bad-mem|max-mem|large-mem|missing-mem) cpumax="1200000 100000" ;;
+            evict|term-evict|bad-mem|max-mem|large-mem|missing-mem) cpumax="1200000 100000" ;;
             *) exit 99 ;;
         esac
         stub_probe "$load" "$available" "$memmax" "$memcur" "$cpumax"
@@ -652,6 +691,7 @@ case "$command" in
             large-mem) memmax=34359738368 ;;
             missing-mem) memmax=__UNREADABLE__ ;;
             evict) echo 'fixture mid-run disconnect' >&2; exit 255 ;;
+            term-evict) echo 'fixture wrapper sigterm' >&2; exit 143 ;;
         esac
         write_cgroups "$memmax" 0 "1200000 100000"
         export ADMIT_STUB_HOST="$host"
