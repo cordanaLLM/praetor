@@ -456,7 +456,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `decode-named-character-reference` | 1.3.0 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `dequal` | 2.0.3 | MIT | `Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)` |
 | `devlop` | 1.1.0 | MIT | `Copyright (c) 2023 Titus Wormer <tituswormer@gmail.com>` |
-| `entities` | 8.1.0 | BSD-2-Clause | `Copyright (c) Felix Böhm` |
+| `entities` | 9.0.0 | BSD-2-Clause | `Copyright (c) Felix Böhm` |
 | `estree-util-is-identifier-name` | 3.0.0 | MIT | `Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>` |
 | `estree-util-visit` | 2.0.0 | MIT | `Copyright (c) 2021 Titus Wormer <tituswormer@gmail.com>` |
 | `get-east-asian-width` | 1.7.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
@@ -467,7 +467,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `js-yaml` | 5.5.0 | MIT | `Copyright (C) 2011-2015 by Vitaly Puzrin` |
 | `jsonc-parser` | 3.3.1 | MIT | `Copyright (c) Microsoft` |
 | `katex` | 0.19.1 | MIT | `Copyright (c) 2013-2020 Khan Academy and other contributors` |
-| `markdownlint` | 0.42.0 | MIT | `Copyright (c) David Anson` |
+| `markdownlint` | 0.42.1 | MIT | `Copyright (c) David Anson` |
 | `micromark` | 4.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-core-commonmark` | 2.0.4 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-extension-directive` | 4.0.0 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
@@ -503,8 +503,8 @@ as the lock records them, copyright lines as each package's license file states 
 | `micromark-util-types` | 2.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `ms` | 2.1.3 | MIT | `Copyright (c) 2020 Vercel, Inc.` |
 | `parse-entities` | 4.0.2 | MIT | `Copyright (c) Titus Wormer <mailto:tituswormer@gmail.com>` |
-| `parse5` | 8.0.1 | MIT | `Copyright (c) 2013-2019 Ivan Nikulin (ifaaan@gmail.com, https://github.com/inikulin)` |
-| `re2js` | 2.9.1 | MIT | `Copyright (c) 2023 Oleksii Vasyliev` |
+| `parse5` | 8.1.1 | MIT | `Copyright (c) 2013-2019 Ivan Nikulin (ifaaan@gmail.com, https://github.com/inikulin)` |
+| `re2js` | 2.10.0 | MIT | `Copyright (c) 2023 Oleksii Vasyliev` |
 | `smol-toml` | 1.9.1 | BSD-3-Clause | `Copyright (c) Squirrel Chat et al., All rights reserved.` |
 | `string-width` | 8.3.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `strip-ansi` | 7.2.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |

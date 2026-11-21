@@ -37,8 +37,10 @@ import (
 const (
 	// MaxFamilies bounds every walk over the registry (HISS-02).
 	MaxFamilies = 8
-	// MaxPriorTexts bounds the earlier texts one family may recognise (HISS-02).
-	MaxPriorTexts = 64
+	// MaxPriorTexts bounds the earlier texts one family may recognise (HISS-02). Raised from 64
+	// to 96 by operator decision praetor-markdown-prior-budget (2026-11-16), when the markdown
+	// gate lock update of Renovate PR 1804 brought the Markdown family to 66 entries.
+	MaxPriorTexts = 96
 	// MaxWorkflowLines bounds the action scan of one hosted workflow (HISS-02).
 	MaxWorkflowLines = 4096
 	// MaxAttributes bounds the .gitattributes rules one family declares (HISS-02).
@@ -224,7 +226,7 @@ func markdown() Family {
 // its attribute rules keep them LF on every platform and the vendored interfig files unconverted,
 // and audit warns while a REUSE.toml does not label those files MIT.
 //
-// Prior budget: Validate allows MaxPriorTexts (64) earlier texts per family, and every managed
+// Prior budget: Validate allows MaxPriorTexts (96) earlier texts per family, and every managed
 // file a change rewrites costs one entry. A React, react-dom or scheduler bump rebuilds
 // dist/player.js and dist/THIRD-PARTY-LICENSES.txt, two entries; an esbuild bump rebuilds
 // dist/loader.js and dist/player.js, two; an interfig bump also moves the vendored render files

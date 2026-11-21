@@ -85,7 +85,7 @@ shipped-text ledger, `internal/managedasset/testdata/shipped/figure-engine.sha25
 text the family ever shipped; after such a change, append the new digests with
 `PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'`
 and add each outgoing digest to `priorDigests` in `assets.go`, so plain adoption refreshes an
-unedited copy. The family holds at most 64 earlier texts. The player bundle is no family asset
+unedited copy. The family holds at most 96 earlier texts (`managedasset.MaxPriorTexts`). The player bundle is no family asset
 any more: a React or esbuild bump changes the release archive, whose digest each adopter's
 `player.lock.json` records, and costs the ledger nothing.
 

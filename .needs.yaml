@@ -657,7 +657,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: markdownlint
-      version: 0.42.0
+      version: 0.42.1
       language: typescript
       ecosystem: npm
       capability: ui.external.markdownlint
@@ -678,7 +678,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: parse5
-      version: 8.0.1
+      version: 8.1.1
       language: typescript
       ecosystem: npm
       capability: ui.external.parse5
@@ -711,4 +711,4 @@ readiness:
     total_third_party_deps: 85
     covered_deps: 0
     gap_deps: 85
-updated_at: 2026-11-14T15:32:37.495559938Z
+updated_at: 2026-11-15T21:35:35.768635607Z

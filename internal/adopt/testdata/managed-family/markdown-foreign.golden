@@ -8,8 +8,8 @@ action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded lock
 action reconcile .github/workflows/praetor-docs.yml :: Existing file differs from the scaffold adoption writes; preserved, not verified (praetorctl adopt --force --lock-source-root=<lock source> regenerates it)
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml sha256:106fdb43a27f5375606b88d4aa64ad98e6d36d2efb59715f359722851adc4aa1
-file tools/markdownlint/package.json sha256:154815f5ca6f8328f4d73a473ae27717042ea71c0e2faeadb81fe6f4e8aa1624
-file tools/markdownlint/package-lock.json sha256:d17327f29300200731db5c52e6b25bf776cd4c5ff618851eb40621fd19fb0cf7
+file tools/markdownlint/package.json sha256:c4a4f14ef66b7c97378626a39d2106be83bd101e1f46b439a6a981fe5bd527a8
+file tools/markdownlint/package-lock.json sha256:b7e28257db0c8e62f2cc201531dd960a8bfbc8ace79c886e429350d7960311df
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
 file tools/markdownlint/verify.mjs sha256:f018e2ac86d3ba934ac84d617a26431a7cd3fcfc0f74e8c72f165610ea0d1ad8
 file tools/markdownlint/no-private-scratch-links.mjs sha256:73a69096db090123ba0285999d9fa6acb7154e2652011e52a4e2de1fd083fe07
@@ -25,8 +25,8 @@ action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded lock
 action replace .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow; replaced existing content (-1/+61 lines, removed "name: Operator"); backup: .workingdir/adopt-backups/<stamp>/.github/workflows/praetor-docs.yml
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml sha256:4fd5c0776345353b4265c8cf0f317cbc8ca239d559bfb698611214d955c56c50
-file tools/markdownlint/package.json sha256:154815f5ca6f8328f4d73a473ae27717042ea71c0e2faeadb81fe6f4e8aa1624
-file tools/markdownlint/package-lock.json sha256:d17327f29300200731db5c52e6b25bf776cd4c5ff618851eb40621fd19fb0cf7
+file tools/markdownlint/package.json sha256:c4a4f14ef66b7c97378626a39d2106be83bd101e1f46b439a6a981fe5bd527a8
+file tools/markdownlint/package-lock.json sha256:b7e28257db0c8e62f2cc201531dd960a8bfbc8ace79c886e429350d7960311df
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
 file tools/markdownlint/verify.mjs sha256:14dca640b78da39e7dbbfcd388cf86736fe116d0ef7639383cab1a918537106a
 file tools/markdownlint/no-private-scratch-links.mjs sha256:73a69096db090123ba0285999d9fa6acb7154e2652011e52a4e2de1fd083fe07
