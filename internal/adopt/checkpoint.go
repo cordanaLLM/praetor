@@ -63,6 +63,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"80a0a2da3dc2222e12b5c70ab7bc442fae586f1d06d5bdcb0516df3c20a144ca": "stop checkpoint counts session-owned worktrees and ignores gate scratch",
 	},
 	checkpointCommon: {
+		"dc0dc81fa9198e4b5155648dffbc81e32ae8031d4a7705f1d7fa6a6da508ad00": "hook steps and fixtures follow the stage budget; trusted subprocess argv",
 		"c1c74e9d3ecfc87e3afb9b6db19500a961c8e8235a1d38540a4a54b04f1cd278": "checkpoint timeouts name bounded command and limit (#1983)",
 		"a8d89c11f41cb3a5ca6497e84ec5dd66e38cb83c9916b56f0985f9fd8a9d854f": "missing hook tools name their restore command",
 		"385b25fdbb89d0d8a4d1e6ee2a3dbf570e2a058c8c308a2363aaf77b0871b7b1": "complete emitted docstrings and explained empty handlers",
