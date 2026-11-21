@@ -182,7 +182,7 @@ func TestCreditsRejectSeparatedConsoleComparators(t *testing.T) {
 func TestCreditsAcceptMatchingOrUnversionedConsoleDetails(t *testing.T) {
 	for _, detail := range []string{
 		"kit 3.1.1", "kit", "kit ^", "kit >=", "kit >= current", "other-kit >= 3.1.0", "@other/kit ^ 3.1.1",
-		"kit 3.1.1, adapter-static 4.0.0", "kit 3.1.1, other 2.0.0",
+		"kit 3.1.1, adapter-static 4.0.0", "kit 3.1.1, other 2.0.0", "kit 3.1.1, 7zip-bin 5.2.0",
 		"@sveltejs/kit 3.1.1; @sveltejs/adapter-static 4.0.0",
 		"`kit` `3.1.1`, (adapter-static 4.0.0)", "", "framework and static adapter",
 		"other-kit 3.1.0, @other/kit 3.1.0, unrelated 1.0.0",
@@ -205,19 +205,23 @@ func TestCreditsConsoleManifestBoundaries(t *testing.T) {
 		manifest string
 		want     string
 	}{
-		"bare match":      {[]string{consoleManifestFile}, []string{"npm:svelte"}, "5.57.3", `{"dependencies":{"svelte":"5.57.3"}}`, ""},
-		"two named pins":  {[]string{consoleManifestFile}, []string{"npm:@sveltejs/kit", "npm:other"}, "kit 3.1.1, other 2.0.0", `{"dependencies":{"@sveltejs/kit":"3.1.1","other":"2.0.0"}}`, ""},
-		"bare stale":      {[]string{consoleManifestFile}, []string{"npm:svelte"}, "5.57.2", `{"dependencies":{"svelte":"5.57.3"}}`, "names svelte 5.57.2; console/package.json pins 5.57.3"},
-		"second path":     {[]string{"other/package.json", consoleManifestFile}, []string{"npm:svelte"}, "svelte 5.57.2", `{"dependencies":{"svelte":"5.57.3"}}`, "pins 5.57.3"},
-		"peer pin":        {[]string{consoleManifestFile}, []string{"npm:svelte"}, "svelte 5.57.3", `{"peerDependencies":{"svelte":"5.57.3"}}`, ""},
-		"optional pin":    {[]string{consoleManifestFile}, []string{"npm:svelte"}, "svelte 5.57.2", `{"optionalDependencies":{"svelte":"5.57.3"}}`, "pins 5.57.3"},
-		"absent pin":      {[]string{consoleManifestFile}, []string{"npm:svelte"}, "svelte 5.57.3", `{}`, "has no pin for that package"},
-		"other path":      {[]string{"other/package.json"}, []string{"npm:svelte"}, "svelte 5.57.2", "{", ""},
-		"other ecosystem": {[]string{consoleManifestFile}, []string{"pypi:svelte"}, "svelte 5.57.2", `{}`, ""},
-		"other package":   {[]string{consoleManifestFile}, []string{"npm:svelte"}, "kit 3.1.0", `{}`, ""},
-		"bad JSON":        {[]string{consoleManifestFile}, nil, "", "{", "parse console/package.json for credits"},
-		"repeated key":    {[]string{consoleManifestFile}, nil, "", `{"dependencies":{},"dependencies":{}}`, "parse console/package.json for credits"},
-		"URL only":        {[]string{consoleManifestFile}, []string{"npm:svelte"}, "[framework](https://example.test/svelte 5.57.2)", `{}`, ""},
+		"bare match":          {[]string{consoleManifestFile}, []string{"npm:svelte"}, "5.57.3", `{"dependencies":{"svelte":"5.57.3"}}`, ""},
+		"two named pins":      {[]string{consoleManifestFile}, []string{"npm:@sveltejs/kit", "npm:other"}, "kit 3.1.1, other 2.0.0", `{"dependencies":{"@sveltejs/kit":"3.1.1","other":"2.0.0"}}`, ""},
+		"digit package match": {[]string{consoleManifestFile}, []string{"npm:@sveltejs/kit", "npm:7zip-bin"}, "kit 3.1.1, 7zip-bin 5.2.0", `{"dependencies":{"@sveltejs/kit":"3.1.1","7zip-bin":"5.2.0"}}`, ""},
+		"digit package stale": {[]string{consoleManifestFile}, []string{"npm:@sveltejs/kit", "npm:7zip-bin"}, "kit 3.1.1, 7zip-bin 5.2.1", `{"dependencies":{"@sveltejs/kit":"3.1.1","7zip-bin":"5.2.0"}}`, "names 7zip-bin 5.2.1; console/package.json pins 5.2.0"},
+		"digit package range": {[]string{consoleManifestFile}, []string{"npm:7zip-bin"}, "7zip-bin 5.2.0 || 5.1.0", `{"dependencies":{"7zip-bin":"5.2.0"}}`, "names 7zip-bin 5.2.0 || 5.1.0; console/package.json pins 5.2.0"},
+		"bare major":          {[]string{consoleManifestFile}, []string{"npm:svelte"}, "svelte 5", `{"dependencies":{"svelte":"5.57.3"}}`, "names svelte 5;"},
+		"bare stale":          {[]string{consoleManifestFile}, []string{"npm:svelte"}, "5.57.2", `{"dependencies":{"svelte":"5.57.3"}}`, "names svelte 5.57.2; console/package.json pins 5.57.3"},
+		"second path":         {[]string{"other/package.json", consoleManifestFile}, []string{"npm:svelte"}, "svelte 5.57.2", `{"dependencies":{"svelte":"5.57.3"}}`, "pins 5.57.3"},
+		"peer pin":            {[]string{consoleManifestFile}, []string{"npm:svelte"}, "svelte 5.57.3", `{"peerDependencies":{"svelte":"5.57.3"}}`, ""},
+		"optional pin":        {[]string{consoleManifestFile}, []string{"npm:svelte"}, "svelte 5.57.2", `{"optionalDependencies":{"svelte":"5.57.3"}}`, "pins 5.57.3"},
+		"absent pin":          {[]string{consoleManifestFile}, []string{"npm:svelte"}, "svelte 5.57.3", `{}`, "has no pin for that package"},
+		"other path":          {[]string{"other/package.json"}, []string{"npm:svelte"}, "svelte 5.57.2", "{", ""},
+		"other ecosystem":     {[]string{consoleManifestFile}, []string{"pypi:svelte"}, "svelte 5.57.2", `{}`, ""},
+		"other package":       {[]string{consoleManifestFile}, []string{"npm:svelte"}, "kit 3.1.0", `{}`, ""},
+		"bad JSON":            {[]string{consoleManifestFile}, nil, "", "{", "parse console/package.json for credits"},
+		"repeated key":        {[]string{consoleManifestFile}, nil, "", `{"dependencies":{},"dependencies":{}}`, "parse console/package.json for credits"},
+		"URL only":            {[]string{consoleManifestFile}, []string{"npm:svelte"}, "[framework](https://example.test/svelte 5.57.2)", `{}`, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			sources := consoleCreditsFixture(test.detail)

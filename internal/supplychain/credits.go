@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -170,6 +171,11 @@ func consoleVersionClaim(fields []string, index int) (string, int, bool) {
 	return claim, next, true
 }
 
+// consoleVersionValue matches the version part of a console credit term after any comparator:
+// digits, optionally dot-separated (a bare major such as 3 is a version, not an exact pin), with an
+// optional prerelease or build suffix, never a digit-leading package name such as 7zip-bin.
+var consoleVersionValue = regexp.MustCompile(`^v?\d+(?:\.\d+)*(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
+
 // consoleVersionTerm reads one version term (with any standalone comparator) starting at index.
 func consoleVersionTerm(fields []string, index int) (string, int, bool) {
 	if index >= len(fields) {
@@ -183,8 +189,7 @@ func consoleVersionTerm(fields []string, index int) (string, int, bool) {
 		_, value = semver.CutOperator(field)
 		next++
 	}
-	value = strings.TrimPrefix(strings.TrimSpace(value), "v")
-	if len(value) == 0 || value[0] < '0' || value[0] > '9' {
+	if !consoleVersionValue.MatchString(strings.TrimSpace(value)) {
 		return "", index, false
 	}
 	return field, next, true
