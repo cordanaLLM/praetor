@@ -194,7 +194,8 @@ with tempfile.TemporaryDirectory(prefix="praetor-mcp-case-") as directory:
     command = ["python3", "scripts/dev_mcp.py", "call", "--root", directory,
                "standards_compile_context"]
     subprocess.run(command + ["{}"], check=True)
-    assert "fixture-policy" in (root / "CLAUDE.md").read_text()
+    assert "@AGENTS.md" in (root / "CLAUDE.md").read_text()
+    assert "fixture-policy" in (root / ".github/copilot-instructions.md").read_text()
     subprocess.run(command + [json.dumps({"verify_only": True})], check=True)
 PY
 ```

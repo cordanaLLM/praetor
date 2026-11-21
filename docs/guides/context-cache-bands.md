@@ -23,13 +23,20 @@ head. Then run `praetorctl compile-context`.
 | config | the text register block, `## <Client>` sections | a manifest or client edit |
 | tail | verification commands, repository-state text | the repository changes |
 
-The bands order `AGENTS.md` itself. Every client reads that file directly or through the
-import its vendor file names, so head, config and tail are cached where the client loads them.
-A vendor file points to `AGENTS.md` instead of copying it (an `@AGENTS.md` import, native
-reading, or the sentence "Read AGENTS.md for canonical agent instructions."), and keeps only
-its static generated header and its own `## <Client>` section, which is config. The markers do
-not appear in the compiled files. Blank lines at a band edge are trimmed and the bands are
-joined by one blank line.
+The bands order `AGENTS.md` itself and any full-content projection compiled from it. Pointer
+vendor files (`CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.windsurfrules`,
+`.gemini/GEMINI.md` and `.codex/rules.md`) refer to `AGENTS.md` instead of copying shared
+text (an `@AGENTS.md` or `@../AGENTS.md` import, native `AGENTS.md` reading, or the fallback
+sentence `"Read AGENTS.md for canonical agent instructions."` for an undocumented target in
+`canonicalReference` in `internal/agentcontext/render.go`), and keep only their static
+generated header and their own `## <Client>` section in the config band. Copilot's
+`.github/copilot-instructions.md` sets `fullContent: true` in `internal/agentcontext/render.go`
+and copies the shared head, config and tail bands with its `## GitHub Copilot` section in the
+config band (`TestProjectionLoadingContract` in `internal/agentcontext/pointer_test.go`,
+`TestBandsEmitHeadConfigTailInOrderForEveryVendorFile` in `internal/agentcontext/bands_test.go`),
+because Copilot IDE chat and code review include surfaces that do not load `AGENTS.md`. The
+markers do not appear in the compiled files. Blank lines at a band edge are trimmed and the
+bands are joined by one blank line.
 
 ## Reference
 
@@ -92,10 +99,15 @@ on 2026-10-28.
 The remaining vendor targets have no documented hard size cap in this registry.
 Generated headers count toward the loaded context caps. Every client's line
 budget also counts the text it loads: its projection plus `AGENTS.md` for native
-readers (Cursor, Windsurf and Codex) and the pointer sentence reader (Copilot),
-or the expanded imports for Claude Code and Gemini CLI. Client-owned sections
-count wherever loaded, including both files when repeated there.
-`TargetFile.LineCount` continues to describe the emitted file alone; the
+readers (Cursor, Windsurf and Codex, plus any sentence-fallback target) in
+`directSize` (`internal/agentcontext/imports.go`) and the largest tracked nested
+`AGENTS.md` chain for Codex (`checkLoadedSize`), the full-content projection
+alone for Copilot (`directSize`, `TestCopilotLoadedLineBudget` in
+`internal/agentcontext/pointer_test.go`; issue #2029 tracks the Copilot cloud
+agent, which loads both `.github/copilot-instructions.md` and `AGENTS.md`), or
+the expanded imports for Claude Code and Gemini CLI (`expandedSize`). Client-owned
+sections count wherever loaded, including both files when a native reader loads
+both. `TargetFile.LineCount` continues to describe the emitted file alone; the
 loaded line budget is checked separately by the renderer. A refusal names the file, measured size, unit and cap, for example:
 `target file .gemini/GEMINI.md exceeds client size cap (25000 bytes > 24000)`. A Codex `AGENTS.md`
 refusal also names the deepest file of the largest nested chain, the path to trim.
