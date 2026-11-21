@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -94,8 +95,50 @@ func TestRenovateEngineUnsafeLaterEnable(t *testing.T) {
 	t.Log(s.report.Warnings[0])
 }
 
-// TestRenovateEngineUnsafeInputs refuses malformed or incomplete rules, such as one covering only the former identity.
+// pinRenovateEngineClock fixes the renovate-engine-bumps audit clock for one test.
+func pinRenovateEngineClock(t *testing.T, at time.Time) {
+	t.Helper()
+	previous := renovateEngineNow
+	renovateEngineNow = func() time.Time { return at }
+	t.Cleanup(func() { renovateEngineNow = previous })
+}
+
+// formerOnlyEngineRule covers the Go module and the former forge identity but not the moved one.
+const formerOnlyEngineRule = `{"packageRules":[{"matchPackageNames":["github.com/cordanaLLM/praetor", "github.com/cordanaLLM/praetor/**", "github.com/cordanaLLM/praetor/cmd/standardsctl", "cordanaLLM/praetor", "cordanaLLM/praetor/**"],"enabled":false}]}`
+
+// TestRenovateEngineMovedNameGrace passes a rule that misses only the moved names with a warning before the grace
+// ends and fails it from the grace end on; a rule missing any other engine name fails at once.
+func TestRenovateEngineMovedNameGrace(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+		at   time.Time
+		fail bool
+	}{
+		{"former only, before the grace end", formerOnlyEngineRule, renovateEngineGraceUntil.Add(-24 * time.Hour), false},
+		{"former only, one second before the end", formerOnlyEngineRule, renovateEngineGraceUntil.Add(-time.Second), false},
+		{"former only, at the grace end", formerOnlyEngineRule, renovateEngineGraceUntil, true},
+		{"moved only, former names missing", `{"packageRules":[{"matchPackageNames":["github.com/cordanaLLM/praetor", "github.com/cordanaLLM/praetor/**", "github.com/cordanaLLM/praetor/cmd/standardsctl", "tekmora/praetor", "tekmora/praetor/**"],"enabled":false}]}`, renovateEngineGraceUntil.Add(-24 * time.Hour), true},
+		{"no engine rule", `{"packageRules":[]}`, renovateEngineGraceUntil.Add(-24 * time.Hour), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pinRenovateEngineClock(t, tc.at)
+			root := t.TempDir()
+			mustWrite(t, filepath.Join(root, "renovate.json"), tc.data)
+			line, err := AuditRenovateEngineBumps(t.Context(), root)
+			checkRepositoryVerdict(t, line, err, tc.fail, "renovate-engine-bumps")
+			if !tc.fail && (!strings.HasPrefix(line, "[WARN] ") || !strings.Contains(line, "tekmora/praetor")) {
+				t.Fatalf("grace line %q: want a [WARN] naming the moved identity", line)
+			}
+		})
+	}
+}
+
+// TestRenovateEngineUnsafeInputs refuses malformed or incomplete rules, such as one covering only the former
+// identity once the moved-name grace has ended.
 func TestRenovateEngineUnsafeInputs(t *testing.T) {
+	pinRenovateEngineClock(t, renovateEngineGraceUntil)
 	cases := []struct{ name, file, data string }{
 		{"JSONC", "renovate.jsonc", "// comment\n{}"},
 		{"former identity only", "renovate.json", `{"packageRules":[{"matchPackageNames":["github.com/cordanaLLM/praetor", "github.com/cordanaLLM/praetor/**", "cordanaLLM/praetor", "cordanaLLM/praetor/**"],"enabled":false}]}`},
