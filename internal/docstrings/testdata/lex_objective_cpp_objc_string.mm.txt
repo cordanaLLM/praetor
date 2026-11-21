@@ -1,0 +1,3 @@
+id value = @"a]\"/*";
+// Run provides the documented control.
+int run(void) { return 0; }

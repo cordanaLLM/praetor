@@ -1,0 +1,6 @@
+<script>
+@Tag(`a] \`
+// Not documentation.
+b`)
+function run() {}
+</script>

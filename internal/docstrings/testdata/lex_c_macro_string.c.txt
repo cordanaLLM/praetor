@@ -1,0 +1,4 @@
+#define R
+const char *text = R"(hello";
+// Run provides the documented control.
+int run(void) { return 0; }

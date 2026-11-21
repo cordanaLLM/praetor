@@ -1,0 +1,7 @@
+@tag(
+    '''a ] //
+    b ) #''',
+)
+def run():
+    """Run the operation."""
+    return 1

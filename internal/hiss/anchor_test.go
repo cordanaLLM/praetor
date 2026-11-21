@@ -265,11 +265,18 @@ func TestExtractFileFunctions_Positive_AllScannerFamilies(t *testing.T) {
 			{Name: "Alpha", Start: 3, End: 4},
 			{Name: "S.Beta", Start: 8, End: 9},
 		}},
-		{"src/lib.rs", "pub fn compute() {\n    let x = 1;\n}\n", []FunctionSpan{{Name: "compute", Start: 1, End: 3}}},
+		{"src/lib.rs", "pub fn compute() {\n    let x = 1;\n}\n\npub fn wrapped(\n    a: u32,\n    b: u32,\n) -> u32 {\n    a + b\n}\n", []FunctionSpan{
+			{Name: "compute", Start: 1, End: 3},
+			{Name: "wrapped", Start: 5, End: 10},
+		}},
 		{"app/mod.py", "def run():\n    return 1\n", []FunctionSpan{{Name: "run", Start: 1, End: 2}}},
-		{"web/app.ts", "export function greet() {\n  return 1;\n}\n", []FunctionSpan{{Name: "greet", Start: 1, End: 3}}},
+		{"web/app.ts", "export function greet() {\n  return 1;\n}\n\nexport function combine(\n  a: number,\n  b: number,\n): number {\n  return a + b;\n}\n", []FunctionSpan{
+			{Name: "greet", Start: 1, End: 3},
+			{Name: "combine", Start: 5, End: 10},
+		}},
 		{"bin/run.sh", "#!/bin/sh\ndeploy() {\n  echo ok\n}\n", []FunctionSpan{{Name: "deploy", Start: 2, End: 4}}},
 		{"App.java", "class App {\n  void start() {\n  }\n}\n", []FunctionSpan{{Name: "start", Start: 2, End: 3}}},
+		{"src/add.c", "int add(\n    int a,\n    int b)\n{\n    return a + b;\n}\n", []FunctionSpan{{Name: "add", Start: 1, End: 6}}},
 	}
 	for _, tc := range cases {
 		got, err := ExtractFileFunctions(tc.rel, []byte(tc.src))

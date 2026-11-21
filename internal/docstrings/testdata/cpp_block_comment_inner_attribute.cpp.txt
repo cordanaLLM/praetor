@@ -1,0 +1,8 @@
+// Run the operation.
+[[deprecated(
+/* examples:
+[[nodiscard]]
+*/
+"use run_v2"
+)]]
+int run() { return 1; }

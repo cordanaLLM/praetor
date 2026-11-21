@@ -1,0 +1,3 @@
+/// Run provides the documented control.
+#[tag(cr#"a]"/*"#)]
+pub fn run() {}

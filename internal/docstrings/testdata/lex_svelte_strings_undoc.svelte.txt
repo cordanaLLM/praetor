@@ -1,0 +1,4 @@
+<script>
+@Tag("a]\"/*", 'a]\'/*')
+function run() {}
+</script>

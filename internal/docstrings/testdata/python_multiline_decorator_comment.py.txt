@@ -1,0 +1,8 @@
+@tag(
+    "alpha",
+    # a note between arguments
+    "beta",
+)
+def run():
+    """Run the operation."""
+    return 1

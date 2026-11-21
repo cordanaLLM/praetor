@@ -1,0 +1,2 @@
+#[tag(/** outer /*! nested */ tail */ 1)] //! inner doc
+pub fn run() {}

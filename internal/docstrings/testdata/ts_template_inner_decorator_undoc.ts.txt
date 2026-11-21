@@ -1,0 +1,6 @@
+class C {
+  @tag(`first
+  @example
+  last`)
+  run() {}
+}

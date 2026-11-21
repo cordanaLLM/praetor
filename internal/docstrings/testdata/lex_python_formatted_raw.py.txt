@@ -1,0 +1,2 @@
+text = rf"a\{items['key']}" + FR'a{items["key"]}'
+def run(): """Run provides the documented control."""

@@ -1,0 +1,2 @@
+id value = @"a]\"/*";
+int run(void) { return 0; }

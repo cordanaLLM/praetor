@@ -1,0 +1,4 @@
+package fixture
+var text = 1 /* inner */ // line
+// Run provides the documented control.
+func run() {}

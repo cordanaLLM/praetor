@@ -1,0 +1,2 @@
+text = "a]#"
+def run(): pass

@@ -1,0 +1,2 @@
+[[deprecated(R"msg(use run_v2 instead of [[old)]])msg")]]
+int run() { return 1; }

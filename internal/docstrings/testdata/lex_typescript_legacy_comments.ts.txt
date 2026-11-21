@@ -1,0 +1,5 @@
+<!-- line comment
+--> line comment
+const text = 1;
+// Run provides the documented control.
+function run(): void {}

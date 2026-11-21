@@ -1,0 +1,4 @@
+#! /usr/bin/env node /* ` "
+const text = 1;
+// Run provides the documented control.
+function run() {}

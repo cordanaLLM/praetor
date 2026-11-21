@@ -1,0 +1,2 @@
+const char *text[] = {"a]\"/*", u8"a]/*" "b", L"a]/*", u"a]/*", U"a]/*"};
+int run(void) { return 0; }

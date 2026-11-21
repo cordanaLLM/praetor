@@ -1,0 +1,7 @@
+/// Run the operation.
+#[cfg_attr(
+    feature = "x",
+
+    inline
+)]
+pub fn run() {}

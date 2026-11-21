@@ -1,0 +1,3 @@
+// Run the operation.
+[[nodiscard]] [[maybe_unused]]
+int run() { return 1; }

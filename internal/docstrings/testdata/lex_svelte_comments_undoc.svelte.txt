@@ -1,0 +1,4 @@
+<script>
+@Tag(/* inner )] */ 1) // line
+function run() {}
+</script>

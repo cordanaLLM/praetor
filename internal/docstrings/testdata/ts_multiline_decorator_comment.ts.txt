@@ -1,0 +1,9 @@
+class C {
+  // Run the operation.
+  @tag(
+    "alpha",
+    // a note between arguments
+    "beta",
+  )
+  run() {}
+}

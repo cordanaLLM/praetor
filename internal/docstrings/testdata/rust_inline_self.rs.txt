@@ -1,0 +1,2 @@
+/// Run the operation.
+#[inline] fn run() {}

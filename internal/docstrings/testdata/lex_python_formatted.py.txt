@@ -1,0 +1,2 @@
+text = f"a {items["key"]} b"
+def run(): """Run provides the documented control."""

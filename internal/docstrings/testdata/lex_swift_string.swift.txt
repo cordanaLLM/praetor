@@ -1,0 +1,3 @@
+/// Run provides the documented control.
+@Tag("a]\"/*")
+func run() {}

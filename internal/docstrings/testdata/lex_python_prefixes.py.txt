@@ -1,0 +1,2 @@
+text = r"a]#" + R'a]#' + u"a]#" + U'a]#'
+def run(): """Run provides the documented control."""

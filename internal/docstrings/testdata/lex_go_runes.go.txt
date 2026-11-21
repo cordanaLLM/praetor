@@ -1,0 +1,9 @@
+package fixture
+var a = 'é'
+var b = '\u005d'
+var c = '\U0000005d'
+var d = '\135'
+var e = '\x5d'
+var f = '\''
+// Run provides the documented control.
+func run() {}

@@ -42,10 +42,6 @@ const vendoredDocstringExceptionReason = "category D: vendored interfig upstream
 // vendoredDocstringExceptions names only measured undocumented functions in pinned upstream source.
 var vendoredDocstringExceptions = []config.Exception{
 	{
-		Rule: "docstrings", Path: "tools/figures/third_party/interfig/upstream/src/geometry.ts", Function: "route",
-		Category: "D", Entered: "2026-11-10", Expires: "2027-03-10", Reason: vendoredDocstringExceptionReason,
-	},
-	{
 		Rule: "docstrings", Path: "tools/figures/third_party/interfig/upstream/src/geometry.ts", Function: "other",
 		Category: "D", Entered: "2026-11-10", Expires: "2027-03-10", Reason: vendoredDocstringExceptionReason,
 	},

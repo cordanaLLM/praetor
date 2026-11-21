@@ -1,0 +1,4 @@
+text = """a]
+# Not documentation.
+b"""
+def run(): pass

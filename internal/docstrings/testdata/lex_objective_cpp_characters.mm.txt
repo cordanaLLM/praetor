@@ -1,0 +1,3 @@
+int values[] = {']', '\x5d', '\u005d', u8']', L']', u']', U']', 'ab'};
+// Run provides the documented control.
+int run(void) { return 0; }

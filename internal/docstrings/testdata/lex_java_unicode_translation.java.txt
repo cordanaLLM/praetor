@@ -1,0 +1,3 @@
+String text = "\u005d";
+// Run provides the documented control.
+void run() {}

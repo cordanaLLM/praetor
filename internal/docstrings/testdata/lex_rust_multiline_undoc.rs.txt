@@ -1,0 +1,4 @@
+#[tag("a]
+// Not documentation.
+b")]
+pub fn run() {}

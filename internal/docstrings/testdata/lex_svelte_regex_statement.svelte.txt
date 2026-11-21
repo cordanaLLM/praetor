@@ -1,0 +1,5 @@
+<script>
+if (ready) /[/*]/.test(text);
+// Run provides the documented control.
+function run() {}
+</script>

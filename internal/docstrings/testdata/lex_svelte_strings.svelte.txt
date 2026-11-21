@@ -1,0 +1,5 @@
+<script>
+// Run provides the documented control.
+@Tag("a]\"/*", 'a]\'/*')
+function run() {}
+</script>

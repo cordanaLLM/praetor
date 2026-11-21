@@ -1,0 +1,2 @@
+@Tag("a]\"/*", 'a]\'/*')
+function run() {}

@@ -1,0 +1,2 @@
+@Tag("a \(String("/*")) b", #"a \#(String(#"a]"#)) b"#)
+func run() {}

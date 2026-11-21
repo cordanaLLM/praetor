@@ -1,0 +1,3 @@
+// Run provides the documented control.
+@Tag(`a ${`b ${1}`} c`)
+function run() {}

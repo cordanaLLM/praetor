@@ -1,0 +1,4 @@
+// Continued comment \
+continued
+// Run provides the documented control.
+int run(void) { return 0; }

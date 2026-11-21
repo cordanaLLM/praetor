@@ -62,8 +62,22 @@ internal spacing.
 
 ## Literals and comments are stripped before matching
 
-A rule keyword inside a string or a comment is not a finding. Stripping runs across lines, so a
-block comment or a docstring containing `while True` does not fire.
+A rule keyword inside a string or a comment is not a finding. Stripping runs across lines in one forward pass per file through the shared per-language lexical scanner (`literalStripper`, `hiss.ScanLines` and `hiss.StripLiterals` in `internal/hiss/rules.go`), so a block comment or a docstring containing `while True` does not fire:
+
+- **Rust (`rustSyntax`)**: line and nested block comments, including documentation forms; ordinary, byte and C strings; raw `r`, `br` and `cr` strings with hash delimiters; Unicode, escaped and byte characters distinguished from lifetimes. `referenceFixtures` in `internal/docstrings/docstrings_test.go` pins documented and undocumented controls for each token family.
+- **C (`cLikeSyntax` with preprocessing rejection)**: ordinary and encoding-prefixed strings, concatenated strings, character and multicharacter constants, line comments and non-nesting block comments. C never opens a C++ raw string. Source preprocessing splices and trigraphs remain unsupported by documentation association: the scanner returns incomplete and rejects subsequent documentation through EOF. `lex_c_macro_string.c.txt`, `lex_c_line_splice.c.txt` and `lex_c_trigraph.c.txt`, with their `_undoc` twins, pin the distinction and the known false alarms.
+- **C++, CUDA and Objective-C++ (`cppSyntax`)**: native strings, characters and comments plus raw strings with `R`, `LR`, `u8R`, `uR` or `UR` prefixes. Raw delimiters use the basic printable character set excluding spaces, parentheses and backslash, at most 16 bytes; double quotes are permitted. Objective-C `@"..."` strings share ordinary quote handling. Preprocessing splices outside literals remain unsupported for documentation association. `lex_cpp_quote_delimiter.cpp.txt`, the CUDA and Objective-C++ reference pairs, and the delimiter-boundary pairs pin these forms.
+- **Go (`goSyntax`)**: interpreted strings, raw backtick strings without escape processing, Unicode and escaped runes, line comments and non-nesting block comments. Backticks never open template substitutions. `lex_go_raw.go.txt`, `lex_go_raw_multiline.go.txt` and `lex_go_runes.go.txt`, with their `_undoc` twins, cover comment markers, line ends and escaped character widths.
+- **Java (`javaSyntax`)**: strings, characters, text blocks and non-nesting comments. Source Unicode translation remains unsupported: a source `\u` sequence rejects documentation association through EOF, including when written inside a literal. This conservative rejection can report a documented function as undocumented; `lex_java_unicode_translation.java.txt` and its twin pin that false alarm. `lex_java_text_block.java.txt` pins text-block escapes.
+- **Kotlin (`kotlinSyntax`)**: escaped strings and characters, raw triple strings, nested comments and `${...}` interpolation, including quoted expressions and maximal closing-quote runs. `lex_kotlin_raw.kt.txt`, `lex_kotlin_interpolation.kt.txt` and `lex_kotlin_raw_quote_run.kt.txt`, with their twins, pin these forms.
+- **Swift (`swiftSyntax`)**: ordinary and multiline strings, matching extended hash delimiters, matching escape and interpolation delimiters, and nested comments. Regex literals remain unsupported; a slash outside a string or comment rejects documentation association through EOF. This also conservatively rejects division expressions. `lex_swift_regex.swift.txt` and `lex_swift_extended_regex.swift.txt`, with their twins, pin documented controls becoming known false alarms. The other Swift reference pairs pin the recognised forms.
+- **Python (`pythonSyntax`)**: line comments; single and triple quotes; the case-insensitive `r`, `u`, `b`, `br`, `rb`, `f`, `fr`, `rf`, `t`, `tr`, `rt` prefix allow-list; replacement fields with nested quotes, comments and format fields. Prefix processing preserves the lexical quote-escape rules of raw strings. Function-body documentation accepts constant text with no prefix or an `r`/`u` prefix; bytes and `f`/`t` values are expressions, not docstrings (`TestPythonDocstringPrefixes_3D`). `lex_python_formatted_triple.py.txt`, the prefix pairs and format-field pairs pin nested triple quotes and reused quotes.
+- **JavaScript and TypeScript (`scriptSyntax`)**: single/double strings, line continuations, line and block comments, hashbang text, Annex B HTML-like line comments, templates and embedded expressions, and expression-context regular expressions. Statement-context regex disambiguation remains incomplete: `lex_javascript_regex_statement.js.txt`, `lex_typescript_regex_statement.ts.txt` and their twins pin a known false alarm when a pattern opens a spurious block comment. These are explicit lexical gaps, not claims of parser coverage.
+- **Svelte**: the shared script lexer after `svelteScriptLines` projects top-level script blocks, excluding markup, HTML comments and styles. `lex_svelte_markup_comments.svelte.txt` and its twin ensure apparent script tags inside comments/styles expose no phantom function. Script literal pairs share the JavaScript forms and statement-regex gap.
+
+Documentation coverage (`docstrings.HasDocstring` in `internal/docstrings/docstrings.go`) reads `hiss.ScanLines` once forward per file to record lexical state, standalone comments and complete annotation spans, then walks upward over those records. The bound is 16 annotation introducers per physical line and 32 physical lines per upward walk; seventeen separate annotation lines remain valid. Interpolated expressions use an explicit stack bounded at 32; deeper nesting rejects documentation through EOF. `lex_rust_seventeen_lines.rs.txt`, the one-line count boundaries, and the interpolation nesting pairs pin the limits.
+
+Incomplete literals and annotations cannot provide standalone documentation. When extraction produces no candidates, `checkEmptyLexicalFile` refuses a lexically incomplete file with an explicit error; `TestUnrecognisedLexicalFilesFailClosed_3D` prevents a zero-function pass for the rejected reference pairs. Rust function extraction retains conservative candidates after malformed literals, while documentation association still uses the strict lexical state; malformed files therefore retain their undocumented candidates instead of becoming zero-function passes. Native invariant scans share literal modes but continue scanning candidate code after unsupported preprocessing rather than treating an unread preprocessor expansion as verified.
 
 ## CRLF does not silence a rule
 
@@ -108,7 +122,8 @@ Test code and function bodies are both brace-delimited items, and one tracker (`
   by any run of `const`, `async`, `unsafe`, `safe`, `default` and `extern` qualifiers before `fn`.
   The grammar matches the line after literals are stripped, so a `fn` in a string or comment is not
   a header. Outer attributes may precede the header on the same line (`#[inline] pub fn`,
-  `#[tokio::main] async fn main() {`).
+  `#[tokio::main] async fn main() {`). The recorded function span runs from this header line
+  through the closing brace even when the signature wraps onto later lines.
 - The abort policy exempts the body of the unindented `fn main`; rustfmt indents a method of the
   same name inside its `impl` block, so the method stays library code. The header line belongs to
   `fn main` too, so a one-line `fn main() { std::process::exit(run()) }` is exempt.
@@ -432,13 +447,7 @@ black-formatted function at its `) -> T:` line, and a function holding a column-
 string, so neither body was measured for HISS-04 or scanned for recursion.
 `TestPythonContinuationLinesStayInTheirFunction` in `internal/hiss/recursion_test.go` pins it.
 
-That tracking depends on the literal stripper reading strings the way Python does: a trailing
-backslash carries a quoted string onto the next line, and `\"""` does not close a triple-quoted
-string. When the stripper still misreads one, as with a Python 3.12 f-string field that reuses its
-quote, the carried bracket depth resets at the next line that starts with a statement-only keyword
-(`def`, `class`, `return`, `import` and the like), which no bracket can hold. A misread then costs
-the lines up to that statement, not every function below it.
-`TestLiteralStripperCarriesEscapedLineBreaks` and `TestPythonStringAndBracketRecovery` pin both.
+That tracking uses the shared literal scanner's Python prefix and replacement-field states, including reused quotes and nested triple strings. `lex_python_formatted_triple.py.txt` and its undocumented twin replay the nested form; `TestPythonContinuationLinesStayInTheirFunction` retains continuation coverage. Statement-only keyword recovery remains a conservative guard for malformed input (`TestPythonStringAndBracketRecovery`).
 
 Mutual and indirect recursion need a call graph across functions and stay undecided for both
 languages, as do nested-fn recursion, recursion inside a trait impl, turbofish or path-qualified

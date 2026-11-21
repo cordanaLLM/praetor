@@ -1,0 +1,4 @@
+// Run provides the documented control.
+@Tag("a]\
+b")
+function run() {}

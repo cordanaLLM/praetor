@@ -1,0 +1,7 @@
+/// Detached comment separated from the attribute by a blank line.
+
+#[cfg_attr(
+    feature = "x",
+    inline
+)]
+pub fn run() {}

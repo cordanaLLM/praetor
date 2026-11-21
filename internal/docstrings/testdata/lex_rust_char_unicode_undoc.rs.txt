@@ -1,0 +1,2 @@
+#[tag('\u{5d}')]
+pub fn run() {}

@@ -1,0 +1,3 @@
+/// Run the operation.
+#[inline] // ordinary trailing comment
+pub fn run() {}

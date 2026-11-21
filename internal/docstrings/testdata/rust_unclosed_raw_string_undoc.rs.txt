@@ -1,0 +1,2 @@
+#[deprecated(note = r#"use "new_api instead")]
+pub fn run() {}

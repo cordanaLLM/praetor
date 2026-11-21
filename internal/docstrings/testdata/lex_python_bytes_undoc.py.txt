@@ -1,0 +1,2 @@
+text = b"a]#" + B'a]#' + br"a]#" + RB'a]#'
+def run(): pass
