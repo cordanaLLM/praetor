@@ -535,6 +535,155 @@ only, that is, runs with a run identity, an estimate and an actual cost
 (`Outcome.MeasuredCosts`, `router.CostTally`); the efficiency ledger sums units by
 the same rule.
 
+## Replay evaluation
+
+Planted-defect probes saturate once candidate reviewers find every planted line and do not
+expose combiner failures such as softening a blocking verdict while retaining the evidence
+or dropping a real defect behind a false debunk. `praetorctl models replay`
+(`cmd/standardsctl/models_replay.go`, `internal/replay`) evaluates named review or combiner
+arms against merged pull requests replayed at a historical cutoff:
+
+```bash
+praetorctl models replay \
+  --pr=42 \
+  --merge=8f3c2a1 \
+  --cutoff=2026-10-15T12:00:00Z \
+  --until=2026-11-01T00:00:00Z \
+  --suite=combiner-eval \
+  --draft=/path/to/draft-a.json \
+  --draft=/path/to/draft-b.json \
+  --arm='sonnet=my-combiner --tree {tree} {drafts}' \
+  --json
+```
+
+`--repo` selects the repository checkout (default `.`), `--base` selects the base branch
+(defaulting through `forge.RepositoryDefaultBranch`), `--log` overrides the outcome log
+path (default `.workingdir/routing/outcomes.jsonl`), and `--draft` supplies ordered review
+drafts (synthesizing deterministic patch and commit drafts when omitted). The command exits
+`0` after writing one scored outcome row per arm, `1` when a replay is refused
+(`replay.ErrRefused`: cutoff leak, no ground truth, or cap exceeded), and `2` on usage
+errors (`TestModelsReplayCLISuccessWritesRowsAndJSON`,
+`TestModelsReplayCLIExitCodesRefusedAndUsage`).
+
+### Cutoff and leak refusal
+
+`replay.Cutoff` selects the latest first-parent commit on the base branch whose committer
+timestamp is at or before `--cutoff`. Before any arm runs, `replay.VerifyTree` walks the
+cutoff commit and all its ancestors in the source repository (including second-parent merge
+history) and refuses the replay with `replay.ErrLeak` naming the offending commit whenever any
+commit carries a committer timestamp after `--cutoff` (`TestReplayRefusesCutoffLeakNamingCommit`).
+A supplied `Sample.TreeDir` is refused if dirty (`TestReviewDirtyTreeRefused`) and must
+have the same HEAD as the canonical base-branch cutoff (`TestReviewSuppliedTreeMatchesCanonicalCutoff`).
+A dirty `--repo` checkout can still run; its uncommitted changes are excluded from the snapshot
+(`internal/replay/replay.go`, `materializeCutoffTree`).
+Each arm execution then gets its
+own shallow repository holding only the cutoff commit and its tree, fetched without source refs,
+alternates or `FETCH_HEAD`, verified again with `replay.VerifyTree`, and removed afterwards, also on cancellation
+(`internal/replay/snapshot.go`, `TestReviewArmIsolation`,
+`TestReviewCanceledPreparationCleansUp`). Replay rows are appended to the outcome log as one
+validated batch, so a failed arm or a refused row writes nothing
+(`router.AppendOutcomes`, `TestReviewFailedArmLeavesNoRows`,
+`TestReviewOutcomeLogPastSnapshotBound`).
+
+### Ground truth from post-merge history
+
+`--samples=bundled` selects the starter corpus compiled into `cmd/standardsctl/models_replay.go`.
+It uses two merged pull requests from this repository whose later repairs changed lines attributed
+to the original PR. Run it against a full checkout containing these commits; an adopter's fork must
+retain that history or supply its own JSON sample file with `--samples=/path/to/samples.json`.
+Run the bundled corpus without `--pr`, `--merge`, `--cutoff`, `--until`, or `--draft`, which
+cannot be combined with `--samples`:
+
+```bash
+praetorctl models replay \
+  --repo=/path/to/full-checkout \
+  --samples=bundled \
+  --suite=combiner-eval \
+  --arm='sonnet=my-combiner --tree {tree} {drafts}' \
+  --json
+```
+
+Drafts are synthesized from each PR's first-parent patch. Both annotation dimensions remain
+unmeasured until independently curated findings are supplied.
+
+| PR | Defect and repair | Cutoff commit | Repair commit (inclusive end of window) |
+| :--- | :--- | :--- | :--- |
+| 1837 | The pre-push message check included commits already published by another remote; PR 1880 excluded them. | `e6376bb852f1612c6b9dc38dd03372ee8e089ebb` | `a6fc702c3b00d97bebeb99fc52900cf2fb259865` |
+| 1857 | The pre-push signature check refused upstream commits a fork could not re-sign; PR 1890 skipped published upstream commits while retaining checks on local commits. | `a6fc702c3b00d97bebeb99fc52900cf2fb259865` | `ff4e892f319ae06a2a283f04d9c947517a686d6c` |
+
+The cutoffs immediately precede each repair, avoiding unrelated intervening changes when mapping
+repair hunks. `TestModelsReplayBundledCorpus` validates loading, pinned metadata and mapped repair hunks.
+
+`replay.GroundTruth` scans first-parent commits on the base branch after `--merge` (accepting
+a single commit or a `start..end` range) with committer timestamps in `(cutoff, until]`. A
+later commit counts as repairing the pull request when either:
+
+- its commit message (including merged branch messages) names the pull request number
+  (`#<n>`, `PR <n>`, `pull request <n>`), a hexadecimal prefix of at least 7 characters of
+  any pull-request commit (`replay.MinCommitPrefix`), or a `Fixes:` / `Revert` reference to
+  it; or
+- its message names a pull-request commit's subject after removing the conventional-commit
+  type/scope prefix (including `!`) and trailing PR number (`(#<n>)` or `#<n>`), folding
+  case and whitespace. The normalized subject must contain at least 16 Unicode characters;
+  the repair receives reason `subject` (`TestMatchCommitMessageSubject`,
+  `TestGroundTruthMatchesSubjectWithoutBlame`). Exact `Revert "<subject>"` references retain
+  reason `revert subject`, including subjects below that threshold; or
+- its unified diff removes or modifies lines that `git blame --porcelain` at the candidate
+  commit's parent attributes to a commit in the pull request.
+
+Before matching, `replay.GroundTruth` computes `git patch-id --stable` on the pull request
+and on each candidate commit; a patch-identical re-land counts as the same change rather
+than a repair commit, even when its message names the pull request
+(`TestGroundTruthMatchesBlameAndPRNumberExcludesUnrelatedAndReland`). History walks are
+bounded by `replay.MaxCommitScan` (256 commits) and per-commit changed lines by
+`replay.MaxDiffLines` (2,000 lines); zero post-merge commits, zero matched fixes, or a
+commit/diff count above its cap refuses the replay. Repairs with no hunks that map into the
+cutoff tree are also refused before arm execution (`TestReviewRejectsUnmappableGroundTruth`)
+(`TestReplayZeroLaterCommitsRefused`, `TestGroundTruthCommitCountCapBoundary`,
+`TestGroundTruthDiffLineCapBoundary`).
+
+### Swapped-order runs and outcome rows
+
+Each `--arm name=<command>` template executes as a direct argument vector without a shell,
+expanding `{tree}` to the cutoff worktree path and `{drafts}` to the ordered draft file
+paths (or appending both when neither placeholder appears). Until the review-merge package
+lands, an arm writes one JSON object to standard output with `verdict`
+(`changes_requested` or `approve`) and `findings` (`file`, `line`, optional `end_line` or
+`location`, `summary`). `replay.Replay` runs every arm twice per sample: once with drafts in
+the given order and once with the draft list reversed. A verdict that differs between the
+two runs sets `order_sensitive: true` (`TestReplayArmsOrderSensitivityAndOutcomeRow`).
+Every run receives private draft copies with their original basenames, including inputs that
+share a basename, so arm writes cannot affect later runs (`TestReviewDraftCopiesIsolateEveryRun`).
+A confirmed fabrication in any sample fails the outcome even when another sample's annotations
+are unmeasured (`TestReviewPartialFabricationFailsOutcome`).
+
+Each arm appends one `router.Outcome` row (`internal/router/outcomes.go`) via
+`router.AppendOutcome`, readable through `router.ReadOutcomes`, with `task: "review"`,
+`target` set to the arm name, and optional replay fields:
+
+| Field | Meaning |
+| :--- | :--- |
+| `arm` | Arm name from `--arm name=<command>` |
+| `suite` | Suite label from `--suite` (default `replay`) |
+| `cutoff` | RFC3339 cutoff timestamp bounding the replay tree |
+| `sample_count` | Number of replayed pull-request samples aggregated into the row |
+| `retained_defects` | Ground-truth fix hunks hit by a finding's `file:line` pointer in both draft orders |
+| `verdict_match` | Whether both runs returned `changes_requested` on the defective sample |
+| `order_sensitive` | Whether the normalized verdict flipped between original and reversed draft order |
+
+### Credit
+
+<!-- praetor:docs-references:off tools/match_prs_to_master.py and tools/replay_combiner.py are paths in the external Fairies repository credited here, not paths of this repository -->
+
+The historical cutoff, post-merge ground-truth derivation, and swapped-order combiner
+replay design (idea only, no code or text taken) comes from Fairies by Michael Niedermayer (GPL-2.0,
+`https://code.ffmpeg.org/michaelni/Fairies` at `c4ed93c30469`: `simpast-runs`,
+`tools/match_prs_to_master.py`, `tools/replay_combiner.py`) and the
+[Fairy-audits](https://code.ffmpeg.org/michaelni/Fairy-audits) README
+`2026-07-11-combiner-gpt54-vs-gpt56-terra/README.md` at `7fd282e3200b`.
+
+<!-- praetor:docs-references:on -->
+
 ## Catalog freshness
 
 Every entry may carry `preview: true` and an `as_of` date (YYYY-MM-DD) for when its data

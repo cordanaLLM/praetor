@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+type: added
+title: Replay merged pull requests at a historical cutoff with praetorctl models replay, deriving ground truth from post-merge repair commits and scoring review arms across original and reversed draft orders.
