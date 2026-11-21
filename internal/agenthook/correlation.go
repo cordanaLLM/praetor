@@ -215,7 +215,8 @@ func (s correlationStore) active(ctx context.Context, client, session, agentID s
 	return found, err
 }
 
-func (s correlationStore) markHandbackValidated(ctx context.Context, client, session, agentID, toolID, text string) error {
+// markHandbackValidated binds the delivered message to the classification of its validated original report.
+func (s correlationStore) markHandbackValidated(ctx context.Context, client, session, agentID, toolID, text, classification string) error {
 	active, err := correlationName("active", client, session, agentID)
 	if err != nil {
 		return err
@@ -232,8 +233,11 @@ func (s correlationStore) markHandbackValidated(ctx context.Context, client, ses
 		if readErr != nil {
 			return readErr
 		}
+		if entry.HandbackDigest != "" {
+			return errors.New("subagent handback already pending")
+		}
 		entry.HandbackDigest = correlationHandbackDigest(toolID, text)
-		entry.HandbackVerdict = claudeVerdictWord(text)
+		entry.HandbackVerdict = classification
 		return s.write(active, entry)
 	})
 }

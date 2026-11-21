@@ -233,7 +233,8 @@ func (d Dialect) encodeDelivery(canonical Canonical, verdict Verdict) Response {
 		specific["permissionDecision"] = "allow"
 		specific["permissionDecisionReason"] = boundReason(verdict.Notice)
 		specific["updatedInput"] = verdict.UpdatedInput
-	} else {
+	}
+	if verdict.AddedContext != "" {
 		specific["additionalContext"] = verdict.AddedContext
 	}
 	data, err := json.Marshal(map[string]any{"hookSpecificOutput": specific})
@@ -311,6 +312,11 @@ func decodeObject(payload []byte) (map[string]json.RawMessage, error) {
 	if len(payload) > MaxInputBytes {
 		return nil, errors.New("hook input exceeds 1 MiB")
 	}
+	return decodeJSONObject(payload)
+}
+
+// decodeJSONObject reads object structure from operands whose native payload bounds were already checked.
+func decodeJSONObject(payload []byte) (map[string]json.RawMessage, error) {
 	if !utf8.Valid(payload) {
 		return nil, errors.New("hook input is not valid UTF-8")
 	}

@@ -14,6 +14,16 @@ const (
 // vocabulary keeps one definition.
 func ValidTaskLabel(name string) bool { return routingName(name) }
 
+// IsReviewTask reports whether a task requires a prompt-injection review declaration.
+func IsReviewTask(label string) bool {
+	switch label {
+	case "code_review", "review", "single_file_audits":
+		return true
+	default:
+		return false
+	}
+}
+
 // DeclaredTaskLabels returns the sorted, deduplicated union of every tier's target_tasks.
 // A nil configuration declares nothing.
 func DeclaredTaskLabels(cfg *RoutingConfig) []string {

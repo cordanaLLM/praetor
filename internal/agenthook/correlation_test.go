@@ -31,7 +31,7 @@ func TestCorrelationStorePositive(t *testing.T) {
 	if got, err := store.active(t.Context(), "claude", "session", "agent"); err != nil || got.Resolution != want {
 		t.Fatalf("correlation = %+v, %v", got, err)
 	}
-	if err := store.markHandbackValidated(t.Context(), "claude", "session", "agent", "handback", "report"); err != nil {
+	if err := store.markHandbackValidated(t.Context(), "claude", "session", "agent", "handback", "report", claudeVerdictWord("report")); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.markHandbackDelivered(t.Context(), "claude", "session", "agent", "handback", "report"); err != nil {

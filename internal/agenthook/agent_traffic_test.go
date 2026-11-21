@@ -230,7 +230,7 @@ func TestClaudeFailedOrDeniedHandbackRetainsFallbackValidation(t *testing.T) {
 	}
 }
 
-func TestClaudeHandbackTransitionsAreBoundToTheToolUse(t *testing.T) {
+func TestAgentTrafficHandbackTransitionsAreBoundToTheToolUse(t *testing.T) {
 	root, state := repository(t, true), t.TempDir()
 	prepareClaudeCorrelation(t, root, state, "session-tools", "dispatch-tool", "agent-tools", validBrief)
 	first := handbackEventPayloadWithID(t, "PreToolUse", "session-tools", "agent-tools", "handback-old", validReturn)
@@ -238,8 +238,19 @@ func TestClaudeHandbackTransitionsAreBoundToTheToolUse(t *testing.T) {
 		t.Fatalf("first pre-handback: %+v", response)
 	}
 	second := handbackEventPayloadWithID(t, "PreToolUse", "session-tools", "agent-tools", "handback-new", validReturn)
+	if response := runAgentHook(t, root, state, "claude", EventPreHandback, second); response.ExitCode != 2 {
+		t.Fatalf("pending handback replaced: %+v", response)
+	}
+	wrongAbort := handbackEventPayloadWithID(t, "PostToolUseFailure", "session-tools", "agent-tools", "handback-new", validReturn)
+	if response := runAgentHook(t, root, state, "claude", EventHandbackAbort, wrongAbort); response.ExitCode != 2 {
+		t.Fatalf("unvalidated abort accepted: %+v", response)
+	}
+	abort := handbackEventPayloadWithID(t, "PostToolUseFailure", "session-tools", "agent-tools", "handback-old", validReturn)
+	if response := runAgentHook(t, root, state, "claude", EventHandbackAbort, abort); response.ExitCode != 0 {
+		t.Fatalf("original abort: %+v", response)
+	}
 	if response := runAgentHook(t, root, state, "claude", EventPreHandback, second); response.ExitCode != 0 {
-		t.Fatalf("replacement pre-handback: %+v", response)
+		t.Fatalf("retry after abort: %+v", response)
 	}
 	stale := handbackEventPayloadWithID(t, "PostToolUseFailure", "session-tools", "agent-tools", "handback-old", validReturn)
 	if response := runAgentHook(t, root, state, "claude", EventHandbackAbort, stale); response.ExitCode != 2 ||
@@ -405,15 +416,21 @@ func prepareReturnFixture(t *testing.T, root, state string, fixture agentReturnF
 	return commandPayload(t, fields)
 }
 
+// prepareClaudeCorrelation simulates a client launching the exact input approved by pre-dispatch.
 func prepareClaudeCorrelation(t *testing.T, root, state, session, toolID, agentID, brief string) {
 	t.Helper()
 	input := map[string]any{"prompt": brief, "run_in_background": true}
 	receipt := map[string]any{"status": "async_launched", "agentId": agentID}
 	pre := nativePayload(t, "PreToolUse", session, "Agent", toolID, input, nil)
-	post := nativePayload(t, "PostToolUse", session, "Agent", toolID, map[string]any{"prompt": brief}, receipt)
-	if response := runAgentHook(t, root, state, "claude", EventPreDispatch, pre); response.ExitCode != 0 {
+	response := runAgentHook(t, root, state, "claude", EventPreDispatch, pre)
+	if response.ExitCode != 0 {
 		t.Fatalf("prepare brief: %+v", response)
 	}
+	if len(response.Stdout) > 0 {
+		specific := field[map[string]any](t, decodeStdout(t, response), "hookSpecificOutput")
+		input = field[map[string]any](t, specific, "updatedInput")
+	}
+	post := nativePayload(t, "PostToolUse", session, "Agent", toolID, input, receipt)
 	if response := runAgentHook(t, root, state, "claude", EventDispatchReceipt, post); response.ExitCode != 0 {
 		t.Fatalf("prepare receipt: %+v", response)
 	}

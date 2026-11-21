@@ -45,6 +45,8 @@ func StripLineComment(line, marker string) string {
 type CommentSyntax struct {
 	Line  []string
 	Block [][2]string
+	// Unquoted treats quotes as literal text, as in Markdown and HTML.
+	Unquoted bool
 }
 
 // StripComments returns one line of code without its comments, and the closer of a block
@@ -54,9 +56,10 @@ type CommentSyntax struct {
 //     URL and the "#" of "a#b" are code. A marker that ends in a letter, such as REM, opens
 //     one only as a whole word.
 //   - A block opener opens a comment anywhere; the comment reads as one blank.
-//   - A marker inside a quoted string is code. A double or single quote that starts a word
-//     quotes up to the next same quote on the line; one that nothing closes, or that follows
-//     a letter or digit as the apostrophe of "don't" does, is a literal.
+//   - Unless syntax.Unquoted is set, a marker inside a quoted string is code. A double or
+//     single quote that starts a word quotes up to the next same quote on the line; one that
+//     nothing closes, or that follows a letter or digit as the apostrophe of "don't" does,
+//     is a literal.
 //
 // A line that holds no comment comes back unchanged; otherwise the blanks a cut leaves at its
 // end are trimmed.
@@ -92,10 +95,13 @@ func StripComments(line string, syntax CommentSyntax, open string) (string, stri
 
 // commentAt reads line at pos, outside every comment: stop when a line comment opens there,
 // the closer and the opener's length when a block comment opens there, and otherwise the
-// length of the code that starts there, a whole quoted string or one byte.
+// length of the code that starts there, a whole quoted string or one byte. Unquoted syntax
+// treats quotes as literal bytes, so they cannot hide comment openers.
 func commentAt(line string, pos int, syntax CommentSyntax) (int, string, bool) {
-	if quoted := quotedLength(line, pos); quoted > 0 {
-		return quoted, "", false
+	if !syntax.Unquoted {
+		if quoted := quotedLength(line, pos); quoted > 0 {
+			return quoted, "", false
+		}
 	}
 	rest := line[pos:]
 	for _, pair := range syntax.Block {
