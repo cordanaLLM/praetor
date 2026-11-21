@@ -6,6 +6,7 @@ package admission
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -88,20 +89,22 @@ func ScopesAvailable(ctx context.Context) (bool, string) {
 	return true, ""
 }
 
-// Step is one admitted command and where its streams go.
+// Step is one admitted command, its execution bound, and where its streams go.
 type Step struct {
-	Label  string
-	Argv   []string
-	Limits Limits
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
+	Label   string
+	Argv    []string
+	Limits  Limits
+	Timeout time.Duration
+	Stdin   io.Reader
+	Stdout  io.Writer
+	Stderr  io.Writer
 }
 
 // Run runs the step in its own scope where the host offers scopes, and unscoped otherwise with
-// a line saying why (no silent fallback). ctx must carry the step's deadline: without one the
-// command runner applies its short default. The step's own failure is returned unchanged, so
-// errors.As finds its *exec.ExitError.
+// a line saying why (no silent fallback). Timeout bounds the step after the scope probe; without
+// Timeout, ctx's deadline (or the command runner's short default) bounds it. A step cut by its
+// deadline prints and returns a reason naming the label, command and deadline. Any other failure
+// of the step is returned unchanged, so errors.As finds its *exec.ExitError.
 func Run(ctx context.Context, s Step) error {
 	if len(s.Argv) == 0 {
 		return fmt.Errorf("admission %s: no command to run", s.Label)
@@ -109,16 +112,72 @@ func Run(ctx context.Context, s Step) error {
 	if err := s.Limits.Check(); err != nil {
 		return err
 	}
+	inherited := contextRemaining(ctx)
 	name, args := s.Argv[0], s.Argv[1:]
 	if ok, why := ScopesAvailable(ctx); ok {
 		name, args = "systemd-run", ScopeArgs(unitName(s.Label, time.Now()), s.Limits, s.Argv)
+	} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return reportStepDeadline(s, inherited)
 	} else if _, err := fmt.Fprintf(s.Stderr, "admission %s: runs unscoped, %s\n", s.Label, why); err != nil {
 		return err
 	}
-	return util.RunCommandPassthrough(ctx, "", name, s.Stdin, s.Stdout, s.Stderr, args...)
+	stepCtx, bound, cancel := withStepDeadline(ctx, s.Timeout)
+	defer cancel()
+	ignoreBackgroundTTYSignals()
+	err := util.RunCommandPassthrough(stepCtx, "", name, s.Stdin, s.Stdout, s.Stderr, args...)
+	if errors.Is(stepCtx.Err(), context.DeadlineExceeded) {
+		return reportStepDeadline(s, bound)
+	}
+	return err
 }
 
-// DefaultStep is a step with the process's own streams.
+// contextRemaining is the time left before ctx's deadline, or the command runner's default when ctx has none.
+func contextRemaining(ctx context.Context) time.Duration {
+	if dl, ok := ctx.Deadline(); ok {
+		return max(0, time.Until(dl).Round(time.Millisecond))
+	}
+	return util.DefaultCommandTimeout
+}
+
+// withStepDeadline installs an execution deadline and reports its effective bound after the scope check.
+func withStepDeadline(ctx context.Context, timeout time.Duration) (context.Context, time.Duration, context.CancelFunc) {
+	if timeout <= 0 {
+		if _, ok := ctx.Deadline(); ok {
+			return ctx, contextRemaining(ctx), func() {}
+		}
+		timeout = util.DefaultCommandTimeout
+	}
+	stepCtx, cancel := context.WithTimeout(ctx, timeout)
+	return stepCtx, contextRemaining(stepCtx), cancel
+}
+
+// reportStepDeadline prints and returns the named reason for a step cut at its deadline: label, command and bound.
+func reportStepDeadline(s Step, bound time.Duration) error {
+	msg := fmt.Sprintf("admission %s: %s exceeded %s deadline, killed", s.Label, s.Argv[0], bound)
+	if s.Stderr != nil {
+		if _, writeErr := fmt.Fprintln(s.Stderr, msg); writeErr != nil {
+			return errors.Join(fmt.Errorf("%s: %w", msg, context.DeadlineExceeded), writeErr)
+		}
+	}
+	return fmt.Errorf("%s: %w", msg, context.DeadlineExceeded)
+}
+
+// DefaultStep is a step with the process's own output streams and non-interactive input.
+// A character-device stdin (a controlling terminal or console) becomes nil (/dev/null), while
+// a pipe or file passes through: Run starts the step in its own process group, where reading
+// or configuring a controlling terminal triggers SIGTTIN or SIGTTOU instead of reading input.
 func DefaultStep(label string, argv []string, l Limits) Step {
-	return Step{Label: label, Argv: argv, Limits: l, Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
+	return Step{Label: label, Argv: argv, Limits: l, Stdin: nonInteractiveStdin(os.Stdin), Stdout: os.Stdout, Stderr: os.Stderr}
+}
+
+// nonInteractiveStdin passes a pipe or file stdin through and replaces a terminal or console (a character device) with nil.
+func nonInteractiveStdin(f *os.File) io.Reader {
+	if f == nil {
+		return nil
+	}
+	info, err := f.Stat()
+	if err != nil || info.Mode()&os.ModeCharDevice != 0 {
+		return nil
+	}
+	return f
 }
